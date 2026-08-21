@@ -1,0 +1,8 @@
+type: fix
+audience: admin
+en: >-
+  Fixed Docker development deployments so LENSNODE_TOKEN changes in .env.dev
+  are applied consistently to the backend and LensNode services.
+zh-CN: >-
+  修复 Docker 开发环境中 .env.dev 的 LENSNODE_TOKEN 修改无法同步应用到后端和
+  LensNode 服务的问题。

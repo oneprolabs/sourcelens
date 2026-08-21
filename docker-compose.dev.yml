@@ -15,7 +15,6 @@ services:
       - ./.env.dev
     environment:
       LENSNODE_NAME: ${LENSNODE_NAME:-local-dev-lensnode}
-      LENSNODE_TOKEN: ${LENSNODE_TOKEN:-dev-lensnode-token}
       LENSNODE_WORKSPACE_PATH: /workspace
       # Development login must not depend on the external Turnstile service.
       TURNSTILE_ENABLED: "false"
@@ -185,7 +184,6 @@ services:
       - ./.env.dev
     environment:
       LENSNODE_NAME: ${LENSNODE_NAME:-local-dev-lensnode}
-      LENSNODE_TOKEN: ${LENSNODE_TOKEN:-dev-lensnode-token}
       LENSNODE_CONTROL_WS_URL: ws://backend-api:8000/ws/lens/lensnodes/
       LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace

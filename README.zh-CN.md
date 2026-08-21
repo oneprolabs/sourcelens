@@ -97,9 +97,13 @@ git submodule update --init --recursive
 
 ```bash
 cp env.sample .env.dev
-# 按需编辑 .env.dev，配置数据库、AI 服务密钥等
+# 按需编辑 .env.dev，配置数据库、AI 服务密钥和已批准的 LENSNODE_TOKEN
+# LENSNODE_TOKEN 必须与管理后台中的 LensNode 记录保持一致
 docker compose -f docker-compose.dev.yml up -d
 ```
+
+如果在管理后台重置了 LensNode Token，请同步更新 `.env.dev` 中的
+`LENSNODE_TOKEN`，并重新创建开发服务，使 LensNode 能够重新连接。
 
 ### 3. 访问服务
 

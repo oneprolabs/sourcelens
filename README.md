@@ -97,9 +97,13 @@ git submodule update --init --recursive
 
 ```bash
 cp env.sample .env.dev
-# Edit .env.dev — database, AI service keys, etc.
+# Edit .env.dev — database, AI service keys, and the approved LENSNODE_TOKEN.
+# Keep LENSNODE_TOKEN in sync with the LensNode record in the admin UI.
 docker compose -f docker-compose.dev.yml up -d
 ```
+
+If the LensNode token is reset in the admin UI, update `LENSNODE_TOKEN` in
+`.env.dev` and recreate the development services so the node can reconnect.
 
 ### 3. Services
 
