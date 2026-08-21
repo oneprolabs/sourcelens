@@ -90,6 +90,25 @@
   "virtualEmail": {
     "yourAddress": "您的AI智能邮箱"
   },
+  "lensNodeErrors": {
+    "assistantArchived": "当前助手已归档，无法处理新的请求。",
+    "required": "当前操作未配置执行节点。",
+    "offline": "执行节点当前不在线，请稍后重试或联系管理员。",
+    "notApproved": "执行节点尚未通过审批，请联系管理员。",
+    "tokenRevoked": "执行节点凭证已被撤销，请联系管理员。",
+    "draining": "执行节点正在停止服务，请稍后重试。",
+    "taskUnavailable": "执行节点不支持当前操作，请联系管理员。",
+    "directoryUnavailable": "执行节点上不存在目标目录。",
+    "resultTimeout": "执行节点未能及时返回结果，请稍后重试。",
+    "channelUnavailable": "执行节点连接暂时不可用，请稍后重试。",
+    "skillRequired": "当前助手未绑定可执行 Skill，无法处理这个请求。请联系管理员绑定对应 Skill。",
+    "skillEnvironmentRequired": "Skill 缺少必需的环境变量，请联系管理员完善 Skill 配置。",
+    "mcpEnvironmentRequired": "MCP 缺少必需的环境变量，请联系管理员完善 MCP 配置。",
+    "documentUnsupported": "当前执行节点不支持文档附件。",
+    "documentStateUnavailable": "文档附件状态不可用，请重试。",
+    "documentUnavailable": "文档附件不可用，请重新上传。",
+    "attachmentUnreadable": "附件无法读取，请重新上传。"
+  },
   "lens": {
     "share": {
       "copyLink": "复制链接",

@@ -194,14 +194,15 @@ test('assistant Skill picker supports search and environment configuration', asy
 })
 
 test('chat exposes actionable messages for dispatch configuration failures', async () => {
-  const [chat, english, chinese] = await Promise.all([
+  const [chat, nodeErrors, english, chinese] = await Promise.all([
     source('pages/lens/Chat.vue'),
+    source('utils/lensNodeErrors.js'),
     source('locales/en.json').then(JSON.parse),
     source('locales/zh-CN.json').then(JSON.parse)
   ])
 
   assert.match(chat, /GENERAL_CHAT_SKILL_REQUIRED/)
-  assert.match(chat, /LENSNODE_OFFLINE/)
+  assert.match(nodeErrors, /LENSNODE_OFFLINE/)
   assert.equal(
     english.lens.chat.errorSkillRequired,
     'This assistant has no executable Skill bound for the request. Ask an administrator to bind the required Skill.'

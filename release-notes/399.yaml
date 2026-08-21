@@ -1,0 +1,7 @@
+type: fix
+audience: user
+en: >-
+  Fixed LensNode dispatch failures so users see clear, actionable messages
+  instead of raw internal error codes.
+zh-CN: >-
+  修复 LensNode 派发失败时直接显示内部错误码的问题，现为用户提供清晰且可操作的提示。

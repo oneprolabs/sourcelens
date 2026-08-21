@@ -1198,10 +1198,7 @@
                         >
                           {{
                             progressStatusIcon(
-                              livePlanStatus(
-                                item,
-                                liveStructuredProgress.items
-                              )
+                              livePlanStatus(item, liveStructuredProgress.items)
                             )
                           }}
                         </span>
@@ -1649,6 +1646,7 @@ import {
   isPreviewable
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
+import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
 import { useToast } from '@/composables/useToast'
@@ -2203,8 +2201,7 @@ function isCurrentActivity(activity, item) {
   const latest = runtimeState.value.activities.at(-1)
   const items = liveStructuredProgress.value.items
   return (
-    livePlanStatus(item, items) === 'in_progress' &&
-    latest?.id === activity.id
+    livePlanStatus(item, items) === 'in_progress' && latest?.id === activity.id
   )
 }
 
@@ -2394,6 +2391,8 @@ const showRetryHint = computed(() => {
 // timeout is the model being slow (after retries), not a platform fault.
 function mapRunError(code) {
   const c = String(code || '').toUpperCase()
+  const lensNodeMessage = lensNodeErrorMessage(c, t)
+  if (lensNodeMessage) return lensNodeMessage
   if (c.includes('IMAGE_PREPROCESSING')) {
     return t('lens.chat.errorImagePreprocessing')
   }
@@ -2420,15 +2419,6 @@ function mapRunError(code) {
   }
   if (c.includes('GENERAL_CHAT_SKILL_REQUIRED')) {
     return t('lens.chat.errorSkillRequired')
-  }
-  if (c.includes('LENSNODE_OFFLINE')) {
-    return t('lens.chat.errorNodeOffline')
-  }
-  if (c.includes('LENSNODE_NOT_APPROVED')) {
-    return t('lens.chat.errorNodeNotApproved')
-  }
-  if (c.includes('LENSNODE_TASK_UNAVAILABLE')) {
-    return t('lens.chat.errorTaskUnavailable')
   }
   return t('lens.chat.emptyAnswerHint')
 }

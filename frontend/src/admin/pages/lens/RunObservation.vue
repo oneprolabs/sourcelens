@@ -404,6 +404,16 @@
                 </button>
                 <button
                   class="detail-tab"
+                  data-testid="run-diagnosis-tab"
+                  :class="
+                    activeDetailTab === 'diagnosis' ? 'detail-tab-active' : ''
+                  "
+                  @click="activeDetailTab = 'diagnosis'"
+                >
+                  {{ t('lensRuns.tabDiagnosis') }}
+                </button>
+                <button
+                  class="detail-tab"
                   :class="
                     activeDetailTab === 'trace' ? 'detail-tab-active' : ''
                   "
@@ -426,16 +436,6 @@
                   <span class="ml-1 text-xs text-gray-400">{{
                     (detail.output_files || []).length
                   }}</span>
-                </button>
-                <button
-                  class="detail-tab"
-                  data-testid="run-diagnosis-tab"
-                  :class="
-                    activeDetailTab === 'diagnosis' ? 'detail-tab-active' : ''
-                  "
-                  @click="activeDetailTab = 'diagnosis'"
-                >
-                  {{ t('lensRuns.tabDiagnosis') }}
                 </button>
               </div>
 

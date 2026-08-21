@@ -48,7 +48,9 @@
               v-model="searchQuery"
               type="search"
               class="form-input"
-              :placeholder="t('lensAdmin.environmentVariables.searchPlaceholder')"
+              :placeholder="
+                t('lensAdmin.environmentVariables.searchPlaceholder')
+              "
             />
           </label>
           <p class="mt-2 text-xs text-ink-500" role="status">
@@ -116,7 +118,10 @@
                 >
                   <td class="table-cell" :data-label="activeColumns[0]">
                     <div class="font-medium text-ink-900">{{ row.name }}</div>
-                    <div v-if="row.description" class="mt-1 text-xs text-ink-500">
+                    <div
+                      v-if="row.description"
+                      class="mt-1 text-xs text-ink-500"
+                    >
                       {{ row.description }}
                     </div>
                   </td>
@@ -130,10 +135,15 @@
                         <span class="truncate">{{ key }}</span>
                       </span>
                     </div>
-                    <span v-else class="text-xs text-ink-400">{{ emptyValue }}</span>
+                    <span v-else class="text-xs text-ink-400">{{
+                      emptyValue
+                    }}</span>
                   </td>
                   <td class="table-cell" :data-label="activeColumns[2]">
-                    <div v-if="row.usages?.length" class="flex flex-wrap gap-1.5">
+                    <div
+                      v-if="row.usages?.length"
+                      class="flex flex-wrap gap-1.5"
+                    >
                       <span
                         v-for="usage in visibleUsages(row)"
                         :key="usageKey(usage)"
@@ -145,8 +155,13 @@
                         </span>
                         <span aria-hidden="true">·</span>
                         <span class="truncate">{{ usage.resource_name }}</span>
-                        <span v-if="usage.assistant_name" aria-hidden="true">·</span>
-                        <span v-if="usage.assistant_name" class="truncate text-ink-400">
+                        <span v-if="usage.assistant_name" aria-hidden="true"
+                          >·</span
+                        >
+                        <span
+                          v-if="usage.assistant_name"
+                          class="truncate text-ink-400"
+                        >
                           {{ usage.assistant_name }}
                         </span>
                       </span>
@@ -162,10 +177,14 @@
                         }}
                       </span>
                     </div>
-                    <span v-else class="text-xs text-ink-400">{{ emptyValue }}</span>
+                    <span v-else class="text-xs text-ink-400">{{
+                      emptyValue
+                    }}</span>
                   </td>
                   <td class="table-cell" :data-label="activeColumns[3]">
-                    <StatusBadge :status="row.enabled ? 'enabled' : 'disabled'" />
+                    <StatusBadge
+                      :status="row.enabled ? 'enabled' : 'disabled'"
+                    />
                   </td>
                   <td class="table-cell !px-2" :data-label="activeColumns[4]">
                     <div
@@ -276,11 +295,7 @@
             </div>
           </FormRow>
           <BooleanRow v-model="form.enabled" />
-          <p
-            v-if="formError"
-            class="text-sm text-danger-700"
-            role="alert"
-          >
+          <p v-if="formError" class="text-sm text-danger-700" role="alert">
             {{ formError }}
           </p>
         </form>
@@ -324,7 +339,9 @@
               })
             }}
           </p>
-          <ul class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-warning-800">
+          <ul
+            class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-warning-800"
+          >
             <li v-for="usage in deleteTarget.usages" :key="usageKey(usage)">
               {{ usageTitle(usage) }}
             </li>
@@ -387,7 +404,11 @@
                 <h3 class="text-sm font-semibold text-ink-900">
                   {{ t('lensAdmin.environmentVariables.values') }}
                 </h3>
-                <BaseButton size="sm" variant="outline" @click="toggleViewReveal">
+                <BaseButton
+                  size="sm"
+                  variant="outline"
+                  @click="toggleViewReveal"
+                >
                   {{
                     viewRevealed
                       ? t('lensAdmin.environmentVariables.hideValues')
@@ -408,7 +429,9 @@
                   :key="item.key"
                   class="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3 border-b border-line px-4 py-3 text-sm last:border-b-0"
                 >
-                  <span class="min-w-0 truncate font-mono text-xs font-medium text-ink-700">
+                  <span
+                    class="min-w-0 truncate font-mono text-xs font-medium text-ink-700"
+                  >
                     {{ item.key }}
                   </span>
                   <span
@@ -441,7 +464,10 @@
                   <span aria-hidden="true">·</span>
                   <span class="truncate">{{ usage.resource_name }}</span>
                   <span v-if="usage.assistant_name" aria-hidden="true">·</span>
-                  <span v-if="usage.assistant_name" class="truncate text-ink-400">
+                  <span
+                    v-if="usage.assistant_name"
+                    class="truncate text-ink-400"
+                  >
                     {{ usage.assistant_name }}
                   </span>
                 </span>

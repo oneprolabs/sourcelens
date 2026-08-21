@@ -351,6 +351,7 @@ import api from '@/api'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
 import { taskManagementApi } from '@/admin/api/taskManagement'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
+import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
@@ -841,7 +842,11 @@ const datasourceSyncDetails = computed(() => {
       t('lensAdmin.datasourceDetail.lastSyncedAt'),
       formatDateTime(row.last_synced_at)
     ),
-    detailItem(t('lensAdmin.datasourceDetail.lastError'), row.last_error, true),
+    detailItem(
+      t('lensAdmin.datasourceDetail.lastError'),
+      lensNodeErrorMessage(row.last_error, t) || row.last_error,
+      true
+    ),
     detailItem(
       t('lensAdmin.datasourceDetail.createdAt'),
       formatDateTime(row.created_at)

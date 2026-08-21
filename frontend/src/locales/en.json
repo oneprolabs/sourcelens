@@ -90,6 +90,25 @@
   "virtualEmail": {
     "yourAddress": "Your AI Email"
   },
+  "lensNodeErrors": {
+    "assistantArchived": "This assistant is archived and cannot run new requests.",
+    "required": "No execution node is configured for this operation.",
+    "offline": "The execution node is offline. Retry later or contact an administrator.",
+    "notApproved": "The execution node has not been approved yet. Contact an administrator.",
+    "tokenRevoked": "The execution node credentials were revoked. Contact an administrator.",
+    "draining": "The execution node is shutting down. Retry shortly.",
+    "taskUnavailable": "The execution node does not support this operation. Contact an administrator.",
+    "directoryUnavailable": "The target directory is unavailable on the execution node.",
+    "resultTimeout": "The execution node did not return a result in time. Retry later.",
+    "channelUnavailable": "The execution node connection is temporarily unavailable. Retry later.",
+    "skillRequired": "This assistant has no executable Skill bound for the request. Ask an administrator to bind the required Skill.",
+    "skillEnvironmentRequired": "A required Skill environment variable is missing. Ask an administrator to complete the Skill configuration.",
+    "mcpEnvironmentRequired": "A required MCP environment variable is missing. Ask an administrator to complete the MCP configuration.",
+    "documentUnsupported": "The selected execution node does not support document attachments.",
+    "documentStateUnavailable": "The document attachment state is unavailable. Please retry.",
+    "documentUnavailable": "The document attachment is unavailable. Please upload it again.",
+    "attachmentUnreadable": "The attachment could not be read. Please upload it again."
+  },
   "lens": {
     "share": {
       "copyLink": "Copy link",

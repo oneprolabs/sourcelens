@@ -144,71 +144,71 @@
                 @click="selectEvent(row.event)"
                 @keydown.enter="selectEvent(row.event)"
               >
-                  <td class="event-cell">
-                    <span class="turn-rail" aria-hidden="true" />
-                    <span
-                      v-if="index === 0"
-                      class="request-dot"
-                      aria-hidden="true"
+                <td class="event-cell">
+                  <span class="turn-rail" aria-hidden="true" />
+                  <span
+                    v-if="index === 0"
+                    class="request-dot"
+                    aria-hidden="true"
+                  />
+                  <span class="seq">#{{ row.event.sequence }}</span>
+                  <span class="kind-tag" :class="tagClass(row.event)">
+                    <span class="kind-tag-label">{{
+                      kindLabel(row.event)
+                    }}</span>
+                  </span>
+                </td>
+                <td class="content-cell">
+                  <button
+                    v-if="row.hasChildren"
+                    type="button"
+                    class="row-expand"
+                    :aria-label="t('lensRuns.trajectoryToggle')"
+                    @click.stop="toggleCall(row.event.call_id)"
+                  >
+                    <ChevronRight
+                      v-if="collapsed.has(row.event.call_id)"
+                      :size="14"
                     />
-                    <span class="seq">#{{ row.event.sequence }}</span>
-                    <span class="kind-tag" :class="tagClass(row.event)">
-                      <span class="kind-tag-label">{{
-                        kindLabel(row.event)
-                      }}</span>
-                    </span>
-                  </td>
-                  <td class="content-cell">
-                    <button
-                      v-if="row.hasChildren"
-                      type="button"
-                      class="row-expand"
-                      :aria-label="t('lensRuns.trajectoryToggle')"
-                      @click.stop="toggleCall(row.event.call_id)"
+                    <ChevronDown v-else :size="14" />
+                  </button>
+                  <span class="content-text">
+                    <span
+                      v-if="toolCallText(row.event)"
+                      class="content-title content-title-code"
                     >
-                      <ChevronRight
-                        v-if="collapsed.has(row.event.call_id)"
-                        :size="14"
-                      />
-                      <ChevronDown v-else :size="14" />
-                    </button>
-                    <span class="content-text">
-                      <span
-                        v-if="toolCallText(row.event)"
-                        class="content-title content-title-code"
-                      >
-                        {{ toolCallText(row.event).name }}
-                      </span>
-                      <span
-                        v-else
-                        class="content-title"
-                        :class="{
-                          'content-title-error': isErrorEvent(row.event)
-                        }"
-                      >
-                        {{ eventTitle(row.event) }}
-                      </span>
-                      <span
-                        v-if="toolCallText(row.event)?.args"
-                        class="content-args"
-                      >
-                        {{ toolCallText(row.event).args }}
-                      </span>
+                      {{ toolCallText(row.event).name }}
                     </span>
-                    <span class="content-trailing">
-                      <span
-                        class="content-metrics"
-                        :class="{
-                          'content-metrics-error': isErrorEvent(row.event)
-                        }"
-                      >
-                        {{ eventMetric(row.event) }}
-                      </span>
-                      <time class="content-time">
-                        {{ timeText(row.event.timestamp) }}
-                      </time>
+                    <span
+                      v-else
+                      class="content-title"
+                      :class="{
+                        'content-title-error': isErrorEvent(row.event)
+                      }"
+                    >
+                      {{ eventTitle(row.event) }}
                     </span>
-                  </td>
+                    <span
+                      v-if="toolCallText(row.event)?.args"
+                      class="content-args"
+                    >
+                      {{ toolCallText(row.event).args }}
+                    </span>
+                  </span>
+                  <span class="content-trailing">
+                    <span
+                      class="content-metrics"
+                      :class="{
+                        'content-metrics-error': isErrorEvent(row.event)
+                      }"
+                    >
+                      {{ eventMetric(row.event) }}
+                    </span>
+                    <time class="content-time">
+                      {{ timeText(row.event.timestamp) }}
+                    </time>
+                  </span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -245,7 +245,9 @@
               }}</span>
             </div>
             <div class="inspector-header-meta">
-              <span class="inspector-sequence">#{{ selectedEvent.sequence }}</span>
+              <span class="inspector-sequence"
+                >#{{ selectedEvent.sequence }}</span
+              >
               <span class="kind-tag" :class="tagClass(selectedEvent)">
                 {{ kindLabel(selectedEvent) }}
               </span>
@@ -285,8 +287,13 @@
                   <span :class="statusClass(selectedEvent)">{{
                     statusLabel(selectedEvent)
                   }}</span>
-                  <span class="inspector-chip">Sequence {{ selectedEvent.sequence }}</span>
-                  <span v-if="selectedEvent.attempt != null" class="inspector-chip">
+                  <span class="inspector-chip"
+                    >Sequence {{ selectedEvent.sequence }}</span
+                  >
+                  <span
+                    v-if="selectedEvent.attempt != null"
+                    class="inspector-chip"
+                  >
                     Attempt {{ selectedEvent.attempt }}
                   </span>
                 </div>
@@ -295,9 +302,18 @@
                 <div>
                   <dt>Hierarchy</dt>
                   <dd class="mono hierarchy-value">
-                    <span v-if="selectedEvent.call_id">Call {{ selectedEvent.call_id }}</span>
-                    <span v-if="selectedEvent.parent_call_id">Parent {{ selectedEvent.parent_call_id }}</span>
-                    <span v-if="!selectedEvent.call_id && !selectedEvent.parent_call_id">-</span>
+                    <span v-if="selectedEvent.call_id"
+                      >Call {{ selectedEvent.call_id }}</span
+                    >
+                    <span v-if="selectedEvent.parent_call_id"
+                      >Parent {{ selectedEvent.parent_call_id }}</span
+                    >
+                    <span
+                      v-if="
+                        !selectedEvent.call_id && !selectedEvent.parent_call_id
+                      "
+                      >-</span
+                    >
                   </dd>
                 </div>
                 <div>
@@ -325,7 +341,9 @@
                   class="inspector-data-block"
                 >
                   <span class="inspector-data-label">Output</span>
-                  <pre>{{ inspectorValue(inspectorOutput(selectedEvent)) }}</pre>
+                  <pre>{{
+                    inspectorValue(inspectorOutput(selectedEvent))
+                  }}</pre>
                 </div>
               </section>
               <section class="overview-section">
@@ -665,12 +683,7 @@ function eventMetric(event) {
 
 function inspectorInput(event) {
   const payload = event?.payload || {}
-  return (
-    payload.arguments ??
-    payload.input ??
-    payload.params ??
-    payload.request
-  )
+  return payload.arguments ?? payload.input ?? payload.params ?? payload.request
 }
 
 function inspectorOutput(event) {
@@ -825,9 +838,7 @@ async function fetchTrajectory(append = false) {
         _ms: new Date(event.timestamp).getTime()
       }))
     const nextEvents = normalize(data.results)
-    events.value = append
-      ? [...events.value, ...nextEvents]
-      : nextEvents
+    events.value = append ? [...events.value, ...nextEvents] : nextEvents
     summary.value = data.summary || {}
     hasMore.value = Boolean(data.has_more)
     if (!append) {
