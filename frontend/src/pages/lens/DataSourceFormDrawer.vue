@@ -727,14 +727,29 @@
         :label="t('lensAdmin.fields.syncPolicy')"
         required
       >
-        <BaseSelect v-model="syncPolicyMode" class="w-56">
-          <option value="interval">
-            {{ t('lensAdmin.datasourceWizard.syncPolicyInterval') }}
-          </option>
-          <option value="crontab">
-            {{ t('lensAdmin.datasourceWizard.syncPolicyCrontab') }}
-          </option>
-        </BaseSelect>
+        <div class="flex items-center gap-2">
+          <BaseSelect v-model="syncPolicyMode" class="min-w-0 flex-1">
+            <option value="interval">
+              {{ t('lensAdmin.datasourceWizard.syncPolicyInterval') }}
+            </option>
+            <option value="crontab">
+              {{ t('lensAdmin.datasourceWizard.syncPolicyCrontab') }}
+            </option>
+          </BaseSelect>
+          <BaseButton
+            class="h-10 w-10 shrink-0"
+            size="sm"
+            variant="outline"
+            :aria-label="t('lensAdmin.datasourceWizard.refreshDirectories')"
+            :disabled="refreshingDirectories || !form.lensnode_uuid"
+            @click="emit('refresh-dirs')"
+          >
+            <RefreshCwIcon
+              class="h-4 w-4"
+              :class="{ 'animate-spin': refreshingDirectories }"
+            />
+          </BaseButton>
+        </div>
       </FormRow>
       <FormRow
         v-if="!isManagedWorkspace && syncPolicyMode === 'interval'"
@@ -1201,6 +1216,7 @@ const props = defineProps({
   checkingPath: Boolean,
   testingConnection: Boolean,
   refreshingCredentials: Boolean,
+  refreshingDirectories: Boolean,
   saving: Boolean,
   formError: { type: String, default: '' }
 })
@@ -1213,6 +1229,7 @@ const emit = defineEmits([
   'test-connection',
   'connection-change',
   'refresh-credentials',
+  'refresh-dirs',
   'update:syncIntervalSeconds',
   'update:syncPolicyMode',
   'update:syncCron',

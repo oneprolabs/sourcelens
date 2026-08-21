@@ -1,0 +1,4 @@
+type: feature
+audience: admin
+en: Added an icon-only directory refresh control to the Data Source wizard so administrators can reload LensNode workspace directories without leaving the form.
+zh-CN: 在数据源向导中新增仅显示图标的目录刷新控件，管理员无需离开表单即可重新加载 LensNode 工作区目录。

@@ -1418,6 +1418,8 @@
       "pathHint": "选择已有目录，或在所选节点工作区下创建新目录，不能包含 ../。",
       "selectedTargetPath": "当前目标目录",
       "noWorkspaceDirs": "当前工作区暂无可选目录，可以直接新建目录。",
+      "refreshDirectories": "刷新目录",
+      "refreshingDirectories": "正在刷新目录…",
       "createTargetDir": "新建目标目录",
       "createAtWorkspace": "在工作区根目录新建",
       "noChildDirs": "暂无子目录",

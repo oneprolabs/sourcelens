@@ -1418,6 +1418,8 @@
       "pathHint": "Select an existing directory, or create a new directory under the selected node workspace. Do not include ../.",
       "selectedTargetPath": "Current target directory",
       "noWorkspaceDirs": "No workspace directories are available. You can create a new directory.",
+      "refreshDirectories": "Refresh directories",
+      "refreshingDirectories": "Refreshing directories...",
       "createTargetDir": "Create target directory",
       "createAtWorkspace": "Create under workspace root",
       "noChildDirs": "No child directories",

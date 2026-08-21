@@ -410,6 +410,7 @@
         :checking-path="checkingDatasourcePath"
         :testing-connection="testingDatasourceConnection"
         :refreshing-credentials="refreshingCredentials"
+        :refreshing-directories="refreshingDirectories"
         :saving="saving"
         :form-error="formError"
         @close="closeDrawer"
@@ -419,6 +420,7 @@
         @test-connection="testDatasourceConnection"
         @connection-change="resetDatasourceConnectionResult"
         @refresh-credentials="refreshCredentials"
+        @refresh-dirs="refreshDirectories"
       />
 
       <DataSourceDetailDrawer
@@ -448,6 +450,7 @@ import {
   listCredentials,
   listDataSources,
   listLensNodes,
+  scanLensNodeDirs,
   refreshDataSourceAvailability,
   setDataSourceEnabled,
   syncDataSource,
@@ -515,6 +518,7 @@ const datasourceConnectionBaseSignature = ref('')
 const checkingDatasourcePath = ref(false)
 const testingDatasourceConnection = ref(false)
 const refreshingCredentials = ref(false)
+const refreshingDirectories = ref(false)
 const syncIntervalSeconds = ref(3600)
 const syncPolicyMode = ref('interval')
 const syncCron = ref('0 2 * * *')
@@ -1470,6 +1474,43 @@ async function refreshCredentials() {
   } finally {
     refreshingCredentials.value = false
   }
+}
+
+async function refreshDirectories() {
+  const lensnodeUuid = form.value.lensnode_uuid
+  if (!lensnodeUuid) return
+
+  const lensnode = lensnodes.value.find((item) => item.uuid === lensnodeUuid)
+  if (!lensnode) return
+
+  refreshingDirectories.value = true
+  try {
+    const workspacePath = lensnode.workspace_path || '/workspace'
+    const result = await scanLensNodeDirs(lensnodeUuid, [workspacePath])
+    const directories = refreshedDirectories(result, workspacePath)
+    lensnodes.value = lensnodes.value.map((item) =>
+      item.uuid === lensnodeUuid
+        ? { ...item, available_dirs: directories }
+        : item
+    )
+  } catch (error) {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+  } finally {
+    refreshingDirectories.value = false
+  }
+}
+
+function refreshedDirectories(result, workspacePath) {
+  const dirs = result?.dirs ?? result
+  if (Array.isArray(dirs)) return dirs
+  if (!dirs || typeof dirs !== 'object') return []
+
+  const workspaceDirs = dirs[workspacePath]
+  if (Array.isArray(workspaceDirs)) return workspaceDirs
+
+  return Object.values(dirs).flatMap((value) =>
+    Array.isArray(value) ? value : []
+  )
 }
 
 function applyDatasourceConnectionResult(result) {
