@@ -20,7 +20,7 @@ async function mockChat(page, createStatus = 200) {
         body: JSON.stringify({
           data:
             createStatus === 200
-              ? { uuid: 'session-2', title: '' }
+              ? { uuid: 'session-2', title: '', status: 'active' }
               : { detail: 'Create failed' }
         })
       })
@@ -38,11 +38,14 @@ async function mockChat(page, createStatus = 200) {
           uuid: 'assistant-1',
           slug: 'draft-test',
           name: 'Draft Test',
-          status: 'active'
+          status: 'active',
+          selected_task: 'knowledge_qa'
         }
       ],
       '/api/lens/shares/': [],
-      '/api/lens/sessions/': [{ uuid: 'session-1', title: 'Existing' }],
+      '/api/lens/sessions/': [
+        { uuid: 'session-1', title: 'Existing', status: 'active' }
+      ],
       '/api/lens/sessions/session-1/messages/': []
     }
 

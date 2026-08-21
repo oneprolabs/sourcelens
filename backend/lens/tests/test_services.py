@@ -277,7 +277,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(self.session.message_set.count(), 2)
         self.assertEqual(run.execution.status, "queued")
         self.assertEqual(run.execution.agent_rounds, "balanced")
-        self.assertEqual(run.execution.run_timeout_s, 900)
+        self.assertEqual(run.execution.run_timeout_s, 3600)
 
     def test_build_run_history_returns_prior_turns_and_skips_empty(self):
         run1 = create_execution_run(
@@ -2370,7 +2370,7 @@ class LensServiceTests(TransactionTestCase):
 
         self.assertNotIn("secret-token", str(payload))
         self.assertEqual(payload["execution"]["agent_rounds"], "balanced")
-        self.assertEqual(payload["execution"]["run_timeout_s"], 900)
+        self.assertEqual(payload["execution"]["run_timeout_s"], 3600)
         self.assertNotIn("endpoint", payload["execution"]["loaded_mcps"][0])
         self.assertEqual(
             payload["execution"]["loaded_mcps"][0]["mcp_name"],

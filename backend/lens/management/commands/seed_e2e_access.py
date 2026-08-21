@@ -61,6 +61,7 @@ class Command(BaseCommand):
         user_ids = {}
         for role, spec in USERS.items():
             user, _ = User.objects.get_or_create(username=spec["username"])
+            user.email = f"{spec['username']}@example.com"
             user.is_staff = spec["is_staff"]
             user.set_password(PASSWORD)
             user.save()

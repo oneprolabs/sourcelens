@@ -57,7 +57,9 @@ async function mockChat(
           slug: 'drawer-test',
           name: 'Drawer Test',
           status: 'active',
-          multimodal_model_ref: 'vision-model'
+          multimodal_model_ref: 'vision-model',
+          selected_task: 'knowledge_qa',
+          can_process_images: true
         }
       ],
       '/api/lens/shares/': [],
@@ -372,13 +374,22 @@ test.describe('touch input accessibility', () => {
     await page.locator('input[type="file"]').setInputFiles({
       name: 'mobile-test.png',
       mimeType: 'image/png',
-      buffer: Buffer.from('mobile image')
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+        + '+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64'
+      )
     })
-    const removeImage = page.getByRole('button', { name: 'Remove image' })
+    const removeImage = page.getByRole('button', {
+      name: /Remove attachment|Remove image/
+    })
     const imagePreview = page.locator('.composer-thumb img')
     await expect(removeImage).toBeVisible()
     await expect(imagePreview).toHaveAttribute('src', /^blob:/)
-    await expect(removeImage).toHaveAttribute('title', 'Remove image')
+    await expect(removeImage).toHaveAttribute(
+      'title',
+      /Remove attachment|Remove image/
+    )
     await expectMinimumTouchTarget(removeImage)
 
     await share.click()
@@ -413,7 +424,7 @@ test.describe('touch input accessibility', () => {
       ['复制', '复制'],
       ['分享', '分享'],
       ['重试', '重试'],
-      ['上传图片', '上传图片'],
+      ['上传图片或文档', '上传图片或文档'],
       ['预览', '预览'],
       ['下载', '下载']
     ]
@@ -427,11 +438,15 @@ test.describe('touch input accessibility', () => {
     await page.locator('input[type="file"]').setInputFiles({
       name: 'mobile-test.png',
       mimeType: 'image/png',
-      buffer: Buffer.from('mobile image')
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+        + '+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64'
+      )
     })
     await expect(
-      page.getByRole('button', { name: '移除图片' })
-    ).toHaveAttribute('title', '移除图片')
+      page.getByRole('button', { name: /移除附件|移除图片/ })
+    ).toHaveAttribute('title', /移除附件|移除图片/)
   })
 })
 

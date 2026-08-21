@@ -75,7 +75,7 @@
               <BaseDateInput
                 v-model="selectedDate"
                 :mobile-touch="false"
-                input-class="stats-filter-control w-40 rounded-lg border-gray-200 focus:ring-2 focus:ring-primary-600 focus:border-primary-600"
+                input-class="stats-filter-control !h-11 w-40 rounded-lg border-gray-200 focus:ring-2 focus:ring-primary-600 focus:border-primary-600"
                 @change="fetchStats"
               />
             </template>
@@ -802,7 +802,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-@media (max-width: 767px), (hover: none), (pointer: coarse) {
+@media (max-width: 1024px), (hover: none), (pointer: coarse) {
   .stats-user-filter,
   .stats-user-select {
     width: 100%;
@@ -810,7 +810,13 @@ onMounted(() => {
     max-width: 100%;
   }
 
+  :deep(.stats-user-select button) {
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
   .stats-filter-control,
+  :deep(.stats-filter-control),
   .stats-granularity-btn,
   :deep(.stats-refresh-btn) {
     min-height: 44px;

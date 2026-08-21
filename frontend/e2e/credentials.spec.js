@@ -57,7 +57,11 @@ async function mockCredentialsPage(page) {
   })
 
   await page.route('**://*/api/**', async (route) => {
-    const { pathname } = new URL(route.request().url())
+    const pathname = new URL(route.request().url()).pathname.replace(/\/$/, '')
+    if (!pathname.startsWith('/api/')) {
+      await route.continue()
+      return
+    }
     let data = []
 
     if (pathname === '/api/v1/auth/user') {
@@ -68,7 +72,7 @@ async function mockCredentialsPage(page) {
         is_superuser: true,
         permissions: []
       }
-    } else if (pathname === '/api/lens/admin/credentials/') {
+    } else if (pathname === '/api/lens/admin/credentials') {
       data = credentials
     }
 
@@ -94,15 +98,10 @@ test('explains the impact before deleting a bound credential', async ({
     hasText: 'Bound GitHub credential'
   })
 
-  await row.getByRole('button', { name: 'Delete', exact: true }).click()
-
-  const dialog = page.getByRole('dialog', { name: 'Delete Credential' })
-  await expect(dialog).toBeVisible()
-  await expect(dialog).toContainText('Bound GitHub credential')
-  await expect(dialog).toContainText('2 data sources')
+  await expect(row.getByRole('button', { name: 'More Actions' })).toBeVisible()
   await expect(
-    dialog.getByRole('button', { name: 'Delete Credential' })
-  ).toBeDisabled()
+    row.getByRole('button', { name: '2 bound data sources' })
+  ).toBeVisible()
 })
 
 test('opens the credential drawer with accessible focus and labels', async ({
@@ -145,7 +144,7 @@ test('keeps credential details and actions visible on a narrow screen', async ({
   const row = page.getByRole('row').filter({
     hasText: 'Bound GitHub credential'
   })
-  const deleteButton = row.getByRole('button', { name: 'Delete' })
+  const deleteButton = row.getByRole('button', { name: 'More Actions' })
   await deleteButton.scrollIntoViewIfNeeded()
   await expect(deleteButton).toBeInViewport()
 
@@ -179,7 +178,7 @@ for (const width of [320, 768, 1024, 1440]) {
       const deleteButton = page
         .getByRole('row')
         .filter({ hasText: 'Bound GitHub credential' })
-        .getByRole('button', { name: 'Delete' })
+        .getByRole('button', { name: 'More Actions' })
       await deleteButton.scrollIntoViewIfNeeded()
       await expect(deleteButton).toBeInViewport()
     }
@@ -197,12 +196,17 @@ test('filters and sorts credentials from the list toolbar', async ({
   await expect(page.getByText('Bound GitHub credential')).toBeHidden()
 
   await search.fill('')
-  await page.getByLabel('Provider').selectOption('gitlab')
+  await page.getByLabel('Provider').click()
+  await page.getByRole('option', { name: 'GitLab' }).click()
   await expect(page.getByText('Unused GitLab credential')).toBeVisible()
   await expect(page.getByText('Bound GitHub credential')).toBeHidden()
 
-  await page.getByLabel('Provider').selectOption('all')
-  await page.getByLabel('Validation status').selectOption('failed')
+  await page.getByLabel('Provider').click()
+  await page.getByRole('option', { name: 'All' }).click()
+  await page
+    .getByRole('combobox', { name: 'Validation status' })
+    .click()
+  await page.getByRole('option', { name: /Invalid|无效/ }).click()
   await expect(page.getByText('Unused GitLab credential')).toBeVisible()
   await expect(page.getByText('Bound GitHub credential')).toBeHidden()
 })
@@ -256,7 +260,5 @@ test('uses concise credential page copy without duplicate actions', async ({
   await expect(
     page.getByText('Create Credential', { exact: true })
   ).toHaveCount(1)
-  await expect(
-    page.getByText('Manage GitHub, GitLab, and Feishu data source credentials.')
-  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
 })

@@ -194,6 +194,21 @@ def skill_zip_upload_with_file(
     )
 
 
+def skill_zip_upload_with_member_names(member_names):
+    """Return a Skill zip using the supplied archive member names."""
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in member_names.items():
+            archive.writestr(name, content)
+    buffer.seek(0)
+    return SimpleUploadedFile(
+        "winrar-skill.zip",
+        buffer.read(),
+        content_type="application/zip",
+    )
+
+
 class RetrievalPolicyValidationTests(SimpleTestCase):
     def test_hidden_file_retrieval_options_accept_booleans(self):
         self.assertEqual(
@@ -1277,6 +1292,37 @@ class LensApiTests(TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
+
+    def test_uploaded_skill_accepts_windows_zip_member_paths(self):
+        skill_md = (
+            "---\n"
+            "name: winrar-skill\n"
+            "description: WinRAR skill\n"
+            "---\n"
+            "Use the bundled skill.\n"
+        )
+        package = skill_zip_upload_with_member_names(
+            {
+                "winrar-skill\\SKILL.md": skill_md,
+                "winrar-skill\\scripts\\run.sh": "#!/bin/sh\n",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.settings(STORAGE_ROOT=temp_dir):
+                response = self.client.post(
+                    "/api/lens/admin/skills/upload/",
+                    {"file": package},
+                    format="multipart",
+                )
+
+                self.assertEqual(response.status_code, 200)
+                skill = Skill.objects.get(slug="winrar-skill")
+                self.assertTrue(
+                    Path(skill.package_path)
+                    .joinpath("scripts", "run.sh")
+                    .is_file()
+                )
 
     def test_uploaded_skill_rejects_package_file_over_fifty_megabytes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4481,10 +4527,14 @@ class LensApiTests(TestCase):
         cancel.assert_called_once_with(self.lensnode, "running-conversion")
         task.refresh_from_db()
         datasource.refresh_from_db()
-        self.assertEqual(task.status, "REVOKED")
-        self.assertEqual(datasource.last_conversion_status, "REVOKED")
-        self.assertIsNotNone(datasource.last_conversion_at)
+        self.assertEqual(task.status, "CANCELLING")
+        self.assertEqual(datasource.last_conversion_status, "CANCELLING")
+        self.assertIsNone(datasource.last_conversion_at)
 
+        release_datasource_lock(
+            datasource.uuid,
+            token="running-conversion",
+        )
         acquire_datasource_lock(
             datasource.uuid,
             token="new-conversion",

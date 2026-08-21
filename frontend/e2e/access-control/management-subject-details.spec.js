@@ -64,7 +64,10 @@ test('keeps row edit actions independent from detail drawers', async ({
   const userRow = page
     .getByTestId('user-detail-row')
     .filter({ hasText: f.users.authuser })
-  await userRow.getByRole('button', { name: 'Edit' }).click()
+  await userRow.click()
+  await page.getByRole('dialog', { name: 'User Details' })
+    .getByRole('button', { name: 'Edit' })
+    .click()
 
   await expect(page.getByRole('dialog', { name: 'Edit User' })).toBeVisible()
   await expect(
@@ -88,7 +91,10 @@ test('keeps row edit actions independent from detail drawers', async ({
   const groupRow = page
     .getByTestId('group-detail-row')
     .filter({ hasText: group.name })
-  await groupRow.getByRole('button', { name: 'Edit' }).click()
+  await groupRow.click()
+  await page.getByRole('dialog', { name: 'Group Details' })
+    .getByRole('button', { name: 'Edit' })
+    .click()
 
   await expect(page.getByRole('dialog', { name: 'Edit Group' })).toBeVisible()
   await expect(

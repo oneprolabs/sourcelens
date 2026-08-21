@@ -90,7 +90,7 @@ test('admin run detail previews and downloads generated files', async ({
   ])
 
   await page.goto('/management/lens/runs')
-  await page.getByText('Generated report request').click()
+  await page.getByRole('cell', { name: 'Generated report request' }).click()
   await page.getByTestId('run-files-tab').click()
 
   await expect(page.getByText('report.txt')).toBeVisible()
@@ -101,7 +101,7 @@ test('admin run detail previews and downloads generated files', async ({
   await page.getByTestId('preview-output-file').click()
   await expect(page.locator('.preview-title')).toHaveText('report.txt')
   await expect(page.locator('.preview-text')).toHaveText('generated report')
-  await page.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByTestId('download-output-file').click()
@@ -115,7 +115,7 @@ test('admin run detail shows an empty generated-files state', async ({
   await mockAdminRunApis(page, [])
 
   await page.goto('/management/lens/runs')
-  await page.getByText('Generated report request').click()
+  await page.getByRole('cell', { name: 'Generated report request' }).click()
   await page.getByTestId('run-files-tab').click()
 
   await expect(page.getByTestId('run-files-empty')).toBeVisible()

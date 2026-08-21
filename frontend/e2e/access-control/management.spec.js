@@ -283,8 +283,8 @@ test.describe('Management: create drawers', () => {
     const originalUser = data(await usersResponse.json()).results.find(
       (user) => user.id === USER_ID
     )
-    const longUsername = `compact_member_${'x'.repeat(72)}`
-    const longEmail = `compact.${'long'.repeat(20)}@example.com`
+    const longUsername = `compact_member_${Date.now()}_${'x'.repeat(58)}`
+    const longEmail = `compact.${Date.now()}.${'long'.repeat(18)}@example.com`
     let group
 
     try {
@@ -333,7 +333,11 @@ test.describe('Management: create drawers', () => {
 
       await createDialog.getByRole('button', { name: 'Cancel' }).click()
       const groupRow = page.locator('tbody tr').filter({ hasText: group.name })
-      await groupRow.getByRole('button', { name: 'Edit' }).click()
+      await groupRow.click()
+      await page
+        .getByRole('dialog', { name: 'Group Details' })
+        .getByRole('button', { name: 'Edit' })
+        .click()
 
       const editDialog = page.getByRole('dialog', { name: 'Edit Group' })
       const editSelector = editDialog.getByTestId('group-member-selector')

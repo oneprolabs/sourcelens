@@ -361,7 +361,7 @@ def _safe_extract_zip(data, destination):
     files = 0
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         for info in archive.infolist():
-            if info.is_dir():
+            if _zip_member_is_dir(info):
                 continue
             files += 1
             if files > MAX_FILE_COUNT:
@@ -375,14 +375,22 @@ def _safe_extract_zip(data, destination):
             total_size += info.file_size
             if total_size > MAX_UNPACKED_SIZE:
                 raise SkillPackageError("Skill package unpacks over 100 MB.")
-            _validate_zip_member(info)
-        archive.extractall(destination)
+            member_path = _validate_zip_member(info)
+            target = destination / member_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with archive.open(info) as source, target.open("wb") as dest:
+                    shutil.copyfileobj(source, dest)
+            except (NotImplementedError, RuntimeError) as exc:
+                raise SkillPackageError(
+                    "Skill package uses an unsupported or encrypted "
+                    "compression method."
+                ) from exc
+
         for info in archive.infolist():
-            if info.is_dir():
+            if _zip_member_is_dir(info):
                 continue
-            relative_path = Path(
-                *PurePosixPath(info.filename.replace("\\", "/")).parts
-            )
+            relative_path = _zip_member_path(info.filename)
             target = destination / relative_path
             source_mode = (info.external_attr >> 16) & 0o777
             target.chmod(0o755 if source_mode & 0o111 else 0o644)
@@ -391,9 +399,7 @@ def _safe_extract_zip(data, destination):
 def _validate_zip_member(info):
     """Reject unsafe zip member names or unsupported entries."""
 
-    if "\\" in info.filename:
-        raise SkillPackageError("Skill package contains unsafe paths.")
-    name = info.filename
+    name = info.filename.replace("\\", "/")
     path = PurePosixPath(name)
     if name.startswith("/") or not name.strip() or ".." in path.parts:
         raise SkillPackageError("Skill package contains unsafe paths.")
@@ -404,6 +410,19 @@ def _validate_zip_member(info):
         raise SkillPackageError(
             "Skill package contains unsupported file types."
         )
+    return _zip_member_path(name)
+
+
+def _zip_member_path(name):
+    """Return a normalized filesystem path for a ZIP member name."""
+
+    return Path(*PurePosixPath(name.replace("\\", "/")).parts)
+
+
+def _zip_member_is_dir(info):
+    """Return whether a ZIP member represents a directory."""
+
+    return info.is_dir() or info.filename.endswith(("/", "\\"))
 
 
 def _find_skill_root(extract_root):

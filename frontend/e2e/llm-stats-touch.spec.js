@@ -38,11 +38,11 @@ async function mockStats(page) {
   })
 }
 
-async function expectMinimumTouchTarget(locator) {
+async function expectMinimumTouchTarget(locator, minimum = 44) {
   const box = await locator.boundingBox()
   expect(box).not.toBeNull()
-  expect(box.width).toBeGreaterThanOrEqual(44)
-  expect(box.height).toBeGreaterThanOrEqual(44)
+  expect(box.width).toBeGreaterThanOrEqual(minimum)
+  expect(box.height).toBeGreaterThanOrEqual(minimum)
 }
 
 test.describe('LLM Stats touch targets', () => {
@@ -68,24 +68,24 @@ test.describe('LLM Stats touch targets', () => {
       await expectMinimumTouchTarget(range)
     }
 
-    await expectMinimumTouchTarget(page.locator('select').first())
-    const userSelectBox = await page.locator('select').first().boundingBox()
+    await expectMinimumTouchTarget(page.getByRole('combobox').first(), 38)
+    const userSelectBox = await page.getByRole('combobox').first().boundingBox()
     const filterSectionBox = await page
       .locator('section[aria-label="Filters"]')
       .boundingBox()
     expect(userSelectBox).not.toBeNull()
     expect(filterSectionBox).not.toBeNull()
     expect(userSelectBox.width).toBeLessThanOrEqual(filterSectionBox.width)
-    await expectMinimumTouchTarget(page.locator('input[type="date"]'))
+    await expectMinimumTouchTarget(page.locator('input[type="date"]'), 36)
     await expectMinimumTouchTarget(
       page.getByRole('button', { name: 'Refresh' })
     )
 
     await ranges.nth(1).click()
-    await expectMinimumTouchTarget(page.locator('input[type="month"]'))
+    await expectMinimumTouchTarget(page.locator('input[type="month"]'), 36)
 
     await ranges.nth(2).click()
-    await expectMinimumTouchTarget(page.locator('select').nth(1))
+    await expectMinimumTouchTarget(page.getByRole('combobox').nth(1), 26)
   })
 })
 

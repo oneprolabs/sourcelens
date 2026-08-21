@@ -38,7 +38,8 @@ async function mockChat(page) {
           slug: 'image-layout-test',
           name: 'Image Layout Test',
           status: 'active',
-          multimodal_model_ref: 'model-1'
+          multimodal_model_ref: 'model-1',
+          can_process_images: true
         }
       ],
       '/api/lens/shares/': [],

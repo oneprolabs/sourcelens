@@ -28,7 +28,9 @@ export const useUserStore = defineStore('user', () => {
 
   const loadUserPreferences = async () => {
     const language = user.value?.profile?.language
-    if (language) await preferencesStore.setLanguage(language)
+    if (language && !localStorage.getItem('userLanguage')) {
+      await preferencesStore.setLanguage(language)
+    }
   }
 
   // Actions

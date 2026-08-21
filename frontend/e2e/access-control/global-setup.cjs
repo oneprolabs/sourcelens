@@ -25,7 +25,10 @@ module.exports = async () => {
     const res = await fetch(`${BASE}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password: seed.password })
+      body: JSON.stringify({
+        email: `${username}@example.com`,
+        password: seed.password
+      })
     })
     const body = await res.json()
     const token = body?.data?.access

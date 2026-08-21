@@ -25,6 +25,7 @@ EXPECTED_MODELS = {
     "RunExecution",
     "RunOutputFile",
     "RunStep",
+    "RunTraceEvent",
     "RunTraceExport",
     "ScheduledTask",
     "Session",

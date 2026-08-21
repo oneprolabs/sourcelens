@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { asRole, fixtures } from './helpers.js'
+import { asRole, authHeader, fixtures } from './helpers.js'
 
 const f = fixtures()
 
@@ -10,7 +10,8 @@ test.describe('Management: standardized table actions', () => {
   })
 
   test('selects current-page users and opens the row action menu', async ({
-    page
+    page,
+    request
   }) => {
     await page.goto('/management/users')
     const username = f.users.user
@@ -40,8 +41,12 @@ test.describe('Management: standardized table actions', () => {
         response.request().method() === 'POST'
     )
     await bulkActions.getByRole('button', { name: 'Confirm' }).click()
-    await expect(await bulkResponse).toBeOK()
+    expect((await bulkResponse).ok()).toBeTruthy()
     await expect(row.getByText('Disabled')).toBeVisible()
+    await request.patch(`/api/v1/management/users/${f.user_ids.user}/`, {
+      headers: authHeader('admin'),
+      data: { is_active: true }
+    })
   })
 
   test('requires confirmation before a bulk group delete', async ({ page }) => {

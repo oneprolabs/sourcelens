@@ -5,15 +5,15 @@
 import { test, expect } from '@playwright/test'
 
 async function tryLogin(page) {
-  const username = process.env.TEST_USERNAME || 'admin'
-  const password = process.env.TEST_PASSWORD || 'adminpassword'
+  const email = process.env.TEST_EMAIL || 'e2e_admin@example.com'
+  const password = process.env.TEST_PASSWORD || 'e2ePass123!'
 
   await page.goto('/login')
   await page.waitForLoadState('networkidle')
 
   const loginResponse = await page.request.post(
     new URL('/api/v1/auth/login', page.url()).toString(),
-    { data: { username, password } }
+    { data: { email, password } }
   )
   if (loginResponse.ok()) {
     const body = await loginResponse.json()
@@ -36,16 +36,14 @@ async function tryLogin(page) {
   const formVisible = await loginForm.isVisible().catch(() => false)
   if (!formVisible) return false
 
-  const usernameInput = page.locator('input[name="username"]')
-  if (!(await usernameInput.isVisible().catch(() => false))) {
-    const passwordModeButton = page.getByRole('button', {
-      name: /account password|账号密码/i
-    })
-    if (!(await passwordModeButton.isVisible().catch(() => false))) return false
+  const passwordModeButton = page.getByText(
+    /Use email and password|使用邮箱和密码/
+  )
+  if (await passwordModeButton.isVisible().catch(() => false)) {
     await passwordModeButton.click()
   }
 
-  await usernameInput.fill(username)
+  await page.locator('input[name="email"]').fill(email)
   await page.locator('input[name="password"]').fill(password)
   await page.click('button[type="submit"]')
   await page.waitForURL((url) => !url.pathname.includes('/login'))
@@ -118,9 +116,8 @@ test.describe('LLM pages', () => {
     const providerSelect = page
       .locator('form')
       .last()
-      .locator('select', {
-        has: page.locator('option[value="openai"]')
-      })
+      .getByRole('combobox')
+      .nth(1)
     await expect(providerSelect).toBeVisible({ timeout: 10000 })
   })
 
@@ -256,7 +253,8 @@ test.describe('LLM pages', () => {
     await expect(row).toContainText('top_p: 0.9')
     await expect(row).toContainText('request_timeout_seconds: 90')
 
-    await row.locator('button[title="Edit"], button[title="编辑"]').click()
+    await row.getByRole('button', { name: /更多操作|More Actions/ }).click()
+    await page.getByRole('menuitem', { name: /编辑|Edit/ }).click({ force: true })
     let form = page.locator('form').last()
     const parameterInput = (name) =>
       form
@@ -272,7 +270,8 @@ test.describe('LLM pages', () => {
       .toBe(120)
     await expect(row).toContainText('request_timeout_seconds: 120')
 
-    await row.locator('button[title="Edit"], button[title="编辑"]').click()
+    await row.getByRole('button', { name: /更多操作|More Actions/ }).click()
+    await page.getByRole('menuitem', { name: /编辑|Edit/ }).click({ force: true })
     form = page.locator('form').last()
     await parameterInput('temperature').fill('')
     await parameterInput('request_timeout_seconds').fill('')
@@ -287,13 +286,13 @@ test.describe('LLM pages', () => {
 
     await page.getByRole('button', { name: /Add config|添加配置/ }).click()
     form = page.locator('form').last()
-    const providerSelect = form.locator('select', {
-      has: page.locator('option[value="azure_openai"]')
-    })
-    await providerSelect.selectOption('azure_openai')
+    const providerSelect = form.getByRole('combobox').nth(1)
+    await providerSelect.click()
+    await page.getByRole('option', { name: /Azure OpenAI/i }).click()
     await expect(form.locator('label[title="deployment"]')).toBeVisible()
     await expect(form.locator('label[title="api_version"]')).toBeVisible()
-    await providerSelect.selectOption('openai')
+    await providerSelect.click()
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click()
     await expect(form.locator('label[title="deployment"]')).toHaveCount(0)
     await expect(form.locator('label[title="api_version"]')).toHaveCount(0)
   })

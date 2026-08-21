@@ -21,6 +21,7 @@ export async function asRole(page, role) {
   const token = fixtures().tokens[role]
   await page.addInitScript((t) => {
     window.localStorage.setItem('access_token', t)
+    window.localStorage.setItem('userLanguage', 'en')
   }, token)
   return token
 }

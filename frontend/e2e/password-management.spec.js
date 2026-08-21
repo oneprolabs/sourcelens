@@ -5,6 +5,9 @@ test('requests password setup or reset without exposing eligibility', async ({
 }) => {
   let resetRequests = 0
   let requestPayload = null
+  await page.addInitScript(() => {
+    localStorage.setItem('userLanguage', 'en')
+  })
   await page.route('**/api/v1/auth/password/reset', async (route) => {
     resetRequests += 1
     requestPayload = route.request().postDataJSON()
@@ -18,7 +21,10 @@ test('requests password setup or reset without exposing eligibility', async ({
   })
 
   await page.goto('/login')
-  await page.getByRole('button', { name: 'Use account password' }).click()
+  const passwordMode = page.getByRole('button', {
+    name: /Use (account password|email and password)/
+  })
+  await passwordMode.click()
   await page.getByRole('button', { name: 'Forgot password?' }).click()
 
   const email = page.getByLabel('Email address')

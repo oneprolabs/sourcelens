@@ -143,15 +143,17 @@ test('localizes assistant types with readable fallback values', async ({
   await expect(assistantTypeCell(page, 'Empty Assistant')).toHaveText('—')
 
   await page.getByRole('button', { name: '新建 Assistant' }).click()
-  const drawer = page.locator('.fixed.inset-0.z-50')
+  const drawer = page.getByRole('dialog', { name: '新建 Assistant' })
   const textInputs = drawer.locator('input.form-input:not([type="number"])')
   await textInputs.nth(0).fill('Localized Assistant')
   await textInputs.nth(1).fill('localized-assistant')
-  await drawer.locator('select.form-input').nth(0).selectOption('test-model')
+  await drawer.getByRole('combobox').first().click()
+  await page.getByRole('option', { name: 'test-model' }).click()
   await drawer.getByRole('button', { name: '下一步' }).click()
 
-  const executionSelects = drawer.locator('select.form-input')
-  await executionSelects.nth(0).selectOption('test-lensnode')
+  const executionSelects = drawer.locator('select[aria-hidden="true"]')
+  await drawer.getByRole('combobox').first().click()
+  await page.getByRole('option', { name: 'Test LensNode' }).click()
   await expect(drawer.getByText('类型', { exact: true })).toBeVisible()
   await expect(executionSelects.nth(1).locator('option')).toHaveText([
     '请选择类型',

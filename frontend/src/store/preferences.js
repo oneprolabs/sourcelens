@@ -269,7 +269,7 @@ export const usePreferencesStore = defineStore('preferences', {
     },
 
     loadFromBackend(preferences) {
-      if (preferences.language) {
+      if (preferences.language && !localStorage.getItem('userLanguage')) {
         this.setLanguage(preferences.language)
       }
 

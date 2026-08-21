@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Fixed WinRAR-created Skill ZIP packages failing to upload and import.
+zh-CN: 修复使用 WinRAR 创建的 Skill ZIP 包无法上传和导入的问题。
