@@ -2,7 +2,6 @@ import json
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -119,12 +118,7 @@ class PluginToolSnapshotTests(TestCase):
             (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
             (path / "runtime.py").write_text("PLUGIN_API_VERSION = 1\n")
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                with patch(
-                    "lens.plugins.releases."
-                    "assert_plugin_release_integrity",
-                    side_effect=lambda plugin, release=None: plugin,
-                ):
-                    yield
+                yield
 
     def _create_active_run(self):
         with self.plugin_root():

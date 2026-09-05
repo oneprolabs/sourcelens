@@ -102,6 +102,9 @@
       },
       "branch": {
         "type": "string",
+        "format": "provider-resource-option",
+        "resource": "branches",
+        "depends_on": "projects",
         "title": "Branch",
         "description": "Optional branch, tag, or commit ref shared by all projects."
       },

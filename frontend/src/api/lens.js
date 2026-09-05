@@ -465,38 +465,6 @@ export async function getPluginIcon(key) {
   return response.data
 }
 
-export async function listPluginReleases() {
-  const response = await api.get('/lens/admin/plugins/releases/')
-  return unwrapList(unwrapResponse(response))
-}
-
-export async function reconcilePluginReleases() {
-  const response = await api.post('/lens/admin/plugins/releases/reconcile/')
-  return unwrapResponse(response)
-}
-
-export async function publishPluginRelease(key, version) {
-  const response = await api.post(
-    `/lens/admin/plugins/${key}/releases/${version}/publish/`
-  )
-  return unwrapResponse(response)
-}
-
-export async function setPluginReleaseRole(key, version, deploymentRole) {
-  const response = await api.post(
-    `/lens/admin/plugins/${key}/releases/${version}/role/`,
-    { deployment_role: deploymentRole }
-  )
-  return unwrapResponse(response)
-}
-
-export async function retirePluginRelease(key, version) {
-  const response = await api.post(
-    `/lens/admin/plugins/${key}/releases/${version}/retire/`
-  )
-  return unwrapResponse(response)
-}
-
 export async function listConnections(params = {}) {
   return collectPaginatedResults(async (page) => {
     const response = await api.get('/lens/admin/connections/', {

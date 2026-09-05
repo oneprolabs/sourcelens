@@ -957,7 +957,6 @@ const datasourceResourceDetails = computed(() => {
     ]
   }
   if (row.source_type === 'git') {
-    const repositories = dataSourceRepositories(row)
     const repositoryUrl = dataSourceRepositoryUrl(row, row.connection_endpoint)
     const items = [
       detailItem(t('lensAdmin.fields.repoUrl'), repositoryUrl, true, {

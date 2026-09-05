@@ -74,7 +74,7 @@ test('Feishu Connection keeps setup guidance beside editable fields', async () =
     source('components/ui/BaseDrawer.vue'),
     source('admin/locales/zh-CN.json'),
     readFile(
-      new URL('../../plugins/feishu/1.0.0/plugin.json', import.meta.url),
+      new URL('../../plugins/feishu/plugin.json', import.meta.url),
       'utf8'
     )
   ])
@@ -114,7 +114,7 @@ test('GitHub Connection explains PAT permissions and datasource boundaries', asy
     source('components/lens/GitHubConnectionGuide.vue'),
     source('admin/locales/zh-CN.json'),
     readFile(
-      new URL('../../plugins/github/1.0.0/plugin.json', import.meta.url),
+      new URL('../../plugins/github/plugin.json', import.meta.url),
       'utf8'
     )
   ])
@@ -146,7 +146,7 @@ test('Connection Plugin summary stays one line with concise GitHub copy', async 
     source('components/ui/BaseDrawer.vue'),
     source('admin/locales/zh-CN.json'),
     readFile(
-      new URL('../../plugins/github/1.0.0/plugin.json', import.meta.url),
+      new URL('../../plugins/github/plugin.json', import.meta.url),
       'utf8'
     )
   ])
@@ -179,7 +179,7 @@ test('GitLab Connection explains PAT scopes and datasource boundaries', async ()
     source('components/lens/GitLabConnectionGuide.vue'),
     source('admin/locales/zh-CN.json'),
     readFile(
-      new URL('../../plugins/gitlab/1.0.0/plugin.json', import.meta.url),
+      new URL('../../plugins/gitlab/plugin.json', import.meta.url),
       'utf8'
     )
   ])
@@ -215,10 +215,7 @@ test('Jira Connection explains Cloud and self-hosted read-only setup', async () 
     source('pages/lens/Connections.vue'),
     source('components/lens/JiraConnectionGuide.vue'),
     source('admin/locales/zh-CN.json'),
-    readFile(
-      new URL('../../plugins/jira/1.0.0/plugin.json', import.meta.url),
-      'utf8'
-    )
+    readFile(new URL('../../plugins/jira/plugin.json', import.meta.url), 'utf8')
   ])
   const manifest = JSON.parse(manifestText)
 

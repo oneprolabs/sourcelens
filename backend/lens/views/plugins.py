@@ -12,7 +12,6 @@ from lens.models import (
     CredentialLease,
     ExecutionSnapshot,
     PluginInvocation,
-    PluginRelease,
 )
 from lens.plugins.datasource_access import (
     datasource_access_failure_detail,
@@ -27,15 +26,6 @@ from lens.plugins.registry import (
     PluginNotFoundError,
     discover_plugins,
     installed_plugin,
-)
-from lens.plugins.releases import (
-    PluginReleaseLifecycleError,
-    active_installed_plugins,
-    assign_plugin_release_role,
-    plugin_release_payload,
-    publish_plugin_release,
-    reconcile_plugin_releases,
-    retire_plugin_release,
 )
 from lens.plugins.tool_snapshots import (
     ACTIVE_RUN_STATUSES,
@@ -117,10 +107,17 @@ def _resource_option_selection(connection, resource, request):
     if len(matches) != 1:
         raise DatasourceProviderError("resource options are unsupported")
     dependency = matches[0]["depends_on"]
+    provider_dependency = dependency
+    if dependency.endswith("ies"):
+        provider_dependency = dependency[:-3] + "y"
+    elif dependency.endswith("s"):
+        provider_dependency = dependency[:-1]
     value = request.query_params.get(dependency)
+    if not value and provider_dependency != dependency:
+        value = request.query_params.get(provider_dependency)
     if not value:
         raise DatasourceProviderError("resource dependency is required")
-    return {dependency: value}
+    return {provider_dependency: value}
 
 
 def _connection_http_client(provider, connection):
@@ -170,10 +167,13 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
     def list(self, request):
         """List installed Plugins visible to administrators."""
 
-        try:
-            plugins = active_installed_plugins()
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
+        del request
+        plugins = []
+        for key in sorted({plugin.key for plugin in discover_plugins()}):
+            try:
+                plugins.append(installed_plugin(key))
+            except PluginNotFoundError:
+                continue
         return Response(
             [
                 {
@@ -194,125 +194,6 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
             ]
         )
 
-    @action(detail=False, methods=["get"], url_path="releases")
-    def releases(self, request):
-        """List installed and historical Plugin release lifecycle state."""
-
-        del request
-        installed = {
-            (plugin.key, plugin.version): plugin
-            for plugin in discover_plugins()
-        }
-        queryset = PluginRelease.objects.select_related(
-            "published_by"
-        ).order_by("plugin_key", "-version")
-        return Response(
-            [
-                plugin_release_payload(release, installed)
-                for release in queryset
-            ]
-        )
-
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="releases/reconcile",
-    )
-    def reconcile_releases(self, request):
-        """Register filesystem versions without promoting new packages."""
-
-        del request
-        releases = reconcile_plugin_releases()
-        installed = {
-            (plugin.key, plugin.version): plugin
-            for plugin in discover_plugins()
-        }
-        return Response(
-            [
-                plugin_release_payload(release, installed)
-                for release in releases
-            ]
-        )
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"releases/(?P<version>[^/]+)/publish",
-    )
-    def publish_release(self, request, key=None, version=None):
-        """Publish one installed debugging release."""
-
-        release = self._release(key, version)
-        if isinstance(release, Response):
-            return release
-        try:
-            release = publish_plugin_release(release, request.user)
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
-        return Response(plugin_release_payload(release))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"releases/(?P<version>[^/]+)/role",
-    )
-    def assign_release_role(self, request, key=None, version=None):
-        """Assign or clear the active/candidate role for one release."""
-
-        release = self._release(key, version)
-        if isinstance(release, Response):
-            return release
-        try:
-            release = assign_plugin_release_role(
-                release,
-                request.data.get("deployment_role", ""),
-            )
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
-        return Response(plugin_release_payload(release))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"releases/(?P<version>[^/]+)/retire",
-    )
-    def retire_release(self, request, key=None, version=None):
-        """Retire one published release while preserving its files."""
-
-        del request
-        release = self._release(key, version)
-        if isinstance(release, Response):
-            return release
-        try:
-            release = retire_plugin_release(release)
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
-        return Response(plugin_release_payload(release))
-
-    @staticmethod
-    def _release(plugin_key, version):
-        """Return one persisted Plugin release or an HTTP 404 response."""
-
-        try:
-            return PluginRelease.objects.select_related("published_by").get(
-                plugin_key=plugin_key,
-                version=version,
-            )
-        except PluginRelease.DoesNotExist:
-            return Response(
-                {"detail": "PLUGIN_RELEASE_NOT_FOUND"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-    @staticmethod
-    def _lifecycle_error(exc):
-        """Return one stable release transition conflict response."""
-
-        return Response(
-            {"detail": str(exc)},
-            status=status.HTTP_409_CONFLICT,
-        )
-
     @action(detail=True, methods=["get"], url_path="tools")
     def tools(self, request, key=None):
         """List safe model-facing tools from the installed Plugin."""
@@ -320,8 +201,6 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
         del request
         try:
             plugin = installed_plugin(key)
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
         except PluginNotFoundError:
             return Response({"detail": "PLUGIN_NOT_FOUND"}, status=404)
         return Response(
@@ -345,8 +224,6 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
         del request
         try:
             plugin = installed_plugin(key)
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
         except PluginNotFoundError:
             return Response({"detail": "PLUGIN_NOT_FOUND"}, status=404)
         return Response(
@@ -384,8 +261,6 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
         del request
         try:
             plugin = installed_plugin(key)
-        except PluginReleaseLifecycleError as exc:
-            return self._lifecycle_error(exc)
         except PluginNotFoundError:
             return Response({"detail": "PLUGIN_NOT_FOUND"}, status=404)
         if not plugin.icon:

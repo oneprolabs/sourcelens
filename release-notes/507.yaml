@@ -1,0 +1,11 @@
+type: improvement
+audience: admin
+en: >-
+  Simplified Plugin management by using installed manifest files directly and
+  removing the separate Plugin version lifecycle store.
+zh-CN: >-
+  简化 Plugin 管理，直接使用已安装的 manifest 文件，并移除独立的 Plugin 版本
+  生命周期存储。
+es: >-
+  Se simplificó la gestión de Plugins usando directamente los manifiestos
+  instalados y eliminando el almacenamiento separado del ciclo de versiones.

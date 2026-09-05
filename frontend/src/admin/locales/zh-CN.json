@@ -967,10 +967,6 @@
         "label": "凭证",
         "action": "新建凭证"
       },
-      "pluginReleases": {
-        "title": "Plugin 版本",
-        "description": "发布已安装的 Plugin 版本，并独立指定候选版本与生产版本。"
-      },
       "environmentVariables": {
         "title": "环境变量",
         "description": "管理可被 Skill 复用的加密运行时配置集。",
@@ -1000,38 +996,6 @@
         "description": "配置节点默认超时、Run 保留天数、健康检查阈值，以及默认定时任务启用状态。",
         "label": "配置项",
         "action": "新建配置"
-      }
-    },
-    "pluginReleases": {
-      "reconcile": "扫描已安装版本",
-      "empty": "未发现已安装的 Plugin 版本",
-      "installation": "安装状态",
-      "installed": "已安装",
-      "missing": "文件缺失",
-      "integrity": "完整性",
-      "publishedAt": "发布时间",
-      "publish": "发布",
-      "setCandidate": "设为候选版本",
-      "setActive": "设为生产版本",
-      "clearRole": "移除部署角色",
-      "retire": "退役",
-      "loadFailed": "加载 Plugin 版本失败",
-      "reconcileSuccess": "已扫描并登记安装目录中的 Plugin 版本",
-      "reconcileFailed": "扫描 Plugin 版本失败",
-      "actionSuccess": "Plugin 版本状态已更新",
-      "actionFailed": "更新 Plugin 版本状态失败",
-      "retireConfirm": "确认退役这个 Plugin 版本？退役后不能再分配部署角色。",
-      "integrityValid": "校验通过",
-      "integrityInvalid": "内容已变化",
-      "integrityMutable": "调试版本可变",
-      "status": {
-        "debugging": "调试中",
-        "published": "已发布",
-        "retired": "已退役"
-      },
-      "role": {
-        "active": "生产版本",
-        "candidate": "候选版本"
       }
     },
     "mcp": {
@@ -1348,11 +1312,12 @@
           }
         },
         "datasourceFields": {
-          "repository": {
+          "repositories": {
             "title": "仓库"
           },
           "branch": {
-            "title": "分支"
+            "title": "分支",
+            "description": "可选。填写所有仓库共用的分支、标签或提交引用。"
           },
           "directory": {
             "title": "目录",
@@ -1378,11 +1343,12 @@
           }
         },
         "datasourceFields": {
-          "project": {
+          "projects": {
             "title": "项目"
           },
           "branch": {
-            "title": "分支"
+            "title": "分支",
+            "description": "可选。填写所有项目共用的分支、标签或提交引用。"
           },
           "directory": {
             "title": "目录",

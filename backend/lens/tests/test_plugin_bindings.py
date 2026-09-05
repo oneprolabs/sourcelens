@@ -127,12 +127,7 @@ class AssistantPluginBindingTests(TestCase):
             (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
             (path / "runtime.py").write_text("PLUGIN_API_VERSION = 1\n")
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                with patch(
-                    "lens.plugins.releases."
-                    "assert_plugin_release_integrity",
-                    side_effect=lambda plugin, release=None: plugin,
-                ):
-                    yield
+                yield
 
     def test_general_chat_can_use_plugin_tools_without_a_skill(self):
         with self.plugin_root():

@@ -967,10 +967,6 @@
         "label": "Credencial",
         "action": "Crear Credencial"
       },
-      "pluginReleases": {
-        "title": "Versiones de Plugin",
-        "description": "Publicar versiones instaladas de Plugins y asignar por separado las funciones de candidata y producción."
-      },
       "environmentVariables": {
         "title": "Medio ambiente",
         "description": "Almacenar valores de variables de entorno cifradas y reutilizarlos en Skills y Assistants.",
@@ -1000,38 +996,6 @@
         "description": "Configurar valores predeterminados de nodos, retención de ejecución, umbrales de verificación de salud y habilitación de tareas por defecto.",
         "label": "Configuración",
         "action": "Crear configuración"
-      }
-    },
-    "pluginReleases": {
-      "reconcile": "Buscar versiones instaladas",
-      "empty": "No se encontraron versiones de Plugins instaladas",
-      "installation": "Instalación",
-      "installed": "Instalado",
-      "missing": "Faltan archivos",
-      "integrity": "Integridad",
-      "publishedAt": "Publicado el",
-      "publish": "Publicar",
-      "setCandidate": "Marcar como candidata",
-      "setActive": "Marcar como producción",
-      "clearRole": "Quitar función de despliegue",
-      "retire": "Retirar",
-      "loadFailed": "No se pudieron cargar las versiones de Plugins",
-      "reconcileSuccess": "Las versiones de Plugins instaladas se registraron correctamente",
-      "reconcileFailed": "No se pudieron buscar las versiones de Plugins",
-      "actionSuccess": "Versión del Plugin actualizada",
-      "actionFailed": "No se pudo actualizar la versión del Plugin",
-      "retireConfirm": "¿Retirar esta versión del Plugin? Una versión retirada no puede tener una función de despliegue.",
-      "integrityValid": "Verificada",
-      "integrityInvalid": "Contenido modificado",
-      "integrityMutable": "Modificable durante la depuración",
-      "status": {
-        "debugging": "En depuración",
-        "published": "Publicada",
-        "retired": "Retirada"
-      },
-      "role": {
-        "active": "Producción",
-        "candidate": "Candidata"
       }
     },
     "mcp": {
@@ -1348,11 +1312,12 @@
           }
         },
         "datasourceFields": {
-          "repository": {
-            "title": "Repositorio"
+          "repositories": {
+            "title": "Repositorios"
           },
           "branch": {
-            "title": "Rama"
+            "title": "Rama",
+            "description": "Referencia opcional de rama, etiqueta o commit compartida por todos los repositorios."
           },
           "directory": {
             "title": "Directorio",
@@ -1378,11 +1343,12 @@
           }
         },
         "datasourceFields": {
-          "project": {
-            "title": "Proyecto"
+          "projects": {
+            "title": "Proyectos"
           },
           "branch": {
-            "title": "Rama"
+            "title": "Rama",
+            "description": "Referencia opcional de rama, etiqueta o commit compartida por todos los proyectos."
           },
           "directory": {
             "title": "Directorio",

@@ -54,7 +54,7 @@ class PluginNotFoundError(PluginRegistryError):
 
 @dataclass(frozen=True)
 class InstalledPlugin:
-    """One validated Plugin release available to the platform."""
+    """One validated Plugin package available to the platform."""
 
     key: str
     version: str
@@ -88,7 +88,7 @@ class InstalledPluginTool:
 
 
 def discover_plugins():
-    """Return validated Plugin releases from controlled roots."""
+    """Return validated Plugin packages from controlled roots."""
 
     plugins = []
     identities = set()
@@ -130,7 +130,7 @@ def discover_plugins():
 
 
 def latest_plugin(plugin_key):
-    """Return the latest installed release for one Plugin key."""
+    """Return the latest installed package for one Plugin key."""
 
     matches = [
         plugin for plugin in discover_plugins() if plugin.key == plugin_key
@@ -146,30 +146,27 @@ def latest_plugin(plugin_key):
 
 
 def installed_plugin(plugin_key, version=None):
-    """Return an exact release, or the active published release when omitted."""
+    """Return the latest installed package or one exact version."""
 
-    release = None
+    matches = [
+        plugin
+        for plugin in discover_plugins()
+        if plugin.key == plugin_key
+    ]
     if version is None:
-        from .releases import active_plugin_release
-
-        release = active_plugin_release(plugin_key)
-        version = release.version
+        if matches:
+            return max(matches, key=lambda item: _semver(item.version))
     else:
-        from lens.models import PluginRelease
-
-        release = PluginRelease.objects.filter(
-            plugin_key=plugin_key,
-            version=version,
-        ).first()
-
-    for plugin in discover_plugins():
-        if plugin.key == plugin_key and plugin.version == version:
-            if release is not None and release.release_status != "debugging":
-                from .releases import assert_plugin_release_integrity
-
-                assert_plugin_release_integrity(plugin, release)
-            return plugin
+        for plugin in matches:
+            if plugin.version == version:
+                return plugin
     raise PluginNotFoundError("installed plugin version is required")
+
+
+def _semver(value):
+    """Return the numeric ordering key for a validated semantic version."""
+
+    return tuple(int(part) for part in value.split("."))
 
 
 def _load_plugin(root, plugin_dir, expected_key=None):

@@ -124,6 +124,9 @@
       },
       "branch": {
         "type": "string",
+        "format": "provider-resource-option",
+        "resource": "branches",
+        "depends_on": "repositories",
         "title": "Branch",
         "description": "Optional branch, tag, or commit ref shared by all repositories."
       },

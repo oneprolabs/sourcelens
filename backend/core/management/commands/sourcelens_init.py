@@ -55,8 +55,6 @@ class Command(BaseCommand):
 
         self._ensure_default_lensnode()
 
-        self._soft("register_plugin_releases")
-
         if not options["skip_periodic_tasks"]:
             self._soft("register_periodic_tasks")
 

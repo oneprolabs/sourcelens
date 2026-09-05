@@ -6,14 +6,12 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
-from lens.models import PluginRelease
 from lens.plugins.registry import (
     PluginRegistryError,
     discover_plugins,
     installed_plugin,
     latest_plugin,
 )
-from lens.plugins.releases import reconcile_plugin_releases
 from rest_framework.test import APIClient
 
 User = get_user_model()
@@ -84,8 +82,6 @@ class PluginRegistryTests(TestCase):
                 },
             )
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                PluginRelease.objects.filter(plugin_key="github").delete()
-                reconcile_plugin_releases()
                 plugins = discover_plugins()
                 exact = installed_plugin("github", "1.0.0")
                 latest = latest_plugin("github")
@@ -96,6 +92,35 @@ class PluginRegistryTests(TestCase):
         )
         self.assertEqual(exact.version, "1.0.0")
         self.assertEqual(latest.version, "1.0.0")
+
+    def test_accepts_modified_plugin_without_persisted_release_digest(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(
+                root,
+                {
+                    "key": "github",
+                    "version": "1.0.0",
+                    "protocol_version": 1,
+                    "display_name": "Original",
+                    "handlers": {
+                        "runtime": "python_v1",
+                        "datasource": "python_v1",
+                    },
+                },
+            )
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                self.assertEqual(
+                    installed_plugin("github").display_name,
+                    "Original",
+                )
+                manifest_path = Path(root) / "github" / "plugin.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["display_name"] = "Updated"
+                manifest_path.write_text(json.dumps(manifest))
+
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.display_name, "Updated")
 
     def test_rejects_manifest_key_that_differs_from_directory(self):
         manifest = {
@@ -390,8 +415,6 @@ class PluginRegistryTests(TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._write_manifest(root, manifest)
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                PluginRelease.objects.filter(plugin_key="github").delete()
-                reconcile_plugin_releases()
                 response = client.get("/api/lens/admin/plugins/")
 
         self.assertEqual(response.status_code, 200)
@@ -467,8 +490,6 @@ class PluginRegistryTests(TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._write_manifest(root, manifest)
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                PluginRelease.objects.filter(plugin_key="github").delete()
-                reconcile_plugin_releases()
                 response = client.get("/api/lens/admin/plugins/github/tools/")
 
         self.assertEqual(response.status_code, 200)

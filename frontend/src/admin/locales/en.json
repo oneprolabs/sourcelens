@@ -967,10 +967,6 @@
         "label": "Credential",
         "action": "Create Credential"
       },
-      "pluginReleases": {
-        "title": "Plugin Versions",
-        "description": "Publish installed Plugin versions and assign candidate and production roles independently."
-      },
       "environmentVariables": {
         "title": "Environment",
         "description": "Store encrypted environment variable values and reuse them across Skills and Assistants.",
@@ -1000,38 +996,6 @@
         "description": "Configure node defaults, Run retention, health-check thresholds, and default task enablement.",
         "label": "Setting",
         "action": "Create Setting"
-      }
-    },
-    "pluginReleases": {
-      "reconcile": "Scan installed versions",
-      "empty": "No installed Plugin versions found",
-      "installation": "Installation",
-      "installed": "Installed",
-      "missing": "Files missing",
-      "integrity": "Integrity",
-      "publishedAt": "Published at",
-      "publish": "Publish",
-      "setCandidate": "Set as candidate",
-      "setActive": "Set as production",
-      "clearRole": "Clear deployment role",
-      "retire": "Retire",
-      "loadFailed": "Failed to load Plugin versions",
-      "reconcileSuccess": "Installed Plugin versions scanned and registered",
-      "reconcileFailed": "Failed to scan Plugin versions",
-      "actionSuccess": "Plugin version updated",
-      "actionFailed": "Failed to update Plugin version",
-      "retireConfirm": "Retire this Plugin version? A retired version cannot be assigned a deployment role.",
-      "integrityValid": "Verified",
-      "integrityInvalid": "Content changed",
-      "integrityMutable": "Mutable while debugging",
-      "status": {
-        "debugging": "Debugging",
-        "published": "Published",
-        "retired": "Retired"
-      },
-      "role": {
-        "active": "Production",
-        "candidate": "Candidate"
       }
     },
     "mcp": {
@@ -1348,11 +1312,12 @@
           }
         },
         "datasourceFields": {
-          "repository": {
-            "title": "Repository"
+          "repositories": {
+            "title": "Repositories"
           },
           "branch": {
-            "title": "Branch"
+            "title": "Branch",
+            "description": "Optional branch, tag, or commit ref shared by all repositories."
           },
           "directory": {
             "title": "Directory",
@@ -1378,11 +1343,12 @@
           }
         },
         "datasourceFields": {
-          "project": {
-            "title": "Project"
+          "projects": {
+            "title": "Projects"
           },
           "branch": {
-            "title": "Branch"
+            "title": "Branch",
+            "description": "Optional branch, tag, or commit ref shared by all projects."
           },
           "directory": {
             "title": "Directory",
