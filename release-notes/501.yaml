@@ -1,0 +1,12 @@
+type: fix
+audience: admin
+en: >-
+  Fixed a deployment failure caused by conflicting Lens migration leaf nodes;
+  the Shared Q&A language migration now follows the Plugin integration migration.
+zh-CN: >-
+  修复 Lens 迁移叶节点冲突导致的部署失败；共享问答语言迁移现在按 Plugin 集成迁移
+  顺序执行。
+es: >-
+  Se corrigió un fallo de despliegue causado por migraciones Lens en conflicto;
+  la migración de idioma de Q&A compartidas ahora sigue a la migración de
+  integración de Plugins.
