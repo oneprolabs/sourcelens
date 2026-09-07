@@ -85,6 +85,7 @@ from lens.services import (
 from lens.tasks import (
     acquire_datasource_lock,
     cleanup_stale_datasource_sync_tasks,
+    confirm_orphaned_datasource_conversion,
     complete_datasource_conversion_task,
     complete_datasource_sync_task,
     datasource_conversion_task,
@@ -577,18 +578,14 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(run.execution.run_timeout_s, 3600)
 
     def test_build_run_history_returns_prior_turns_and_skips_empty(self):
-        run1 = create_execution_run(
-            session=self.session, question="q1", enqueue=False
-        )
+        run1 = create_execution_run(session=self.session, question="q1", enqueue=False)
         run1.output_message.content = "a1"
         run1.output_message.save(update_fields=["content"])
         run1.status = Run.Status.DONE
         run1.outcome = Run.Outcome.COMPLETED
         run1.save(update_fields=["status", "outcome"])
         # second turn left unanswered -> its empty answer must be skipped
-        create_execution_run(
-            session=self.session, question="q2", enqueue=False
-        )
+        create_execution_run(session=self.session, question="q2", enqueue=False)
         current = create_execution_run(
             session=self.session, question="q3", enqueue=False
         )
@@ -1256,9 +1253,7 @@ class LensServiceTests(TransactionTestCase):
     def test_execute_answer_run_creates_execution_snapshot(self):
         self.assistant.agent_rounds = "max"
         self.assistant.token_budget_profile = "deep"
-        self.assistant.save(
-            update_fields=["agent_rounds", "token_budget_profile"]
-        )
+        self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
         run = create_execution_run(
             session=self.session,
             question="How does SSE work?",
@@ -1273,9 +1268,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(run.steps.count(), 3)
         self.assertTrue(run.output_message.content)
         self.assertEqual(run.execution.task, "knowledge_qa")
-        self.assertEqual(
-            run.execution.target_dirs, [{"path": "/workspace/repo"}]
-        )
+        self.assertEqual(run.execution.target_dirs, [{"path": "/workspace/repo"}])
         self.assertEqual(run.execution.agent_rounds, "max")
         self.assertEqual(run.execution.run_timeout_s, 3600)
         self.assertEqual(run.execution.token_budget_profile, "unlimited")
@@ -1320,9 +1313,7 @@ class LensServiceTests(TransactionTestCase):
         self.assistant.capability = Assistant.Capability.GENERAL_CHAT
         self.assistant.visibility = Assistant.Visibility.PUBLIC
         self.assistant.save(update_fields=["capability", "visibility"])
-        self.lensnode.tasks = [
-            {"name": "general_chat", "description": "Delegate work"}
-        ]
+        self.lensnode.tasks = [{"name": "general_chat", "description": "Delegate work"}]
         self.lensnode.save(update_fields=["tasks"])
         run = create_execution_run(
             session=self.session,
@@ -1687,9 +1678,7 @@ class LensServiceTests(TransactionTestCase):
         mock_attachment_data_url,
     ):
         sender = mock_async_to_sync.return_value
-        mock_attachment_data_url.return_value = (
-            "data:image/png;base64,encoded"
-        )
+        mock_attachment_data_url.return_value = "data:image/png;base64,encoded"
         self.assistant.multimodal_model_ref = uuid4()
         self.assistant.save(update_fields=["multimodal_model_ref"])
         attachment = MessageAttachment.objects.create(
@@ -1729,9 +1718,7 @@ class LensServiceTests(TransactionTestCase):
         sender = mock_async_to_sync.return_value
         self.assistant.agent_rounds = "deep"
         self.assistant.token_budget_profile = "unlimited"
-        self.assistant.save(
-            update_fields=["agent_rounds", "token_budget_profile"]
-        )
+        self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
         run = create_execution_run(
             session=self.session,
             question="Analyze everything",
@@ -1741,9 +1728,7 @@ class LensServiceTests(TransactionTestCase):
 
         self.assistant.agent_rounds = "balanced"
         self.assistant.token_budget_profile = "standard"
-        self.assistant.save(
-            update_fields=["agent_rounds", "token_budget_profile"]
-        )
+        self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
         dispatch_run_to_lensnode(run, "Analyze everything")
 
         payload = sender.call_args.args[1]["payload"]
@@ -1752,9 +1737,7 @@ class LensServiceTests(TransactionTestCase):
             {
                 "profile": "deep",
                 "max_tokens": execution.token_budget_max_tokens,
-                "final_reserve_tokens": (
-                    execution.token_budget_final_reserve_tokens
-                ),
+                "final_reserve_tokens": (execution.token_budget_final_reserve_tokens),
             },
         )
         self.assertEqual(execution.token_budget_profile, "deep")
@@ -1774,9 +1757,7 @@ class LensServiceTests(TransactionTestCase):
         sender = mock_async_to_sync.return_value
         self.assistant.agent_rounds = "max"
         self.assistant.token_budget_profile = "standard"
-        self.assistant.save(
-            update_fields=["agent_rounds", "token_budget_profile"]
-        )
+        self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
         run = create_execution_run(
             session=self.session,
             question="Analyze without a token cap",
@@ -1840,9 +1821,7 @@ class LensServiceTests(TransactionTestCase):
     ):
         sender = mock_async_to_sync.return_value
         self.assistant.agent_model_ref = "11111111-1111-1111-1111-111111111111"
-        self.assistant.multimodal_model_ref = (
-            "22222222-2222-2222-2222-222222222222"
-        )
+        self.assistant.multimodal_model_ref = "22222222-2222-2222-2222-222222222222"
         self.assistant.settings = {"runtime_mode": "original"}
         self.user.profile.language = "zh-CN"
         self.user.profile.save(update_fields=["language"])
@@ -2935,6 +2914,40 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(run.status, Run.Status.DONE)
         self.assertEqual(run.output_message.content, "answer")
 
+    def test_lensnode_reconnect_rebinds_active_conversion(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "reconnect-conversion",
+            {"document": True},
+        )
+        task.status = "STARTED"
+        task.metadata["lensnode_connection_id"] = "old-connection"
+        task.save(update_fields=["status", "metadata"])
+
+        token = issue_lensnode_token(self.lensnode)
+        async_to_sync(self._exercise_lensnode_conversion_reconnect)(
+            token,
+            task.task_id,
+            datasource.uuid,
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "STARTED")
+        self.assertNotEqual(
+            task.metadata["lensnode_connection_id"],
+            "old-connection",
+        )
+        self.assertEqual(
+            task.metadata["last_lensnode_operation"]["operation"],
+            "conversion",
+        )
+
     def test_lensnode_websocket_rejects_revoked_token(self):
         token = issue_lensnode_token(self.lensnode)
         self.lensnode.token_revoked = True
@@ -3040,6 +3053,56 @@ class LensServiceTests(TransactionTestCase):
                     "unsupported": 0,
                 },
             }
+        )
+        self.assertEqual(
+            await communicator.receive_json_from(),
+            {
+                "type": "datasource_terminal_ack",
+                "task_id": task_id,
+            },
+        )
+        await communicator.disconnect()
+
+    async def _exercise_lensnode_conversion_reconnect(
+        self,
+        token,
+        task_id,
+        datasource_uuid,
+    ):
+        """Report a still-running conversion through a new WebSocket."""
+
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/lens/lensnodes/?token={token}",
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.receive_json_from()
+        await communicator.send_json_to(
+            {
+                "type": "hello",
+                "protocol_version": "v1",
+                "agent_version": "1.0.0",
+                "workspace_path": "/workspace",
+                "available_dirs": [{"path": "/workspace/repo"}],
+                "tasks": [{"name": "knowledge_qa"}],
+                "active_datasource_operations": [
+                    {
+                        "task_id": task_id,
+                        "datasource_uuid": str(datasource_uuid),
+                        "operation": "conversion",
+                        "phase": "conversion_progress",
+                        "last_progress": {
+                            "progress_current": 10,
+                            "progress_total": 100,
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(
+            (await communicator.receive_json_from())["type"],
+            "hello_ack",
         )
         await communicator.disconnect()
 
@@ -3204,13 +3267,16 @@ class LensServiceTests(TransactionTestCase):
             },
         )
 
-        with patch.dict(
-            os.environ,
-            {
-                "LENSNODE_AI_GATEWAY_URL": "http://gateway.test",
-                "LENSNODE_TOKEN": "lensnode-token",
-            },
-        ), patch("lens.datasource_services._send_lensnode_command") as send:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "LENSNODE_AI_GATEWAY_URL": "http://gateway.test",
+                    "LENSNODE_TOKEN": "lensnode-token",
+                },
+            ),
+            patch("lens.datasource_services._send_lensnode_command") as send,
+        ):
             request_id = dispatch_datasource_upload_async(
                 datasource,
                 task_id="managed-upload",
@@ -3240,9 +3306,7 @@ class LensServiceTests(TransactionTestCase):
         from lens.datasource_services import _send_lensnode_command
 
         self.lensnode.connection_id = "specific.connection!channel"
-        with patch(
-            "lens.datasource_services.get_channel_layer"
-        ) as get_layer:
+        with patch("lens.datasource_services.get_channel_layer") as get_layer:
             channel_layer = get_layer.return_value
             channel_layer.send = AsyncMock()
             _send_lensnode_command(
@@ -3273,9 +3337,7 @@ class LensServiceTests(TransactionTestCase):
             created_by=self.user,
         )
 
-        with patch(
-            "lens.tasks.dispatch_datasource_conversion_async"
-        ) as dispatch:
+        with patch("lens.tasks.dispatch_datasource_conversion_async") as dispatch:
             dispatch.return_value = "conversion-request"
             result = datasource_conversion_task(
                 str(datasource.uuid),
@@ -3373,7 +3435,7 @@ class LensServiceTests(TransactionTestCase):
             2,
         )
 
-    def test_reconnect_reconciles_orphaned_conversion_and_releases_owners(
+    def test_reconnect_rebinds_reported_conversion_to_new_connection(
         self,
     ):
         datasource = DataSource.objects.create(
@@ -3403,16 +3465,202 @@ class LensServiceTests(TransactionTestCase):
         count = reconcile_orphaned_datasource_conversions(
             self.lensnode.uuid,
             "new-connection",
+            [
+                {
+                    "task_id": task.task_id,
+                    "datasource_uuid": str(datasource.uuid),
+                    "operation": "conversion",
+                    "phase": "running",
+                    "last_progress": {
+                        "progress_current": 10,
+                        "progress_total": 100,
+                    },
+                }
+            ],
         )
 
         task.refresh_from_db()
         datasource.refresh_from_db()
         self.assertEqual(count, 1)
+        self.assertEqual(task.status, "STARTED")
+        self.assertEqual(
+            task.metadata["lensnode_connection_id"],
+            "new-connection",
+        )
+        self.assertEqual(
+            task.metadata["last_lensnode_operation"]["phase"],
+            "running",
+        )
+        self.assertEqual(datasource.last_conversion_status, "STARTED")
+        self.assertEqual(
+            cache.get(f"lens:datasource-sync:{datasource.uuid}"),
+            task.task_id,
+        )
+        LensNodeConsumer._record_datasource_sync_event(
+            task.task_id,
+            {
+                "step": "conversion_progress",
+                "status": "running",
+                "progress_percent": 99,
+            },
+            "old-connection",
+        )
+        task.refresh_from_db()
+        self.assertNotIn("progress_percent", task.metadata)
+
+    def test_legacy_reconnect_rebinds_conversion_without_operation_report(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "legacy-conversion",
+            {"document": True},
+        )
+        task.status = "STARTED"
+        task.metadata["lensnode_connection_id"] = "old-connection"
+        task.save(update_fields=["status", "metadata"])
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as apply_async:
+            count = reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                None,
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertEqual(task.status, "STARTED")
+        self.assertEqual(
+            task.metadata["lensnode_connection_id"],
+            "new-connection",
+        )
+        self.assertNotIn(
+            "datasource_orphan_confirmation_connection_id",
+            task.metadata,
+        )
+        apply_async.assert_not_called()
+
+    def test_reconnect_defers_failure_for_unreported_conversion(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "unreported-conversion",
+            {"document": True},
+        )
+        task.status = "STARTED"
+        task.metadata["lensnode_connection_id"] = "old-connection"
+        task.save(update_fields=["status", "metadata"])
+        cache.set(f"lens:datasource-sync:{datasource.uuid}", task.task_id)
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as apply_async:
+            count = reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                [],
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(count, 0)
+        self.assertEqual(task.status, "STARTED")
+        self.assertEqual(
+            task.metadata["datasource_orphan_confirmation_connection_id"],
+            "new-connection",
+        )
+        self.assertEqual(
+            cache.get(f"lens:datasource-sync:{datasource.uuid}"),
+            task.task_id,
+        )
+        self.assertEqual(
+            task.metadata["lensnode_connection_id"],
+            "new-connection",
+        )
+        apply_async.assert_called_once()
+
+        self.assertTrue(
+            confirm_orphaned_datasource_conversion(
+                task.task_id,
+                "new-connection",
+            )
+        )
+        task.refresh_from_db()
         self.assertEqual(task.status, "FAILURE")
         self.assertEqual(task.error, "DATASOURCE_CONVERSION_ORPHANED")
-        self.assertTrue(task.metadata["recovery_retryable"])
-        self.assertEqual(datasource.last_conversion_status, "FAILURE")
-        self.assertIsNone(cache.get(f"lens:datasource-sync:{datasource.uuid}"))
+        self.assertEqual(
+            task.metadata["stop_confirmation_source"],
+            "lensnode_active_operations_absent",
+        )
+
+    def test_unreported_reconnect_accepts_buffered_completion(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "buffered-conversion",
+            {"document": True},
+        )
+        task.status = "STARTED"
+        task.metadata["lensnode_connection_id"] = "old-connection"
+        task.save(update_fields=["status", "metadata"])
+
+        with patch("lens.tasks.confirm_orphaned_datasource_conversion.apply_async"):
+            reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                [],
+            )
+
+        complete_datasource_conversion_task(
+            task.task_id,
+            {"status": "success"},
+            connection_id="new-connection",
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+
+    def test_orphan_confirmation_does_not_replace_terminal_callback(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+            last_conversion_status="SUCCESS",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "completed-conversion",
+            {"document": True},
+        )
+        task.status = "SUCCESS"
+        task.metadata["datasource_orphan_confirmation_connection_id"] = "new-connection"
+        task.save(update_fields=["status", "metadata"])
+
+        self.assertFalse(
+            confirm_orphaned_datasource_conversion(
+                task.task_id,
+                "new-connection",
+            )
+        )
+        task.refresh_from_db()
+        datasource.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+        self.assertEqual(datasource.last_conversion_status, "SUCCESS")
 
     def test_complete_managed_workspace_conversion_persists_summary(self):
         datasource = DataSource.objects.create(
@@ -3541,9 +3789,7 @@ class LensServiceTests(TransactionTestCase):
         task.finished_at = timezone.now()
         task.save(update_fields=["status", "finished_at"])
 
-        with patch(
-            "lens.tasks.dispatch_datasource_conversion_async"
-        ) as dispatch:
+        with patch("lens.tasks.dispatch_datasource_conversion_async") as dispatch:
             result = datasource_conversion_task(
                 str(datasource.uuid),
                 {"document": True},
@@ -3583,8 +3829,7 @@ class LensServiceTests(TransactionTestCase):
                 side_effect=dispatch,
             ),
             patch(
-                "lens.services."
-                "cancel_datasource_conversion_on_lensnode"
+                "lens.services." "cancel_datasource_conversion_on_lensnode"
             ) as cancel,
         ):
             datasource_conversion_task(
@@ -4113,9 +4358,7 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
 
-        with patch(
-            "lens.services.cancel_datasource_sync_on_lensnode"
-        ) as cancel:
+        with patch("lens.services.cancel_datasource_sync_on_lensnode") as cancel:
             result = cleanup_stale_datasource_sync_tasks()
 
         task.refresh_from_db()
@@ -4160,9 +4403,7 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
 
-        with patch(
-            "lens.services.cancel_datasource_upload_on_lensnode"
-        ) as cancel:
+        with patch("lens.services.cancel_datasource_upload_on_lensnode") as cancel:
             result = cleanup_stale_datasource_sync_tasks()
 
         task.refresh_from_db()
@@ -4210,9 +4451,7 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
 
-        with patch(
-            "lens.services.cancel_datasource_conversion_on_lensnode"
-        ) as cancel:
+        with patch("lens.services.cancel_datasource_conversion_on_lensnode") as cancel:
             result = cleanup_stale_datasource_sync_tasks()
 
         task.refresh_from_db()
@@ -4280,9 +4519,7 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
 
-        with patch(
-            "lens.services.cancel_datasource_sync_on_lensnode"
-        ) as cancel:
+        with patch("lens.services.cancel_datasource_sync_on_lensnode") as cancel:
             result = cleanup_stale_datasource_sync_tasks(startup=True)
 
         task.refresh_from_db()
@@ -4319,9 +4556,7 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
 
-        with patch(
-            "lens.services.cancel_datasource_sync_on_lensnode"
-        ) as cancel:
+        with patch("lens.services.cancel_datasource_sync_on_lensnode") as cancel:
             result = cleanup_stale_datasource_sync_tasks()
 
         self.assertEqual(result["failed"], 0)
@@ -4389,16 +4624,23 @@ class LensServiceTests(TransactionTestCase):
 
     def test_lensnode_health_marks_stale_lensnodes_offline(self):
         self.lensnode.status = LensNode.Status.ONLINE
-        self.lensnode.last_heartbeat_at = timezone.now() - timedelta(
-            seconds=120
-        )
+        self.lensnode.last_heartbeat_at = timezone.now() - timedelta(seconds=120)
         self.lensnode.save(update_fields=["status", "last_heartbeat_at"])
 
-        marked = lensnode_health_task()
+        with patch(
+            "lens.services.schedule_lensnode_disconnect_grace_check"
+        ) as schedule_check:
+            marked = lensnode_health_task()
 
         self.lensnode.refresh_from_db()
         self.assertEqual(marked, 1)
         self.assertEqual(self.lensnode.status, LensNode.Status.OFFLINE)
+        self.assertIsNotNone(self.lensnode.disconnected_at)
+        schedule_check.assert_called_once()
+        self.assertEqual(
+            str(schedule_check.call_args.args[0]),
+            str(self.lensnode.uuid),
+        )
 
     def test_register_periodic_tasks_adds_lens_entries(self):
         TASK_REGISTRY.clear()

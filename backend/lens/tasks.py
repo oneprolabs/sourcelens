@@ -430,9 +430,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     # final status.
     task_id = task_id or uuid.uuid4().hex
     with transaction.atomic():
-        datasource = DataSource.objects.select_for_update().get(
-            uuid=datasource_uuid
-        )
+        datasource = DataSource.objects.select_for_update().get(uuid=datasource_uuid)
         if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
             return 0
         record = _get_or_create_source_sync_record(datasource)
@@ -512,9 +510,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             task_execution = TaskExecution.objects.select_for_update().get(
                 task_id=task_id
             )
-            cancelling = (
-                task_execution.status == DATASOURCE_CANCELLING_STATUS
-            )
+            cancelling = task_execution.status == DATASOURCE_CANCELLING_STATUS
             TaskTracker.update_task_status(
                 task_id,
                 task_execution.status if cancelling else TaskStatus.PENDING,
@@ -957,9 +953,7 @@ def complete_datasource_sync_task(task_id, result):
     success = status_value == "success"
     cancelled = status_value == "cancelled"
     error = result.get("error") or (
-        "DATASOURCE_SYNC_CANCELLED"
-        if cancelled
-        else "LENS_SOURCE_SYNC_FAILED"
+        "DATASOURCE_SYNC_CANCELLED" if cancelled else "LENS_SOURCE_SYNC_FAILED"
     )
     changed = result.get("changed")
     if changed is None:
@@ -1037,9 +1031,7 @@ def complete_datasource_sync_task(task_id, result):
 
     if record is not None:
         record.last_status = (
-            ScheduledTask.Status.SUCCESS
-            if success
-            else ScheduledTask.Status.FAILED
+            ScheduledTask.Status.SUCCESS if success else ScheduledTask.Status.FAILED
         )
         record.last_error = "" if success or cancelled else error
         record.last_run_at = timezone.now()
@@ -1092,12 +1084,9 @@ def complete_datasource_sync_task(task_id, result):
                     "failed",
                     error,
                 ),
-                "completion_reason": str(
-                    result.get("completion_reason") or error
-                ),
+                "completion_reason": str(result.get("completion_reason") or error),
                 "stop_confirmation_source": str(
-                    result.get("stop_confirmation_source")
-                    or "lensnode_callback"
+                    result.get("stop_confirmation_source") or "lensnode_callback"
                 ),
             },
         )
@@ -1181,15 +1170,23 @@ def release_datasource_lock(datasource_uuid, token=None):
     return False
 
 
-def reconcile_orphaned_datasource_conversions(lensnode_uuid, connection_id):
-    """Fail conversions owned by a dead LensNode connection generation."""
+def reconcile_orphaned_datasource_conversions(
+    lensnode_uuid,
+    connection_id,
+    active_operations,
+):
+    """Rebind datasource work after a LensNode reconnect.
+
+    A missing active_operations report identifies a pre-protocol LensNode.
+    Preserve its reconnect behavior by rebinding its active work; an empty
+    report from a capable LensNode means the work is unreported instead.
+    """
 
     from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
-    now = timezone.now()
     active_statuses = _datasource_active_statuses(TaskStatus)
-    orphaned = TaskExecution.objects.filter(
+    tasks = TaskExecution.objects.filter(
         module__in=[
             "lens_datasource_conversion",
             "lens_datasource_upload",
@@ -1199,50 +1196,130 @@ def reconcile_orphaned_datasource_conversions(lensnode_uuid, connection_id):
     ).exclude(
         metadata__lensnode_connection_id=str(connection_id),
     )
-    count = 0
-    for task in orphaned:
+    legacy_node = active_operations is None
+    operations = {
+        str(item.get("task_id")): item
+        for item in (active_operations or [])
+        if isinstance(item, dict) and item.get("task_id")
+    }
+    rebound_count = 0
+    for task in tasks:
         metadata = dict(task.metadata or {})
-        is_upload = task.module == "lens_datasource_upload"
-        datasource_uuid = metadata.get("datasource_uuid")
-        datasource = DataSource.objects.filter(uuid=datasource_uuid).first()
-        if datasource is not None:
-            datasource.last_conversion_status = TaskStatus.FAILURE
-            datasource.last_conversion_at = now
-            datasource.save(
-                update_fields=[
-                    "last_conversion_status",
-                    "last_conversion_at",
-                    "updated_at",
-                ]
+        operation = operations.get(task.task_id)
+        expected_operation = (
+            "upload" if task.module == "lens_datasource_upload" else "conversion"
+        )
+        if legacy_node or (
+            operation
+            and str(operation.get("datasource_uuid"))
+            == str(metadata.get("datasource_uuid"))
+            and operation.get("operation") == expected_operation
+        ):
+            metadata["lensnode_connection_id"] = str(connection_id)
+            metadata["reconnected_at"] = timezone.now().isoformat()
+            if operation:
+                metadata["last_lensnode_operation"] = operation
+            metadata.pop("datasource_orphan_confirmation_connection_id", None)
+            task.metadata = metadata
+            task.save(update_fields=["metadata"])
+            rebound_count += 1
+            continue
+        if metadata.get("lensnode_connection_id") != str(connection_id):
+            # The operation may have completed while the socket was down. Its
+            # buffered terminal frame is sent after hello, so let the new
+            # connection deliver it during the confirmation window.
+            metadata["lensnode_connection_id"] = str(connection_id)
+            metadata["datasource_orphan_confirmation_connection_id"] = str(
+                connection_id
             )
-        release_datasource_lock(
-            datasource_uuid,
-            token=metadata.get("lock_token") or task.task_id,
+            task.metadata = metadata
+            task.save(update_fields=["metadata"])
+            _schedule_datasource_orphan_confirmation(
+                task.task_id,
+                connection_id,
+            )
+    return rebound_count
+
+
+def _schedule_datasource_orphan_confirmation(task_id, connection_id):
+    """Delay failure while LensNode delivers any buffered terminal frame."""
+
+    from .services import get_reconcile_confirm_grace_seconds
+
+    try:
+        confirm_orphaned_datasource_conversion.apply_async(
+            args=[task_id, str(connection_id)],
+            countdown=get_reconcile_confirm_grace_seconds(),
         )
-        metadata.update(
-            {
-                "recovery_reason": "LENSNODE_CONNECTION_GENERATION_EXPIRED",
-                "recovery_retryable": True,
-                "reconciled_at": now.isoformat(),
-                "completion_reason": (
-                    "DATASOURCE_UPLOAD_ORPHANED"
-                    if is_upload
-                    else "DATASOURCE_CONVERSION_ORPHANED"
-                ),
-                "stop_confirmation_source": "connection_generation_expired",
-            }
+    except Exception:
+        logger.exception(
+            "Failed to schedule datasource orphan confirmation for task %s",
+            task_id,
         )
-        task.status = TaskStatus.FAILURE
-        task.finished_at = now
-        task.error = (
-            "DATASOURCE_UPLOAD_ORPHANED"
-            if is_upload
-            else "DATASOURCE_CONVERSION_ORPHANED"
+
+
+@shared_task(
+    name="lens.confirm_orphaned_datasource_conversion",
+    queue="lens",
+    ignore_result=True,
+)
+def confirm_orphaned_datasource_conversion(task_id, connection_id):
+    """Fail unreported datasource work after the reconnect grace period."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    task = TaskExecution.objects.filter(task_id=task_id).first()
+    if task is None:
+        return False
+    metadata = dict(task.metadata or {})
+    if metadata.get("datasource_orphan_confirmation_connection_id") != str(
+        connection_id
+    ):
+        return False
+    now = timezone.now()
+    is_upload = task.module == "lens_datasource_upload"
+    datasource_uuid = metadata.get("datasource_uuid")
+    error = (
+        "DATASOURCE_UPLOAD_ORPHANED" if is_upload else "DATASOURCE_CONVERSION_ORPHANED"
+    )
+    metadata.update(
+        {
+            "recovery_reason": "LENSNODE_ACTIVE_OPERATION_UNREPORTED",
+            "recovery_retryable": True,
+            "reconciled_at": now.isoformat(),
+            "completion_reason": error,
+            "stop_confirmation_source": "lensnode_active_operations_absent",
+        }
+    )
+    updated = TaskExecution.objects.filter(
+        pk=task.pk,
+        status__in=_datasource_active_statuses(TaskStatus),
+        metadata__datasource_orphan_confirmation_connection_id=str(connection_id),
+    ).update(
+        status=TaskStatus.FAILURE,
+        finished_at=now,
+        error=error,
+        metadata=metadata,
+    )
+    if not updated:
+        return False
+    datasource = DataSource.objects.filter(uuid=datasource_uuid).first()
+    if datasource is not None:
+        datasource.last_conversion_status = TaskStatus.FAILURE
+        datasource.last_conversion_at = now
+        datasource.save(
+            update_fields=[
+                "last_conversion_status",
+                "last_conversion_at",
+                "updated_at",
+            ]
         )
-        task.metadata = metadata
-        task.save(update_fields=["status", "finished_at", "error", "metadata"])
-        count += 1
-    return count
+    release_datasource_lock(
+        datasource_uuid,
+        token=metadata.get("lock_token") or task.task_id,
+    )
+    return True
 
 
 def cleanup_stale_datasource_sync_tasks(startup=False):
@@ -1264,11 +1341,6 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
 
     now = timezone.now()
     orphaned_count = 0
-    for lensnode in LensNode.objects.all():
-        orphaned_count += reconcile_orphaned_datasource_conversions(
-            lensnode.uuid,
-            lensnode.connection_id,
-        )
     timeout_s = get_datasource_sync_timeout_s()
     conversion_cutoff = now - timedelta(seconds=get_datasource_conversion_timeout_s())
     upload_cutoff = now - timedelta(seconds=get_datasource_upload_timeout_s())
@@ -1600,6 +1672,11 @@ def check_lensnode_disconnect_grace_period(lensnode_uuid, disconnected_at_iso):
         lensnode_uuid,
     )
     mark_active_runs_awaiting_resume(lensnode_uuid)
+    reconcile_orphaned_datasource_conversions(
+        lensnode_uuid,
+        node.connection_id,
+        [],
+    )
 
 
 @shared_task(
@@ -1803,15 +1880,31 @@ def lensnode_health_task():
         key="lensnode.health.offline_threshold_s"
     ).first()
     threshold_s = int(setting.value if setting else 60)
-    cutoff = timezone.now() - timedelta(seconds=threshold_s)
-    updated = LensNode.objects.filter(
-        status=LensNode.Status.ONLINE,
-        last_heartbeat_at__lt=cutoff,
-    ).update(
-        status=LensNode.Status.OFFLINE,
-        connection_id="",
-        updated_at=timezone.now(),
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=threshold_s)
+    stale_nodes = list(
+        LensNode.objects.filter(
+            status=LensNode.Status.ONLINE,
+            last_heartbeat_at__lt=cutoff,
+        ).only("pk", "uuid")
     )
+    updated = 0
+    from .services import schedule_lensnode_disconnect_grace_check
+
+    for node in stale_nodes:
+        transitioned = LensNode.objects.filter(
+            pk=node.pk,
+            status=LensNode.Status.ONLINE,
+            last_heartbeat_at__lt=cutoff,
+        ).update(
+            status=LensNode.Status.OFFLINE,
+            connection_id="",
+            disconnected_at=now,
+            updated_at=now,
+        )
+        if transitioned:
+            updated += 1
+            schedule_lensnode_disconnect_grace_check(node.uuid, now)
 
     record.last_status = ScheduledTask.Status.SUCCESS
     record.last_metrics = {

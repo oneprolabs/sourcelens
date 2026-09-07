@@ -114,6 +114,8 @@ class LensNodeClient:
             )
         )
         self.datasource_conversion_cancels = {}
+        self.active_datasource_operations = {}
+        self._datasource_operations_lock = threading.Lock()
         self.datasource_sync_cancels = {}
         self.running_commands = {}
         self._checkpoint_resume_ready = None
@@ -131,12 +133,11 @@ class LensNodeClient:
         # — better to drop the oldest frames of one run than to lose every run.
         self._outbox = collections.deque()
         self._outbox_ready = asyncio.Event()
-        self._outbox_max = int(
-            os.getenv("LENSNODE_OUTBOX_MAX_FRAMES", "10000")
-        )
+        self._outbox_max = int(os.getenv("LENSNODE_OUTBOX_MAX_FRAMES", "10000"))
         self._outbox_dropped = 0
         self._pending_trace_frames = collections.OrderedDict()
         self._pending_terminal_frames = collections.OrderedDict()
+        self._pending_datasource_terminal_frames = collections.OrderedDict()
 
     def _enqueue(self, payload):
         """Append an outbound frame to the durable outbox.
@@ -166,6 +167,15 @@ class LensNodeClient:
             self._pending_terminal_frames.move_to_end(run_uuid)
             while len(self._pending_terminal_frames) > self._outbox_max:
                 self._pending_terminal_frames.popitem(last=False)
+        if payload.get("type") in {
+            "datasource_convert_done",
+            "datasource_upload_done",
+        } and payload.get("task_id"):
+            task_id = str(payload["task_id"])
+            self._pending_datasource_terminal_frames[task_id] = payload
+            self._pending_datasource_terminal_frames.move_to_end(task_id)
+            while len(self._pending_datasource_terminal_frames) > self._outbox_max:
+                self._pending_datasource_terminal_frames.popitem(last=False)
         while len(self._outbox) >= self._outbox_max:
             self._outbox.popleft()
             self._outbox_dropped += 1
@@ -281,8 +291,7 @@ class LensNodeClient:
                 f"Draining LensNode {self.config.name} before shutdown.",
                 details=[
                     f"InFlightRuns: {len(self.running_tasks)}",
-                    "DrainTimeout: "
-                    f"{format_duration(self.config.drain_timeout_s)}",
+                    "DrainTimeout: " f"{format_duration(self.config.drain_timeout_s)}",
                 ],
             )
         )
@@ -329,9 +338,7 @@ class LensNodeClient:
         tasks = list(self.running_tasks.values())
         if not tasks:
             return
-        done, pending = await asyncio.wait(
-            tasks, timeout=self.config.drain_timeout_s
-        )
+        done, pending = await asyncio.wait(tasks, timeout=self.config.drain_timeout_s)
         if pending:
             LOGGER.warning(
                 task_log(
@@ -421,6 +428,7 @@ class LensNodeClient:
         await self._send_hello()
         self._restore_pending_trace_frames()
         self._restore_pending_terminal_frames()
+        self._restore_pending_datasource_terminal_frames()
 
     def _restore_pending_trace_frames(self):
         """Requeue unacknowledged trace events in per-run sequence order.
@@ -446,10 +454,7 @@ class LensNodeClient:
                 known_frame_ids.add(id(frame))
                 covered_sequences[run_uuid].update(sequences)
         for (run_uuid, sequence), frame in self._pending_trace_frames.items():
-            if (
-                id(frame) in known_frame_ids
-                or sequence in covered_sequences[run_uuid]
-            ):
+            if id(frame) in known_frame_ids or sequence in covered_sequences[run_uuid]:
                 continue
             key = (run_uuid, (sequence,))
             trace_frames.setdefault(key, frame)
@@ -462,8 +467,7 @@ class LensNodeClient:
         for frames in ordered_by_run.values():
             frames.sort(
                 key=lambda frame: min(
-                    event.get("sequence", 0)
-                    for event in frame.get("events") or []
+                    event.get("sequence", 0) for event in frame.get("events") or []
                 )
             )
 
@@ -494,6 +498,21 @@ class LensNodeClient:
         }
         for run_uuid, frame in self._pending_terminal_frames.items():
             if run_uuid not in queued_run_uuids:
+                self._outbox.append(frame)
+        if self._outbox:
+            self._outbox_ready.set()
+
+    def _restore_pending_datasource_terminal_frames(self):
+        """Requeue datasource terminal frames until the server receives them."""
+
+        queued_task_ids = {
+            str(frame.get("task_id") or "")
+            for frame in self._outbox
+            if frame.get("type")
+            in {"datasource_convert_done", "datasource_upload_done"}
+        }
+        for task_id, frame in self._pending_datasource_terminal_frames.items():
+            if task_id not in queued_task_ids:
                 self._outbox.append(frame)
         if self._outbox:
             self._outbox_ready.set()
@@ -602,10 +621,7 @@ class LensNodeClient:
                 )
             LOGGER.info(
                 task_log(
-                    (
-                        "Cancelled command run_start "
-                        f"{run_uuid} by control plane."
-                    )
+                    ("Cancelled command run_start " f"{run_uuid} by control plane.")
                 )
             )
         elif message_type == "run_done_ack":
@@ -627,6 +643,23 @@ class LensNodeClient:
             if not cleanup_deferred:
                 cleanup_run_checkpoint(run_uuid, workspace_path)
                 cleanup_run_runtime_resources(workspace_path, run_uuid)
+        elif message_type == "datasource_terminal_ack":
+            task_id = str(message.get("task_id") or "")
+            frame = self._pending_datasource_terminal_frames.get(task_id)
+            if frame is not None:
+                self._acknowledge_datasource_terminal_frame(frame)
+                self._outbox = collections.deque(
+                    item
+                    for item in self._outbox
+                    if not (
+                        item.get("type")
+                        in {
+                            "datasource_convert_done",
+                            "datasource_upload_done",
+                        }
+                        and str(item.get("task_id") or "") == task_id
+                    )
+                )
         elif message_type == "run_trace_events_ack":
             run_uuid = str(message.get("run_uuid") or "")
             last_sequence = message.get("last_sequence")
@@ -653,9 +686,7 @@ class LensNodeClient:
             )
         elif message_type == "hello_ack":
             LOGGER.info(
-                task_log(
-                    f"Confirmed LensNode capability report {self.config.name}."
-                )
+                task_log(f"Confirmed LensNode capability report {self.config.name}.")
             )
         elif message_type == "heartbeat_ack":
             LOGGER.debug("Received control frame: %s", message_type)
@@ -739,9 +770,7 @@ class LensNodeClient:
                 ],
             )
         )
-        task = asyncio.create_task(
-            self._execute_command(run_uuid, message)
-        )
+        task = asyncio.create_task(self._execute_command(run_uuid, message))
         self.running_commands[run_uuid] = message
         self.running_tasks[run_uuid] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
@@ -778,11 +807,13 @@ class LensNodeClient:
                 except PermissionError:
                     pass
             result[path] = subdirs
-        self._enqueue({
-            "type": "list_dirs_result",
-            "request_id": request_id,
-            "dirs": result,
-        })
+        self._enqueue(
+            {
+                "type": "list_dirs_result",
+                "request_id": request_id,
+                "dirs": result,
+            }
+        )
 
     async def _handle_datasource_check_path(self, message):
         """Inspect a datasource path and reply to the control plane."""
@@ -843,9 +874,7 @@ class LensNodeClient:
         cancel_event = threading.Event()
         self.datasource_sync_cancels[task_id] = cancel_event
         message = {**message, "cancel_event": cancel_event}
-        task = asyncio.create_task(
-            self._execute_datasource_sync(message, plugin)
-        )
+        task = asyncio.create_task(self._execute_datasource_sync(message, plugin))
         self.running_tasks[task_key] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
 
@@ -879,8 +908,7 @@ class LensNodeClient:
                             "step": "queue",
                             "status": "queued",
                             "message": (
-                                "Waiting for exclusive LensNode execution "
-                                "capacity."
+                                "Waiting for exclusive LensNode execution " "capacity."
                             ),
                         }
                     )
@@ -909,9 +937,7 @@ class LensNodeClient:
                     )
                 finally:
                     if slot_acquired:
-                        await self.execution_queue.release(
-                            ExecutionClass.EXCLUSIVE
-                        )
+                        await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
                 if result.get("status") in {"failed", "cancelled"}:
                     self._enqueue(
                         {
@@ -939,9 +965,7 @@ class LensNodeClient:
                 "ai_gateway_url": self.config.ai_gateway_url,
                 "lensnode_token": self.config.token,
                 "gateway_http_client": self.gateway_http_client,
-                "tls_skip_verify": getattr(
-                    self.config, "tls_skip_verify", False
-                ),
+                "tls_skip_verify": getattr(self.config, "tls_skip_verify", False),
                 "tls_ca_file": getattr(self.config, "tls_ca_file", None),
             }
             slot_acquired = False
@@ -955,8 +979,7 @@ class LensNodeClient:
                         "step": "queue",
                         "status": "queued",
                         "message": (
-                            "Waiting for exclusive LensNode execution "
-                            "capacity."
+                            "Waiting for exclusive LensNode execution " "capacity."
                         ),
                     }
                 )
@@ -986,9 +1009,7 @@ class LensNodeClient:
                 )
             finally:
                 if slot_acquired:
-                    await self.execution_queue.release(
-                        ExecutionClass.EXCLUSIVE
-                    )
+                    await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
             self._enqueue(
                 {
                     "type": "datasource_sync_done",
@@ -1143,9 +1164,7 @@ class LensNodeClient:
                 "plugin_http_pool",
                 None,
             )
-            if plugin_http_pool is not None and callable(
-                runtime.http_origins
-            ):
+            if plugin_http_pool is not None and callable(runtime.http_origins):
                 resolved = snapshot.get("resolved_config") or {}
                 endpoint = resolved.get("endpoint")
                 connection_scope = (
@@ -1195,6 +1214,12 @@ class LensNodeClient:
             return
         cancel_event = threading.Event()
         self.datasource_conversion_cancels[task_id] = cancel_event
+        self._record_datasource_operation(
+            task_id,
+            message.get("datasource_uuid"),
+            "conversion",
+            "starting",
+        )
         task = asyncio.create_task(
             self._execute_datasource_conversion(
                 {**message, "cancel_event": cancel_event}
@@ -1212,6 +1237,7 @@ class LensNodeClient:
         loop = asyncio.get_running_loop()
 
         def emit(event):
+            self._update_datasource_operation(task_id, event)
             payload = {
                 "type": "datasource_convert_event",
                 "request_id": request_id,
@@ -1248,8 +1274,7 @@ class LensNodeClient:
                         "step": "queue",
                         "status": "queued",
                         "message": (
-                            "Waiting for exclusive LensNode execution "
-                            "capacity."
+                            "Waiting for exclusive LensNode execution " "capacity."
                         ),
                     }
                 )
@@ -1279,9 +1304,7 @@ class LensNodeClient:
                 )
             finally:
                 if slot_acquired:
-                    await self.execution_queue.release(
-                        ExecutionClass.EXCLUSIVE
-                    )
+                    await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
             self._enqueue(
                 {
                     "type": "datasource_convert_done",
@@ -1345,6 +1368,12 @@ class LensNodeClient:
         task_key = f"datasource-upload:{task_id}"
         if task_key in self.running_tasks:
             return
+        self._record_datasource_operation(
+            task_id,
+            message.get("datasource_uuid"),
+            "upload",
+            "starting",
+        )
         task = asyncio.create_task(self._execute_datasource_upload(message))
         self.running_tasks[task_key] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
@@ -1380,9 +1409,7 @@ class LensNodeClient:
                 }
             )
         except Exception:
-            LOGGER.exception(
-                "Managed workspace upload failed task_id=%s", task_id
-            )
+            LOGGER.exception("Managed workspace upload failed task_id=%s", task_id)
             self._enqueue(
                 {
                     "type": "datasource_upload_done",
@@ -1423,8 +1450,7 @@ class LensNodeClient:
                         return_exceptions=True,
                     )
                     raise RunCancelledError(
-                        "Managed datasource conversion was cancelled while "
-                        "queued."
+                        "Managed datasource conversion was cancelled while " "queued."
                     )
                 await asyncio.wait((acquire_task,), timeout=0.1)
             return acquire_task.result()
@@ -1435,10 +1461,7 @@ class LensNodeClient:
                     acquire_task,
                     return_exceptions=True,
                 )
-            elif (
-                not acquire_task.cancelled()
-                and acquire_task.exception() is None
-            ):
+            elif not acquire_task.cancelled() and acquire_task.exception() is None:
                 await self.execution_queue.release(execution_class)
             raise
 
@@ -1483,6 +1506,7 @@ class LensNodeClient:
         completed = False
         slot_acquired = False
         try:
+
             def report_queued():
                 self._enqueue(
                     {
@@ -1492,9 +1516,7 @@ class LensNodeClient:
                         "status": "running",
                         "detail": {
                             "queue_state": "QUEUED",
-                            "message": (
-                                "Waiting for LensNode execution capacity."
-                            ),
+                            "message": ("Waiting for LensNode execution capacity."),
                         },
                     }
                 )
@@ -1549,6 +1571,73 @@ class LensNodeClient:
         except asyncio.CancelledError:
             return
 
+    def _record_datasource_operation(
+        self,
+        task_id,
+        datasource_uuid,
+        operation,
+        phase,
+    ):
+        """Record one datasource operation for reconnect reconciliation."""
+
+        with self._datasource_operations_lock:
+            self.active_datasource_operations[str(task_id)] = {
+                "task_id": str(task_id),
+                "datasource_uuid": str(datasource_uuid or ""),
+                "operation": operation,
+                "phase": phase,
+                "last_progress": {},
+            }
+
+    def _update_datasource_operation(self, task_id, event):
+        """Keep the reconnect report aligned with durable progress events."""
+
+        with self._datasource_operations_lock:
+            operation = self.active_datasource_operations.get(str(task_id))
+            if operation is None:
+                return
+            operation["phase"] = str(event.get("step") or "running")
+            operation["last_progress"] = {
+                key: event[key]
+                for key in [
+                    "progress_current",
+                    "progress_total",
+                    "progress_percent",
+                    "timestamp",
+                ]
+                if key in event
+            }
+
+    def _remove_datasource_operation(self, task_id):
+        """Stop reporting a datasource operation after terminal delivery."""
+
+        with self._datasource_operations_lock:
+            self.active_datasource_operations.pop(str(task_id), None)
+
+    def _acknowledge_datasource_terminal_frame(self, payload):
+        """Clear reconnect state after a datasource terminal frame is sent."""
+
+        if payload.get("type") not in {
+            "datasource_convert_done",
+            "datasource_upload_done",
+        }:
+            return
+        task_id = str(payload.get("task_id") or "")
+        if not task_id:
+            return
+        if self._pending_datasource_terminal_frames.get(task_id) is payload:
+            self._pending_datasource_terminal_frames.pop(task_id, None)
+            self._remove_datasource_operation(task_id)
+
+    def _reported_active_datasource_operations(self):
+        """Return a stable snapshot of live datasource operations."""
+
+        with self._datasource_operations_lock:
+            return [
+                dict(operation)
+                for operation in self.active_datasource_operations.values()
+            ]
+
     def _reported_active_runs(self):
         """Return runs executing or awaiting terminal-frame delivery."""
 
@@ -1560,8 +1649,7 @@ class LensNodeClient:
         active_runs.update(
             str(payload["run_uuid"])
             for payload in self._outbox
-            if payload.get("type") == "run_done"
-            and payload.get("run_uuid")
+            if payload.get("type") == "run_done" and payload.get("run_uuid")
         )
         active_runs.update(self._pending_terminal_frames)
         return sorted(active_runs)
@@ -1580,10 +1668,7 @@ class LensNodeClient:
         dirs = available_dirs(self.config.workspace_path)
         LOGGER.info(
             task_log(
-                (
-                    "Starting to report LensNode capabilities "
-                    f"{self.config.name}."
-                ),
+                ("Starting to report LensNode capabilities " f"{self.config.name}."),
                 details=[
                     f"WorkspacePath: {self.config.workspace_path}",
                     f"AvailableDirs: {len(dirs)}",
@@ -1592,6 +1677,7 @@ class LensNodeClient:
             )
         )
         active_runs = self._reported_active_runs()
+        active_datasource_operations = self._reported_active_datasource_operations()
         checkpoint_resume_ready = self._checkpoint_resume_available()
         await self.websocket.send(
             json.dumps(
@@ -1604,6 +1690,7 @@ class LensNodeClient:
                     "available_dirs": dirs,
                     "tasks": TASKS,
                     "active_runs": active_runs,
+                    "active_datasource_operations": active_datasource_operations,
                     "labels": {
                         "mode": "local",
                         "run_document_attachments": True,
@@ -1628,9 +1715,7 @@ class LensNodeClient:
         try:
             get_checkpoint_saver(workspace_path)
         except Exception:
-            LOGGER.exception(
-                "Disabling run checkpoint resume: storage is unavailable"
-            )
+            LOGGER.exception("Disabling run checkpoint resume: storage is unavailable")
             self._checkpoint_resume_ready = False
             return False
         self._checkpoint_resume_ready = True
@@ -1652,10 +1737,7 @@ class LensNodeClient:
                 tuple(task["name"] for task in TASKS),
             )
             self.heartbeat_count += 1
-            if (
-                self.heartbeat_count == 1
-                or signature != self.last_report_signature
-            ):
+            if self.heartbeat_count == 1 or signature != self.last_report_signature:
                 LOGGER.info(
                     task_log(
                         (
@@ -1699,9 +1781,7 @@ class LensNodeClient:
             while self._outbox:
                 payload = self._outbox.popleft()
                 try:
-                    await websocket.send(
-                        json.dumps(payload, ensure_ascii=False)
-                    )
+                    await websocket.send(json.dumps(payload, ensure_ascii=False))
                 except Exception:
                     self._outbox.appendleft(payload)
                     self._outbox_ready.set()
@@ -1732,9 +1812,7 @@ class LensNodeClient:
             f"CloseMessage: {message}",
         ]
         if self.connected_at:
-            details.append(
-                f"ConnectedDuration: {elapsed_since(self.connected_at)}"
-            )
+            details.append(f"ConnectedDuration: {elapsed_since(self.connected_at)}")
         LOGGER.info(
             task_log(
                 (
@@ -1783,12 +1861,9 @@ def _init_sentry():
         dsn=dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         release=os.getenv("SENTRY_RELEASE", "") or None,
-        traces_sample_rate=float(
-            os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")
-        ),
-        send_default_pii=os.getenv(
-            "SENTRY_SEND_DEFAULT_PII", "false"
-        ).lower() in ("1", "true", "yes"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        send_default_pii=os.getenv("SENTRY_SEND_DEFAULT_PII", "false").lower()
+        in ("1", "true", "yes"),
     )
 
 

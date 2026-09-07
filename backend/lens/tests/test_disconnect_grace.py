@@ -10,6 +10,7 @@ from core.asgi import application
 from lens.lensnode_auth import issue_lensnode_token
 from lens.models import (
     Assistant,
+    DataSource,
     GlobalSetting,
     LensNode,
     Run,
@@ -24,7 +25,10 @@ from lens.services import (
     get_awaiting_resume_ttl_hours,
     get_reconcile_confirm_grace_seconds,
 )
-from lens.tasks import check_lensnode_disconnect_grace_period
+from lens.tasks import (
+    check_lensnode_disconnect_grace_period,
+    register_datasource_conversion_task,
+)
 
 User = get_user_model()
 
@@ -69,9 +73,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
         )
 
     def _make_running_run(self):
-        run = create_execution_run(
-            session=self.session, question="q", enqueue=False
-        )
+        run = create_execution_run(session=self.session, question="q", enqueue=False)
         run.status = Run.Status.RUNNING
         run.started_at = timezone.now()
         run.save(update_fields=["status", "started_at"])
@@ -82,9 +84,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
             get_lensnode_disconnect_grace_seconds(),
             LENSNODE_DISCONNECT_GRACE_SECONDS_DEFAULT,
         )
-        GlobalSetting.objects.create(
-            key="lensnode.disconnect_grace_s", value=42
-        )
+        GlobalSetting.objects.create(key="lensnode.disconnect_grace_s", value=42)
         self.assertEqual(get_lensnode_disconnect_grace_seconds(), 42)
 
     def test_reconcile_confirm_grace_seconds_default_and_override(self):
@@ -93,9 +93,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
             get_reconcile_confirm_grace_seconds(),
             RECONCILE_CONFIRM_GRACE_SECONDS_DEFAULT,
         )
-        GlobalSetting.objects.create(
-            key="lensnode.reconcile_confirm_grace_s", value=7
-        )
+        GlobalSetting.objects.create(key="lensnode.reconcile_confirm_grace_s", value=7)
         self.assertEqual(get_reconcile_confirm_grace_seconds(), 7)
 
     def test_resume_ttl_is_capped_by_node_retention(self):
@@ -122,6 +120,42 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
         run.refresh_from_db()
         self.assertEqual(run.status, Run.Status.RUNNING)
         self.assertIsNotNone(run.resume_by)
+
+    def test_check_confirms_active_conversion_when_node_stays_offline(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_conversion_task(
+            datasource,
+            "offline-conversion",
+            {"document": True},
+        )
+        task.status = "STARTED"
+        task.metadata["lensnode_connection_id"] = "old-connection"
+        task.save(update_fields=["status", "metadata"])
+        stamp = timezone.now()
+        self.lensnode.status = LensNode.Status.OFFLINE
+        self.lensnode.connection_id = ""
+        self.lensnode.disconnected_at = stamp
+        self.lensnode.save(update_fields=["status", "connection_id", "disconnected_at"])
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as apply_async:
+            check_lensnode_disconnect_grace_period(
+                str(self.lensnode.uuid),
+                stamp.isoformat(),
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(
+            task.metadata["datasource_orphan_confirmation_connection_id"],
+            "",
+        )
+        apply_async.assert_called_once()
 
     def test_check_expires_run_past_original_wall_clock_budget(self):
         run = self._make_running_run()
@@ -152,9 +186,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
         self.lensnode.status = LensNode.Status.OFFLINE
         self.lensnode.disconnected_at = stamp
         self.lensnode.labels = {}
-        self.lensnode.save(
-            update_fields=["status", "disconnected_at", "labels"]
-        )
+        self.lensnode.save(update_fields=["status", "disconnected_at", "labels"])
 
         check_lensnode_disconnect_grace_period(
             str(self.lensnode.uuid), stamp.isoformat()
@@ -187,9 +219,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
         # A newer disconnect moved disconnected_at on; this stale check, pinned
         # to the earlier episode, must defer to the newer one and no-op.
         self.lensnode.status = LensNode.Status.OFFLINE
-        self.lensnode.disconnected_at = scheduled_stamp + timezone.timedelta(
-            seconds=5
-        )
+        self.lensnode.disconnected_at = scheduled_stamp + timezone.timedelta(seconds=5)
         self.lensnode.save(update_fields=["status", "disconnected_at"])
 
         check_lensnode_disconnect_grace_period(
@@ -224,9 +254,7 @@ class LensNodeDisconnectGraceTests(TransactionTestCase):
         self.assertIsNotNone(self.lensnode.disconnected_at)
         self.assertTrue(apply_async.called)
         kwargs = apply_async.call_args.kwargs
-        self.assertEqual(
-            kwargs["args"][0], str(self.lensnode.uuid)
-        )
+        self.assertEqual(kwargs["args"][0], str(self.lensnode.uuid))
         self.assertIn("countdown", kwargs)
 
     def test_disconnect_schedules_check_when_health_task_cleared_owner(self):

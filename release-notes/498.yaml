@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Resumed managed workspace conversions and uploads after transient LensNode reconnects without losing completed results.
+zh-CN: 修复 LensNode 短暂重连后托管工作区转换和上传无法恢复，以及已完成结果可能丢失的问题。

@@ -207,17 +207,17 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
     def _schedule_disconnect_grace_check(self, lensnode_uuid, disconnected_at):
         """Schedule the deferred grace check (delegates to the service)."""
 
-        schedule_lensnode_disconnect_grace_check(
-            lensnode_uuid, disconnected_at
-        )
+        schedule_lensnode_disconnect_grace_check(lensnode_uuid, disconnected_at)
 
     async def _handle_hello(self, content):
         active_runs = content.get("active_runs") or []
+        active_datasource_operations = content.get("active_datasource_operations")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self._update_lensnode_report(content, require_versions=True)
         await database_sync_to_async(reconcile_orphaned_datasource_conversions)(
             self.lensnode.uuid,
             self.channel_name,
+            active_datasource_operations,
         )
         await database_sync_to_async(reconcile_lensnode_active_runs)(
             self.lensnode.uuid, active_runs
@@ -419,9 +419,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             citations=content.get("citations"),
             planned_evidence=content.get("planned_evidence"),
         )
-        parent_update = await database_sync_to_async(
-            self._delegation_done_payload
-        )(run.pk)
+        parent_update = await database_sync_to_async(self._delegation_done_payload)(
+            run.pk
+        )
         if parent_update is not None:
             await self.channel_layer.group_send(
                 lensnode_group_name(parent_update.pop("lensnode_uuid")),
@@ -467,9 +467,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "outcome": run.outcome,
             "assistant_name": run.session.assistant.name,
             "answer": (
-                str(run.output_message.content or "")
-                if run.output_message_id
-                else ""
+                str(run.output_message.content or "") if run.output_message_id else ""
             ),
             "error": str(run.error or "")[:500],
             "lensnode_uuid": str(run.parent_run.lensnode.uuid),
@@ -489,13 +487,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         request_id = content.get("request_id") or ""
         dirs = content.get("dirs") or {}
         if request_id:
-            await database_sync_to_async(self._cache_list_dirs_result)(
-                request_id, dirs
-            )
+            await database_sync_to_async(self._cache_list_dirs_result)(request_id, dirs)
 
     @staticmethod
     def _cache_list_dirs_result(request_id, dirs):
         from django.core.cache import cache
+
         cache.set(f"lens:list_dirs:{request_id}", dirs, timeout=30)
 
     async def _handle_datasource_path_result(self, content):
@@ -511,6 +508,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
     @staticmethod
     def _cache_datasource_path_result(request_id, result):
         from django.core.cache import cache
+
         cache.set(f"lens:datasource_path:{request_id}", result, timeout=30)
 
     async def _handle_datasource_connection_result(self, content):
@@ -518,9 +516,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
 
         request_id = content.get("request_id") or ""
         if request_id:
-            await database_sync_to_async(
-                self._cache_datasource_connection_result
-            )(
+            await database_sync_to_async(self._cache_datasource_connection_result)(
                 request_id,
                 content.get("result") or {},
             )
@@ -528,6 +524,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
     @staticmethod
     def _cache_datasource_connection_result(request_id, result):
         from django.core.cache import cache
+
         cache.set(
             f"lens:datasource_connection:{request_id}",
             result,
@@ -543,10 +540,15 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         await database_sync_to_async(self._record_datasource_sync_event)(
             task_id,
             content,
+            self.channel_name,
         )
 
     @staticmethod
-    def _record_datasource_sync_event(task_id, content):
+    def _record_datasource_sync_event(
+        task_id,
+        content,
+        connection_id=None,
+    ):
         from agentcore_task.adapters.django import TaskTracker
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
@@ -555,6 +557,14 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         if task and task.status in TaskStatus.get_completed_statuses():
             return
         metadata = dict(task.metadata or {}) if task else {}
+        owner_connection_id = metadata.get("lensnode_connection_id") or ""
+        if (
+            task
+            and connection_id
+            and owner_connection_id
+            and owner_connection_id != connection_id
+        ):
+            return
         progress_task_status = TaskStatus.STARTED
         queue_metadata = {}
         if task and content.get("step") == "queue":
@@ -575,9 +585,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "name": content.get("step") or "sync",
             "status": content.get("status") or "running",
             "message": content.get("message") or "",
-            "timestamp": (
-                content.get("timestamp") or timezone.now().isoformat()
-            ),
+            "timestamp": (content.get("timestamp") or timezone.now().isoformat()),
         }
         for key in [
             "category",
@@ -598,11 +606,11 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "phase_progress",
             "progress_counts",
             "substantive_progress",
-                    "conversion_summary",
-                    "repository_summaries",
-                    "failed_repositories",
-                    "partial_success",
-                    "current_file",
+            "conversion_summary",
+            "repository_summaries",
+            "failed_repositories",
+            "partial_success",
+            "current_file",
             "current_status",
             "current_reason",
             "current_stats",
@@ -656,9 +664,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             if summary:
                 metadata_update["sync_summary"] = summary
         if "conversion_summary" in content:
-            metadata_update["conversion_summary"] = content.get(
-                "conversion_summary"
-            )
+            metadata_update["conversion_summary"] = content.get("conversion_summary")
         for key in ["progress_total", "progress_current", "progress_percent"]:
             if key in content:
                 metadata_update[key] = content.get(key)
@@ -670,8 +676,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         if (
             queue_metadata
             and updated_task is not None
-            and updated_task.metadata.get("type")
-            == "datasource_conversion"
+            and updated_task.metadata.get("type") == "datasource_conversion"
         ):
             datasource_uuid = updated_task.metadata.get("datasource_uuid")
             if datasource_uuid:
@@ -786,9 +791,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "status": status,
             "path": path,
             "name": path.rsplit("/", 1)[-1],
-            "extension": path.rsplit(".", 1)[-1].lower()
-            if "." in path
-            else "",
+            "extension": path.rsplit(".", 1)[-1].lower() if "." in path else "",
             "reason": content.get("current_reason") or "",
             "stats": content.get("current_stats") or {},
         }
@@ -887,19 +890,10 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                     "documents": content.get("documents") or 0,
                     "by_extension": content.get("by_extension") or {},
                     "by_type": content.get("by_type") or {},
-                    "conversion_summary": content.get(
-                        "conversion_summary"
-                    )
-                    or {},
+                    "conversion_summary": content.get("conversion_summary") or {},
                     "warnings": content.get("warnings") or [],
-                    "repository_summaries": content.get(
-                        "repository_summaries"
-                    )
-                    or [],
-                    "failed_repositories": content.get(
-                        "failed_repositories"
-                    )
-                    or [],
+                    "repository_summaries": content.get("repository_summaries") or [],
+                    "failed_repositories": content.get("failed_repositories") or [],
                     "partial_success": bool(content.get("partial_success")),
                     "target_path": content.get("target_path") or "",
                     "error": content.get("error") or "",
@@ -917,9 +911,15 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         task_id = content.get("task_id") or ""
         if not request_id and not task_id:
             return
-        await database_sync_to_async(
-            self._complete_datasource_conversion_done
-        )(request_id, content, self.channel_name)
+        await database_sync_to_async(self._complete_datasource_conversion_done)(
+            request_id, content, self.channel_name
+        )
+        await self.send_json(
+            {
+                "type": "datasource_terminal_ack",
+                "task_id": task_id,
+            }
+        )
 
     async def _handle_datasource_upload_done(self, content):
         """Complete a Managed Workspace upload from LensNode."""
@@ -932,6 +932,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             request_id,
             content,
             self.channel_name,
+        )
+        await self.send_json(
+            {
+                "type": "datasource_terminal_ack",
+                "task_id": task_id,
+            }
         )
 
     @staticmethod
