@@ -746,12 +746,15 @@ PLUGIN_VERSION = "1.0.0"
 http_origins(endpoint)
 build_tool(definition, executor)
 execute_tool(tool_key, client, arguments, secret, endpoint, config)
-# Optional; required only when the Manifest declares Datasource support.
+# Required as a pair when the Manifest declares Datasource support.
 build_datasource_command(snapshot, material, trigger)
+sync_datasource(command, workspace_path, emit, execute)
 ```
 
 LensNode 保留通用的快照、lease、材料读取、审计和 finally 清理职责；Provider API
-调用、endpoint 策略、工具签名、结果上限及同步命令规范化均由 Plugin runtime 承担。
+调用、endpoint 策略、工具签名、结果上限、同步命令规范化与同步编排均由 Plugin
+runtime 承担。Plugin handler 可调用 LensNode 提供的受限共享执行器，但执行器不得
+根据 provider key 推断供应商规则。
 新 Plugin 或新版本因此不需要向 SourceLens/LensNode 增加供应商 key 分支。V1 仍是
 企业管理员安装的受信任 Python 代码；进程隔离、制品签名和外部第三方 Plugin 运行权
 限是后续安全发布工作。

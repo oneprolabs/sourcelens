@@ -828,6 +828,36 @@ def test_sync_git_submodules_runs_when_declared(tmp_path, monkeypatch):
     assert calls[1][2] == "LENS_SOURCE_GIT_SUBMODULE_UPDATE_FAILED"
 
 
+def test_sync_git_submodules_uses_plugin_url_rewrites(tmp_path, monkeypatch):
+    """The generic executor applies a Plugin-provided URL rewrite plan."""
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitmodules").write_text("", encoding="utf-8")
+    calls = []
+
+    def run_git(args, cwd=None, timeout=600, detail_prefix=""):
+        del timeout
+        calls.append((args, cwd, detail_prefix))
+        return None
+
+    monkeypatch.setattr("lensnode.datasource_sync._run_git", run_git)
+
+    _sync_git_submodules(
+        repo,
+        config={
+            "submodule_url_resolver": lambda _target, _config: [
+                {"from": "git@example:", "to": "https://example/"},
+            ],
+        },
+    )
+
+    assert calls[0][0][:2] == [
+        "-c",
+        'url."https://example/".insteadOf=git@example:',
+    ]
+
+
 def test_feishu_folder_token_from_drive_url():
     """Feishu folder URLs can be normalized to folder tokens."""
 

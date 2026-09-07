@@ -1106,7 +1106,10 @@ class LensNodeClient:
             plugin_key = str(snapshot.get("plugin_key") or "")
             plugin_version = str(snapshot.get("plugin_version") or "")
             runtime = load_runtime_contract(plugin_key, plugin_version)
-            if not callable(runtime.build_datasource_command):
+            if (
+                not callable(runtime.build_datasource_command)
+                or not callable(runtime.sync_datasource)
+            ):
                 return {
                     "status": "failed",
                     "error": "PLUGIN_DATASOURCE_UNSUPPORTED",
@@ -1157,10 +1160,11 @@ class LensNodeClient:
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]
-            return sync_datasource(
+            return runtime.sync_datasource(
                 command,
                 self.config.workspace_path,
                 emit,
+                sync_datasource,
             )
         except PluginRuntimeError as exc:
             return {"status": "failed", "error": str(exc)}

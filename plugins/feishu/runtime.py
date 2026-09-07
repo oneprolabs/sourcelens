@@ -82,6 +82,12 @@ def build_datasource_command(snapshot, material, trigger):
     }
 
 
+def sync_datasource(command, workspace_path, emit, execute):
+    """Execute the Feishu datasource policy through the shared executor."""
+
+    return execute(command, workspace_path, emit)
+
+
 def _endpoint(value):
     """Require the fixed Feishu API origin from the snapshot."""
 

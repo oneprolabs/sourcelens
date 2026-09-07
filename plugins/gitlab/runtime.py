@@ -1,8 +1,11 @@
 """GitLab LensNode runtime entrypoint."""
 
+import configparser
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -23,6 +26,7 @@ ACTIVITY_RESOURCE_MAX = {
     "merge_requests": 20,
     "issues": 20,
 }
+GITLAB_MAX_SUBMODULE_CONFIG_BYTES = 64 * 1024
 
 
 def http_origins(endpoint):
@@ -400,6 +404,8 @@ def build_datasource_command(snapshot, material, trigger):
         "directory": datasource.get("directory") or "",
         "auth_scheme": "token",
         "access_token": material["value"],
+        "allow_submodules": True,
+        "gitlab_endpoint": endpoint,
     }
     config["repositories"] = [
         {
@@ -419,6 +425,75 @@ def build_datasource_command(snapshot, material, trigger):
         "trigger": trigger,
         "config": config,
     }
+
+
+def sync_datasource(command, workspace_path, emit, execute):
+    """Execute GitLab synchronization with GitLab-owned submodule policy."""
+
+    config = dict((command or {}).get("config") or {})
+    config["submodule_url_resolver"] = _gitlab_submodule_url_rewrites
+    return execute(
+        {**command, "config": config},
+        workspace_path,
+        emit,
+    )
+
+
+def _gitlab_submodule_url_rewrites(target, config):
+    """Return GitLab-owned SSH-to-HTTP submodule origin rewrites."""
+
+    endpoint = _endpoint((config or {}).get("gitlab_endpoint"))
+    modules_path = Path(target) / ".gitmodules"
+    if not modules_path.is_file():
+        return []
+    if modules_path.stat().st_size > GITLAB_MAX_SUBMODULE_CONFIG_BYTES:
+        raise PluginRuntimeError("GITLAB_SUBMODULE_CONFIG_TOO_LARGE")
+    parser = configparser.RawConfigParser(interpolation=None)
+    try:
+        parser.read(modules_path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError) as exc:
+        raise PluginRuntimeError("GITLAB_SUBMODULE_CONFIG_INVALID") from exc
+    rewrites = []
+    seen = set()
+    for section in parser.sections():
+        if not section.startswith("submodule ") or not parser.has_option(
+            section,
+            "url",
+        ):
+            continue
+        rewrite = _gitlab_submodule_url_rewrite(
+            parser.get(section, "url"),
+            endpoint,
+        )
+        if rewrite is None:
+            continue
+        identity = (rewrite["from"], rewrite["to"])
+        if identity not in seen:
+            seen.add(identity)
+            rewrites.append(rewrite)
+    return rewrites
+
+
+def _gitlab_submodule_url_rewrite(url, endpoint):
+    """Map one GitLab SSH URL origin to the approved HTTP endpoint."""
+
+    value = str(url or "").strip()
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme == "ssh"
+        and parsed.username == "git"
+        and parsed.hostname
+        and parsed.path.startswith("/")
+        and not parsed.query
+        and not parsed.fragment
+    ):
+        source = urlunsplit(("ssh", parsed.netloc, "/", "", ""))
+    else:
+        match = re.fullmatch(r"git@([^/:]+):.+", value)
+        if match is None:
+            return None
+        source = f"git@{match.group(1)}:"
+    return {"from": source, "to": f"{endpoint}/"}
 
 
 def _endpoint(value):

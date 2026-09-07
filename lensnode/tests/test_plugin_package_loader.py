@@ -22,6 +22,9 @@ def execute_tool(tool_key, client, arguments, secret, endpoint, config):
 
 def build_datasource_command(snapshot, material, trigger):
     return {"source_type": "git"}
+
+def sync_datasource(command, workspace_path, emit, execute):
+    return execute(command, workspace_path, emit)
 '''
 
 
@@ -46,6 +49,7 @@ def test_loads_runtime_contract_from_configured_root(tmp_path):
     assert callable(contract.build_tool)
     assert callable(contract.execute_tool)
     assert callable(contract.build_datasource_command)
+    assert callable(contract.sync_datasource)
     assert contract.http_origins("https://example.com") == (
         "https://example.com",
     )
@@ -55,6 +59,10 @@ def test_loads_tool_only_runtime_without_datasource_command(tmp_path):
     source = RUNTIME_SOURCE.replace(
         '\ndef build_datasource_command(snapshot, material, trigger):\n'
         '    return {"source_type": "git"}\n',
+        "",
+    ).replace(
+        '\ndef sync_datasource(command, workspace_path, emit, execute):\n'
+        '    return execute(command, workspace_path, emit)\n',
         "",
     )
     _package(tmp_path, source)
@@ -66,6 +74,7 @@ def test_loads_tool_only_runtime_without_datasource_command(tmp_path):
     )
 
     assert contract.build_datasource_command is None
+    assert contract.sync_datasource is None
 
 
 def test_rejects_runtime_identity_mismatch(tmp_path):
