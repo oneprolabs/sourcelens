@@ -82,6 +82,7 @@ from lens.skill_packages import package_zip_bytes
 from lens.tasks import (
     SourceSyncBusy,
     acquire_datasource_lock,
+    complete_datasource_sync_task,
     release_datasource_lock,
 )
 from lens.views.assistants import AssistantViewSet
@@ -6253,7 +6254,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["detail"], "DATASOURCE_DISABLED")
         apply_async.assert_not_called()
 
-    def test_cancel_datasource_sync_releases_lock(self):
+    def test_cancel_datasource_sync_waits_for_stop_confirmation(self):
         task = TaskExecution.objects.create(
             task_id="running-sync",
             task_name="datasource_sync:Repo Cache",
@@ -6287,13 +6288,34 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         revoke.assert_called_once_with(
             "celery-sync",
-            terminate=True,
-            signal="SIGTERM",
+            terminate=False,
         )
         cancel.assert_called_once_with(self.lensnode, "running-sync")
         task.refresh_from_db()
-        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.status, "CANCELLING")
 
+        delete_response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+        self.assertEqual(delete_response.status_code, 409)
+
+        with self.assertRaises(SourceSyncBusy):
+            acquire_datasource_lock(
+                self.datasource.uuid,
+                token="new-sync",
+                ttl_s=60,
+            )
+
+        complete_datasource_sync_task(
+            task.task_id,
+            {
+                "status": "cancelled",
+                "error": "DATASOURCE_SYNC_CANCELLED",
+            },
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "REVOKED")
         acquire_datasource_lock(
             self.datasource.uuid,
             token="new-sync",

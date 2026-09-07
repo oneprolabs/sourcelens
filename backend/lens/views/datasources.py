@@ -47,7 +47,6 @@ from lens.tasks import (
     register_datasource_conversion_task,
     register_datasource_sync_task,
     register_datasource_upload_task,
-    release_datasource_lock,
     source_sync_task,
 )
 from rest_framework import status
@@ -190,6 +189,7 @@ class DataSourceViewSet(BaseAdminViewSet):
             active_statuses = [
                 TaskStatus.PENDING,
                 *TaskStatus.get_running_statuses(),
+                DATASOURCE_CANCELLING_STATUS,
             ]
             active_sync = TaskExecution.objects.filter(
                 module="lens_datasource",
@@ -592,45 +592,65 @@ class DataSourceViewSet(BaseAdminViewSet):
         from core.celery import app
 
         datasource = self.get_object()
-        task = (
-            TaskExecution.objects.filter(
-                module="lens_datasource",
-                metadata__datasource_uuid=str(datasource.uuid),
-                status__in=[
-                    TaskStatus.PENDING,
-                    *TaskStatus.get_running_statuses(),
-                ],
+        with transaction.atomic():
+            datasource = DataSource.objects.select_for_update().get(
+                pk=datasource.pk
             )
-            .order_by("-created_at")
-            .first()
-        )
-        if task is None:
-            return Response(
-                {"detail": "No running datasource sync task."},
-                status=status.HTTP_404_NOT_FOUND,
+            task = (
+                TaskExecution.objects.select_for_update()
+                .filter(
+                    module="lens_datasource",
+                    metadata__datasource_uuid=str(datasource.uuid),
+                    status__in=[
+                        TaskStatus.PENDING,
+                        *TaskStatus.get_running_statuses(),
+                        DATASOURCE_CANCELLING_STATUS,
+                    ],
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if task is None:
+                return Response(
+                    {"detail": "No running datasource sync task."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            metadata = dict(task.metadata or {})
+            celery_task_id = metadata.get("celery_task_id") or task.task_id
+            app.control.revoke(celery_task_id, terminate=False)
+            cancel_datasource_sync_on_lensnode(
+                datasource.lensnode,
+                task.task_id,
             )
 
-        metadata = dict(task.metadata or {})
-        celery_task_id = metadata.get("celery_task_id") or task.task_id
-        app.control.revoke(celery_task_id, terminate=True, signal="SIGTERM")
-        cancel_datasource_sync_on_lensnode(datasource.lensnode, task.task_id)
-
-        lock_token = metadata.get("lock_token") or task.task_id
-        release_datasource_lock(datasource.uuid, token=lock_token)
-        metadata["manual_revoked_at"] = timezone.now().isoformat()
-        metadata["manual_revoked_by"] = request.user.pk
-        task.status = TaskStatus.REVOKED
-        task.finished_at = timezone.now()
-        task.error = "Task manually revoked by operator."
-        task.metadata = metadata
-        task.save(
-            update_fields=[
-                "status",
-                "finished_at",
-                "error",
-                "metadata",
-            ]
-        )
+            metadata["manual_revoked_at"] = timezone.now().isoformat()
+            metadata["manual_revoked_by"] = request.user.pk
+            dispatched = bool(
+                metadata.get("lock_token")
+                or metadata.get("datasource_sync_request_id")
+                or task.status in TaskStatus.get_running_statuses()
+            )
+            task.status = (
+                DATASOURCE_CANCELLING_STATUS
+                if dispatched
+                else TaskStatus.REVOKED
+            )
+            task.finished_at = None if dispatched else timezone.now()
+            task.error = "" if dispatched else "DATASOURCE_SYNC_CANCELLED"
+            metadata["cancellation_state"] = task.status
+            if not dispatched:
+                metadata["completion_reason"] = "DATASOURCE_SYNC_CANCELLED"
+                metadata["stop_confirmation_source"] = "queued_before_dispatch"
+            task.metadata = metadata
+            task.save(
+                update_fields=[
+                    "status",
+                    "finished_at",
+                    "error",
+                    "metadata",
+                ]
+            )
         return Response(
             {
                 "uuid": str(datasource.uuid),

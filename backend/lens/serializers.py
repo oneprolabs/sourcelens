@@ -2188,6 +2188,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 status__in=[
                     TaskStatus.PENDING,
                     *TaskStatus.get_running_statuses(),
+                    "CANCELLING",
                 ],
             )
             .order_by("-created_at")
