@@ -198,6 +198,32 @@ After installation:
 - Installation details and the initial admin password:
   `<install-dir>/install-info.env`
 
+When no active system model exists during an interactive install or rerun, the
+installer offers to configure one before it prints the final summary. Select a
+provider and model with the arrow keys, enter the API key in the masked prompt,
+and the installer will test the connection before saving it as the system
+default. Existing model settings are preserved when the installer is run again.
+
+Use `--yes` to skip interactive model setup. You can configure or manage models
+later at `http://<host>:10080/management/llm/config`.
+
+When SourceLens is installed in a NAT virtual machine, forward host TCP port
+`10080` to guest TCP port `10080` before opening the site in the host browser.
+
+To test local changes, transfer the complete repository (including initialized
+submodules) to the target machine, then run:
+
+```bash
+sudo bash /tmp/sourcelens-source/install.sh \
+  --source /tmp/sourcelens-source \
+  --dir /opt/sourcelens-fixed-test
+```
+
+`--source` reads installer and deployment files from that source tree while
+application images are still pulled from the registry. A non-default install
+directory creates an isolated test environment so an existing installation is
+not replaced; the installer will ask for another port if `10080` is busy.
+
 The default installation directory is `/opt/sourcelens`. Re-running the
 installer with a newer tag upgrades the installation in place. Existing `.env`
 configuration and application data are preserved.

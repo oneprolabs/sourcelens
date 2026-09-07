@@ -195,6 +195,29 @@ curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
 - 配置文件：`<install-dir>/.env`
 - 安装详情和初始管理员密码：`<install-dir>/install-info.env`
 
+交互式安装或重复运行时，如果没有已启用的系统模型，安装器会在最终摘要前引导
+配置。使用方向键选择模型服务商和模型，在显示星号掩码的输入框中填写 API Key 后，
+安装器会先测试连接，再将配置保存为系统默认模型。重复运行安装器不会覆盖已有模型
+配置。
+
+使用 `--yes` 可跳过交互式模型配置。之后可前往
+`http://<host>:10080/management/llm/config` 配置或管理模型。
+
+如果 SourceLens 安装在 NAT 虚拟机中，需要先将宿主机 TCP 端口 `10080` 转发到
+虚拟机 TCP 端口 `10080`，再从宿主机浏览器访问。
+
+测试本地修改时，将包含已初始化子模块的完整仓库传到目标机器，然后运行：
+
+```bash
+sudo bash /tmp/sourcelens-source/install.sh \
+  --source /tmp/sourcelens-source \
+  --dir /opt/sourcelens-fixed-test
+```
+
+`--source` 会从该目录读取安装和部署文件，应用镜像仍然从镜像仓库拉取。使用
+非默认安装目录时，安装器会创建隔离的测试环境，避免替换已有安装；如果 `10080`
+已占用，安装器会提示选择其他端口。
+
 默认安装目录为 `/opt/sourcelens`。使用新 tag 重复运行安装器即可原地升级，已有
 `.env` 配置和应用数据会被保留。
 

@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Added guided AI model setup to standalone installation, with provider and
+  model selection, masked API key entry, connection validation, and safe
+  preservation of existing model settings.
+zh-CN: >-
+  为 standalone 安装新增 AI 模型配置向导，支持服务商和模型选择、API Key
+  星号输入、连接验证，并安全保留已有模型配置。

@@ -58,9 +58,9 @@ services:
       # Gate dependent services on API readiness only. Full Celery readiness is
       # checked by install.sh after worker and scheduler have started.
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 5s
+      timeout: 5s
+      retries: 12
       start_period: 120s
 
   frontend:
