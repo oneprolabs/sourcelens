@@ -157,12 +157,8 @@ def test_terminal_result_retains_checkpoint_until_acknowledged():
     executor.agent = FakeAgent()
 
     with (
-        patch(
-            "lensnode.executor.cleanup_run_checkpoint"
-        ) as checkpoint_cleanup,
-        patch(
-            "lensnode.executor.cleanup_run_runtime_resources"
-        ) as runtime_cleanup,
+        patch("lensnode.executor.cleanup_run_checkpoint") as checkpoint_cleanup,
+        patch("lensnode.executor.cleanup_run_runtime_resources") as runtime_cleanup,
     ):
         asyncio.run(
             executor.execute(
@@ -310,8 +306,7 @@ def test_duplicate_resume_for_active_run_is_idempotent():
         await client._handle_message(json.dumps(message))
 
         assert not any(
-            frame.get("error") == "LENSNODE_RUN_ACTIVE"
-            for frame in client._outbox
+            frame.get("error") == "LENSNODE_RUN_ACTIVE" for frame in client._outbox
         )
         client.running_tasks[run_uuid].cancel()
         await asyncio.gather(
@@ -360,9 +355,7 @@ def test_run_admission_echoes_dispatch_id_and_duplicate_is_idempotent():
         )
 
         admissions = [
-            frame
-            for frame in client._outbox
-            if frame.get("type") == "run_admitted"
+            frame for frame in client._outbox if frame.get("type") == "run_admitted"
         ]
         assert admissions == [
             {
@@ -377,8 +370,7 @@ def test_run_admission_echoes_dispatch_id_and_duplicate_is_idempotent():
             },
         ]
         assert not any(
-            frame.get("error") == "LENSNODE_RUN_ACTIVE"
-            for frame in client._outbox
+            frame.get("error") == "LENSNODE_RUN_ACTIVE" for frame in client._outbox
         )
         client.running_tasks[run_uuid].cancel()
         await asyncio.gather(
@@ -494,9 +486,7 @@ def test_control_plane_cancel_cleans_idle_checkpoint_and_runtime_files():
 
     with (
         patch("lensnode.main.cleanup_run_checkpoint") as checkpoint_cleanup,
-        patch(
-            "lensnode.main.cleanup_run_runtime_resources"
-        ) as runtime_cleanup,
+        patch("lensnode.main.cleanup_run_runtime_resources") as runtime_cleanup,
     ):
         asyncio.run(exercise())
 
@@ -666,9 +656,7 @@ def test_executor_watchdog_fails_stalled_run_and_mutes_late_emits(
     assert done[-1]["error"] == "NO_ACTIVITY_TIMEOUT"
     assert agent.cancel_event is not None
     assert agent.cancel_event.is_set()
-    assert not any(
-        event.get("content_delta") == "late output" for event in events
-    )
+    assert not any(event.get("content_delta") == "late output" for event in events)
 
 
 class HeartbeatOnlyAgent:
@@ -781,8 +769,7 @@ def test_executor_enforces_wall_clock_deadline_and_mutes_late_emits(
     assert agent.cancel_event is not None
     assert agent.cancel_event.is_set()
     assert not any(
-        event.get("content_delta") == "late deadline output"
-        for event in events
+        event.get("content_delta") == "late deadline output" for event in events
     )
 
 
@@ -976,9 +963,10 @@ def test_runtime_materializes_virtual_plugin_skill_references(tmp_path):
             "HyperBDR/sourcelens"
             in (package / "references" / "repositories.md").read_text()
         )
-        assert "do not grant access" in (
-            package / "references" / "repositories.md"
-        ).read_text()
+        assert (
+            "do not grant access"
+            in (package / "references" / "repositories.md").read_text()
+        )
         assert "virtual Skill" in resources.context_skill_contents[0]
     finally:
         cleanup_runtime_resources(resources)
@@ -1092,9 +1080,7 @@ def test_mcp_environment_expands_runtime_placeholders_only(tmp_path):
     try:
         runtime_mcp = resources.mcp_configs[0]
         assert runtime_mcp["endpoint"] == "https://mcp.example.com/api"
-        assert runtime_mcp["config"]["headers"] == {
-            "Authorization": f"Bearer {secret}"
-        }
+        assert runtime_mcp["config"]["headers"] == {"Authorization": f"Bearer {secret}"}
         runtime_text = resources.mcp_config_path.read_text(encoding="utf-8")
         assert secret not in runtime_text
         assert "MCP_TOKEN" not in runtime_text
@@ -1188,9 +1174,7 @@ def test_mcp_environment_preserves_legacy_placeholder_literals(tmp_path):
         assert resources.mcp_configs[0]["endpoint"] == (
             "https://mcp.example.com/${API_VERSION}"
         )
-        assert resources.mcp_configs[0]["config"] == {
-            "template": "${LITERAL}"
-        }
+        assert resources.mcp_configs[0]["config"] == {"template": "${LITERAL}"}
     finally:
         cleanup_runtime_resources(resources)
 
@@ -1266,10 +1250,7 @@ def test_system_prompt_injects_codegraph_guidance_when_available():
 
     assert "CodeGraph is available" in prompt
     assert "mcp__codegraph__codegraph_explore" in prompt
-    assert (
-        "MUST call mcp__codegraph__codegraph_explore before any"
-        in prompt
-    )
+    assert "MUST call mcp__codegraph__codegraph_explore before any" in prompt
     assert "mcp__codegraph__codegraph_trace" not in prompt
 
 
@@ -1327,8 +1308,7 @@ def test_code_analysis_paths_are_relative_to_resource_directories():
     )
 
     assert answer == (
-        "See backend/lens/views.py and "
-        "frontend/src/pages/lens/Chat.vue."
+        "See backend/lens/views.py and " "frontend/src/pages/lens/Chat.vue."
     )
 
 
@@ -1343,8 +1323,7 @@ def test_workspace_paths_are_relative_for_non_code_analysis_tasks():
     )
 
     assert answer == (
-        "The workspace is . and the file is "
-        "lensnode/lensnode/runtime.py."
+        "The workspace is . and the file is " "lensnode/lensnode/runtime.py."
     )
 
 
@@ -1376,9 +1355,12 @@ def test_general_chat_answers_hide_runtime_document_paths_and_tool_names():
 
 
 def test_code_analysis_has_bounded_default_agent_turns():
-    assert _resolve_agent_turn_limit(
-        {"task": "code_analysis"},
-    ) == 10
+    assert (
+        _resolve_agent_turn_limit(
+            {"task": "code_analysis"},
+        )
+        == 10
+    )
 
 
 @pytest.mark.parametrize(
@@ -1392,21 +1374,30 @@ def test_code_analysis_has_bounded_default_agent_turns():
     ],
 )
 def test_agent_rounds_resolve_to_model_turn_limits(agent_rounds, expected):
-    assert _resolve_agent_turn_limit(
-        {"task": "code_analysis", "agent_rounds": agent_rounds},
-    ) == expected
+    assert (
+        _resolve_agent_turn_limit(
+            {"task": "code_analysis", "agent_rounds": agent_rounds},
+        )
+        == expected
+    )
 
 
 def test_unknown_agent_rounds_keep_code_analysis_default():
-    assert _resolve_agent_turn_limit(
-        {"task": "code_analysis", "agent_rounds": "unknown"},
-    ) == 10
+    assert (
+        _resolve_agent_turn_limit(
+            {"task": "code_analysis", "agent_rounds": "unknown"},
+        )
+        == 10
+    )
 
 
 def test_explicit_agent_turn_limit_overrides_code_analysis_default():
-    assert _resolve_agent_turn_limit(
-        {"task": "code_analysis", "max_agent_turns": 7},
-    ) == 7
+    assert (
+        _resolve_agent_turn_limit(
+            {"task": "code_analysis", "max_agent_turns": 7},
+        )
+        == 7
+    )
 
 
 def test_other_tasks_keep_unset_agent_turn_limit():
@@ -1445,9 +1436,7 @@ def test_smart_collaboration_bypasses_capability_route():
 def test_vague_code_analysis_questions_are_detected_without_target():
     assert _vague_code_analysis_question("帮我分析一下") is True
     assert _vague_code_analysis_question("请描述一下") is True
-    assert _vague_code_analysis_question(
-        "分析 runtime.py 的 _build_agent"
-    ) is False
+    assert _vague_code_analysis_question("分析 runtime.py 的 _build_agent") is False
 
 
 def test_git_log_accepts_non_integer_max_count(tmp_path):
@@ -1935,6 +1924,7 @@ def test_lensnode_datasource_conversion_reports_safe_cancellation(
                     "type": "datasource_convert",
                     "request_id": "conversion-request",
                     "task_id": task_id,
+                    "datasource_uuid": "datasource-uuid",
                     "source_type": "managed_workspace",
                     "target_path": "/workspace/documents",
                     "conversion": {"document": True},
@@ -1945,6 +1935,15 @@ def test_lensnode_datasource_conversion_reports_safe_cancellation(
             asyncio.to_thread(started.wait),
             timeout=1,
         )
+        assert client._reported_active_datasource_operations() == [
+            {
+                "task_id": task_id,
+                "datasource_uuid": "datasource-uuid",
+                "operation": "conversion",
+                "phase": "starting",
+                "last_progress": {},
+            }
+        ]
 
         await client._handle_message(
             json.dumps(
@@ -1965,5 +1964,15 @@ def test_lensnode_datasource_conversion_reports_safe_cancellation(
         assert done[-1]["status"] == "cancelled"
         assert done[-1]["error"] == "DATASOURCE_CONVERSION_CANCELLED"
         assert f"datasource-convert:{task_id}" not in client.running_tasks
+        assert client._reported_active_datasource_operations()
+        await client._handle_message(
+            json.dumps(
+                {
+                    "type": "datasource_terminal_ack",
+                    "task_id": task_id,
+                }
+            )
+        )
+        assert client._reported_active_datasource_operations() == []
 
     asyncio.run(exercise())
