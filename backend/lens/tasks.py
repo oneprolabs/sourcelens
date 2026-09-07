@@ -854,6 +854,38 @@ def complete_datasource_conversion_task(
     )
     completion_metadata["conversion_summary"] = conversion_summary
     completion_metadata["completion_reason"] = completion_reason
+    if task_status == TaskStatus.SUCCESS:
+        completion_metadata.update(
+            {
+                "phase": "COMPLETED",
+                "overall_progress_percent": 100,
+                "phase_progress": {
+                    "current": 1,
+                    "total": 1,
+                    "unit": "steps",
+                },
+                "progress_counts": {
+                    "total": int(conversion_summary.get("total") or 0),
+                    "candidates": int(
+                        conversion_summary.get("candidates") or 0
+                    ),
+                    "processed": int(
+                        conversion_summary.get("total") or 0
+                    ),
+                    "converted": int(
+                        conversion_summary.get("converted")
+                        or conversion_summary.get("success")
+                        or 0
+                    ),
+                    "failed": int(conversion_summary.get("failed") or 0),
+                    "skipped": int(conversion_summary.get("skipped") or 0),
+                    "unsupported": int(
+                        conversion_summary.get("unsupported") or 0
+                    ),
+                },
+                "last_substantive_progress_at": timezone.now().isoformat(),
+            }
+        )
     if task_status == TaskStatus.REVOKED:
         completion_metadata["stop_confirmation_source"] = str(
             result.get("stop_confirmation_source") or "lensnode_callback"

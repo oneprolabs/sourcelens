@@ -56,7 +56,11 @@ from lens.runtime_events import (
     sanitize_runtime_event,
     sanitize_termination_detail,
 )
-from lens.serializers import MessageSerializer, RunSerializer
+from lens.serializers import (
+    DataSourceSerializer,
+    MessageSerializer,
+    RunSerializer,
+)
 from lens.services import (
     AssistantNotRunnableError,
     LensNodeDispatchError,
@@ -3429,6 +3433,8 @@ class LensServiceTests(TransactionTestCase):
                 "status": "success",
                 "conversion_summary": {
                     "total": 3,
+                    "candidates": 3,
+                    "converted": 1,
                     "success": 1,
                     "failed": 1,
                     "skipped": 1,
@@ -3451,6 +3457,10 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(task.result["conversion_summary"]["failed"], 1)
         self.assertEqual(datasource.last_conversion_status, "SUCCESS")
         self.assertIsNotNone(datasource.last_conversion_at)
+        self.assertEqual(task.metadata["phase"], "COMPLETED")
+        self.assertEqual(task.metadata["overall_progress_percent"], 100)
+        self.assertEqual(task.metadata["phase_progress"]["unit"], "steps")
+        self.assertEqual(task.metadata["progress_counts"]["candidates"], 3)
 
     def test_lensnode_conversion_done_frame_completes_task(self):
         datasource = DataSource.objects.create(
@@ -3638,6 +3648,22 @@ class LensServiceTests(TransactionTestCase):
                 "progress_total": 3,
                 "progress_current": 1,
                 "progress_percent": 33,
+                "phase": "PARSING_DOCUMENTS",
+                "overall_progress_percent": 33,
+                "phase_progress": {
+                    "current": 1,
+                    "total": 3,
+                    "unit": "files",
+                },
+                "progress_counts": {
+                    "total": 3,
+                    "candidates": 3,
+                    "processed": 1,
+                    "converted": 1,
+                    "failed": 0,
+                    "skipped": 0,
+                    "unsupported": 0,
+                },
                 "summary": {
                     "total": 3,
                     "waiting": 1,
@@ -3655,9 +3681,21 @@ class LensServiceTests(TransactionTestCase):
         task = TaskExecution.objects.get(task_id="live-managed-conversion")
         summary = task.metadata["conversion_summary"]
         self.assertEqual(task.metadata["progress_percent"], 33)
+        self.assertEqual(task.metadata["phase"], "PARSING_DOCUMENTS")
+        self.assertEqual(task.metadata["overall_progress_percent"], 33)
+        self.assertEqual(
+            task.metadata["phase_progress"]["unit"],
+            "files",
+        )
+        self.assertEqual(task.metadata["progress_counts"]["processed"], 1)
+        self.assertIn("last_substantive_progress_at", task.metadata)
         self.assertEqual(summary["waiting"], 1)
         self.assertEqual(summary["active"], 1)
         self.assertEqual(summary["succeeded"], 1)
+        current_sync = DataSourceSerializer(datasource).data["current_sync"]
+        self.assertEqual(current_sync["phase"], "PARSING_DOCUMENTS")
+        self.assertEqual(current_sync["progress_counts"]["processed"], 1)
+        self.assertIsNotNone(current_sync["last_substantive_progress_at"])
 
     def test_source_sync_task_reuses_registered_task_id(self):
         task_id = "manual-sync"

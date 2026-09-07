@@ -338,7 +338,12 @@ const BASIC_METADATA_FIELDS = [
   'conversion',
   'conversion_enabled',
   'sync_policy',
-  'sync_interval_seconds'
+  'sync_interval_seconds',
+  'phase',
+  'overall_progress_percent',
+  'phase_progress',
+  'progress_counts',
+  'last_substantive_progress_at'
 ].join(',')
 
 function mapStatus(status) {

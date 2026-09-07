@@ -2183,7 +2183,10 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         task = (
             TaskExecution.objects.filter(
-                module="lens_datasource",
+                module__in=[
+                    "lens_datasource",
+                    "lens_datasource_conversion",
+                ],
                 metadata__datasource_uuid=str(datasource.uuid),
                 status__in=[
                     TaskStatus.PENDING,
@@ -2210,6 +2213,23 @@ class DataSourceSerializer(serializers.ModelSerializer):
             ),
             "progress_percent": (task.metadata or {}).get(
                 "progress_percent",
+                None,
+            ),
+            "phase": (task.metadata or {}).get("phase", ""),
+            "overall_progress_percent": (task.metadata or {}).get(
+                "overall_progress_percent",
+                None,
+            ),
+            "phase_progress": (task.metadata or {}).get(
+                "phase_progress",
+                {},
+            ),
+            "progress_counts": (task.metadata or {}).get(
+                "progress_counts",
+                {},
+            ),
+            "last_substantive_progress_at": (task.metadata or {}).get(
+                "last_substantive_progress_at",
                 None,
             ),
         }

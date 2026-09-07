@@ -239,6 +239,134 @@ def test_managed_conversion_batches_files_and_bounds_manifest_details(
     assert len(summary["items"]) <= 200
 
 
+def test_managed_conversion_reports_phase_aware_progress(tmp_path, monkeypatch):
+    """Managed conversion progress distinguishes phase and overall state."""
+
+    install_fake_markitdown(monkeypatch)
+    (tmp_path / "report.docx").write_bytes(b"document")
+    (tmp_path / "notes.bin").write_text("unsupported")
+    events = []
+
+    result = convert_managed_workspace(
+        conversion_command(tmp_path),
+        workspace_path=tmp_path.parent,
+        emit=events.append,
+    )
+
+    parsing = [
+        event
+        for event in events
+        if event.get("phase") == "PARSING_DOCUMENTS"
+    ][-1]
+    finalizing = events[-1]
+
+    assert result["status"] == "success"
+    assert parsing["phase_progress"] == {
+        "current": 1,
+        "total": 1,
+        "unit": "files",
+    }
+    assert parsing["overall_progress_percent"] < 100
+    assert parsing["progress_counts"] == {
+        "total": 2,
+        "candidates": 1,
+        "processed": 2,
+        "converted": 1,
+        "failed": 0,
+        "skipped": 0,
+        "unsupported": 1,
+    }
+    assert finalizing["phase"] == "FINALIZING"
+    assert finalizing["overall_progress_percent"] == 99
+
+
+def test_managed_conversion_reports_embedded_image_progress(
+    tmp_path,
+    monkeypatch,
+):
+    """Managed conversion emits image progress before its file completes."""
+
+    install_fake_markitdown(monkeypatch)
+    (tmp_path / "report.docx").write_bytes(b"document")
+
+    def convert_embedded_images(_path, context):
+        callback = context["on_conversion_progress"]
+        callback(
+            {
+                "stage": "recognizing_images",
+                "image_completed": 0,
+                "image_total": 2,
+            }
+        )
+        callback(
+            {
+                "stage": "recognizing_images",
+                "image_completed": 1,
+                "image_total": 2,
+            }
+        )
+        return {"markdown": "", "stats": {}, "cost": {}}
+
+    monkeypatch.setattr(
+        "lensnode.document_convert.convert_embedded_images",
+        convert_embedded_images,
+    )
+    command = conversion_command(tmp_path)
+    command["conversion"]["embedded_image"] = True
+    events = []
+
+    convert_managed_workspace(
+        command,
+        workspace_path=tmp_path.parent,
+        emit=events.append,
+    )
+
+    visual = [
+        event
+        for event in events
+        if event.get("phase") == "PROCESSING_EMBEDDED_IMAGES"
+    ]
+
+    assert len(visual) == 2
+    assert visual[-1]["phase_progress"] == {
+        "current": 1,
+        "total": 2,
+        "unit": "embedded_images",
+        "scope": "current_file",
+    }
+    assert visual[-1]["overall_progress_percent"] == 50
+    assert visual[-1]["progress_counts"]["processed"] == 0
+
+
+def test_managed_conversion_reports_discovery_heartbeat(tmp_path, monkeypatch):
+    """Managed conversion reports long file discovery before totals exist."""
+
+    install_fake_markitdown(monkeypatch)
+    for index in range(100):
+        (tmp_path / f"document-{index}.docx").write_bytes(b"document")
+    events = []
+
+    convert_managed_workspace(
+        conversion_command(tmp_path),
+        workspace_path=tmp_path.parent,
+        emit=events.append,
+    )
+
+    heartbeat = next(
+        event
+        for event in events
+        if event.get("step") == "conversion_discovery_progress"
+    )
+
+    assert heartbeat["phase"] == "DISCOVERING_FILES"
+    assert heartbeat["phase_progress"] == {
+        "current": 100,
+        "total": None,
+        "unit": "files",
+    }
+    assert heartbeat["progress_counts"]["total"] is None
+
+
 def test_managed_conversion_rejects_overlarge_workspace_manifest(tmp_path):
     """A configured workspace file budget fails before conversion starts."""
 

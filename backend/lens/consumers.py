@@ -593,6 +593,11 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "progress_total",
             "progress_current",
             "progress_percent",
+            "phase",
+            "overall_progress_percent",
+            "phase_progress",
+            "progress_counts",
+            "substantive_progress",
                     "conversion_summary",
                     "repository_summaries",
                     "failed_repositories",
@@ -615,6 +620,18 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             "progress_message": step["message"],
             "last_progress_at": step["timestamp"],
         }
+        for key in [
+            "phase",
+            "overall_progress_percent",
+            "phase_progress",
+            "progress_counts",
+        ]:
+            if key in content:
+                metadata_update[key] = content.get(key)
+        if content.get("substantive_progress"):
+            metadata_update["last_substantive_progress_at"] = step[
+                "timestamp"
+            ]
         is_conversion = (
             content.get("category") == "conversion"
             or str(content.get("step") or "").startswith("conversion")
