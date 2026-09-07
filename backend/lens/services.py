@@ -1278,6 +1278,7 @@ def _validated_routing_assistant_uuids(session, user, selected_uuids=None):
     allowed = smart_collaboration_assistants(
         user,
         session.allowed_assistant_uuids,
+        allow_empty=True,
     )
     allowed_ids = {str(item.uuid) for item in allowed}
     if selected_uuids is not None:

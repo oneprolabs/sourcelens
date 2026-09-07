@@ -107,11 +107,15 @@ class LensNodeExecutionQueue:
         request.admitted.set_result(None)
 
     def _admit_standard_waiters(self):
-        """Fill free standard slots without letting exclusive work block them."""
+        """Fill free standard slots until the next exclusive-work barrier."""
 
         waiting = collections.deque()
         while self._waiting:
             request = self._waiting.popleft()
+            if request.execution_class == ExecutionClass.EXCLUSIVE:
+                waiting.append(request)
+                waiting.extend(self._waiting)
+                break
             if (
                 request.execution_class == ExecutionClass.STANDARD
                 and self._active_standard < self.max_standard_concurrency
@@ -128,6 +132,10 @@ class LensNodeExecutionQueue:
         waiting = collections.deque()
         while self._waiting:
             request = self._waiting.popleft()
+            if request.execution_class == ExecutionClass.EXCLUSIVE:
+                waiting.append(request)
+                waiting.extend(self._waiting)
+                break
             if (
                 request.execution_class == ExecutionClass.DELEGATED
                 and self._active_delegated < self.max_delegated_concurrency

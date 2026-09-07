@@ -636,14 +636,20 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         ]:
             if key in content:
                 metadata_update[key] = content.get(key)
-        if content.get("substantive_progress"):
-            metadata_update["last_substantive_progress_at"] = step[
-                "timestamp"
-            ]
         is_conversion = (
             content.get("category") == "conversion"
             or str(content.get("step") or "").startswith("conversion")
         )
+        if content.get("substantive_progress") or (
+            is_conversion
+            and (
+                content.get("current_status") is not None
+                or content.get("progress_current")
+            )
+        ):
+            metadata_update["last_substantive_progress_at"] = step[
+                "timestamp"
+            ]
         if is_conversion:
             summary = LensNodeConsumer._merge_realtime_summary(
                 metadata.get("conversion_summary") or {},
