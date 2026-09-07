@@ -2,6 +2,7 @@ import json
 import mimetypes
 import time
 import zipfile
+from xml.etree import ElementTree
 from io import BytesIO
 from pathlib import Path
 
@@ -30,6 +31,7 @@ DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_MAX_PAGES = 500
 DEFAULT_IMAGE_JPEG_QUALITY = 82
 DEFAULT_IMAGE_MAX_DIMENSION = 1600
+DEFAULT_IMAGE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 DEFAULT_MIN_IMAGE_BYTES = 5 * 1024
 DEFAULT_MIN_IMAGE_DIMENSION = 64
 DEFAULT_PDF_MAX_IMAGES_PER_PAGE = 3
@@ -40,6 +42,8 @@ DEFAULT_PDF_RENDER_DPI = 144
 IMAGE_BLANK_VARIANCE_THRESHOLD = 8.0
 DEFAULT_TOKEN_CHARS = 4
 DETAIL_ITEMS_LIMIT = 200
+DEFAULT_MAX_SPREADSHEET_CELLS = 100000
+DEFAULT_MAX_SPREADSHEET_XML_BYTES = 50 * 1024 * 1024
 
 
 def _check_runtime_cancelled(context):
@@ -85,12 +89,14 @@ class ConversionOutput:
         cost=None,
         skipped=False,
         reason="",
+        warning="",
     ):
         self.text = text
         self.stats = stats or {}
         self.cost = cost or {}
         self.skipped = skipped
         self.reason = reason
+        self.warning = warning
 
 
 class BaseConverter:
@@ -140,6 +146,19 @@ class MarkItDownDocumentConverter(BaseConverter):
 
         _check_runtime_cancelled(context)
         _touch_runtime_activity(context)
+        stats = document_stats(path, context.get("conversion") or {})
+        if stats.get("warning"):
+            return ConversionOutput(
+                skipped=True,
+                reason=stats["warning"],
+                stats=stats,
+            )
+        if stats.get("truncated"):
+            return ConversionOutput(
+                skipped=True,
+                reason=stats["truncation_reason"],
+                stats=stats,
+            )
         try:
             from markitdown import MarkItDown
         except Exception as exc:
@@ -150,7 +169,6 @@ class MarkItDownDocumentConverter(BaseConverter):
         _touch_runtime_activity(context)
         text_content = getattr(result, "text_content", None)
         text = str(result) if text_content is None else text_content
-        stats = document_stats(path)
         cost = empty_cost_stats()
         image_context = document_image_context(context, path, text)
         embedded = convert_embedded_images(path, image_context)
@@ -167,7 +185,15 @@ class MarkItDownDocumentConverter(BaseConverter):
                 stats=stats,
                 cost=cost,
             )
-        return ConversionOutput(text=text, stats=stats, cost=cost)
+        warning = ""
+        if stats.get("visual_failures"):
+            warning = "DOCUMENT_TEXT_EXTRACTED_WITH_VISUAL_FAILURE"
+        return ConversionOutput(
+            text=text,
+            stats=stats,
+            cost=cost,
+            warning=warning,
+        )
 
     def version(self):
         """Return MarkItDown version metadata."""
@@ -480,6 +506,8 @@ def post_process_documents(context, sync_result, emit=None):
                 )
                 merge_summary_stats(summary, result.get("stats") or {})
                 merge_cost_stats(summary["cost"], result.get("cost") or {})
+                if result.get("warning"):
+                    warnings.append(result["warning"])
         except Exception as exc:
             from .gateway_model import RunCancelledError
 
@@ -539,6 +567,9 @@ def conversion_error_reason(exc):
         return "PASSWORD_PROTECTED"
     if "EMPTY" in message or "NO EXTRACTABLE" in message:
         return "NO_EXTRACTABLE_TEXT"
+    visual_reason = visual_error_reason(exc)
+    if visual_reason != "VISUAL_RETRY_EXHAUSTED":
+        return visual_reason
     return "CONVERSION_FILE_FAILED"
 
 
@@ -871,6 +902,7 @@ def convert_one(target, path, item, context):
         "images_recognized": images_recognized,
         "stats": stats,
         "cost": cost,
+        "warning": output.warning,
     }
 
 
@@ -886,12 +918,22 @@ def conversion_limits(conversion):
     }
 
 
-def document_stats(path):
+def document_stats(path, conversion=None):
     """Return document-specific conversion stats."""
 
     suffix = Path(path).suffix.lower()
     if suffix == ".xlsx":
-        return xlsx_stats(path)
+        return xlsx_stats(
+            path,
+            max_cells=int(
+                (conversion or {}).get("max_spreadsheet_cells")
+                or DEFAULT_MAX_SPREADSHEET_CELLS
+            ),
+            max_xml_bytes=int(
+                (conversion or {}).get("max_spreadsheet_xml_bytes")
+                or DEFAULT_MAX_SPREADSHEET_XML_BYTES
+            ),
+        )
     return {"pages": 0}
 
 
@@ -914,48 +956,209 @@ def pdf_page_count(path):
         return 0
 
 
-def xlsx_stats(path):
-    """Return XLSX workbook stats when openpyxl is available."""
+def xlsx_stats(
+    path,
+    max_cells=DEFAULT_MAX_SPREADSHEET_CELLS,
+    max_xml_bytes=DEFAULT_MAX_SPREADSHEET_XML_BYTES,
+):
+    """Return bounded XLSX ranges based on non-empty cells and formulas."""
 
+    sheets = []
+    total_rows = 0
+    max_columns = 0
+    effective_cells = 0
+    scanned_cells = 0
+    xml_bytes = 0
+    truncated = False
     try:
-        from openpyxl import load_workbook
-    except Exception:
+        with zipfile.ZipFile(path) as archive:
+            worksheet_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith("xl/worksheets/") and name.endswith(".xml")
+            )
+            for name in worksheet_names:
+                info = archive.getinfo(name)
+                if info.file_size > max(max_xml_bytes - xml_bytes, 0):
+                    sheets.append(
+                        xlsx_truncated_sheet_stats(name, info.file_size)
+                    )
+                    truncated = True
+                    break
+                xml_bytes += info.file_size
+                sheet = xlsx_sheet_stats(
+                    archive,
+                    name,
+                    max(max_cells - scanned_cells, 0),
+                )
+                sheets.append(sheet)
+                total_rows += int(sheet["rows"])
+                max_columns = max(max_columns, int(sheet["columns"]))
+                effective_cells += int(sheet["effective_cells"])
+                scanned_cells += int(sheet["scanned_cells"])
+                if sheet["truncated"]:
+                    truncated = True
+                    break
+    except (OSError, zipfile.BadZipFile, ElementTree.ParseError):
         return {
             "xlsx_files": 1,
             "sheets": 0,
             "rows": 0,
             "columns": 0,
             "truncated": False,
-            "warning": "OPENPYXL_NOT_AVAILABLE",
+            "warning": "SPREADSHEET_PARSE_FAILED",
         }
-
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    sheets = []
-    total_rows = 0
-    max_columns = 0
-    try:
-        for sheet in workbook.worksheets:
-            rows = int(sheet.max_row or 0)
-            columns = int(sheet.max_column or 0)
-            total_rows += rows
-            max_columns = max(max_columns, columns)
-            sheets.append(
-                {
-                    "name": sheet.title,
-                    "rows": rows,
-                    "columns": columns,
-                }
-            )
-    finally:
-        workbook.close()
-    return {
+    result = {
         "xlsx_files": 1,
         "sheets": len(sheets),
         "rows": total_rows,
         "columns": max_columns,
+        "effective_cells": effective_cells,
+        "scanned_cells": scanned_cells,
+        "xml_bytes": xml_bytes,
         "sheet_stats": sheets,
-        "truncated": False,
+        "truncated": truncated,
     }
+    if len(sheets) == 1:
+        result["detected_range"] = sheets[0]["detected_range"]
+        result["effective_range"] = sheets[0]["effective_range"]
+    if truncated:
+        result["truncation_reason"] = xlsx_truncation_reason(sheets)
+    return result
+
+
+def xlsx_sheet_stats(archive, name, remaining_cells):
+    """Inspect one worksheet XML stream without trusting dimension metadata."""
+
+    detected_range = ""
+    minimum_row = None
+    maximum_row = 0
+    minimum_column = None
+    maximum_column = 0
+    effective_cells = 0
+    scanned_cells = 0
+    truncated = False
+    with archive.open(name) as source:
+        events = ("start", "end")
+        for event, element in ElementTree.iterparse(source, events=events):
+            tag = element.tag.rsplit("}", 1)[-1]
+            if event == "start" and tag == "dimension":
+                detected_range = element.attrib.get("ref") or ""
+            if event != "end" or tag != "c":
+                continue
+            scanned_cells += 1
+            if scanned_cells > remaining_cells:
+                truncated = True
+                element.clear()
+                break
+            if xlsx_cell_has_content(element):
+                effective_cells += 1
+                reference = element.attrib.get("r") or ""
+                row, column = xlsx_cell_coordinates(reference)
+                if row and column:
+                    minimum_row = (
+                        row if minimum_row is None else min(minimum_row, row)
+                    )
+                    maximum_row = max(maximum_row, row)
+                    minimum_column = (
+                        column
+                        if minimum_column is None
+                        else min(minimum_column, column)
+                    )
+                    maximum_column = max(maximum_column, column)
+            element.clear()
+    return {
+        "name": Path(name).stem,
+        "detected_range": detected_range,
+        "effective_range": xlsx_range(
+            minimum_row,
+            minimum_column,
+            maximum_row,
+            maximum_column,
+        ),
+        "rows": max(0, maximum_row - (minimum_row or maximum_row) + 1),
+        "columns": max(
+            0,
+            maximum_column - (minimum_column or maximum_column) + 1,
+        ),
+        "effective_cells": effective_cells,
+        "scanned_cells": scanned_cells,
+        "truncated": truncated,
+    }
+
+
+def xlsx_truncated_sheet_stats(name, xml_bytes):
+    """Return a spreadsheet summary truncated before XML expansion."""
+
+    return {
+        "name": Path(name).stem,
+        "detected_range": "",
+        "effective_range": "",
+        "rows": 0,
+        "columns": 0,
+        "effective_cells": 0,
+        "scanned_cells": 0,
+        "xml_bytes": xml_bytes,
+        "truncation_reason": "SPREADSHEET_XML_BUDGET_EXCEEDED",
+        "truncated": True,
+    }
+
+
+def xlsx_truncation_reason(sheets):
+    """Return the first deterministic workbook truncation reason."""
+
+    for sheet in sheets:
+        reason = sheet.get("truncation_reason")
+        if reason:
+            return reason
+    return "SPREADSHEET_CELL_BUDGET_EXCEEDED"
+
+
+def xlsx_cell_has_content(element):
+    """Return whether a worksheet cell has a value, string, or formula."""
+
+    return any(
+        child.tag.rsplit("}", 1)[-1] in {"v", "f", "is"}
+        for child in element
+    )
+
+
+def xlsx_cell_coordinates(reference):
+    """Return one A1 cell reference as numeric row and column coordinates."""
+
+    letters = "".join(
+        character for character in reference if character.isalpha()
+    )
+    digits = "".join(
+        character for character in reference if character.isdigit()
+    )
+    if not letters or not digits:
+        return 0, 0
+    column = 0
+    for character in letters.upper():
+        column = column * 26 + ord(character) - ord("A") + 1
+    return int(digits), column
+
+
+def xlsx_column_name(column):
+    """Return the Excel column name for a positive numeric column index."""
+
+    name = ""
+    while column:
+        column, remainder = divmod(column - 1, 26)
+        name = chr(ord("A") + remainder) + name
+    return name
+
+
+def xlsx_range(minimum_row, minimum_column, maximum_row, maximum_column):
+    """Return an A1 range for effective worksheet cells."""
+
+    if not minimum_row or not minimum_column:
+        return ""
+    return (
+        f"{xlsx_column_name(minimum_column)}{minimum_row}:"
+        f"{xlsx_column_name(maximum_column)}{maximum_row}"
+    )
 
 
 def estimate_tokens(text):
@@ -1066,6 +1269,18 @@ def conversion_fingerprint(path, digest, context):
             "image_max_dimension": int(
                 conversion.get("image_max_dimension")
                 or DEFAULT_IMAGE_MAX_DIMENSION
+            ),
+            "image_max_upload_bytes": int(
+                conversion.get("image_max_upload_bytes")
+                or DEFAULT_IMAGE_MAX_UPLOAD_BYTES
+            ),
+            "max_spreadsheet_cells": int(
+                conversion.get("max_spreadsheet_cells")
+                or DEFAULT_MAX_SPREADSHEET_CELLS
+            ),
+            "max_spreadsheet_xml_bytes": int(
+                conversion.get("max_spreadsheet_xml_bytes")
+                or DEFAULT_MAX_SPREADSHEET_XML_BYTES
             ),
             "min_image_bytes": int(
                 conversion.get("min_image_bytes") or DEFAULT_MIN_IMAGE_BYTES
@@ -1271,11 +1486,22 @@ def convert_one_embedded_image(source_path, assets_dir, name, raw, context):
             "cost": empty_cost_stats(),
         }
 
-    content, usage = describe_image_bytes(
-        prepared["bytes"],
-        prepared["mime_type"],
-        context,
-    )
+    try:
+        content, usage = describe_image_bytes(
+            prepared["bytes"],
+            prepared["mime_type"],
+            context,
+        )
+    except Exception as exc:
+        reason = visual_error_reason(exc)
+        return {
+            "description": "",
+            "reason": reason,
+            "stats": embedded_image_skip_stats(
+                {"reason": reason, "stats": {}}
+            ),
+            "cost": empty_cost_stats(),
+        }
     stats = {
         **(prepared.get("stats") or {}),
         "embedded_images_recognized": 1 if content else 0,
@@ -1303,6 +1529,9 @@ def embedded_image_skip_stats(prepared):
         stats["embedded_images_blank"] = 1
     if reason == "IMAGE_DUPLICATE":
         stats["embedded_images_duplicate"] = 1
+    if reason.startswith("VISUAL_"):
+        stats["visual_failures"] = int(stats.get("visual_failures") or 0) + 1
+        stats["visual_failure_codes"] = [reason]
     return stats
 
 
@@ -1319,8 +1548,17 @@ def merge_embedded_image_stats(target, source):
         "images_duplicate",
         "images_compressed",
         "images_recognized",
+        "visual_failures",
     ]:
         target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
+    target["visual_failure_codes"] = list(
+        dict.fromkeys(
+            [
+                *(target.get("visual_failure_codes") or []),
+                *(source.get("visual_failure_codes") or []),
+            ]
+        )
+    )
 
 
 def embedded_images_markdown(items):
@@ -1650,11 +1888,19 @@ def convert_pdf_image_bytes(source_path, assets_dir, name, raw, context, meta):
             meta,
         )
 
-    content, usage = describe_image_bytes(
-        prepared["bytes"],
-        prepared["mime_type"],
-        context,
-    )
+    try:
+        content, usage = describe_image_bytes(
+            prepared["bytes"],
+            prepared["mime_type"],
+            context,
+        )
+    except Exception as exc:
+        return pdf_skipped_result(
+            int(meta.get("page") or 0) - 1,
+            visual_error_reason(exc),
+            {},
+            meta,
+        )
     stats = {
         **(prepared.get("stats") or {}),
         "images_recognized": 1 if content else 0,
@@ -1684,6 +1930,9 @@ def pdf_skipped_result(page_index, reason, stats=None, meta=None):
         int(stats.get("pdf_images_skipped") or 0),
     )
     stats["images_skipped"] = max(1, int(stats.get("images_skipped") or 0))
+    if reason.startswith("VISUAL_"):
+        stats["visual_failures"] = int(stats.get("visual_failures") or 0) + 1
+        stats["visual_failure_codes"] = [reason]
     return {
         "source": (meta or {}).get("source") or f"page={page_index + 1}",
         "asset": "",
@@ -1709,8 +1958,17 @@ def merge_pdf_item_stats(target, source):
         "images_blank",
         "images_duplicate",
         "images_compressed",
+        "visual_failures",
     ]:
         target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
+    target["visual_failure_codes"] = list(
+        dict.fromkeys(
+            [
+                *(target.get("visual_failure_codes") or []),
+                *(source.get("visual_failure_codes") or []),
+            ]
+        )
+    )
 
 
 def pdf_images_markdown(items):
@@ -1855,7 +2113,28 @@ def optimize_image_for_model(image, context, path):
     elif len(data) < len(original_data) or resized:
         stats["images_compressed"] = 1
     stats["image_upload_bytes"] = len(data)
+    max_upload_bytes = int(
+        conversion.get("image_max_upload_bytes")
+        or DEFAULT_IMAGE_MAX_UPLOAD_BYTES
+    )
+    if len(data) > max_upload_bytes:
+        return {
+            "skipped": True,
+            "reason": "VISUAL_PAYLOAD_TOO_LARGE",
+            "stats": image_skip_stats("VISUAL_PAYLOAD_TOO_LARGE"),
+        }
     return {"bytes": data, "mime_type": mime_type, "stats": stats}
+
+
+def visual_error_reason(exc):
+    """Return a safe, actionable code for an image gateway failure."""
+
+    message = str(exc or "").upper()
+    if "413" in message or "REQUEST ENTITY TOO LARGE" in message:
+        return "VISUAL_PAYLOAD_TOO_LARGE"
+    if "504" in message or "GATEWAY TIME" in message:
+        return "VISUAL_UPSTREAM_TIMEOUT"
+    return "VISUAL_RETRY_EXHAUSTED"
 
 
 def describe_image_file(path, context):
