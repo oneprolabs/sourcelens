@@ -15,7 +15,13 @@ from lens.datasource_services import (
     DataSourcePathError,
     check_datasource_path,
 )
-from lens.models import DataSource, ScheduledTask
+from lens.models import (
+    CredentialLease,
+    DataSource,
+    ExecutionSnapshot,
+    PluginInvocation,
+    ScheduledTask,
+)
 from lens.plugins.datasource_access import (
     datasource_access_failure_detail,
     validate_connection_datasource_access,
@@ -164,6 +170,43 @@ class DataSourceViewSet(BaseAdminViewSet):
         if task_id and isinstance(response.data, dict):
             response.data["initial_sync_task_id"] = task_id
         return response
+
+    def perform_destroy(self, instance):
+        """Delete datasource audit records before the catalog row."""
+
+        from django_celery_beat.models import PeriodicTask, PeriodicTasks
+
+        with transaction.atomic():
+            snapshot_ids = list(
+                ExecutionSnapshot.objects.filter(
+                    datasource=instance,
+                ).values_list("id", flat=True)
+            )
+            if snapshot_ids:
+                CredentialLease.objects.filter(
+                    snapshot_id__in=snapshot_ids,
+                ).delete()
+                PluginInvocation.objects.filter(
+                    snapshot_id__in=snapshot_ids,
+                ).delete()
+                ExecutionSnapshot.objects.filter(
+                    id__in=snapshot_ids,
+                ).delete()
+            PluginInvocation.objects.filter(datasource=instance).delete()
+
+            periodic_name = f"lens-source-sync-{instance.uuid}"
+            periodic_deleted, _ = PeriodicTask.objects.filter(
+                name=periodic_name,
+            ).delete()
+            ScheduledTask.objects.filter(
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=instance.uuid,
+            ).delete()
+            if periodic_deleted:
+                PeriodicTasks.update_changed()
+
+            instance.delete()
 
     def perform_create(self, serializer):
         """Create datasource, register schedule, and enqueue initial sync."""

@@ -38,18 +38,24 @@ from lens.models import (
     AssistantAccess,
     AssistantMCP,
     AssistantSkill,
+    Connection,
+    CredentialLease,
     DataSource,
     DataSourceCredential,
     EnvironmentVariableSet,
+    ExecutionSnapshot,
     GlobalSetting,
     LensNode,
     MCPServer,
     MessageAttachment,
+    PluginInvocation,
     Run,
     RunExecution,
     RunStep,
     ScheduledTask,
     Session,
+    SecretMaterial,
+    SecretVersion,
     SharedQA,
     Skill,
 )
@@ -6086,6 +6092,71 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(DataSource.objects.filter(pk=datasource.pk).exists())
         send.assert_not_called()
+
+    def test_datasource_delete_cleans_plugin_audit_records(self):
+        material = SecretMaterial.objects.create(name="Datasource PAT")
+        version = SecretVersion.objects.create(
+            material=material,
+            encrypted_value="encrypted",
+        )
+        connection_obj = Connection.objects.create(
+            name="Datasource GitHub",
+            plugin_key="github",
+            endpoint="https://github.com",
+            secret_version=version,
+        )
+        self.datasource.connection = connection_obj
+        self.datasource.plugin_key = "github"
+        self.datasource.save(update_fields=["connection", "plugin_key"])
+        snapshot = ExecutionSnapshot.objects.create(
+            kind=ExecutionSnapshot.Kind.DATASOURCE_SYNC,
+            connection=connection_obj,
+            datasource=self.datasource,
+            secret_version=version,
+            plugin_key="github",
+            plugin_version="1.0.0",
+            protocol_version=1,
+        )
+        invocation = PluginInvocation.objects.create(
+            snapshot=snapshot,
+            connection=connection_obj,
+            datasource=self.datasource,
+            lensnode=self.lensnode,
+            kind=ExecutionSnapshot.Kind.DATASOURCE_SYNC,
+            plugin_key="github",
+        )
+        lease = CredentialLease.objects.create(
+            snapshot=snapshot,
+            lensnode=self.lensnode,
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+        schedule = ScheduledTask.objects.create(
+            name=f"source_sync:{self.datasource.uuid}",
+            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+        )
+
+        response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            DataSource.objects.filter(pk=self.datasource.pk).exists()
+        )
+        self.assertFalse(
+            ExecutionSnapshot.objects.filter(pk=snapshot.pk).exists()
+        )
+        self.assertFalse(
+            PluginInvocation.objects.filter(pk=invocation.pk).exists()
+        )
+        self.assertFalse(
+            CredentialLease.objects.filter(pk=lease.pk).exists()
+        )
+        self.assertFalse(
+            ScheduledTask.objects.filter(pk=schedule.pk).exists()
+        )
 
     def test_datasource_manual_sync_registers_task(self):
         with patch(
