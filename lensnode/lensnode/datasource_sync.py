@@ -1487,7 +1487,7 @@ def _sync_git(command, workspace_path, emit):
 
     config = command.get("config") or {}
     if config.get("scope_type") == "organization" or config.get("repositories"):
-        return _sync_git_organization(command, workspace_path, emit)
+        return _sync_git_repositories(command, workspace_path, emit)
 
     repo_url = config.get("repo_url")
     if not repo_url:
@@ -1628,8 +1628,8 @@ def _sync_git(command, workspace_path, emit):
     }
 
 
-def _sync_git_organization(command, workspace_path, emit):
-    """Synchronize multiple Git repositories under one datasource root."""
+def _sync_git_repositories(command, workspace_path, emit):
+    """Synchronize Git repositories under one datasource root."""
 
     config = command.get("config") or {}
     repositories = [
@@ -1641,14 +1641,33 @@ def _sync_git_organization(command, workspace_path, emit):
 
     root = normalize_target_path(command.get("target_path"), workspace_path)
     root.mkdir(parents=True, exist_ok=True)
-    repository_names = {
-        repo_target_subdir(repository) for repository in repositories
-    }
-    _cleanup_removed_git_repositories(
-        root,
-        repository_names,
-        command.get("datasource_uuid"),
-    )
+    repository_targets = [
+        (
+            repository,
+            *_resolve_git_repository_target(
+                root,
+                repository,
+                command.get("datasource_uuid"),
+                single_repository=len(repositories) == 1,
+            ),
+        )
+        for repository in repositories
+    ]
+    target_paths = [
+        target for _repository, _identity, target in repository_targets
+    ]
+    if len(set(target_paths)) != len(target_paths):
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+    if root.resolve() not in target_paths:
+        repository_names = {
+            target.relative_to(root.resolve()).as_posix()
+            for target in target_paths
+        }
+        _cleanup_removed_git_repositories(
+            root,
+            repository_names,
+            command.get("datasource_uuid"),
+        )
     totals = {
         "synced": 0,
         "files": 0,
@@ -1679,16 +1698,21 @@ def _sync_git_organization(command, workspace_path, emit):
         progress_percent=0,
         summary=totals,
     )
-    for index, repository in enumerate(repositories, start=1):
-        name = repo_target_subdir(repository)
-        repo_target = root / name
+    for index, (repository, identity, repo_target) in enumerate(
+        repository_targets,
+        start=1,
+    ):
+        relative_target = repo_target.relative_to(root.resolve()).as_posix()
+        path_prefix = "" if relative_target == "." else relative_target
         repo_command = {
             **command,
             "target_path": str(repo_target),
             "config": {
                 **config,
                 "repo_url": repository.get("repo_url") or "",
-                "branch": repository.get("branch") or config.get("branch") or "",
+                "branch": (
+                    repository.get("branch") or config.get("branch") or ""
+                ),
             },
         }
         repo_command["config"].pop("repositories", None)
@@ -1697,15 +1721,15 @@ def _sync_git_organization(command, workspace_path, emit):
             emit,
             "repository_started",
             "running",
-            f"Synchronizing Git repository {name}.",
+            f"Synchronizing Git repository {identity}.",
             category="repository",
             progress_total=total,
             progress_current=index - 1,
             progress_percent=int(((index - 1) / total) * 100),
-            current_file=name,
+            current_file=identity,
         )
         repository_event_status = "done"
-        repository_event_message = f"Finished Git repository {name}."
+        repository_event_message = f"Finished Git repository {identity}."
         repository_event_error = ""
         try:
             result = _sync_git(repo_command, workspace_path, emit)
@@ -1720,14 +1744,14 @@ def _sync_git_organization(command, workspace_path, emit):
                 repo_changed,
                 repo_deleted,
             )
-            prefixed_items = _prefix_sync_items(repo_items, name)
+            prefixed_items = _prefix_sync_items(repo_items, path_prefix)
             sync_items.extend(prefixed_items)
-            changed_paths.extend(_prefix_paths(repo_changed, name))
-            deleted_paths.extend(_prefix_paths(repo_deleted, name))
+            changed_paths.extend(_prefix_paths(repo_changed, path_prefix))
+            deleted_paths.extend(_prefix_paths(repo_deleted, path_prefix))
             _merge_git_summary(totals, result)
             totals["synced"] += 1
             repository_summaries.append(
-                _repository_summary(name, repository, "success", result)
+                _repository_summary(identity, repository, "success", result)
             )
         except Exception as exc:
             if str(exc) == "LENS_SOURCE_SYNC_CANCELLED":
@@ -1736,10 +1760,10 @@ def _sync_git_organization(command, workspace_path, emit):
             repository_event_status = "failed"
             repository_event_error = str(exc)
             repository_event_message = (
-                f"Failed Git repository {name}: {repository_event_error}"
+                f"Failed Git repository {identity}: {repository_event_error}"
             )
             failure = _repository_summary(
-                name,
+                identity,
                 repository,
                 "failed",
                 {"error": str(exc)},
@@ -1756,7 +1780,7 @@ def _sync_git_organization(command, workspace_path, emit):
             progress_current=index,
             progress_percent=int((index / total) * 100),
             summary=totals,
-            current_file=name,
+            current_file=identity,
             error=repository_event_error,
         )
 
@@ -1776,7 +1800,7 @@ def _sync_git_organization(command, workspace_path, emit):
 
 
 def repo_target_subdir(repository):
-    """Return a stable target subdirectory for a repository item."""
+    """Return a safe repository identity path below a datasource root."""
 
     raw = (
         repository.get("target_subdir")
@@ -1785,35 +1809,155 @@ def repo_target_subdir(repository):
         or _repo_name_from_url(repository.get("repo_url") or "")
         or "repository"
     )
-    return safe_filename(str(raw).strip()) or "repository"
+    value = str(raw).strip()
+    if not value or value.startswith("/") or "\\" in value:
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+    parts = value.split("/")
+    if any(
+        not part
+        or part in {".", ".."}
+        or safe_filename(part) != part
+        for part in parts
+    ):
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+    return "/".join(parts)
+
+
+def _resolve_git_repository_target(
+    root,
+    repository,
+    datasource_uuid,
+    *,
+    single_repository,
+):
+    """Return the canonical identity and compatible on-disk target."""
+
+    root = Path(root).resolve()
+    identity = repo_target_subdir(repository)
+    canonical = (root / identity).resolve()
+    try:
+        canonical.relative_to(root)
+    except ValueError as exc:
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID") from exc
+    if canonical.exists():
+        return identity, canonical
+
+    legacy_candidates = []
+    if single_repository:
+        legacy_candidates.append(root)
+    legacy_candidates.extend(
+        [
+            root / parse.quote(identity, safe=""),
+            root / safe_filename(identity),
+            root / identity.rsplit("/", 1)[-1],
+        ]
+    )
+    seen = set()
+    for candidate in legacy_candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _is_compatible_git_repository(
+            candidate,
+            datasource_uuid,
+            repository.get("repo_url") or "",
+        ):
+            return identity, candidate
+    if single_repository and (root / manifest_store.MANIFEST_FILE).is_file():
+        raise DataSourceSyncError(
+            "LENS_SOURCE_GIT_LAYOUT_MIGRATION_REQUIRED"
+        )
+    return identity, canonical
+
+
+def _is_owned_git_repository(path, datasource_uuid):
+    """Return whether a Git directory marker belongs to the datasource."""
+
+    path = Path(path)
+    marker = path / manifest_store.MARKER_FILE
+    if not (path / ".git").exists() or not marker.is_file():
+        return False
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return str(payload.get("datasource_uuid") or "") == str(
+        datasource_uuid or ""
+    )
+
+
+def _is_compatible_git_repository(path, datasource_uuid, repo_url):
+    """Return whether an existing Git directory is safe to reuse."""
+
+    path = Path(path)
+    if not (path / ".git").exists():
+        return False
+    marker = path / manifest_store.MARKER_FILE
+    if marker.exists():
+        return _is_owned_git_repository(path, datasource_uuid)
+    if not repo_url:
+        return False
+    remote_url = _git_output(["remote", "get-url", "origin"], cwd=path)
+    return bool(remote_url) and _normalize_repo_url(
+        remote_url
+    ) == _normalize_repo_url(repo_url)
 
 
 def _cleanup_removed_git_repositories(root, repository_names, datasource_uuid):
-    """Remove child repositories no longer configured for a datasource."""
+    """Remove owned repositories no longer configured for a datasource."""
 
     datasource_uuid = str(datasource_uuid or "")
     if not datasource_uuid:
         return []
-    removed = []
-    for child in sorted(Path(root).iterdir(), key=lambda item: item.name):
-        if (
-            not child.is_dir()
-            or child.is_symlink()
-            or child.name in repository_names
-        ):
+    root = Path(root).resolve()
+    if (root / ".git").exists():
+        return []
+    stale = []
+    for current, dirnames, filenames in os.walk(root):
+        current = Path(current)
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if name != ".git" and not (current / name).is_symlink()
+        )
+        if current == root:
             continue
-        marker = child / manifest_store.MARKER_FILE
-        if not marker.is_file():
+        if manifest_store.MARKER_FILE not in filenames:
+            if (current / ".git").exists():
+                dirnames[:] = []
             continue
+        dirnames[:] = []
+        marker = current / manifest_store.MARKER_FILE
         try:
             marker_payload = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if str(marker_payload.get("datasource_uuid") or "") != datasource_uuid:
             continue
-        shutil.rmtree(child)
-        removed.append(child.name)
+        name = current.relative_to(root).as_posix()
+        if name not in repository_names:
+            stale.append((name, current))
+
+    removed = []
+    for name, path in sorted(stale, key=lambda item: item[0]):
+        shutil.rmtree(path)
+        _remove_empty_git_namespace_dirs(path.parent, root)
+        removed.append(name)
     return removed
+
+
+def _remove_empty_git_namespace_dirs(path, root):
+    """Remove empty repository namespace directories below the root."""
+
+    path = Path(path)
+    root = Path(root)
+    while path != root:
+        try:
+            path.rmdir()
+        except OSError:
+            return
+        path = path.parent
 
 
 def _write_git_repository_manifest(
@@ -1838,6 +1982,8 @@ def _write_git_repository_manifest(
 
 
 def _prefix_sync_items(items, prefix):
+    if not prefix:
+        return list(items or [])
     result = []
     for item in items or []:
         local_path = f"{prefix}/{item.local_path}"
@@ -1860,6 +2006,8 @@ def _prefix_sync_items(items, prefix):
 
 
 def _prefix_paths(paths, prefix):
+    if not prefix:
+        return list(paths or [])
     return [f"{prefix}/{path}" for path in paths or []]
 
 

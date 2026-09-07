@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import subprocess
 import zipfile
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from threading import Event
@@ -33,9 +34,12 @@ from lensnode.datasource_sync import (
     _manifest_item_to_sync_item,
     _poll_feishu_export_task,
     _raise_feishu_business_error,
+    _resolve_git_repository_target,
+    repo_target_subdir,
     _sync_git,
     _sync_git_submodules,
     _sync_feishu_folder,
+    sync_datasource,
     upload_managed_workspace,
 )
 from lensnode.path_rules import source_sha256
@@ -245,15 +249,15 @@ def test_default_git_branch_prefers_main():
 def test_cleanup_removed_git_repositories_keeps_current_and_foreign(tmp_path):
     """Only stale child repositories owned by this datasource are removed."""
 
-    stale = tmp_path / "team%2Fstale"
-    current = tmp_path / "team%2Fcurrent"
-    foreign = tmp_path / "team%2Fforeign"
+    stale = tmp_path / "team" / "stale"
+    current = tmp_path / "team" / "current"
+    foreign = tmp_path / "other" / "foreign"
     for child, datasource_uuid in [
         (stale, "datasource-1"),
         (current, "datasource-1"),
         (foreign, "datasource-2"),
     ]:
-        child.mkdir()
+        child.mkdir(parents=True)
         (child / MARKER_FILE).write_text(
             json.dumps({"datasource_uuid": datasource_uuid}),
             encoding="utf-8",
@@ -261,14 +265,226 @@ def test_cleanup_removed_git_repositories_keeps_current_and_foreign(tmp_path):
 
     removed = _cleanup_removed_git_repositories(
         tmp_path,
-        {"team%2Fcurrent"},
+        {"team/current"},
         "datasource-1",
     )
 
-    assert removed == ["team%2Fstale"]
+    assert removed == ["team/stale"]
     assert not stale.exists()
     assert current.exists()
     assert foreign.exists()
+
+
+def test_repo_target_subdir_preserves_safe_resource_path():
+    assert repo_target_subdir({"target_subdir": "group/team/repo"}) == (
+        "group/team/repo"
+    )
+
+
+@pytest.mark.parametrize(
+    "target_subdir",
+    ["/absolute/repo", "../escape", "group//repo", "group/./repo"],
+)
+def test_repo_target_subdir_rejects_unsafe_resource_path(target_subdir):
+    with pytest.raises(
+        DataSourceSyncError,
+        match="LENS_SOURCE_CONFIG_INVALID",
+    ):
+        repo_target_subdir({"target_subdir": target_subdir})
+
+
+def test_repository_target_reuses_owned_legacy_encoded_path(tmp_path):
+    legacy = tmp_path / "group%2Frepo"
+    (legacy / ".git").mkdir(parents=True)
+    (legacy / MARKER_FILE).write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {"target_subdir": "group/repo"},
+        "datasource-1",
+        single_repository=False,
+    )
+
+    assert identity == "group/repo"
+    assert target == legacy.resolve()
+
+
+def test_repository_target_reuses_unmarked_matching_legacy_repo(
+    tmp_path,
+    monkeypatch,
+):
+    legacy = tmp_path / "group%2Frepo"
+    (legacy / ".git").mkdir(parents=True)
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._git_output",
+        lambda *args, **kwargs: "https://git.example.com/group/repo.git",
+    )
+
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {
+            "repo_url": "https://git.example.com/group/repo.git",
+            "target_subdir": "group/repo",
+        },
+        "datasource-1",
+        single_repository=False,
+    )
+
+    assert identity == "group/repo"
+    assert target == legacy.resolve()
+
+
+def test_repository_target_does_not_reuse_foreign_marked_repo(
+    tmp_path,
+    monkeypatch,
+):
+    legacy = tmp_path / "group%2Frepo"
+    (legacy / ".git").mkdir(parents=True)
+    (legacy / MARKER_FILE).write_text(
+        json.dumps({"datasource_uuid": "datasource-2"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._git_output",
+        lambda *args, **kwargs: "https://git.example.com/group/repo.git",
+    )
+
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {
+            "repo_url": "https://git.example.com/group/repo.git",
+            "target_subdir": "group/repo",
+        },
+        "datasource-1",
+        single_repository=False,
+    )
+
+    assert identity == "group/repo"
+    assert target == (tmp_path / "group" / "repo").resolve()
+
+
+def test_repository_target_reuses_owned_single_repository_root(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / MARKER_FILE).write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {"target_subdir": "group/repo"},
+        "datasource-1",
+        single_repository=True,
+    )
+
+    assert identity == "group/repo"
+    assert target == tmp_path.resolve()
+
+
+def test_repository_target_reuses_owned_legacy_leaf_path(tmp_path):
+    legacy = tmp_path / "repo"
+    (legacy / ".git").mkdir(parents=True)
+    (legacy / MARKER_FILE).write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {"target_subdir": "group/repo"},
+        "datasource-1",
+        single_repository=True,
+    )
+
+    assert identity == "group/repo"
+    assert target == legacy.resolve()
+
+
+def test_repository_target_uses_canonical_path_for_new_repository(tmp_path):
+    identity, target = _resolve_git_repository_target(
+        tmp_path,
+        {"target_subdir": "group/team/repo"},
+        "datasource-1",
+        single_repository=True,
+    )
+
+    assert identity == "group/team/repo"
+    assert target == (tmp_path / "group" / "team" / "repo").resolve()
+
+
+def test_repository_target_blocks_unrecognized_existing_single_layout(tmp_path):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1", "items": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DataSourceSyncError,
+        match="LENS_SOURCE_GIT_LAYOUT_MIGRATION_REQUIRED",
+    ):
+        _resolve_git_repository_target(
+            tmp_path,
+            {"target_subdir": "group/repo"},
+            "datasource-1",
+            single_repository=True,
+        )
+
+
+def test_new_git_datasource_syncs_to_canonical_resource_path(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init"], cwd=source, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=source,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=source,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "branch", "-M", "main"],
+        cwd=source,
+        check=True,
+    )
+    (source / "README.md").write_text("hello", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=source, check=True)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "datasource"
+    result = sync_datasource(
+        {
+            "source_type": "git",
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {
+                        "repo_url": str(source),
+                        "branch": "main",
+                        "target_subdir": "group/repo",
+                    }
+                ]
+            },
+        },
+        workspace_path=workspace,
+    )
+
+    repository = target / "group" / "repo"
+    manifest = json.loads((target / "manifest.json").read_text())
+    assert result["status"] == "success"
+    assert (repository / ".git").is_dir()
+    assert manifest["items"][0]["local_path"] == "group/repo/README.md"
+    assert manifest["items"][0]["source_id"] == (
+        f"git:{source}:main:README.md"
+    )
 
 
 def test_git_manifest_items_honors_repository_directory(tmp_path, monkeypatch):

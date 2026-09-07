@@ -42,7 +42,42 @@ def test_builds_multi_project_datasource_command():
     ]
     assert [
         item["target_subdir"] for item in command["config"]["repositories"]
-    ] == ["platform%2Fa", "platform%2Fb"]
+    ] == ["platform/a", "platform/b"]
+
+
+def test_builds_single_project_as_repository_collection():
+    command = GITLAB_RUNTIME.build_datasource_command(
+        {
+            "datasource_uuid": "ds-1",
+            "resolved_config": {
+                "endpoint": "https://gitlab.example.com",
+                "connection_scope": {"projects": ["platform/a"]},
+                "datasource_config": {
+                    "project": "platform/a",
+                    "branch": "main",
+                },
+                "target_path": "/workspace/repos",
+                "sync_policy": {},
+            },
+        },
+        {
+            "plugin_key": "gitlab",
+            "endpoint": "https://gitlab.example.com",
+            "value": "secret",
+        },
+        "manual",
+    )
+
+    assert "repo_url" not in command["config"]
+    assert command["config"]["repositories"] == [
+        {
+            "repo_url": "https://gitlab.example.com/platform/a.git",
+            "branch": "main",
+            "directory": "",
+            "target_subdir": "platform/a",
+            "enabled": True,
+        }
+    ]
 
 
 def test_multi_project_datasource_resolves_each_default_branch():

@@ -1516,6 +1516,72 @@ def test_recent_changes_returns_no_match_instead_of_fallback_repo(tmp_path):
     assert str(repo) in data["candidate_repositories"]
 
 
+def test_recent_changes_uses_selected_repository_for_any_query(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {
+                "target_dirs": [{"path": str(repo)}],
+                "settings": {},
+            }
+        )
+    }
+
+    payload = tools["summarize_recent_changes"].invoke(
+        {
+            "query": "unrelated product changes",
+            "max_commits": 20,
+        }
+    )
+    data = json.loads(payload)
+
+    assert data["repositories"][0]["repository"] == str(repo)
+
+
+def test_recent_changes_discovers_namespaced_repository(tmp_path):
+    root = tmp_path / "workspace"
+    repo = root / "HyperBDR" / "docs"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+    )
+    (repo / "README.md").write_text("hello", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True)
+
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {
+                "target_dirs": [{"path": str(root)}],
+                "settings": {},
+            }
+        )
+    }
+
+    payload = tools["summarize_recent_changes"].invoke(
+        {
+            "query": "docs recent changes",
+            "max_commits": 20,
+        }
+    )
+    data = json.loads(payload)
+
+    assert data["repositories"][0]["repository"] == str(repo)
+
+
 class BlockingExecutor:
     """Executor that blocks until cancelled."""
 

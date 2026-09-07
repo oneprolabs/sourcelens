@@ -474,6 +474,9 @@ def test_gitlab_plugin_sync_builds_git_command_from_snapshot(monkeypatch):
             "resolved_config": {
                 "endpoint": "https://gitlab.internal.example",
                 "target_path": "/workspace/repo",
+                "connection_scope": {
+                    "projects": ["platform/backend/sourcelens"]
+                },
                 "datasource_config": {
                     "project": "platform/backend/sourcelens",
                     "branch": "main",
@@ -508,9 +511,18 @@ def test_gitlab_plugin_sync_builds_git_command_from_snapshot(monkeypatch):
     )
 
     assert result["status"] == "success"
-    assert seen["config"]["repo_url"] == (
-        "https://gitlab.internal.example/platform/backend/sourcelens.git"
-    )
+    assert seen["config"]["repositories"] == [
+        {
+            "repo_url": (
+                "https://gitlab.internal.example/"
+                "platform/backend/sourcelens.git"
+            ),
+            "branch": "main",
+            "directory": "docs",
+            "target_subdir": "platform/backend/sourcelens",
+            "enabled": True,
+        }
+    ]
     assert seen["config"]["access_token"] == "gitlab-secret"
     assert material["value"] == ""
 

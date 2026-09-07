@@ -43,7 +43,44 @@ def test_builds_multi_repository_datasource_command():
     ]
     assert [
         item["target_subdir"] for item in command["config"]["repositories"]
-    ] == ["oneprolabs%2Fa", "oneprolabs%2Fb"]
+    ] == ["oneprolabs/a", "oneprolabs/b"]
+
+
+def test_builds_single_repository_as_repository_collection():
+    command = GITHUB_RUNTIME.build_datasource_command(
+        {
+            "datasource_uuid": "ds-1",
+            "resolved_config": {
+                "endpoint": "https://github.com",
+                "connection_scope": {
+                    "repositories": ["oneprolabs/a"]
+                },
+                "datasource_config": {
+                    "repository": "oneprolabs/a",
+                    "branch": "main",
+                },
+                "target_path": "/workspace/repos",
+                "sync_policy": {},
+            },
+        },
+        {
+            "plugin_key": "github",
+            "endpoint": "https://github.com",
+            "value": "secret",
+        },
+        "manual",
+    )
+
+    assert "repo_url" not in command["config"]
+    assert command["config"]["repositories"] == [
+        {
+            "repo_url": "https://github.com/oneprolabs/a.git",
+            "branch": "main",
+            "directory": "",
+            "target_subdir": "oneprolabs/a",
+            "enabled": True,
+        }
+    ]
 
 
 def test_multi_repository_target_subdirs_remain_unique_for_same_names():
@@ -73,7 +110,7 @@ def test_multi_repository_target_subdirs_remain_unique_for_same_names():
     target_subdirs = [
         item["target_subdir"] for item in command["config"]["repositories"]
     ]
-    assert target_subdirs == ["team-a%2Fcommon", "team_b%2Fcommon"]
+    assert target_subdirs == ["team-a/common", "team_b/common"]
     assert len(set(target_subdirs)) == 2
 
 

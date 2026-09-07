@@ -401,19 +401,16 @@ def build_datasource_command(snapshot, material, trigger):
         "auth_scheme": "token",
         "access_token": material["value"],
     }
-    if "projects" in datasource:
-        config["repositories"] = [
-            {
-                "repo_url": f"{endpoint}/{project}.git",
-                "branch": datasource.get("branch") or "",
-                "directory": datasource.get("directory") or "",
-                "target_subdir": quote(project, safe=""),
-                "enabled": True,
-            }
-            for project in projects
-        ]
-    else:
-        config["repo_url"] = f"{endpoint}/{projects[0]}.git"
+    config["repositories"] = [
+        {
+            "repo_url": f"{endpoint}/{project}.git",
+            "branch": datasource.get("branch") or "",
+            "directory": datasource.get("directory") or "",
+            "target_subdir": project,
+            "enabled": True,
+        }
+        for project in projects
+    ]
     return {
         "source_type": "git",
         "datasource_uuid": snapshot.get("datasource_uuid"),
