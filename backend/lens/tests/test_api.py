@@ -38,18 +38,24 @@ from lens.models import (
     AssistantAccess,
     AssistantMCP,
     AssistantSkill,
+    Connection,
+    CredentialLease,
     DataSource,
     DataSourceCredential,
     EnvironmentVariableSet,
+    ExecutionSnapshot,
     GlobalSetting,
     LensNode,
     MCPServer,
     MessageAttachment,
+    PluginInvocation,
     Run,
     RunExecution,
     RunStep,
     ScheduledTask,
     Session,
+    SecretMaterial,
+    SecretVersion,
     SharedQA,
     Skill,
 )
@@ -76,6 +82,7 @@ from lens.skill_packages import package_zip_bytes
 from lens.tasks import (
     SourceSyncBusy,
     acquire_datasource_lock,
+    complete_datasource_sync_task,
     release_datasource_lock,
 )
 from lens.views.assistants import AssistantViewSet
@@ -5492,6 +5499,55 @@ class LensApiTests(TestCase):
             "/workspace/scheduled",
         )
 
+    def test_datasource_list_filters_by_plugin_key(self):
+        self.datasource.plugin_key = "github"
+        self.datasource.save(update_fields=["plugin_key"])
+        DataSource.objects.create(
+            name="Feishu Docs",
+            plugin_key="feishu",
+            source_type="feishu",
+            lensnode=self.lensnode,
+            config={"folder_url": "https://example.com/folder"},
+            sync_policy={"interval_seconds": 3600},
+            target_path="/workspace/feishu-docs",
+        )
+
+        response = self.client.get(
+            "/api/lens/admin/datasources/",
+            {"plugin_key": "github", "page_size": 100},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["plugin_key"], "github")
+
+        all_response = self.client.get(
+            "/api/lens/admin/datasources/",
+            {"plugin_key": "all", "page_size": 100},
+        )
+
+        self.assertEqual(all_response.status_code, 200, all_response.data)
+        self.assertEqual(all_response.data["count"], 2)
+
+    def test_datasource_delete_rejects_active_sync(self):
+        TaskExecution.objects.create(
+            task_id="running-datasource-sync",
+            task_name="source_sync:Repo Cache",
+            module="lens_datasource",
+            status="STARTED",
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
+        )
+
+        response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "DATASOURCE_SYNC_IN_PROGRESS")
+        self.assertTrue(
+            DataSource.objects.filter(pk=self.datasource.pk).exists()
+        )
+
     def test_check_datasource_path_blocks_existing_datasource_path(self):
         response = self.client.post(
             f"/api/lens/admin/lensnodes/{self.lensnode.uuid}/" "check-datasource-path/",
@@ -6087,6 +6143,71 @@ class LensApiTests(TestCase):
         self.assertFalse(DataSource.objects.filter(pk=datasource.pk).exists())
         send.assert_not_called()
 
+    def test_datasource_delete_cleans_plugin_audit_records(self):
+        material = SecretMaterial.objects.create(name="Datasource PAT")
+        version = SecretVersion.objects.create(
+            material=material,
+            encrypted_value="encrypted",
+        )
+        connection_obj = Connection.objects.create(
+            name="Datasource GitHub",
+            plugin_key="github",
+            endpoint="https://github.com",
+            secret_version=version,
+        )
+        self.datasource.connection = connection_obj
+        self.datasource.plugin_key = "github"
+        self.datasource.save(update_fields=["connection", "plugin_key"])
+        snapshot = ExecutionSnapshot.objects.create(
+            kind=ExecutionSnapshot.Kind.DATASOURCE_SYNC,
+            connection=connection_obj,
+            datasource=self.datasource,
+            secret_version=version,
+            plugin_key="github",
+            plugin_version="1.0.0",
+            protocol_version=1,
+        )
+        invocation = PluginInvocation.objects.create(
+            snapshot=snapshot,
+            connection=connection_obj,
+            datasource=self.datasource,
+            lensnode=self.lensnode,
+            kind=ExecutionSnapshot.Kind.DATASOURCE_SYNC,
+            plugin_key="github",
+        )
+        lease = CredentialLease.objects.create(
+            snapshot=snapshot,
+            lensnode=self.lensnode,
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+        schedule = ScheduledTask.objects.create(
+            name=f"source_sync:{self.datasource.uuid}",
+            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+        )
+
+        response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            DataSource.objects.filter(pk=self.datasource.pk).exists()
+        )
+        self.assertFalse(
+            ExecutionSnapshot.objects.filter(pk=snapshot.pk).exists()
+        )
+        self.assertFalse(
+            PluginInvocation.objects.filter(pk=invocation.pk).exists()
+        )
+        self.assertFalse(
+            CredentialLease.objects.filter(pk=lease.pk).exists()
+        )
+        self.assertFalse(
+            ScheduledTask.objects.filter(pk=schedule.pk).exists()
+        )
+
     def test_datasource_manual_sync_registers_task(self):
         with patch(
             "lens.views.datasources.source_sync_task.apply_async"
@@ -6133,7 +6254,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["detail"], "DATASOURCE_DISABLED")
         apply_async.assert_not_called()
 
-    def test_cancel_datasource_sync_releases_lock(self):
+    def test_cancel_datasource_sync_waits_for_stop_confirmation(self):
         task = TaskExecution.objects.create(
             task_id="running-sync",
             task_name="datasource_sync:Repo Cache",
@@ -6167,13 +6288,34 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         revoke.assert_called_once_with(
             "celery-sync",
-            terminate=True,
-            signal="SIGTERM",
+            terminate=False,
         )
         cancel.assert_called_once_with(self.lensnode, "running-sync")
         task.refresh_from_db()
-        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.status, "CANCELLING")
 
+        delete_response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+        self.assertEqual(delete_response.status_code, 409)
+
+        with self.assertRaises(SourceSyncBusy):
+            acquire_datasource_lock(
+                self.datasource.uuid,
+                token="new-sync",
+                ttl_s=60,
+            )
+
+        complete_datasource_sync_task(
+            task.task_id,
+            {
+                "status": "cancelled",
+                "error": "DATASOURCE_SYNC_CANCELLED",
+            },
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "REVOKED")
         acquire_datasource_lock(
             self.datasource.uuid,
             token="new-sync",

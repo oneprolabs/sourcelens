@@ -1236,6 +1236,8 @@
     },
     "datasourceSearch": {
       "all": "All",
+      "pluginType": "Plugin Type",
+      "allPlugins": "All plugins",
       "sourceType": "Source Type",
       "placeholder": "Type a field, e.g. status, path, repository...",
       "clear": "Clear search",

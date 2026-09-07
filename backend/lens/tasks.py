@@ -266,15 +266,17 @@ def register_datasource_sync_task(
 
     task_metadata = _datasource_task_metadata(datasource, trigger)
     task_metadata.update(metadata or {})
-    return TaskTracker.register_task(
-        task_id=task_id,
-        task_name=_datasource_sync_task_name(datasource),
-        module="lens_datasource",
-        task_args=[str(datasource.uuid)],
-        task_kwargs={"trigger": trigger},
-        created_by=created_by,
-        metadata=task_metadata,
-    )
+    with transaction.atomic():
+        DataSource.objects.select_for_update().get(pk=datasource.pk)
+        return TaskTracker.register_task(
+            task_id=task_id,
+            task_name=_datasource_sync_task_name(datasource),
+            module="lens_datasource",
+            task_args=[str(datasource.uuid)],
+            task_kwargs={"trigger": trigger},
+            created_by=created_by,
+            metadata=task_metadata,
+        )
 
 
 def register_datasource_conversion_task(
@@ -415,7 +417,10 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     """Celery entrypoint for dispatching datasource sync to a LensNode."""
 
     from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
+
+    from .services import cancel_datasource_sync_on_lensnode
 
     # Track this run under a standalone id, not the Celery task id. The
     # Celery task returns SUCCESS right after dispatching to the LensNode,
@@ -424,42 +429,71 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     # PENDING (unknown id) and the LensNode completion callback owns the
     # final status.
     task_id = task_id or uuid.uuid4().hex
-    datasource = DataSource.objects.select_related("lensnode").get(uuid=datasource_uuid)
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
-        return 0
-    record = _get_or_create_source_sync_record(datasource)
-    if datasource.status == DataSource.Status.DISABLED:
-        if record.enabled:
-            record.enabled = False
-            record.save(update_fields=["enabled"])
-        return 0
+    with transaction.atomic():
+        datasource = DataSource.objects.select_for_update().get(
+            uuid=datasource_uuid
+        )
+        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+            return 0
+        record = _get_or_create_source_sync_record(datasource)
+        if datasource.status == DataSource.Status.DISABLED:
+            if record.enabled:
+                record.enabled = False
+                record.save(update_fields=["enabled"])
+            return 0
 
-    now = timezone.now()
-    record.last_status = ScheduledTask.Status.RUNNING
-    record.last_error = ""
-    record.last_run_at = now
-    record.save(update_fields=["last_status", "last_error", "last_run_at"])
-    register_datasource_sync_task(datasource, task_id, trigger)
-    TaskTracker.update_task_status(
-        task_id,
-        TaskStatus.PENDING,
-        metadata={
-            "queue_state": "QUEUED",
-            "execution_class": "exclusive",
-        },
-    )
-    _append_datasource_task_step(
-        task_id,
-        "prepare",
-        "queued",
-        "Datasource sync submitted to the LensNode queue.",
-    )
-
-    try:
-        acquire_datasource_lock(
-            datasource.uuid,
-            token=task_id,
-            ttl_s=get_datasource_sync_timeout_s(),
+        task_execution = register_datasource_sync_task(
+            datasource,
+            task_id,
+            trigger,
+        )
+        if task_execution.status in TaskStatus.get_completed_statuses():
+            return 0
+        now = timezone.now()
+        record.last_status = ScheduledTask.Status.RUNNING
+        record.last_error = ""
+        record.last_run_at = now
+        record.save(update_fields=["last_status", "last_error", "last_run_at"])
+        TaskTracker.update_task_status(
+            task_id,
+            TaskStatus.PENDING,
+            metadata={
+                "queue_state": "QUEUED",
+                "execution_class": "exclusive",
+            },
+        )
+        _append_datasource_task_step(
+            task_id,
+            "prepare",
+            "queued",
+            "Datasource sync submitted to the LensNode queue.",
+        )
+        try:
+            acquire_datasource_lock(
+                datasource.uuid,
+                token=task_id,
+                ttl_s=get_datasource_sync_timeout_s(),
+            )
+        except SourceSyncBusy as exc:
+            record.last_error = str(exc)
+            record.last_run_at = timezone.now()
+            record.save(update_fields=["last_error", "last_run_at"])
+            TaskTracker.update_task_status(
+                task_id,
+                TaskStatus.REVOKED,
+                error=str(exc),
+                metadata=_datasource_step_metadata(
+                    task_id,
+                    "lock",
+                    "skipped",
+                    str(exc),
+                ),
+            )
+            return 0
+        TaskTracker.update_task_status(
+            task_id,
+            TaskStatus.PENDING,
+            metadata={"lock_token": task_id},
         )
         _append_datasource_task_step(
             task_id,
@@ -467,38 +501,36 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             "running",
             "Dispatching datasource sync to LensNode.",
         )
+
+    try:
         request_id = dispatch_datasource_sync_async(
             datasource,
             task_id=task_id,
             trigger=trigger,
         )
-        TaskTracker.update_task_status(
-            task_id,
-            TaskStatus.PENDING,
-            metadata={
-                "completion_source": "lensnode_callback",
-                "datasource_sync_request_id": request_id,
-                "lock_token": task_id,
-                "queue_state": "QUEUED",
-                "execution_class": "exclusive",
-            },
-        )
-    except SourceSyncBusy as exc:
-        record.last_error = str(exc)
-        record.last_run_at = timezone.now()
-        record.save(update_fields=["last_error", "last_run_at"])
-        TaskTracker.update_task_status(
-            task_id,
-            TaskStatus.REVOKED,
-            error=str(exc),
-            metadata=_datasource_step_metadata(
+        with transaction.atomic():
+            task_execution = TaskExecution.objects.select_for_update().get(
+                task_id=task_id
+            )
+            cancelling = (
+                task_execution.status == DATASOURCE_CANCELLING_STATUS
+            )
+            TaskTracker.update_task_status(
                 task_id,
-                "lock",
-                "skipped",
-                str(exc),
-            ),
-        )
-        return 0
+                task_execution.status if cancelling else TaskStatus.PENDING,
+                metadata={
+                    "completion_source": "lensnode_callback",
+                    "datasource_sync_request_id": request_id,
+                    "lock_token": task_id,
+                    "queue_state": "QUEUED",
+                    "execution_class": "exclusive",
+                },
+            )
+        if cancelling:
+            cancel_datasource_sync_on_lensnode(
+                datasource.lensnode,
+                task_id,
+            )
     except Exception as exc:
         release_datasource_lock(datasource.uuid, token=task_id)
         datasource.last_error = str(exc)

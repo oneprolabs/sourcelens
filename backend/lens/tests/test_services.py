@@ -3089,6 +3089,47 @@ class LensServiceTests(TransactionTestCase):
             self.assertEqual(steps[0]["name"], "prepare")
             self.assertEqual(steps[-1]["name"], "dispatch")
 
+    def test_source_sync_task_rolls_back_schedule_when_registration_fails(self):
+        with patch(
+            "lens.tasks.register_datasource_sync_task",
+            side_effect=DataSource.DoesNotExist,
+        ):
+            with self.assertRaises(DataSource.DoesNotExist):
+                source_sync_task(str(self.datasource.uuid))
+
+        self.assertFalse(
+            ScheduledTask.objects.filter(
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=self.datasource.uuid,
+            ).exists()
+        )
+
+    def test_source_sync_task_reissues_cancel_after_dispatch_race(self):
+        def mark_cancelling(*args, **kwargs):
+            del args, kwargs
+            TaskExecution.objects.filter(module="lens_datasource").update(
+                status="CANCELLING"
+            )
+            return "request-1"
+
+        with (
+            patch(
+                "lens.tasks.dispatch_datasource_sync_async",
+                side_effect=mark_cancelling,
+            ),
+            patch("lens.services.cancel_datasource_sync_on_lensnode") as cancel,
+        ):
+            source_sync_task(str(self.datasource.uuid))
+
+        task = TaskExecution.objects.get(module="lens_datasource")
+        self.assertEqual(task.status, "CANCELLING")
+        self.assertEqual(
+            task.metadata["datasource_sync_request_id"],
+            "request-1",
+        )
+        cancel.assert_called_once_with(self.lensnode, task.task_id)
+
     def test_managed_workspace_sync_is_blocked_at_task_and_dispatch_layers(
         self,
     ):

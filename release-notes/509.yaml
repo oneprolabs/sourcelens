@@ -1,0 +1,8 @@
+type: improvement
+audience: admin
+en: >-
+  Improved datasource administration with plugin filtering, safer sync deletion,
+  and consistent Git repository workspace layouts.
+zh-CN: >-
+  优化数据源管理：支持按插件筛选，更安全地删除同步中的数据源，并统一 Git
+  仓库工作区布局。

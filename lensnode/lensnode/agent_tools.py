@@ -3088,7 +3088,14 @@ def _resolve_repo_path(path, target_dirs):
 
     candidates = []
     if path:
-        candidates.append(Path(path).resolve())
+        requested = Path(path)
+        if requested.is_absolute():
+            candidates.append(requested.resolve())
+        else:
+            candidates.extend(
+                (Path(item.get("path", "")).resolve() / requested).resolve()
+                for item in target_dirs
+            )
     candidates.extend(Path(item.get("path", "")).resolve() for item in target_dirs)
     for candidate in candidates:
         for root_item in target_dirs:
@@ -3112,13 +3119,7 @@ def _discover_git_repositories(path, target_dirs, limit=20):
     if directory is None:
         return []
 
-    repos = []
-    for child in sorted(directory.iterdir(), key=lambda item: item.name):
-        if len(repos) >= limit:
-            break
-        if child.is_dir() and (child / ".git").exists():
-            repos.append(str(child))
-    return repos
+    return [str(repo) for repo in _iter_git_repositories(directory, limit)]
 
 
 def _matching_repositories(query, target_dirs):
@@ -3126,22 +3127,48 @@ def _matching_repositories(query, target_dirs):
 
     tokens = _query_tokens(query)
     repositories = []
+    seen = set()
     for item in target_dirs:
         root = Path(item.get("path", "")).resolve()
-        if (root / ".git").exists():
-            repositories.append(root)
-            continue
         if not root.is_dir():
             continue
-        for child in sorted(root.iterdir(), key=lambda item: item.name):
-            if not child.is_dir() or not (child / ".git").exists():
+        for repo in _iter_git_repositories(root, limit=20):
+            if repo in seen:
                 continue
-            name_tokens = set(_name_tokens(child.name))
+            seen.add(repo)
+            if repo == root:
+                repositories.append(repo)
+                continue
+            try:
+                identity = repo.relative_to(root).as_posix()
+            except ValueError:
+                identity = repo.name
+            name_tokens = set(_name_tokens(identity))
             if any(token in name_tokens for token in tokens):
-                repositories.append(child)
+                repositories.append(repo)
     if repositories:
         return repositories
     return []
+
+
+def _iter_git_repositories(directory, limit):
+    """Yield Git repositories recursively without scanning their contents."""
+
+    repositories = []
+    for current, dirnames, _filenames in os.walk(directory):
+        current = Path(current)
+        if (current / ".git").exists():
+            repositories.append(current)
+            dirnames[:] = []
+            if len(repositories) >= limit:
+                break
+            continue
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if not name.startswith(".") and not (current / name).is_symlink()
+        )
+    return repositories
 
 
 def _query_tokens(query):
