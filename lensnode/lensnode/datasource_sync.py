@@ -31,6 +31,7 @@ from .path_rules import unique_child_path
 WORKSPACE_ROOT = "/workspace"
 GIT_SHALLOW_DEPTH = "1"
 DETAIL_ITEMS_LIMIT = 200
+DISCOVERY_PROGRESS_INTERVAL = 100
 DEFAULT_CONVERSION_BATCH_SIZE = 16
 DEFAULT_CONVERSION_MAX_FILES = 100000
 GIT_MAX_FILES = 100000
@@ -270,13 +271,41 @@ def convert_managed_workspace(
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
 
     context = _sync_context(command, target)
+    context["managed_conversion_progress"] = True
     conversion = context["conversion"]
+    _emit_managed_conversion_event(
+        emit,
+        phase="DISCOVERING_FILES",
+        message="Discovering files in the managed workspace.",
+        phase_current=0,
+        phase_total=0,
+        phase_unit="files",
+        overall_progress_percent=0,
+        summary=_empty_managed_conversion_summary(),
+        total=0,
+        candidates=0,
+        processed=0,
+    )
     total, supported_total, unsupported_total, unsupported = (
         _scan_managed_workspace_conversion(
             target,
             context["excluded_datasource_roots"],
             conversion,
+            emit=emit,
         )
+    )
+    _emit_managed_conversion_event(
+        emit,
+        phase="DISCOVERING_FILES",
+        message="Finished discovering managed workspace files.",
+        phase_current=total,
+        phase_total=total,
+        phase_unit="files",
+        overall_progress_percent=5,
+        summary=_empty_managed_conversion_summary(),
+        total=total,
+        candidates=supported_total,
+        processed=0,
     )
     max_files = _conversion_resource_limit(
         conversion,
@@ -300,6 +329,25 @@ def convert_managed_workspace(
         "batch_size",
         DEFAULT_CONVERSION_BATCH_SIZE,
     )
+    _emit_managed_conversion_event(
+        emit,
+        phase="PARSING_DOCUMENTS",
+        message="Processing convertible workspace files.",
+        phase_current=0,
+        phase_total=supported_total,
+        phase_unit="files",
+        overall_progress_percent=10,
+        summary=_managed_conversion_summary(
+            _empty_managed_conversion_summary(),
+            unsupported,
+            supported_total,
+            0,
+            unsupported_total=unsupported_total,
+        ),
+        total=total,
+        candidates=supported_total,
+        processed=unsupported_total,
+    )
     for item in _managed_workspace_conversion_items(
         target,
         context["excluded_datasource_roots"],
@@ -312,6 +360,15 @@ def convert_managed_workspace(
         batch_summary = post_process_documents(
             context,
             manifest_store.SyncResult(items=batch),
+            emit=_managed_conversion_batch_emitter(
+                emit,
+                summary,
+                total=total,
+                supported_total=supported_total,
+                unsupported=unsupported,
+                unsupported_total=unsupported_total,
+                processed_before=processed,
+            ),
         )
         summary = _merge_managed_conversion_summaries(summary, batch_summary)
         processed += len(batch)
@@ -319,6 +376,7 @@ def convert_managed_workspace(
             emit,
             summary,
             total,
+            supported_total,
             unsupported,
             unsupported_total,
             processed,
@@ -328,6 +386,15 @@ def convert_managed_workspace(
         batch_summary = post_process_documents(
             context,
             manifest_store.SyncResult(items=batch),
+            emit=_managed_conversion_batch_emitter(
+                emit,
+                summary,
+                total=total,
+                supported_total=supported_total,
+                unsupported=unsupported,
+                unsupported_total=unsupported_total,
+                processed_before=processed,
+            ),
         )
         summary = _merge_managed_conversion_summaries(summary, batch_summary)
         processed += len(batch)
@@ -335,6 +402,7 @@ def convert_managed_workspace(
             emit,
             summary,
             total,
+            supported_total,
             unsupported,
             unsupported_total,
             processed,
@@ -357,17 +425,18 @@ def convert_managed_workspace(
                 ]
             )
         )
-    _emit(
+    _emit_managed_conversion_event(
         emit,
-        "conversion_complete",
-        "done",
-        "Managed workspace conversion completed.",
-        category="conversion",
-        progress_total=total,
-        progress_current=total,
-        progress_percent=100,
+        phase="FINALIZING",
+        message="Finalizing managed workspace conversion.",
+        phase_current=1,
+        phase_total=1,
+        phase_unit="steps",
+        overall_progress_percent=99,
         summary=summary,
-        conversion_summary=summary,
+        total=total,
+        candidates=supported_total,
+        processed=total,
     )
     return {
         "status": "success",
@@ -529,6 +598,7 @@ def _scan_managed_workspace_conversion(
     target,
     excluded_roots,
     conversion,
+    emit=None,
 ):
     """Scan workspace metadata without retaining the complete file list."""
 
@@ -540,10 +610,35 @@ def _scan_managed_workspace_conversion(
         total += 1
         if is_convertible(target / item.local_path, conversion):
             supported_total += 1
-            continue
-        unsupported_total += 1
-        if len(unsupported) < DETAIL_ITEMS_LIMIT:
-            unsupported.append(item)
+        else:
+            unsupported_total += 1
+            if len(unsupported) < DETAIL_ITEMS_LIMIT:
+                unsupported.append(item)
+        if total % DISCOVERY_PROGRESS_INTERVAL == 0:
+            _emit(
+                emit,
+                "conversion_discovery_progress",
+                "running",
+                f"Discovered {total} workspace files so far.",
+                category="conversion",
+                phase="DISCOVERING_FILES",
+                overall_progress_percent=0,
+                phase_progress={
+                    "current": total,
+                    "total": None,
+                    "unit": "files",
+                },
+                progress_counts={
+                    "total": None,
+                    "candidates": None,
+                    "processed": 0,
+                    "converted": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "unsupported": None,
+                },
+                substantive_progress=True,
+            )
     return total, supported_total, unsupported_total, unsupported
 
 
@@ -658,6 +753,7 @@ def _emit_managed_conversion_progress(
     emit,
     summary,
     total,
+    supported_total,
     unsupported,
     unsupported_total,
     processed,
@@ -666,28 +762,212 @@ def _emit_managed_conversion_progress(
 
     if emit is None:
         return
-    payload = _managed_conversion_summary(
+    summary = _managed_conversion_summary(
         summary,
         unsupported,
         processed,
         processed,
         unsupported_total=unsupported_total,
     )
-    payload["progress_total"] = total
-    payload["progress_current"] = min(total, unsupported_total + processed)
-    payload["progress_percent"] = _conversion_percent(
-        payload["progress_current"],
-        total,
+    _emit_managed_conversion_event(
+        emit,
+        phase="PARSING_DOCUMENTS",
+        message=(
+            f"Processed {processed}/{supported_total} convertible files."
+        ),
+        phase_current=processed,
+        phase_total=supported_total,
+        phase_unit="files",
+        overall_progress_percent=_managed_conversion_overall_percent(
+            processed,
+            supported_total,
+        ),
+        summary=summary,
+        total=total,
+        candidates=supported_total,
+        processed=unsupported_total + processed,
     )
-    progress_summary = dict(payload)
+
+
+def _managed_conversion_overall_percent(processed, candidates):
+    """Return overall progress while reserving time for finalization."""
+
+    if candidates <= 0:
+        return 90
+    return min(90, 10 + int(80 * processed / candidates))
+
+
+def _managed_conversion_batch_emitter(
+    emit,
+    previous_summary,
+    *,
+    total,
+    supported_total,
+    unsupported,
+    unsupported_total,
+    processed_before,
+):
+    """Translate one batch's local events to workspace-level progress."""
+
+    def emit_event(event):
+        """Emit an event with global counters and phase semantics."""
+
+        if emit is None:
+            return
+        local_current = int(event.get("progress_current") or 0)
+        phase = event.get("phase") or "PARSING_DOCUMENTS"
+        phase_progress = event.get("phase_progress") or {}
+        if phase == "PROCESSING_EMBEDDED_IMAGES":
+            document_current = int(event.get("document_current") or 1)
+            image_current = int(phase_progress.get("current") or 0)
+            image_total = int(phase_progress.get("total") or 0)
+            completed = processed_before + max(document_current - 1, 0)
+            visual_fraction = (
+                image_current / image_total if image_total else 0
+            )
+            overall_current = completed + visual_fraction
+            phase_current = image_current
+            phase_total = image_total
+            phase_unit = phase_progress.get("unit") or "embedded_images"
+        else:
+            completed = processed_before + local_current
+            overall_current = completed
+            phase_current = completed
+            phase_total = supported_total
+            phase_unit = "files"
+        summary = _managed_conversion_progress_summary(
+            previous_summary,
+            event.get("summary") or {},
+        )
+        summary = _managed_conversion_summary(
+            summary,
+            unsupported,
+            supported_total,
+            completed,
+            unsupported_total=unsupported_total,
+        )
+        event.update(
+            {
+                "message": (
+                    event.get("message")
+                    if phase == "PROCESSING_EMBEDDED_IMAGES"
+                    else (
+                        f"Processed {completed}/{supported_total} "
+                        "convertible files."
+                    )
+                ),
+                "phase": phase,
+                "overall_progress_percent": (
+                    _managed_conversion_overall_percent(
+                        overall_current,
+                        supported_total,
+                    )
+                ),
+                "phase_progress": {
+                    "current": phase_current,
+                    "total": phase_total,
+                    "unit": phase_unit,
+                    **(
+                        {"scope": "current_file"}
+                        if phase == "PROCESSING_EMBEDDED_IMAGES"
+                        else {}
+                    ),
+                },
+                "progress_counts": _managed_conversion_progress_counts(
+                    summary,
+                    total=total,
+                    candidates=supported_total,
+                    processed=unsupported_total + completed,
+                ),
+                "progress_total": phase_total,
+                "progress_current": phase_current,
+                "progress_percent": _managed_conversion_overall_percent(
+                    overall_current,
+                    supported_total,
+                ),
+                "summary": summary,
+                "substantive_progress": True,
+            }
+        )
+        emit(event)
+
+    return emit_event
+
+
+def _managed_conversion_progress_summary(previous, incoming):
+    """Combine completed batches with a local in-progress batch summary."""
+
+    result = _empty_managed_conversion_summary()
+    for key in ["converted", "success", "skipped", "failed"]:
+        result[key] = int((previous or {}).get(key) or 0) + int(
+            (incoming or {}).get(key) or 0
+        )
+    return result
+
+
+def _managed_conversion_progress_counts(
+    summary,
+    *,
+    total,
+    candidates,
+    processed,
+):
+    """Return stable managed-conversion lifecycle counters."""
+
+    return {
+        "total": int(total),
+        "candidates": int(candidates),
+        "processed": int(processed),
+        "converted": int(summary.get("converted") or 0),
+        "failed": int(summary.get("failed") or 0),
+        "skipped": int(summary.get("skipped") or 0),
+        "unsupported": int(summary.get("unsupported") or 0),
+    }
+
+
+def _emit_managed_conversion_event(
+    emit,
+    *,
+    phase,
+    message,
+    phase_current,
+    phase_total,
+    phase_unit,
+    overall_progress_percent,
+    summary,
+    total,
+    candidates,
+    processed,
+):
+    """Emit one machine-readable managed-conversion progress event."""
+
+    if emit is None:
+        return
+    progress_counts = _managed_conversion_progress_counts(
+        summary,
+        total=total,
+        candidates=candidates,
+        processed=processed,
+    )
     _emit(
         emit,
         "conversion_progress",
         "running",
-        f"Converted {processed}/{max(processed, 1)} datasource files.",
+        message,
         category="conversion",
-        summary=progress_summary,
-        **payload,
+        summary=summary,
+        progress_total=phase_total,
+        progress_current=phase_current,
+        progress_percent=overall_progress_percent,
+        phase=phase,
+        overall_progress_percent=overall_progress_percent,
+        phase_progress={
+            "current": int(phase_current),
+            "total": int(phase_total),
+            "unit": phase_unit,
+        },
+        progress_counts=progress_counts,
+        substantive_progress=True,
     )
 
 

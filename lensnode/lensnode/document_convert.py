@@ -66,6 +66,10 @@ def _touch_runtime_activity(context):
 def _emit_conversion_progress(context, detail):
     """Send content-free conversion progress to the parent process."""
 
+    callback = context.get("on_conversion_progress")
+    if callback is not None:
+        callback(detail)
+        return
     progress_queue = context.get("progress_queue")
     if progress_queue is None:
         return
@@ -357,6 +361,43 @@ def post_process_documents(context, sync_result, emit=None):
     image_count = 0
     image_digests = set()
     jobs = []
+    active_job = {"value": None}
+
+    def report_visual_progress(detail):
+        """Expose image work within a managed workspace file conversion."""
+
+        job = active_job["value"]
+        if not context.get("managed_conversion_progress") or job is None:
+            return
+        if detail.get("stage") != "recognizing_images":
+            return
+        image_total = int(detail.get("image_total") or 0)
+        image_completed = min(
+            int(detail.get("image_completed") or 0),
+            image_total,
+        )
+        emit_conversion(
+            emit,
+            "conversion_visual_progress",
+            "running",
+            "Processing embedded images.",
+            summary,
+            total=image_total,
+            current=image_completed,
+            current_file=manifest_local_path(job.item),
+            phase="PROCESSING_EMBEDDED_IMAGES",
+            phase_progress={
+                "current": image_completed,
+                "total": image_total,
+                "unit": "embedded_images",
+                "scope": "current_file",
+            },
+            document_current=job.index,
+            document_total=job.total,
+            substantive_progress=True,
+        )
+
+    context = {**context, "on_conversion_progress": report_visual_progress}
     for index, item in enumerate(candidates, start=1):
         path = target / manifest_local_path(item)
         if is_image_path(path):
@@ -426,7 +467,11 @@ def post_process_documents(context, sync_result, emit=None):
     queue = conversion_queue_from_context(context)
 
     def handle_job(job):
-        return convert_job(job, target, context)
+        active_job["value"] = job
+        try:
+            return convert_job(job, target, context)
+        finally:
+            active_job["value"] = None
 
     for job, output in queue.run(jobs, handle_job):
         path = job.path
@@ -2174,6 +2219,7 @@ def emit_conversion(
     current_status="",
     current_reason="",
     current_stats=None,
+    **extra,
 ):
     """Emit one conversion progress event."""
 
@@ -2184,19 +2230,21 @@ def emit_conversion(
     if step != "conversion_manifest":
         event_summary.pop("items", None)
         event_summary.pop("items_truncated", None)
-    emit(
-        {
-            "step": step,
-            "status": status,
-            "message": message,
-            "category": "conversion",
-            "summary": event_summary,
-            "progress_total": total,
-            "progress_current": current,
-            "progress_percent": max(0, min(100, percent)),
-            "current_file": current_file,
-            "current_status": current_status,
-            "current_reason": current_reason,
-            "current_stats": current_stats or {},
-        }
-    )
+    event = {
+        "step": step,
+        "status": status,
+        "message": message,
+        "category": "conversion",
+        "summary": event_summary,
+        "progress_total": total,
+        "progress_current": current,
+        "progress_percent": max(0, min(100, percent)),
+        "current_file": current_file,
+        "current_status": current_status,
+        "current_reason": current_reason,
+        "current_stats": current_stats or {},
+    }
+    event.update(extra)
+    if "overall_progress_percent" in extra:
+        event["progress_percent"] = extra["overall_progress_percent"]
+    emit(event)
