@@ -176,6 +176,29 @@ class DataSourceViewSet(BaseAdminViewSet):
             response.data["initial_sync_task_id"] = task_id
         return response
 
+    def destroy(self, request, *args, **kwargs):
+        """Reject deletion while a datasource sync is still active."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+        from agentcore_task.constants import TaskStatus
+
+        datasource = self.get_object()
+        active_statuses = [
+            TaskStatus.PENDING,
+            *TaskStatus.get_running_statuses(),
+        ]
+        active_sync = TaskExecution.objects.filter(
+            module="lens_datasource",
+            metadata__datasource_uuid=str(datasource.uuid),
+            status__in=active_statuses,
+        ).exists()
+        if active_sync:
+            return Response(
+                {"detail": "DATASOURCE_SYNC_IN_PROGRESS"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
     def perform_destroy(self, instance):
         """Delete datasource audit records before the catalog row."""
 

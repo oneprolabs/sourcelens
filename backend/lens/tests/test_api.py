@@ -5528,6 +5528,25 @@ class LensApiTests(TestCase):
         self.assertEqual(all_response.status_code, 200, all_response.data)
         self.assertEqual(all_response.data["count"], 2)
 
+    def test_datasource_delete_rejects_active_sync(self):
+        TaskExecution.objects.create(
+            task_id="running-datasource-sync",
+            task_name="source_sync:Repo Cache",
+            module="lens_datasource",
+            status="STARTED",
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
+        )
+
+        response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "DATASOURCE_SYNC_IN_PROGRESS")
+        self.assertTrue(
+            DataSource.objects.filter(pk=self.datasource.pk).exists()
+        )
+
     def test_check_datasource_path_blocks_existing_datasource_path(self):
         response = self.client.post(
             f"/api/lens/admin/lensnodes/{self.lensnode.uuid}/" "check-datasource-path/",
