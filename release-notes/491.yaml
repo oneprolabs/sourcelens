@@ -1,0 +1,7 @@
+type: fix
+audience: admin
+en: >-
+  Fixed Managed Workspace conversion progress so completed file-processing
+  phases no longer appear to mean the entire conversion has finished.
+zh-CN: >-
+  修复 Managed Workspace 转换进度：文件处理阶段完成时不再被误显示为整个转换已完成。
