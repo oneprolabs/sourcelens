@@ -266,15 +266,17 @@ def register_datasource_sync_task(
 
     task_metadata = _datasource_task_metadata(datasource, trigger)
     task_metadata.update(metadata or {})
-    return TaskTracker.register_task(
-        task_id=task_id,
-        task_name=_datasource_sync_task_name(datasource),
-        module="lens_datasource",
-        task_args=[str(datasource.uuid)],
-        task_kwargs={"trigger": trigger},
-        created_by=created_by,
-        metadata=task_metadata,
-    )
+    with transaction.atomic():
+        DataSource.objects.select_for_update().get(pk=datasource.pk)
+        return TaskTracker.register_task(
+            task_id=task_id,
+            task_name=_datasource_sync_task_name(datasource),
+            module="lens_datasource",
+            task_args=[str(datasource.uuid)],
+            task_kwargs={"trigger": trigger},
+            created_by=created_by,
+            metadata=task_metadata,
+        )
 
 
 def register_datasource_conversion_task(
