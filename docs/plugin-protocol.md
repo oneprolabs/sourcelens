@@ -142,7 +142,7 @@ Plugin 专属的 `plugin_help` Tool；详细说明统一通过虚拟 Skill 文�
 HTTPS origin。宿主据此注入受限客户端；Provider 不得自行创建或关闭客户端。
 
 `runtime.py` 必须导出 Tool 相关固定符号；只有 Manifest 声明 DataSource 能力时，
-才必须额外导出 `build_datasource_command`：
+才必须成对导出 `build_datasource_command` 和 `sync_datasource`：
 
 ```python
 PLUGIN_API_VERSION = 1
@@ -159,9 +159,16 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
     """Execute one bounded operation and return JSON-safe data."""
 
 # Required only for Plugins with a declared Datasource capability.
-def build_datasource_command(config, output_dir, options):
+def build_datasource_command(snapshot, material, trigger):
     """Build one controlled Datasource synchronization command."""
+
+def sync_datasource(command, workspace_path, emit, execute):
+    """Apply Plugin sync policy, then call the shared executor."""
 ```
+
+LensNode 负责快照、lease、材料读取、取消、进度上报和结果生命周期；Plugin handler
+负责 provider 专属的同步策略与执行编排。共享 `execute` 仅执行 Plugin 已准备好的
+通用命令，不得根据 provider key 推断地址、认证或资源规则。
 
 宿主会校验入口文件是受控目录中的普通文件，且入口身份与 Manifest 的
 `key + version` 一致，并按 `plugin_key + plugin_version + 内容哈希` 缓存加载

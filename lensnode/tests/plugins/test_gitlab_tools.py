@@ -43,6 +43,62 @@ def test_builds_multi_project_datasource_command():
     assert [
         item["target_subdir"] for item in command["config"]["repositories"]
     ] == ["platform/a", "platform/b"]
+    assert command["config"]["allow_submodules"] is True
+    assert callable(GITLAB_RUNTIME.sync_datasource)
+
+
+def test_gitlab_datasource_handler_owns_submodule_sync():
+    """GitLab injects its submodule behavior before executing Git sync."""
+
+    command = {"config": {"gitlab_endpoint": "http://gitlab.example"}}
+    seen = {}
+
+    def execute(value, workspace_path, emit):
+        seen.update(value)
+        assert workspace_path == "/workspace"
+        assert emit is None
+        return {"status": "success"}
+
+    result = GITLAB_RUNTIME.sync_datasource(
+        command,
+        "/workspace",
+        None,
+        execute,
+    )
+
+    assert result == {"status": "success"}
+    assert callable(seen["config"]["submodule_url_resolver"])
+
+
+def test_gitlab_submodule_resolver_rewrites_ssh_origins(tmp_path):
+    """GitLab owns SSH-to-HTTP submodule origin translation."""
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitmodules").write_text(
+        "[submodule \"api\"]\n"
+        "\tpath = api\n"
+        "\turl = ssh://git@office.internal:20022/team/api.git\n"
+        "[submodule \"web\"]\n"
+        "\tpath = web\n"
+        "\turl = git@office.internal:team/web.git\n",
+        encoding="utf-8",
+    )
+
+    resolver = GITLAB_RUNTIME.build_datasource_command.__globals__[
+        "_gitlab_submodule_url_rewrites"
+    ]
+
+    assert resolver(repo, {"gitlab_endpoint": "http://gitlab.example"}) == [
+        {
+            "from": "ssh://git@office.internal:20022/",
+            "to": "http://gitlab.example/",
+        },
+        {
+            "from": "git@office.internal:",
+            "to": "http://gitlab.example/",
+        },
+    ]
 
 
 def test_builds_single_project_as_repository_collection():

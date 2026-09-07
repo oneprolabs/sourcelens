@@ -1576,7 +1576,11 @@ def _sync_git(command, workspace_path, emit):
         )
 
     if config.get("allow_submodules", True):
-        _sync_git_submodules(target, git_options=git_options)
+        _sync_git_submodules(
+            target,
+            config=config,
+            git_options=git_options,
+        )
 
     _validate_git_tree_size(target)
 
@@ -2041,19 +2045,22 @@ def _repository_summary(name, repository, status, result):
     }
 
 
-def _sync_git_submodules(target, git_options=None):
-    """Synchronize Git submodules when the repository declares them."""
+def _sync_git_submodules(target, config=None, git_options=None):
+    """Synchronize Git submodules using a Plugin-provided URL rewrite plan."""
 
     if not (target / ".gitmodules").exists():
         return
+    rewrites = _resolve_submodule_url_rewrites(target, config)
+    git_args = _submodule_git_config_args(rewrites)
     _run_git(
-        ["submodule", "sync", "--recursive"],
+        [*git_args, "submodule", "sync", "--recursive"],
         cwd=target,
         detail_prefix="LENS_SOURCE_GIT_SUBMODULE_SYNC_FAILED",
         **(git_options or {}),
     )
     _run_git(
         [
+            *git_args,
             "submodule",
             "update",
             "--init",
@@ -2065,6 +2072,61 @@ def _sync_git_submodules(target, git_options=None):
         detail_prefix="LENS_SOURCE_GIT_SUBMODULE_UPDATE_FAILED",
         **(git_options or {}),
     )
+
+
+def _resolve_submodule_url_rewrites(target, config):
+    """Resolve a bounded, Plugin-owned list of Git URL rewrites."""
+
+    resolver = (config or {}).get("submodule_url_resolver")
+    if resolver is None:
+        return []
+    if not callable(resolver):
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+    try:
+        rewrites = resolver(target, config)
+    except Exception as exc:
+        raise DataSourceSyncError(
+            "LENS_SOURCE_GIT_SUBMODULE_PLAN_FAILED"
+        ) from exc
+    if not isinstance(rewrites, list) or len(rewrites) > 20:
+        raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+    return rewrites
+
+
+def _submodule_git_config_args(rewrites):
+    """Serialize validated Plugin URL rewrites as process-local Git config."""
+
+    args = []
+    seen = set()
+    for rewrite in rewrites:
+        if not isinstance(rewrite, dict):
+            raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+        source = rewrite.get("from")
+        destination = rewrite.get("to")
+        parsed = parse.urlsplit(str(destination or ""))
+        if (
+            not isinstance(source, str)
+            or not source
+            or len(source) > 512
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise DataSourceSyncError("LENS_SOURCE_CONFIG_INVALID")
+        identity = (source, destination)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        args.extend(
+            [
+                "-c",
+                f'url.{json.dumps(destination)}.insteadOf={source}',
+            ]
+        )
+    return args
 
 
 def _git_manifest_items(target, repo_url, branch, directory=""):

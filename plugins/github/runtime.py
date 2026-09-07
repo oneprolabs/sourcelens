@@ -932,6 +932,12 @@ def build_datasource_command(snapshot, material, trigger):
     }
 
 
+def sync_datasource(command, workspace_path, emit, execute):
+    """Execute the GitHub datasource policy through the shared executor."""
+
+    return execute(command, workspace_path, emit)
+
+
 def _validate_definition(value):
     if (
         not isinstance(value, dict)
