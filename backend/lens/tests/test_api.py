@@ -5498,6 +5498,36 @@ class LensApiTests(TestCase):
             "/workspace/scheduled",
         )
 
+    def test_datasource_list_filters_by_plugin_key(self):
+        self.datasource.plugin_key = "github"
+        self.datasource.save(update_fields=["plugin_key"])
+        DataSource.objects.create(
+            name="Feishu Docs",
+            plugin_key="feishu",
+            source_type="feishu",
+            lensnode=self.lensnode,
+            config={"folder_url": "https://example.com/folder"},
+            sync_policy={"interval_seconds": 3600},
+            target_path="/workspace/feishu-docs",
+        )
+
+        response = self.client.get(
+            "/api/lens/admin/datasources/",
+            {"plugin_key": "github", "page_size": 100},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["plugin_key"], "github")
+
+        all_response = self.client.get(
+            "/api/lens/admin/datasources/",
+            {"plugin_key": "all", "page_size": 100},
+        )
+
+        self.assertEqual(all_response.status_code, 200, all_response.data)
+        self.assertEqual(all_response.data["count"], 2)
+
     def test_check_datasource_path_blocks_existing_datasource_path(self):
         response = self.client.post(
             f"/api/lens/admin/lensnodes/{self.lensnode.uuid}/" "check-datasource-path/",

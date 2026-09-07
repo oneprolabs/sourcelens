@@ -1236,6 +1236,8 @@
     },
     "datasourceSearch": {
       "all": "全部",
+      "pluginType": "插件类型",
+      "allPlugins": "全部插件",
       "sourceType": "数据源类型",
       "placeholder": "输入字段名，如 status、路径、仓库...",
       "clear": "清空搜索",

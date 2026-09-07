@@ -81,6 +81,11 @@ class DataSourceViewSet(BaseAdminViewSet):
         filters = self._datasource_search_filters(
             self.request.query_params.get("filters")
         )
+        plugin_key = str(
+            self.request.query_params.get("plugin_key") or ""
+        ).strip()
+        if plugin_key and plugin_key.lower() != "all":
+            queryset = queryset.filter(plugin_key=plugin_key)
         for item in filters:
             queryset = queryset.filter(
                 self._datasource_search_query(

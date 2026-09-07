@@ -143,6 +143,23 @@
               </div>
             </div>
             <div class="flex shrink-0 items-center gap-3 text-xs text-ink-500">
+              <BaseSelect
+                v-model="pluginFilter"
+                class="w-44 text-sm"
+                :aria-label="t('lensAdmin.datasourceSearch.pluginType')"
+                @change="applyPluginFilter"
+              >
+                <option value="all">
+                  {{ t('lensAdmin.datasourceSearch.allPlugins') }}
+                </option>
+                <option
+                  v-for="plugin in datasourcePlugins"
+                  :key="plugin.key"
+                  :value="plugin.key"
+                >
+                  {{ pluginDisplayName(plugin, t, te) }}
+                </option>
+              </BaseSelect>
               <span
                 >{{ enabledDataSourceCount }}
                 {{ t('common.status.active') }}</span
@@ -432,6 +449,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { pluginDisplayName } from '@/utils/pluginI18n'
 
@@ -474,6 +492,7 @@ const searchKey = ref('')
 const searchQuery = ref('')
 const searchFilters = ref([])
 const searchPickerOpen = ref(false)
+const pluginFilter = ref('all')
 const searchBoxRef = ref(null)
 const searchInputRef = ref(null)
 const searchValueInputRef = ref(null)
@@ -625,7 +644,15 @@ function datasourceListParams() {
   if (searchFilters.value.length) {
     params.filters = JSON.stringify(searchFilters.value)
   }
+  if (pluginFilter.value !== 'all') {
+    params.plugin_key = pluginFilter.value
+  }
   return params
+}
+
+function applyPluginFilter() {
+  currentPage.value = 1
+  load()
 }
 
 function applySearch() {

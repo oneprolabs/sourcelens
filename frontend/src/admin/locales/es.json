@@ -1236,6 +1236,8 @@
     },
     "datasourceSearch": {
       "all": "Todos",
+      "pluginType": "Tipo de plugin",
+      "allPlugins": "Todos los plugins",
       "sourceType": "Tipo de fuente",
       "placeholder": "Escribe un campo, por ejemplo estado, ruta, repositorio...",
       "clear": "Borrar búsqueda",
