@@ -2714,6 +2714,9 @@ def _validate_conversion_policy(conversion, field_name="sync_policy"):
         "pdf_max_pages",
         "pdf_min_text_chars",
         "pdf_render_dpi",
+        "max_spreadsheet_cells",
+        "max_spreadsheet_xml_bytes",
+        "image_max_upload_bytes",
     ]:
         value = conversion.get(key)
         if value is not None and (not isinstance(value, int) or value <= 0):

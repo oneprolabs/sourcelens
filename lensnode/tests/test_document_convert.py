@@ -14,6 +14,7 @@ from lensnode.document_convert import image_prompt
 from lensnode.document_convert import post_process_documents
 from lensnode.document_convert import prepare_image_for_model
 from lensnode.document_convert import standalone_image_context
+from lensnode.document_convert import xlsx_stats
 from lensnode.gateway_model import RunCancelledError
 
 Image = pytest.importorskip("PIL.Image")
@@ -72,6 +73,122 @@ def image_bytes(size=(96, 96)):
             )
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def write_xlsx(path, dimension, cells):
+    """Write a minimal XLSX archive with the supplied worksheet cells."""
+
+    rows = "".join(
+        f'<c r="{reference}" t="inlineStr"><is><t>{value}</t></is></c>'
+        for reference, value in cells
+    )
+    worksheet = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/'
+        'spreadsheetml/2006/main">'
+        f'<dimension ref="{dimension}"/><sheetData>{rows}</sheetData>'
+        '</worksheet>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "xl/workbook.xml",
+            '<workbook xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheets><sheet name="Data" '
+            'sheetId="1" r:id="rId1" xmlns:r="http://schemas.'
+            'openxmlformats.org/officeDocument/2006/relationships"/>'
+            "</sheets></workbook>",
+        )
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+
+
+def test_xlsx_stats_ignores_formatting_only_detected_range(tmp_path):
+    """A stale worksheet dimension does not become effective data range."""
+
+    path = tmp_path / "stale-range.xlsx"
+    write_xlsx(path, "A1:XFD1048576", [("A1", "Name"), ("B2", "Value")])
+
+    stats = xlsx_stats(path, max_cells=10)
+
+    assert stats["detected_range"] == "A1:XFD1048576"
+    assert stats["effective_range"] == "A1:B2"
+    assert stats["rows"] == 2
+    assert stats["columns"] == 2
+    assert stats["truncated"] is False
+
+
+def test_xlsx_stats_stops_after_cell_scan_budget(tmp_path):
+    """Sparse XLSX parsing stops once its cell-scan budget is hit."""
+
+    path = tmp_path / "over-budget.xlsx"
+    write_xlsx(
+        path,
+        "A1:XFD1048576",
+        [("A1", "one"), ("B2", "two"), ("C3", "three")],
+    )
+
+    stats = xlsx_stats(path, max_cells=2)
+
+    assert stats["truncated"] is True
+    assert stats["truncation_reason"] == "SPREADSHEET_CELL_BUDGET_EXCEEDED"
+    assert stats["effective_cells"] == 2
+    assert stats["scanned_cells"] == 3
+
+
+def test_xlsx_stats_stops_after_scanning_style_only_cells(tmp_path):
+    """Style-only cells cannot exhaust conversion work without truncation."""
+
+    path = tmp_path / "style-only.xlsx"
+    cells = "".join(f'<c r="A{row}" s="1"/>' for row in range(1, 5))
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<worksheet xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheetData>'
+            f"{cells}</sheetData></worksheet>",
+        )
+
+    stats = xlsx_stats(path, max_cells=2)
+
+    assert stats["truncated"] is True
+    assert stats["truncation_reason"] == "SPREADSHEET_CELL_BUDGET_EXCEEDED"
+    assert stats["scanned_cells"] == 3
+
+
+def test_xlsx_stats_applies_cell_scan_budget_across_worksheets(tmp_path):
+    """Worksheet boundaries cannot reset the spreadsheet scan budget."""
+
+    path = tmp_path / "multiple-sheets.xlsx"
+    worksheet = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/'
+        'spreadsheetml/2006/main"><sheetData><c r="A1" s="1"/>'
+        '<c r="A2" s="1"/></sheetData></worksheet>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+        archive.writestr("xl/worksheets/sheet2.xml", worksheet)
+
+    stats = xlsx_stats(path, max_cells=3)
+
+    assert stats["truncated"] is True
+    assert stats["scanned_cells"] == 4
+    assert stats["sheets"] == 2
+
+
+def test_xlsx_stats_rejects_oversized_worksheet_xml_before_expansion(tmp_path):
+    """A compressed XLSX cannot expand worksheet XML beyond its byte budget."""
+
+    path = tmp_path / "compressed.xlsx"
+    with zipfile.ZipFile(
+        path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", "x" * 1024)
+
+    stats = xlsx_stats(path, max_xml_bytes=128)
+
+    assert stats["truncated"] is True
+    assert stats["truncation_reason"] == "SPREADSHEET_XML_BUDGET_EXCEEDED"
+    assert stats["sheet_stats"][0]["xml_bytes"] == 1024
 
 
 def test_prepare_image_skips_tiny_image(tmp_path):
@@ -288,6 +405,51 @@ def test_post_process_document_recognizes_embedded_office_image(
     ]
 
 
+def test_document_text_survives_embedded_image_gateway_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    """One failed embedded image leaves converted document text available."""
+
+    doc = tmp_path / "report.docx"
+    with zipfile.ZipFile(doc, "w") as archive:
+        archive.writestr("word/media/image1.png", image_bytes())
+    install_fake_markitdown(monkeypatch)
+
+    def fail_image_description(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("504 Gateway Time-out")
+
+    monkeypatch.setattr(
+        "lensnode.document_convert.describe_image_bytes",
+        fail_image_description,
+    )
+
+    summary = post_process_documents(
+        conversion_context(
+            tmp_path,
+            {
+                "document": True,
+                "embedded_image": True,
+                "vision_model_ref": "vision-model",
+                "min_image_bytes": 1,
+            },
+        ),
+        SyncResult(items=[sync_item(doc)]),
+    )
+
+    content = (tmp_path / "report.docx.sourcelens/content.md").read_text()
+    item = summary["items"][0]
+    assert "Document text." in content
+    assert summary["success"] == 1
+    assert summary["warnings"] == [
+        "DOCUMENT_TEXT_EXTRACTED_WITH_VISUAL_FAILURE"
+    ]
+    assert item["stats"]["visual_failure_codes"] == [
+        "VISUAL_UPSTREAM_TIMEOUT"
+    ]
+
+
 def test_post_process_pdf_recognizes_embedded_image(tmp_path, monkeypatch):
     """PDF embedded image objects are described through the shared pipeline."""
 
@@ -332,6 +494,57 @@ def test_post_process_pdf_recognizes_embedded_image(tmp_path, monkeypatch):
     assert "PDF diagram description." in content
     assert summary["pdf_pages"] == 1
     assert summary["pdf_images_recognized"] == 1
+
+
+def test_pdf_text_survives_embedded_image_gateway_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    """A PDF image timeout leaves document text and exposes a warning."""
+
+    pdf = tmp_path / "report.pdf"
+    document = fitz.open()
+    page = document.new_page(width=200, height=200)
+    page.insert_text((20, 30), "This page has extractable document text.")
+    page.insert_image(fitz.Rect(20, 60, 160, 180), stream=image_bytes())
+    document.save(pdf)
+    document.close()
+    install_fake_markitdown(monkeypatch)
+
+    def fail_image_description(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("504 Gateway Time-out")
+
+    monkeypatch.setattr(
+        "lensnode.document_convert.describe_image_bytes",
+        fail_image_description,
+    )
+
+    summary = post_process_documents(
+        conversion_context(
+            tmp_path,
+            {
+                "document": True,
+                "embedded_image": True,
+                "vision_model_ref": "vision-model",
+                "min_image_bytes": 1,
+                "pdf_extract_images": True,
+                "pdf_extract_images_on_text_pages": True,
+            },
+        ),
+        SyncResult(items=[sync_item(pdf)]),
+    )
+
+    content = (tmp_path / "report.pdf.sourcelens/content.md").read_text()
+    item = summary["items"][0]
+    assert "Document text." in content
+    assert summary["success"] == 1
+    assert summary["warnings"] == [
+        "DOCUMENT_TEXT_EXTRACTED_WITH_VISUAL_FAILURE"
+    ]
+    assert item["stats"]["visual_failure_codes"] == [
+        "VISUAL_UPSTREAM_TIMEOUT"
+    ]
 
 
 def test_post_process_pdf_skips_embedded_image_on_text_page_by_default(
