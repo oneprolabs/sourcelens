@@ -21,6 +21,8 @@
 #      cn/gitee channel, rewrites the image registry to Aliyun ACR.
 #   4. Generates a self-signed TLS certificate if missing, creates the data
 #      directory layout, pulls images, starts the stack and health-checks it.
+#   5. When no active system model exists, offers an interactive AI model
+#      setup with hidden API-key input and a connection test.
 #
 # Channels: the download source (github/gitee) selects where release files come
 # from AND which registry the application images are pulled from:
@@ -32,8 +34,8 @@
 # (docker-compose 1.x) is NOT supported — the compose files use V2-only features
 # (top-level `name`, `depends_on.condition`).
 #
-# --source mode — for testing this script itself, or running the whole flow from
-# a local checkout without touching GitHub/Gitee:
+# --source mode — test local installer/deployment files while still pulling
+# released application images from the selected registry:
 #
 #   ./install.sh --source /path/to/sourcelens-repo [tag]
 # =============================================================================
@@ -51,15 +53,17 @@ GITEE_REPO="oneprolabs/sourcelens"
 GITEE_API="https://gitee.com/api/v5/repos/${GITEE_REPO}"
 GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw"
 DEFAULT_INSTALL_DIR="/opt/${APP_NAME}"
-DEFAULT_HTTP_PORT=10080
+DEFAULT_HTTP_PORT=10083
 DEFAULT_HTTPS_PORT=10443
 # Image registry prefixes. Docker Hub uses just the namespace; Aliyun ACR uses
 # host/namespace. Both carry sourcelens-{backend,frontend,lensnode}.
 REGISTRY_GITHUB="oneprolabs"
 REGISTRY_CN="registry.cn-beijing.aliyuncs.com/oneprolabs"
 COMPOSE_FILE="docker-compose.standalone.yml"
+MODEL_SETUP_OVERRIDE="docker-compose.model-setup.yml"
 INSTALLER_VERSION="0.1.0"
 HEALTH_TIMEOUT=240
+PULL_PARALLELISM=4
 
 # Release files fetched directly from the repository tag. Only what
 # docker-compose.standalone.yml actually mounts/needs is included.
@@ -113,6 +117,8 @@ ASSUME_YES=0
 FORCE=0
 SOURCE_DIR=""
 INSTALL_ARGS=()
+MODEL_CONFIGURED=0
+MODEL_SETUP_UNAVAILABLE=0
 
 SCHEME="http"
 PORT_SUFFIX=""
@@ -170,15 +176,15 @@ Options:
                              (default: auto; also selects the image registry:
                              github -> Docker Hub, gitee -> Aliyun ACR)
   -v, --version VER        Release version to install (default: latest tag)
-      --source DIR         Use a local repository directory instead of
-                           downloading release files (testing/offline)
+      --source DIR         Use local installer/deployment files while still
+                           pulling application images from the registry
   -r, --registry REG       Override the application image registry prefix
       --domain HOST        Public hostname / IP (default: auto-detect)
       --admin-user USER    Initial admin username (default: admin)
       --admin-email EMAIL  Initial admin email (default: admin@<domain>)
       --https              Configure URLs for HTTPS behind a TLS proxy
       --docker-mirror URL  Configure a Docker Hub registry mirror (linux)
-  -y, --yes                Non-interactive: accept defaults, no prompts
+  -y, --yes                Accept install defaults and skip model setup
       --force              Upgrade without confirmation
   -h, --help               Show this help
 
@@ -196,19 +202,31 @@ EOF
 confirm() {
   local prompt="$1" answer=""
   [[ "${ASSUME_YES}" == "1" ]] && return 0
-  if [[ ! -t 0 ]]; then
-    if [[ -e /dev/tty ]]; then
-      printf '%s [y/N] ' "${prompt}" >/dev/tty
-      read -r answer </dev/tty || answer="n"
+  while :; do
+    if [[ ! -t 0 ]]; then
+      if [[ -e /dev/tty ]]; then
+        printf '%s [yes/No] ' "${prompt}" >/dev/tty
+        read -r answer </dev/tty || answer="no"
+      else
+        return 0 # fully non-interactive: proceed with defaults
+      fi
     else
-      return 0 # fully non-interactive: proceed with defaults
+      printf '%s [yes/No] ' "${prompt}"
+      read -r answer || answer="no"
     fi
-  else
-    printf '%s [y/N] ' "${prompt}"
-    read -r answer || answer="n"
-  fi
-  answer="$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')"
-  [[ "${answer}" == "y" || "${answer}" == "yes" ]]
+    answer="$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')"
+    case "${answer}" in
+      yes) return 0 ;;
+      ""|no) return 1 ;;
+      *)
+        if [[ ! -t 0 && -e /dev/tty ]]; then
+          printf 'Enter yes or no.\n' >/dev/tty
+        else
+          printf 'Enter yes or no.\n'
+        fi
+        ;;
+    esac
+  done
 }
 
 prompt_value() {
@@ -438,6 +456,9 @@ check_compose() {
 # stack; refuse to run on a host where blue/green is already active.
 check_no_bluegreen() {
   local c=""
+  if [[ -n "${SOURCE_DIR}" && "${INSTALL_DIR}" != "${DEFAULT_INSTALL_DIR}" ]]; then
+    return 0
+  fi
   for c in sourcelens-api-blue sourcelens-api-green; do
     if [[ "$(docker inspect -f '{{.State.Running}}' "${c}" 2>/dev/null)" == "true" ]]; then
       abort "blue/green stack is active on this host (${c} is running). The standalone installer shares project 'sourcelens' with it; use scripts/install.sh instead, or install on a separate host."
@@ -622,15 +643,21 @@ download_release_file() {
 
 fetch_release_files() {
   log_step "Installing release files (source: ${DOWNLOAD_SOURCE})"
-  local rel="" src="" dir="" http="" done=0
+  local rel="" src="" dir="" target="" http="" done=0
   local total="${#RELEASE_FILES[@]}"
   for rel in "${RELEASE_FILES[@]}"; do
     dir="${INSTALL_DIR}/$(dirname "${rel}")"
+    target="${INSTALL_DIR}/${rel}"
     mkdir -p "${dir}"
+    if [[ -d "${target}" ]]; then
+      rmdir "${target}" 2>/dev/null \
+        || abort "expected release file but found a non-empty directory: ${target}"
+      log_warn "replacing an empty directory with release file ${rel}"
+    fi
     if [[ -n "${SOURCE_DIR}" ]]; then
       src="${SOURCE_DIR%/}/${rel}"
       [[ -f "${src}" ]] || abort "source directory ${SOURCE_DIR} is missing ${rel}"
-      cp -f "${src}" "${INSTALL_DIR}/${rel}"
+      cp -f "${src}" "${target}"
       done=$((done + 1))
     else
       download_release_file "${rel}" || true
@@ -666,6 +693,26 @@ fetch_release_files() {
   # Postgres initdb shell scripts must stay executable for the official image.
   chmod +x "${INSTALL_DIR}/docker/postgresql/initdb.d"/*.sh 2>/dev/null || true
   log_ok "Release files installed"
+}
+
+prepare_model_setup_overlay() {
+  local command_rel="backend/core/management/commands/setup_ai_model.py"
+  local command_src="${SOURCE_DIR%/}/${command_rel}"
+  local overlay_dir="${INSTALL_DIR}/docker/model-setup"
+  local overlay="${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}"
+  rm -f "${overlay}" "${overlay_dir}/setup_ai_model.py"
+  [[ -n "${SOURCE_DIR}" && -f "${command_src}" ]] || return 0
+
+  mkdir -p "${overlay_dir}"
+  cp -f "${command_src}" "${overlay_dir}/setup_ai_model.py"
+  {
+    printf 'services:\n'
+    printf '  backend-api:\n'
+    printf '    volumes:\n'
+    printf '      - ./docker/model-setup/setup_ai_model.py:'
+    printf '/opt/backend/core/management/commands/setup_ai_model.py:ro\n'
+  } >"${overlay}"
+  log_info "Model setup is enabled for this local installer test"
 }
 
 # ---------------------------------------------------------------------------
@@ -794,6 +841,19 @@ patch_compose() {
   if ! grep -q "image: ${REGISTRY}/sourcelens-backend:${VERSION}" "${compose}"; then
     abort "failed to pin image references in ${compose}"
   fi
+  if [[ -n "${SOURCE_DIR}" && "${INSTALL_DIR}" != "${DEFAULT_INSTALL_DIR}" ]]; then
+    local project_name=""
+    project_name="$(basename "${INSTALL_DIR}" \
+      | tr '[:upper:]' '[:lower:]' \
+      | tr -cs 'a-z0-9_-' '-')"
+    project_name="${project_name#-}"
+    project_name="${project_name%-}"
+    [[ -n "${project_name}" ]] \
+      || abort "could not derive a test project name from ${INSTALL_DIR}"
+    sed_inplace "${compose}" -E "s/^name:.*$/name: ${project_name}/"
+    sed_inplace "${compose}" -E '/^[[:space:]]*container_name:/d'
+    log_info "Local test environment is isolated from the existing installation"
+  fi
   log_ok "Compose patched (registry: ${REGISTRY}, images tagged :${VERSION})"
 }
 
@@ -835,82 +895,279 @@ create_dirs() {
 # Docker Compose lifecycle
 # ---------------------------------------------------------------------------
 run_compose() {
+  local -a compose_files=(-f "${INSTALL_DIR}/${COMPOSE_FILE}")
+  if [[ -n "${SOURCE_DIR}" && \
+        -f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}" ]]; then
+    compose_files+=(-f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")
+  fi
   "${COMPOSE_CMD[@]}" --project-directory "${INSTALL_DIR}" \
-    -f "${INSTALL_DIR}/${COMPOSE_FILE}" "$@" 2>&1 | tee -a "${LOG_FILE}"
+    "${compose_files[@]}" "$@" 2>&1 | tee -a "${LOG_FILE}"
 }
 
 run_compose_quiet() {
+  local -a compose_files=(-f "${INSTALL_DIR}/${COMPOSE_FILE}")
+  if [[ -n "${SOURCE_DIR}" && \
+        -f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}" ]]; then
+    compose_files+=(-f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")
+  fi
   "${COMPOSE_CMD[@]}" --project-directory "${INSTALL_DIR}" \
-    -f "${INSTALL_DIR}/${COMPOSE_FILE}" "$@"
+    "${compose_files[@]}" "$@"
 }
 
 pull_one() {
-  local img="$1" rc=0
-  if [[ -t 1 ]]; then
-    docker pull "${img}" 2>&1 | tee -a "${LOG_FILE:-/dev/null}" | docker_pull_progress "${img}" || rc=$?
-  else
-    docker pull "${img}" >>"${LOG_FILE:-/dev/null}" 2>&1 || rc=$?
-  fi
-  return "${rc}"
+  local img="$1" output_file="$2"
+  printf '[PULL] %s\n' "${img}" >"${output_file}"
+  docker pull "${img}" >>"${output_file}" 2>&1
 }
 
-docker_pull_progress() {
-  local img="${1##*/}" line="" frac="" msg="" prev=""
-  local total=0 ready=0 done=0
-  [[ -t 1 ]] || { cat >/dev/null 2>&1 || true; return 0; }
-  while IFS= read -r line; do
-    line="${line//$'\r'/}"
-    case "${line}" in
-      *": Pulling fs layer") total=$((total + 1));;
-      *": Layer already exists") total=$((total + 1)); ready=$((ready + 1));;
-      *": Download complete") ready=$((ready + 1));;
-      *": Pull complete") done=$((done + 1));;
-    esac
-    frac=""
-    if [[ "${line}" =~ \:[[:space:]]*(Downloading|Extracting)[[:space:]]*\[[^]]*\][[:space:]]*([0-9][0-9.]*[kMG]?B/[0-9][0-9.]*[kMG]?B) ]]; then
-      frac="${BASH_REMATCH[2]}"
+pull_image_label() {
+  case "$1" in
+    *sourcelens-backend*) printf 'SourceLens Backend' ;;
+    *sourcelens-frontend*) printf 'SourceLens Frontend' ;;
+    *sourcelens-lensnode*) printf 'SourceLens LensNode' ;;
+    postgres:*) printf 'PostgreSQL' ;;
+    redis:*) printf 'Redis' ;;
+    nginx:*) printf 'Nginx' ;;
+    alpine/openssl*) printf 'TLS Helper' ;;
+    *) printf '%s' "${1##*/}" ;;
+  esac
+}
+
+pull_layer_progress() {
+  local output_file="$1"
+  [[ -f "${output_file}" ]] || { printf '0 0'; return 0; }
+  awk '
+    {
+      gsub(/\r/, "")
+      layer = $1
+      sub(/:$/, "", layer)
+      if ($0 ~ /: Pulling fs layer$/) total[layer] = 1
+      if ($0 ~ /: (Download complete|Pull complete)$/ ||
+          $0 ~ /: (Already exists|Layer already exists)$/) {
+        total[layer] = 1
+        done[layer] = 1
+      }
+    }
+    END {
+      total_count = 0
+      done_count = 0
+      for (layer in total) total_count++
+      for (layer in done) done_count++
+      printf "%d %d", done_count, total_count
+    }
+  ' "${output_file}"
+}
+
+pull_progress_bar() {
+  local percent="$1" width=16 filled=0 index=0 bar=""
+  filled=$((percent * width / 100))
+  for ((index = 0; index < width; index++)); do
+    if ((index < filled)); then
+      bar+="█"
+    else
+      bar+="░"
     fi
-    msg="${img}: ${ready}/${total} layers ready"
-    ((done > 0)) && msg+=", ${done} complete"
-    [[ -n "${frac}" ]] && msg+=" (${frac})"
-    printf '\r\033[K%s' "${msg}"
-    prev=1
   done
-  [[ -n "${prev}" ]] && printf '\r\033[K'
-  return 0
+  printf '%s' "${bar}"
+}
+
+_pull_dashboard_cursor_hidden=0
+
+pull_dashboard_hide_cursor() {
+  [[ -t 1 ]] || return 0
+  printf '\033[?25l'
+  _pull_dashboard_cursor_hidden=1
+}
+
+pull_dashboard_show_cursor() {
+  [[ "${_pull_dashboard_cursor_hidden}" == "1" ]] || return 0
+  printf '\033[?25h'
+  _pull_dashboard_cursor_hidden=0
+}
+
+render_pull_dashboard() {
+  local total="$1" started="$2" tick="$3"
+  local index=0 state="" output_file="" metrics="" detail=""
+  local done_layers=0 total_layers=0 percent=0 elapsed=0
+  local minutes=0 seconds=0 indicator="" color="" bar=""
+  local chars='/-\|'
+  [[ -t 1 ]] || return 0
+
+  if [[ "${_pull_dashboard_rendered}" == "1" ]]; then
+    printf '\033[%sA' "${total}"
+  fi
+  elapsed=$((SECONDS - started))
+  minutes=$((elapsed / 60))
+  seconds=$((elapsed % 60))
+
+  for ((index = 0; index < total; index++)); do
+    state="${image_states[index]}"
+    output_file="${image_logs[index]:-}"
+    percent=0
+    indicator="·"
+    color="${c_cyan}"
+    detail="waiting"
+    if [[ "${state}" == "active" ]]; then
+      indicator="${chars:$((tick % 4)):1}"
+      metrics="$(pull_layer_progress "${output_file}")"
+      done_layers="${metrics%% *}"
+      total_layers="${metrics##* }"
+      if ((total_layers > 0)); then
+        percent=$((done_layers * 100 / total_layers))
+        ((percent >= 100)) && percent=95
+        detail="${done_layers}/${total_layers} layers"
+      else
+        detail="starting"
+      fi
+    elif [[ "${state}" == "done" ]]; then
+      indicator="✓"
+      color="${c_green}"
+      percent=100
+      detail="complete"
+    elif [[ "${state}" == "retrying" ]]; then
+      indicator="!"
+      color="${c_yellow}"
+      detail="retrying"
+    elif [[ "${state}" == "failed" ]]; then
+      indicator="✗"
+      color="${c_red}"
+      detail="failed"
+    fi
+    bar="$(pull_progress_bar "${percent}")"
+    printf '\r\033[K%s%s  %-20s [%s]  %3d%%  %-12s  %02d:%02d%s\n' \
+      "${color}" "${indicator}" "${image_labels[index]}" "${bar}" \
+      "${percent}" "${detail}" "${minutes}" "${seconds}" "${c_reset}"
+  done
+  _pull_dashboard_rendered=1
 }
 
 pull_images() {
-  log_step "Pulling container images (registry: ${REGISTRY})"
+  log_step "Downloading SourceLens components"
   run_compose config --quiet || abort "invalid docker-compose configuration; see ${LOG_FILE}"
 
-  local -a images=() img=""
+  local -a images=()
+  local img=""
   while IFS= read -r img; do
     [[ -n "${img}" ]] && images+=("${img}")
   done < <(run_compose_quiet config --images 2>/dev/null | sort -u)
+  if [[ ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.crt" || \
+        ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.key" ]]; then
+    images+=("alpine/openssl")
+  fi
 
-  local total="${#images[@]}" idx=1 attempt=1 max_attempts=3
+  local total="${#images[@]}" attempt=1 max_attempts=3
+  local completed=0 cursor=0 job=0 image_index=0 img=""
+  local running=0 found=0 started="${SECONDS}" tick=0 rc=0
+  local status_file="" output_file=""
+  local failure_message="" retry_message=""
+  local status_dir="${INSTALL_DIR}/logs/.pull-status-$$"
+  local -a pending=() failed=() pids=() batch=() statuses=()
+  local -a image_states=() image_logs=() image_labels=()
   if ((total == 0)); then
-    log_warn "no container images to pull"
+    log_warn "No components need to be downloaded"
     return 0
   fi
-  for img in "${images[@]}"; do
-    attempt=1
-    while :; do
-      if pull_one "${img}"; then
-        break
-      fi
-      if ((attempt >= max_attempts)); then
-        abort "failed to pull ${img} after ${max_attempts} attempts; check network access to the registry (see ${LOG_FILE})"
-      fi
-      log_warn "pull of ${img} failed (attempt ${attempt}/${max_attempts}); retrying in 10s"
-      sleep 10
-      attempt=$((attempt + 1))
-    done
-    log_ok "[${idx}/${total}] pulled ${img}"
-    idx=$((idx + 1))
+  for ((image_index = 0; image_index < total; image_index++)); do
+    pending+=("${image_index}")
+    image_states+=("waiting")
+    image_logs+=("")
+    image_labels+=("$(pull_image_label "${images[image_index]}")")
   done
-  log_ok "All ${total} images pulled"
+  log_info \
+    "Downloading ${total} components, up to ${PULL_PARALLELISM} in parallel"
+  mkdir -p "${status_dir}"
+  _pull_dashboard_rendered=0
+  pull_dashboard_hide_cursor
+
+  while ((${#pending[@]} > 0)); do
+    failed=()
+    cursor=0
+    running=0
+    pids=()
+    batch=()
+    statuses=()
+    while ((cursor < ${#pending[@]} || running > 0)); do
+      while ((running < PULL_PARALLELISM && cursor < ${#pending[@]})); do
+        image_index="${pending[cursor]}"
+        img="${images[image_index]}"
+        status_file="${status_dir}/${attempt}-${image_index}.status"
+        output_file="${status_dir}/${attempt}-${image_index}.log"
+        image_states[image_index]="active"
+        image_logs[image_index]="${output_file}"
+        (
+          if pull_one "${img}" "${output_file}"; then
+            printf '0\n' >"${status_file}"
+          else
+            printf '1\n' >"${status_file}"
+          fi
+        ) &
+        pids+=("$!")
+        batch+=("${image_index}")
+        statuses+=("${status_file}")
+        cursor=$((cursor + 1))
+        running=$((running + 1))
+      done
+
+      found=0
+      for ((job = 0; job < ${#pids[@]}; job++)); do
+        status_file="${statuses[job]:-}"
+        if [[ -n "${status_file}" && -f "${status_file}" ]]; then
+          image_index="${batch[job]}"
+          rc="$(head -n 1 "${status_file}")"
+          wait "${pids[job]}" || true
+          output_file="${image_logs[image_index]}"
+          [[ -f "${output_file}" ]] \
+            && cat "${output_file}" >>"${LOG_FILE:-/dev/null}"
+          if [[ "${rc}" == "0" ]]; then
+            image_states[image_index]="done"
+            completed=$((completed + 1))
+            log_line "[PROGRESS] ${completed}/${total} components downloaded"
+          else
+            image_states[image_index]="retrying"
+            failed+=("${image_index}")
+          fi
+          rm -f "${status_file}" "${output_file}"
+          image_logs[image_index]=""
+          statuses[job]=""
+          running=$((running - 1))
+          found=1
+        fi
+      done
+      tick=$((tick + 1))
+      render_pull_dashboard "${total}" "${started}" "${tick}"
+      ((found == 1)) || sleep 0.2
+    done
+
+    if ((${#failed[@]} == 0)); then
+      break
+    fi
+    if ((attempt >= max_attempts)); then
+      for image_index in "${failed[@]}"; do
+        image_states[image_index]="failed"
+      done
+      render_pull_dashboard "${total}" "${started}" "${tick}"
+      pull_dashboard_show_cursor
+      failure_message="failed to download ${#failed[@]} component(s) after "
+      failure_message+="${max_attempts} attempts; check registry access "
+      failure_message+="(see ${LOG_FILE})"
+      abort "${failure_message}"
+    fi
+    retry_message="${#failed[@]} component download(s) failed on attempt "
+    retry_message+="${attempt}/${max_attempts}; retrying in 10s"
+    log_line "[WARN]  ${retry_message}"
+    render_pull_dashboard "${total}" "${started}" "${tick}"
+    sleep 10
+    pending=("${failed[@]}")
+    attempt=$((attempt + 1))
+  done
+  rmdir "${status_dir}" 2>/dev/null || true
+  render_pull_dashboard "${total}" "${started}" "${tick}"
+  pull_dashboard_show_cursor
+  if [[ -t 1 ]]; then
+    log_line "[OK]    All ${total} components downloaded"
+  else
+    log_ok "All ${total} components downloaded"
+  fi
 }
 
 _spinner_pid=""
@@ -920,10 +1177,15 @@ spinner_start() {
   [[ -t 1 ]] || return 0
   _spinner_on=1
   (
-    local label="$1" chars='/-\|' i=0 c=""
+    local label="$1" chars='/-\|' i=0 c="" started="${SECONDS}"
+    local elapsed=0 minutes=0 seconds=0
     while :; do
       c="${chars:$((i % 4)):1}"
-      printf '\r\033[K%s %s' "${label}" "${c}"
+      elapsed=$((SECONDS - started))
+      minutes=$((elapsed / 60))
+      seconds=$((elapsed % 60))
+      printf '\r\033[K%s  %s  %02d:%02d' \
+        "${label}" "${c}" "${minutes}" "${seconds}"
       i=$((i + 1))
       sleep 0.2
     done
@@ -940,53 +1202,132 @@ spinner_stop() {
 }
 
 start_stack() {
-  log_step "Starting Docker Compose stack"
+  log_step "Starting SourceLens"
   local attempt=1 max_attempts=5 backoff=20
   if [[ -t 1 ]]; then
-    log_info "Starting stack (details logged to ${LOG_FILE})"
-    spinner_start "Starting Docker Compose stack"
+    log_info "Starting SourceLens (details logged to ${LOG_FILE})"
+    spinner_start "Starting SourceLens"
   fi
   until run_compose_quiet up -d --no-build --remove-orphans >>"${LOG_FILE}" 2>&1; do
     spinner_stop
     if ((attempt >= max_attempts)); then
-      log_error "docker compose up failed after ${max_attempts} attempts"
-      log_error "container status:"
-      run_compose ps || true
-      log_error "recent container logs:"
-      run_compose logs --tail=100 --no-color || true
-      abort "docker compose up failed; see ${LOG_FILE} and the container logs above"
+      log_error "SourceLens failed to start after ${max_attempts} attempts"
+      run_compose_quiet ps >>"${LOG_FILE}" 2>&1 || true
+      run_compose_quiet logs --tail=100 --no-color \
+        >>"${LOG_FILE}" 2>&1 || true
+      abort "SourceLens failed to start; see ${LOG_FILE}"
     fi
     log_info "dependencies still warming up; retrying in ${backoff}s (attempt ${attempt}/${max_attempts})"
     sleep "${backoff}"
     ((backoff < 120)) && backoff=$((backoff * 2))
     attempt=$((attempt + 1))
-    spinner_start "Starting Docker Compose stack"
+    spinner_start "Starting SourceLens"
   done
   spinner_stop
-  log_ok "Stack started"
-  log_info "Container status:"
-  run_compose_quiet ps --format 'table {{.Name}}\t{{.Status}}' || true
+  log_ok "SourceLens started"
 }
 
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
-health_check() {
-  log_step "Waiting for system health endpoint (timeout: ${HEALTH_TIMEOUT}s)"
-  local deadline=$((SECONDS + HEALTH_TIMEOUT))
-  local url="http://127.0.0.1:${HTTP_PORT}/health/celery"
-  until curl -fsS --max-time 5 "${url}" >/dev/null 2>&1; do
-    if ((SECONDS >= deadline)); then
-      log_error "health check timed out after ${HEALTH_TIMEOUT}s"
-      log_error "container status:"
-      run_compose ps || true
-      log_error "recent container logs:"
-      run_compose logs --tail=100 --no-color || true
-      abort "health check failed — see ${LOG_FILE} and the container logs above"
-    fi
-    sleep 5
+background_services_ready() {
+  local url="$1" payload="" services="" service=""
+  payload="$(curl -sS --max-time 3 "${url}/health/celery" 2>/dev/null)" \
+    || return 1
+  [[ "${payload}" == *'"missing_consumers": []'* ]] || return 1
+  [[ "${payload}" == *'"overloaded_queues": []'* ]] || return 1
+  [[ "${payload}" != *'"broker_error"'* ]] || return 1
+
+  services="$(run_compose_quiet ps --status running --services 2>/dev/null)" \
+    || return 1
+  for service in backend-worker backend-scheduler frontend lensnode nginx; do
+    printf '%s\n' "${services}" | grep -qx "${service}" || return 1
   done
-  log_ok "Health check passed: ${url}"
+}
+
+health_check() {
+  log_step "Checking SourceLens health"
+  local deadline=$((SECONDS + HEALTH_TIMEOUT))
+  local url="http://127.0.0.1:${HTTP_PORT}"
+  local web_ready=0
+  spinner_start "Preparing SourceLens web service"
+  while :; do
+    if [[ "${web_ready}" == "0" ]] && \
+       curl -fsS --max-time 5 "${url}/health" >/dev/null 2>&1; then
+      web_ready=1
+      spinner_stop
+      log_ok "SourceLens web service is ready"
+      spinner_start "Preparing SourceLens background services"
+    fi
+    if [[ "${web_ready}" == "1" ]] && \
+       background_services_ready "${url}"; then
+      break
+    fi
+    if ((SECONDS >= deadline)); then
+      spinner_stop
+      log_error "health check timed out after ${HEALTH_TIMEOUT}s"
+      run_compose_quiet ps >>"${LOG_FILE}" 2>&1 || true
+      run_compose_quiet logs --tail=100 --no-color \
+        >>"${LOG_FILE}" 2>&1 || true
+      abort "SourceLens health check failed; see ${LOG_FILE}"
+    fi
+    sleep 3
+  done
+  spinner_stop
+  log_ok "SourceLens is healthy"
+}
+
+# ---------------------------------------------------------------------------
+# First-time AI model setup
+# ---------------------------------------------------------------------------
+model_setup_is_available() {
+  run_compose_quiet exec -T backend-api \
+    python manage.py help setup_ai_model >/dev/null 2>&1
+}
+
+model_is_configured() {
+  run_compose_quiet exec -T backend-api \
+    python manage.py setup_ai_model --check >/dev/null 2>&1
+}
+
+configure_ai_model() {
+  local skip_message="" unavailable_message=""
+  log_step "AI model setup"
+  if ! model_setup_is_available; then
+    MODEL_SETUP_UNAVAILABLE=1
+    unavailable_message="The installed SourceLens release does not include "
+    unavailable_message+="the AI model setup wizard; existing model settings "
+    unavailable_message+="were left unchanged"
+    log_warn "${unavailable_message}"
+    return 0
+  fi
+  if model_is_configured; then
+    MODEL_CONFIGURED=1
+    log_ok "An active system AI model is already configured"
+    return 0
+  fi
+
+  if [[ "${ASSUME_YES}" == "1" ]]; then
+    skip_message="AI model setup needs an interactive terminal and was "
+    skip_message+="skipped because --yes is enabled"
+    log_warn "${skip_message}"
+    return 0
+  fi
+  if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
+    log_warn "No interactive terminal is available; AI model setup was skipped"
+    return 0
+  fi
+
+  if ! run_compose_quiet exec backend-api \
+    python manage.py setup_ai_model </dev/tty >/dev/tty 2>/dev/tty; then
+    log_warn "Interactive AI model setup did not complete"
+  fi
+  if model_is_configured; then
+    MODEL_CONFIGURED=1
+    log_ok "System AI model is ready"
+  else
+    log_warn "No active system AI model is configured yet"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1020,7 +1361,6 @@ show_summary() {
   log_step "Installation summary"
   log_info "  Platform:     ${OS_NAME} (${PLATFORM}/${ARCH})"
   log_info "  Version:      v${VERSION}"
-  log_info "  Channel:      ${CHANNEL} (source: ${DOWNLOAD_SOURCE}, registry: ${REGISTRY})"
   log_info "  Install dir:  ${INSTALL_DIR}"
   log_info "  URL:          ${SCHEME}://${DOMAIN}${PORT_SUFFIX}"
   log_info "  HTTP port:    ${HTTP_PORT}"
@@ -1030,15 +1370,31 @@ show_summary() {
 }
 
 final_summary() {
+  local local_url="${SCHEME}://localhost${PORT_SUFFIX}"
+  local model_url="${SCHEME}://${DOMAIN}${PORT_SUFFIX}/management/llm/config"
+  local local_model_url="${local_url}/management/llm/config"
+  local model_warning="" vm_hint=""
   log_step "Installation complete"
   log_ok "SourceLens v${VERSION} installed at ${INSTALL_DIR}"
   log_info "URL:              ${SCHEME}://${DOMAIN}${PORT_SUFFIX}"
   log_info "Email:            ${ADMIN_EMAIL}"
-  log_info "Initial password: ${ADMIN_PASSWORD}"
+  printf '%sInitial password: %s%s\n' \
+    "${c_cyan}" "${ADMIN_PASSWORD}" "${c_reset}"
   log_info "Install dir:      ${INSTALL_DIR}"
   log_info "Config file:      ${INSTALL_DIR}/.env"
   log_info "Install info:     ${INSTALL_DIR}/install-info.env"
   log_info "Install log:      ${LOG_FILE}"
+  log_info "AI model settings: ${model_url}"
+  if [[ "${MODEL_CONFIGURED}" != "1" && \
+        "${MODEL_SETUP_UNAVAILABLE}" != "1" ]]; then
+    model_warning="AI model setup is incomplete; assistants cannot run "
+    model_warning+="until a model is configured"
+    log_warn "${model_warning}"
+  fi
+  vm_hint="NAT virtual machine: forward host TCP port ${HTTP_PORT} to guest "
+  vm_hint+="TCP port ${HTTP_PORT}, then open ${local_url}"
+  log_info "${vm_hint}"
+  log_info "NAT virtual machine AI model settings: ${local_model_url}"
   if [[ "${ENV_EXISTS}" == "1" ]]; then
     log_warn "An existing .env was preserved; the admin password above is the one stored in it"
   fi
@@ -1082,6 +1438,13 @@ main() {
     esac
   done
 
+  if [[ -n "${SOURCE_DIR}" ]]; then
+    [[ -d "${SOURCE_DIR}" ]] \
+      || abort "source directory does not exist: ${SOURCE_DIR}"
+    SOURCE_DIR="$(cd "${SOURCE_DIR}" && pwd -P)"
+  fi
+
+  trap 'pull_dashboard_show_cursor' EXIT
   trap 'log_line "=== install failed at line ${LINENO} (exit $?) ==="' ERR
 
   # Preflight
@@ -1093,6 +1456,8 @@ main() {
 
   mkdir -p "${INSTALL_DIR}/logs"
   LOG_FILE="${INSTALL_DIR}/logs/install.log"
+  touch "${LOG_FILE}"
+  chmod 600 "${LOG_FILE}"
   log_line "=== install.sh v${INSTALLER_VERSION} started ($(date -u '+%Y-%m-%dT%H:%M:%SZ')) ==="
   log_line "argv: $*"
 
@@ -1120,12 +1485,14 @@ main() {
     log_info "Using local release files from ${SOURCE_DIR%/}"
   fi
   fetch_release_files
+  prepare_model_setup_overlay
   generate_env
   patch_compose
-  generate_certs
   pull_images
+  generate_certs
   start_stack
   health_check
+  configure_ai_model
   write_install_info
   final_summary
 }
