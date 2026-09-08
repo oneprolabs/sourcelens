@@ -1,0 +1,7 @@
+type: improvement
+audience: user
+en: >-
+  Improved long-running assistant reliability with per-Run tool-call budgets
+  that preserve completed evidence and safely finish answers after the limit.
+zh-CN: >-
+  优化长时间运行助手的稳定性：支持按 Run 限制工具调用次数，在达到上限后保留已有证据并安全完成回答。
