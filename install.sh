@@ -202,19 +202,31 @@ EOF
 confirm() {
   local prompt="$1" answer=""
   [[ "${ASSUME_YES}" == "1" ]] && return 0
-  if [[ ! -t 0 ]]; then
-    if [[ -e /dev/tty ]]; then
-      printf '%s [y/N] ' "${prompt}" >/dev/tty
-      read -r answer </dev/tty || answer="n"
+  while :; do
+    if [[ ! -t 0 ]]; then
+      if [[ -e /dev/tty ]]; then
+        printf '%s [yes/No] ' "${prompt}" >/dev/tty
+        read -r answer </dev/tty || answer="no"
+      else
+        return 0 # fully non-interactive: proceed with defaults
+      fi
     else
-      return 0 # fully non-interactive: proceed with defaults
+      printf '%s [yes/No] ' "${prompt}"
+      read -r answer || answer="no"
     fi
-  else
-    printf '%s [y/N] ' "${prompt}"
-    read -r answer || answer="n"
-  fi
-  answer="$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')"
-  [[ "${answer}" == "y" || "${answer}" == "yes" ]]
+    answer="$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')"
+    case "${answer}" in
+      yes) return 0 ;;
+      ""|no) return 1 ;;
+      *)
+        if [[ ! -t 0 && -e /dev/tty ]]; then
+          printf 'Enter yes or no.\n' >/dev/tty
+        else
+          printf 'Enter yes or no.\n'
+        fi
+        ;;
+    esac
+  done
 }
 
 prompt_value() {
@@ -903,22 +915,130 @@ run_compose_quiet() {
 }
 
 pull_one() {
-  local img="$1"
-  printf '[PULL] %s\n' "${img}" >>"${LOG_FILE:-/dev/null}"
-  docker pull "${img}" >>"${LOG_FILE:-/dev/null}" 2>&1
+  local img="$1" output_file="$2"
+  printf '[PULL] %s\n' "${img}" >"${output_file}"
+  docker pull "${img}" >>"${output_file}" 2>&1
 }
 
-show_pull_progress() {
-  local completed="$1" total="$2" started="$3" tick="$4"
-  local chars='/-\|' elapsed=0 minutes=0 seconds=0 char=""
+pull_image_label() {
+  case "$1" in
+    *sourcelens-backend*) printf 'SourceLens Backend' ;;
+    *sourcelens-frontend*) printf 'SourceLens Frontend' ;;
+    *sourcelens-lensnode*) printf 'SourceLens LensNode' ;;
+    postgres:*) printf 'PostgreSQL' ;;
+    redis:*) printf 'Redis' ;;
+    nginx:*) printf 'Nginx' ;;
+    alpine/openssl*) printf 'TLS Helper' ;;
+    *) printf '%s' "${1##*/}" ;;
+  esac
+}
+
+pull_layer_progress() {
+  local output_file="$1"
+  [[ -f "${output_file}" ]] || { printf '0 0'; return 0; }
+  awk '
+    {
+      gsub(/\r/, "")
+      layer = $1
+      sub(/:$/, "", layer)
+      if ($0 ~ /: Pulling fs layer$/) total[layer] = 1
+      if ($0 ~ /: (Download complete|Pull complete)$/ ||
+          $0 ~ /: (Already exists|Layer already exists)$/) {
+        total[layer] = 1
+        done[layer] = 1
+      }
+    }
+    END {
+      total_count = 0
+      done_count = 0
+      for (layer in total) total_count++
+      for (layer in done) done_count++
+      printf "%d %d", done_count, total_count
+    }
+  ' "${output_file}"
+}
+
+pull_progress_bar() {
+  local percent="$1" width=16 filled=0 index=0 bar=""
+  filled=$((percent * width / 100))
+  for ((index = 0; index < width; index++)); do
+    if ((index < filled)); then
+      bar+="█"
+    else
+      bar+="░"
+    fi
+  done
+  printf '%s' "${bar}"
+}
+
+_pull_dashboard_cursor_hidden=0
+
+pull_dashboard_hide_cursor() {
   [[ -t 1 ]] || return 0
+  printf '\033[?25l'
+  _pull_dashboard_cursor_hidden=1
+}
+
+pull_dashboard_show_cursor() {
+  [[ "${_pull_dashboard_cursor_hidden}" == "1" ]] || return 0
+  printf '\033[?25h'
+  _pull_dashboard_cursor_hidden=0
+}
+
+render_pull_dashboard() {
+  local total="$1" started="$2" tick="$3"
+  local index=0 state="" output_file="" metrics="" detail=""
+  local done_layers=0 total_layers=0 percent=0 elapsed=0
+  local minutes=0 seconds=0 indicator="" color="" bar=""
+  local chars='/-\|'
+  [[ -t 1 ]] || return 0
+
+  if [[ "${_pull_dashboard_rendered}" == "1" ]]; then
+    printf '\033[%sA' "${total}"
+  fi
   elapsed=$((SECONDS - started))
   minutes=$((elapsed / 60))
   seconds=$((elapsed % 60))
-  char="${chars:$((tick % 4)):1}"
-  printf '\r\033[K%sDownloading SourceLens components  %s  %s/%s completed  %02d:%02d%s' \
-    "${c_cyan}" "${char}" "${completed}" "${total}" \
-    "${minutes}" "${seconds}" "${c_reset}"
+
+  for ((index = 0; index < total; index++)); do
+    state="${image_states[index]}"
+    output_file="${image_logs[index]:-}"
+    percent=0
+    indicator="·"
+    color="${c_cyan}"
+    detail="waiting"
+    if [[ "${state}" == "active" ]]; then
+      indicator="${chars:$((tick % 4)):1}"
+      metrics="$(pull_layer_progress "${output_file}")"
+      done_layers="${metrics%% *}"
+      total_layers="${metrics##* }"
+      if ((total_layers > 0)); then
+        percent=$((done_layers * 100 / total_layers))
+        ((percent >= 100)) && percent=95
+        detail="${done_layers}/${total_layers} layers"
+      else
+        detail="starting"
+      fi
+    elif [[ "${state}" == "done" ]]; then
+      indicator="✓"
+      color="${c_green}"
+      percent=100
+      detail="complete"
+    elif [[ "${state}" == "retrying" ]]; then
+      indicator="!"
+      color="${c_yellow}"
+      detail="retrying"
+    elif [[ "${state}" == "failed" ]]; then
+      indicator="✗"
+      color="${c_red}"
+      detail="failed"
+    fi
+    bar="$(pull_progress_bar "${percent}")"
+    printf '\r\033[K%s%s  %-20s [%s]  %3d%%  %-12s  %02d:%02d%s\n' \
+      "${color}" "${indicator}" "${image_labels[index]}" "${bar}" \
+      "${percent}" "${detail}" "${minutes}" "${seconds}" "${c_reset}"
+  done
+  _pull_dashboard_rendered=1
 }
 
 pull_images() {
@@ -936,20 +1056,28 @@ pull_images() {
   fi
 
   local total="${#images[@]}" attempt=1 max_attempts=3
-  local completed=0 cursor=0 job=0 img="" running=0 found=0
-  local started="${SECONDS}" tick=0 rc=0 status_file=""
+  local completed=0 cursor=0 job=0 image_index=0 img=""
+  local running=0 found=0 started="${SECONDS}" tick=0 rc=0
+  local status_file="" output_file=""
   local failure_message="" retry_message=""
   local status_dir="${INSTALL_DIR}/logs/.pull-status-$$"
   local -a pending=() failed=() pids=() batch=() statuses=()
+  local -a image_states=() image_logs=() image_labels=()
   if ((total == 0)); then
     log_warn "No components need to be downloaded"
     return 0
   fi
-  pending=("${images[@]}")
+  for ((image_index = 0; image_index < total; image_index++)); do
+    pending+=("${image_index}")
+    image_states+=("waiting")
+    image_logs+=("")
+    image_labels+=("$(pull_image_label "${images[image_index]}")")
+  done
   log_info \
     "Downloading ${total} components, up to ${PULL_PARALLELISM} in parallel"
   mkdir -p "${status_dir}"
-  show_pull_progress "${completed}" "${total}" "${started}" "${tick}"
+  _pull_dashboard_rendered=0
+  pull_dashboard_hide_cursor
 
   while ((${#pending[@]} > 0)); do
     failed=()
@@ -960,17 +1088,21 @@ pull_images() {
     statuses=()
     while ((cursor < ${#pending[@]} || running > 0)); do
       while ((running < PULL_PARALLELISM && cursor < ${#pending[@]})); do
-        img="${pending[cursor]}"
-        status_file="${status_dir}/${attempt}-${cursor}"
+        image_index="${pending[cursor]}"
+        img="${images[image_index]}"
+        status_file="${status_dir}/${attempt}-${image_index}.status"
+        output_file="${status_dir}/${attempt}-${image_index}.log"
+        image_states[image_index]="active"
+        image_logs[image_index]="${output_file}"
         (
-          if pull_one "${img}"; then
+          if pull_one "${img}" "${output_file}"; then
             printf '0\n' >"${status_file}"
           else
             printf '1\n' >"${status_file}"
           fi
         ) &
         pids+=("$!")
-        batch+=("${img}")
+        batch+=("${image_index}")
         statuses+=("${status_file}")
         cursor=$((cursor + 1))
         running=$((running + 1))
@@ -980,30 +1112,41 @@ pull_images() {
       for ((job = 0; job < ${#pids[@]}; job++)); do
         status_file="${statuses[job]:-}"
         if [[ -n "${status_file}" && -f "${status_file}" ]]; then
+          image_index="${batch[job]}"
           rc="$(head -n 1 "${status_file}")"
           wait "${pids[job]}" || true
+          output_file="${image_logs[image_index]}"
+          [[ -f "${output_file}" ]] \
+            && cat "${output_file}" >>"${LOG_FILE:-/dev/null}"
           if [[ "${rc}" == "0" ]]; then
+            image_states[image_index]="done"
             completed=$((completed + 1))
             log_line "[PROGRESS] ${completed}/${total} components downloaded"
           else
-            failed+=("${batch[job]}")
+            image_states[image_index]="retrying"
+            failed+=("${image_index}")
           fi
-          rm -f "${status_file}"
+          rm -f "${status_file}" "${output_file}"
+          image_logs[image_index]=""
           statuses[job]=""
           running=$((running - 1))
           found=1
         fi
       done
       tick=$((tick + 1))
-      show_pull_progress "${completed}" "${total}" "${started}" "${tick}"
+      render_pull_dashboard "${total}" "${started}" "${tick}"
       ((found == 1)) || sleep 0.2
     done
 
     if ((${#failed[@]} == 0)); then
       break
     fi
-    [[ -t 1 ]] && printf '\n'
     if ((attempt >= max_attempts)); then
+      for image_index in "${failed[@]}"; do
+        image_states[image_index]="failed"
+      done
+      render_pull_dashboard "${total}" "${started}" "${tick}"
+      pull_dashboard_show_cursor
       failure_message="failed to download ${#failed[@]} component(s) after "
       failure_message+="${max_attempts} attempts; check registry access "
       failure_message+="(see ${LOG_FILE})"
@@ -1011,14 +1154,20 @@ pull_images() {
     fi
     retry_message="${#failed[@]} component download(s) failed on attempt "
     retry_message+="${attempt}/${max_attempts}; retrying in 10s"
-    log_warn "${retry_message}"
+    log_line "[WARN]  ${retry_message}"
+    render_pull_dashboard "${total}" "${started}" "${tick}"
     sleep 10
     pending=("${failed[@]}")
     attempt=$((attempt + 1))
   done
-  [[ -t 1 ]] && printf '\n'
   rmdir "${status_dir}" 2>/dev/null || true
-  log_ok "All ${total} components downloaded"
+  render_pull_dashboard "${total}" "${started}" "${tick}"
+  pull_dashboard_show_cursor
+  if [[ -t 1 ]]; then
+    log_line "[OK]    All ${total} components downloaded"
+  else
+    log_ok "All ${total} components downloaded"
+  fi
 }
 
 _spinner_pid=""
@@ -1295,6 +1444,7 @@ main() {
     SOURCE_DIR="$(cd "${SOURCE_DIR}" && pwd -P)"
   fi
 
+  trap 'pull_dashboard_show_cursor' EXIT
   trap 'log_line "=== install failed at line ${LINENO} (exit $?) ==="' ERR
 
   # Preflight

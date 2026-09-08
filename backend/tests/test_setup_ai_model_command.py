@@ -118,7 +118,7 @@ def test_interactive_setup_can_be_skipped(monkeypatch):
     """Skipping model setup leaves the working installation unchanged."""
 
     monkeypatch.setattr(Command, "_has_tty", lambda self: True)
-    monkeypatch.setattr(Command, "_input", lambda self, prompt: "n")
+    monkeypatch.setattr(Command, "_input", lambda self, prompt: "no")
     output = StringIO()
 
     call_command(Command(), stdout=output)

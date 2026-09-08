@@ -318,14 +318,14 @@ class Command(BaseCommand):
     def _confirm(self, prompt, default):
         """Read a yes/no answer with an explicit default."""
 
-        suffix = " [Y/n]: " if default else " [y/N]: "
+        suffix = " [Yes/no]: " if default else " [yes/No]: "
         while True:
             answer = self._input(prompt + suffix).strip().lower()
             if not answer:
                 return default
-            if answer in {"y", "yes"}:
+            if answer == "yes":
                 return True
-            if answer in {"n", "no"}:
+            if answer == "no":
                 return False
             self.stdout.write(self.style.WARNING("Enter yes or no."))
 
