@@ -388,14 +388,17 @@ def post_process_documents(context, sync_result, emit=None):
     image_digests = set()
     jobs = []
     active_job = {"value": None}
+    original_context = context
 
     def report_visual_progress(detail):
         """Expose image work within a managed workspace file conversion."""
 
         job = active_job["value"]
         if not context.get("managed_conversion_progress") or job is None:
+            _emit_conversion_progress(original_context, detail)
             return
         if detail.get("stage") != "recognizing_images":
+            _emit_conversion_progress(original_context, detail)
             return
         image_total = int(detail.get("image_total") or 0)
         image_completed = min(

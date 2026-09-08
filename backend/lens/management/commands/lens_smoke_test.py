@@ -22,6 +22,8 @@ EXPECTED_MODELS = {
     "Message",
     "MessageAttachment",
     "LensNode",
+    "LegacyIntegrationMigration",
+    "PluginInvocation",
     "Run",
     "RunDiagnostic",
     "RunDiagnosticEvidence",

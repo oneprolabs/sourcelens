@@ -28,7 +28,7 @@ def test_standard_work_runs_in_parallel_up_to_configured_limit():
 
     asyncio.run(exercise())
 
-def test_waiting_exclusive_work_does_not_block_later_standard_work():
+def test_waiting_exclusive_work_blocks_later_standard_work():
     async def exercise():
         queue = LensNodeExecutionQueue(max_standard_concurrency=2)
         await queue.acquire(ExecutionClass.STANDARD)
@@ -50,13 +50,14 @@ def test_waiting_exclusive_work_does_not_block_later_standard_work():
         await asyncio.sleep(0)
 
         assert not exclusive_started.is_set()
-        await asyncio.wait_for(later_standard_started.wait(), timeout=1)
+        assert not later_standard_started.is_set()
 
-        await queue.release(ExecutionClass.STANDARD)
         await queue.release(ExecutionClass.STANDARD)
         await asyncio.wait_for(exclusive_started.wait(), timeout=1)
 
         await queue.release(ExecutionClass.EXCLUSIVE)
+        await asyncio.wait_for(later_standard_started.wait(), timeout=1)
+        await queue.release(ExecutionClass.STANDARD)
         await asyncio.gather(exclusive, later_standard)
 
     asyncio.run(exercise())
