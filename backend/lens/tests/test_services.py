@@ -1749,6 +1749,29 @@ class LensServiceTests(TransactionTestCase):
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
+    def test_dispatch_sends_frozen_tool_budget_override(
+        self,
+        get_channel_layer,
+        mock_async_to_sync,
+    ):
+        sender = mock_async_to_sync.return_value
+        self.assistant.settings = {"tool_budget": {"max_calls": 12}}
+        self.assistant.save(update_fields=["settings"])
+        run = create_execution_run(
+            session=self.session,
+            question="Analyze everything",
+            enqueue=False,
+        )
+
+        self.assistant.settings = {"tool_budget": {"max_calls": 64}}
+        self.assistant.save(update_fields=["settings"])
+        dispatch_run_to_lensnode(run, "Analyze everything")
+
+        payload = sender.call_args.args[1]["payload"]
+        self.assertEqual(payload["tool_budget"], {"max_calls": 12})
+
+    @patch("lens.services.async_to_sync")
+    @patch("lens.services.get_channel_layer")
     def test_dispatch_sends_unlimited_profile_budget(
         self,
         get_channel_layer,

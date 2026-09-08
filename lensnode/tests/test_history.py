@@ -30,6 +30,7 @@ from lensnode.agent_runtime import (
     _strip_dangling_tool_call,
     _synthesize_wrapup_answer,
 )
+from lensnode.agent_runtime.limits import resolve_tool_call_budget
 from lensnode.agent_runtime.prompts import command_answer_language
 from lensnode.agent_runtime.system_prompts import _smart_collaboration_system_prompt
 from lensnode.checkpoint import CheckpointResumeError, ResumeState
@@ -131,6 +132,16 @@ def test_plan_route_requires_initial_plan_before_business_tool():
         require_initial_plan=True,
     )
     assert middleware._requires_initial_plan("github_repository_get") is True
+
+
+def test_tool_call_budget_accepts_per_run_override():
+    config = SimpleNamespace(tool_budget_max_calls=64)
+
+    assert resolve_tool_call_budget(config, {}) == 64
+    assert resolve_tool_call_budget(
+        config,
+        {"tool_budget": {"max_calls": 12}},
+    ) == 12
 
 
 def test_plan_outcome_uses_required_capability_failures():
@@ -934,6 +945,7 @@ def test_capability_boundary_state_round_trips_for_resume():
     original.blocked_requests = {("run_skill", "digest")}
     original.failed_sources = {"skill:github-cli"}
     original.recovered_sources = {"skill:income"}
+    original.tool_call_count = 7
 
     restored = agent_runtime.CapabilityBoundaryMiddleware(
         required_capabilities=["skill"]
@@ -959,6 +971,7 @@ def test_capability_boundary_state_round_trips_for_resume():
     assert restored.blocked_requests == {("run_skill", "digest")}
     assert restored.failed_sources == {"skill:github-cli"}
     assert restored.recovered_sources == {"skill:income"}
+    assert restored.tool_call_count == 7
     assert restored.successful_evidence == original.successful_evidence
     assert outcome == "completed"
     assert detail == {}
@@ -3932,6 +3945,36 @@ def test_capability_boundary_blocks_only_repeated_transient_request():
     )
     assert json.loads(denied.content)["error"] == "CAPABILITY_BLOCKED"
     assert middleware.termination_detail["capability"] == "mcp"
+
+
+def test_capability_boundary_stops_exposing_tools_at_run_budget():
+    events = []
+    middleware = agent_runtime.CapabilityBoundaryMiddleware(
+        emit_event=lambda name, detail: events.append((name, detail)),
+        max_tool_calls=1,
+    )
+    request = SimpleNamespace(
+        tool=SimpleNamespace(name="mcp__orders"),
+        tool_call={"name": "mcp__orders", "id": "call-1"},
+    )
+
+    middleware.wrap_tool_call(
+        request,
+        lambda _request: ToolMessage(
+            content='{"ok":true}',
+            name="mcp__orders",
+            tool_call_id="call-1",
+        ),
+    )
+
+    assert middleware.tool_call_count == 1
+    assert middleware._filter_tools([request.tool]) == []
+    assert events == [
+        (
+            "deepagents.tool_budget.reached",
+            {"max_tool_calls": 1, "tool_call_count": 1},
+        )
+    ]
 
 
 def test_request_failures_are_isolated_by_normalized_arguments():

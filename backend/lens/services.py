@@ -2220,6 +2220,22 @@ def max_agent_turns_for_rounds(agent_rounds):
     )
 
 
+def tool_budget_for_assistant(assistant):
+    """Return an explicit Assistant tool-call budget override, if configured."""
+
+    settings_payload = assistant.settings
+    if not isinstance(settings_payload, dict):
+        return None
+    tool_budget = settings_payload.get("tool_budget")
+    if not isinstance(tool_budget, dict) or "max_calls" not in tool_budget:
+        return None
+    try:
+        max_calls = int(tool_budget["max_calls"])
+    except (TypeError, ValueError):
+        return None
+    return {"max_calls": max(max_calls, 0)}
+
+
 @transaction.atomic
 def create_run_execution_snapshot(
     run,
@@ -2243,6 +2259,9 @@ def create_run_execution_snapshot(
         routing_assistant_uuids,
         routing_assistant_explicit,
     )
+    tool_budget = tool_budget_for_assistant(assistant)
+    if tool_budget is not None:
+        runtime_snapshot["tool_budget"] = tool_budget
     loaded_plugins = build_loaded_plugins(assistant)
     loaded_skills = build_loaded_skills(assistant)
     loaded_skills.extend(
@@ -3016,6 +3035,7 @@ def dispatch_run_to_lensnode(
                         execution.token_budget_final_reserve_tokens
                     ),
                 },
+                "tool_budget": runtime_snapshot.get("tool_budget"),
                 "trace_cursor": last_trace_sequence,
                 "trace_attempt": max(
                     last_trace_attempt + (1 if resume else 0),

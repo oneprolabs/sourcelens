@@ -26,6 +26,7 @@ class LensNodeConfig:
     summary_keep_tokens: int
     offload_tool_tokens: int
     offload_human_tokens: int | None
+    tool_budget_max_calls: int = 64
     context_window_tokens: int = 128000
     summary_trigger_ratio: float = 0.75
     token_budget_max_tokens: int = 200000
@@ -233,6 +234,9 @@ def load_config():
         ),
         offload_human_tokens=_optional_int(
             os.getenv("LENSNODE_OFFLOAD_HUMAN_TOKENS")
+        ),
+        tool_budget_max_calls=int(
+            os.getenv("LENSNODE_TOOL_BUDGET_MAX_CALLS", "64")
         ),
         stream_recovery_attempts=int(
             os.getenv("LENSNODE_STREAM_RECOVERY_ATTEMPTS", "3")

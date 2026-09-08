@@ -22,12 +22,15 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
         require_initial_plan=False,
         planning_reasoning_effort=None,
         on_state_change=None,
+        max_tool_calls=0,
     ):
         self.emit_event = emit_event
         self.required_capabilities = set(required_capabilities or [])
         self.require_initial_plan = require_initial_plan
         self.planning_reasoning_effort = planning_reasoning_effort
         self.on_state_change = on_state_change
+        self.max_tool_calls = max(int(max_tool_calls or 0), 0)
+        self.tool_call_count = 0
         self.planning_started_at = time.monotonic()
         self.initial_plan_exists = False
         self.blocked_tools = set()
@@ -98,6 +101,7 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 [*key, detail]
                 for key, detail in self.failure_records.items()
             ],
+            "tool_call_count": self.tool_call_count,
         }
 
     def restore_state(self, state):
@@ -179,6 +183,10 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 tuple(item[:3]): dict(item[3])
                 for item in state.get("failure_records") or []
             }
+            self.tool_call_count = max(
+                int(state.get("tool_call_count") or 0),
+                0,
+            )
         except (TypeError, ValueError, IndexError) as exc:
             raise CheckpointResumeError(
                 "Resume checkpoint has invalid execution-gate state."
@@ -683,6 +691,8 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 )
 
     def _filter_tools(self, tools):
+        if self._tool_budget_reached():
+            return []
         remaining = []
         for tool in tools:
             tool_name = getattr(tool, "name", None)
@@ -701,6 +711,23 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 continue
             remaining.append(tool)
         return remaining
+
+    def _tool_budget_reached(self):
+        return (
+            self.max_tool_calls > 0
+            and self.tool_call_count >= self.max_tool_calls
+        )
+
+    def _record_tool_call(self):
+        self.tool_call_count += 1
+        if self._tool_budget_reached() and self.emit_event is not None:
+            self.emit_event(
+                "deepagents.tool_budget.reached",
+                {
+                    "max_tool_calls": self.max_tool_calls,
+                    "tool_call_count": self.tool_call_count,
+                },
+            )
 
     def _is_blocked(self, request):
         tool_name = self._tool_name(request)
@@ -757,6 +784,10 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
             return self._deny_unplanned_call(request)
         if self._is_blocked(request):
             return self._deny_blocked_call(request)
+        if self._tool_budget_reached():
+            return self._deny_tool_budget_call(request)
+        self._record_tool_call()
+        self._notify_state_change()
         result = handler(request)
         self._observe_plan_call(request, result)
         result = self._record_result(request, result)
@@ -771,8 +802,32 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
             return self._deny_unplanned_call(request)
         if self._is_blocked(request):
             return self._deny_blocked_call(request)
+        if self._tool_budget_reached():
+            return self._deny_tool_budget_call(request)
+        self._record_tool_call()
+        self._notify_state_change()
         result = await handler(request)
         self._observe_plan_call(request, result)
         result = self._record_result(request, result)
         self._notify_state_change()
         return result
+
+    def _deny_tool_budget_call(self, request):
+        """Prevent a same-step call from exceeding the Run budget."""
+
+        tool_call = request.tool_call or {}
+        return ToolMessage(
+            content=json.dumps(
+                {
+                    "ok": False,
+                    "error": "TOOL_BUDGET_EXHAUSTED",
+                    "message": (
+                        "The Run tool-call budget is exhausted. Use the "
+                        "existing evidence and finish the answer."
+                    ),
+                }
+            ),
+            name=self._tool_name(request),
+            status="error",
+            tool_call_id=tool_call.get("id") or "tool-budget-exhausted",
+        )
