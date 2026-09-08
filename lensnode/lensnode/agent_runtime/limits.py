@@ -38,3 +38,20 @@ def resolve_token_budget(config, command):
         "max_tokens": fallback_max,
         "final_reserve_tokens": min(fallback_reserve, fallback_max),
     }
+
+
+def resolve_tool_call_budget(config, command):
+    """Return the maximum actual tool calls permitted for one run.
+
+    The control plane may provide an explicit per-run budget. Otherwise the
+    LensNode setting applies. A value of zero disables the limit.
+    """
+
+    run_budget = (command or {}).get("tool_budget")
+    fallback_max = max(
+        int(getattr(config, "tool_budget_max_calls", 64) or 0),
+        0,
+    )
+    if isinstance(run_budget, dict):
+        return max(int(run_budget.get("max_calls") or 0), 0)
+    return fallback_max

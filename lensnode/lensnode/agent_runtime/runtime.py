@@ -70,7 +70,10 @@ from .execution import (
     _strip_dangling_tool_call,
     _synthesize_wrapup_answer,
 )
-from .limits import resolve_token_budget as _resolve_token_budget
+from .limits import (
+    resolve_token_budget as _resolve_token_budget,
+    resolve_tool_call_budget as _resolve_tool_call_budget,
+)
 from .messages import (
     activity_from_event as _activity_from_event,
     build_initial_messages as _build_initial_messages,
@@ -738,6 +741,10 @@ class LensDeepAgentRuntime:
             self.config,
             state.command,
         )
+        state.tool_call_budget = _resolve_tool_call_budget(
+            self.config,
+            state.command,
+        )
         budget_gates_enabled = (
             state.runtime_mode.execution_gates
             or bool(state.command.get("parent_run_uuid"))
@@ -1104,6 +1111,11 @@ class LensDeepAgentRuntime:
                 "none",
             ),
             on_state_change=state.persist_execution_state,
+            max_tool_calls=getattr(
+                state,
+                "tool_call_budget",
+                _resolve_tool_call_budget(self.config, state.command),
+            ),
         )
         if state.resume_state is not None:
             state.capability_middleware.restore_state(
@@ -1331,6 +1343,7 @@ class LensDeepAgentRuntime:
                     "token_budget_final_reserve_tokens": state.token_budget[
                         "final_reserve_tokens"
                     ],
+                    "tool_budget_max_calls": state.tool_call_budget,
                 }
             )
         state.emit_agent_event(
