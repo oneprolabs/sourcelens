@@ -163,7 +163,7 @@ SourceLens 有两种生产部署方式，每台主机选择一种：
 - **Standalone 单实例**：使用 `install.sh` 安装和升级。
 - **零停机蓝绿部署**：使用 `scripts/install.sh <tag>` 部署。
 
-默认端口为 HTTP 10080 和 HTTPS 10443。
+一键安装器的默认端口为 HTTP 10083 和 HTTPS 10443。
 
 ### 一键安装
 
@@ -191,7 +191,7 @@ curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
 
 安装完成后：
 
-- 主站：`http://<host>:10080`（HTTPS：`https://<host>:10443`）
+- 主站：`http://<host>:10083`（HTTPS：`https://<host>:10443`）
 - 配置文件：`<install-dir>/.env`
 - 安装详情和初始管理员密码：`<install-dir>/install-info.env`
 
@@ -201,10 +201,10 @@ curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
 配置。
 
 使用 `--yes` 可跳过交互式模型配置。之后可前往
-`http://<host>:10080/management/llm/config` 配置或管理模型。
+`http://<host>:10083/management/llm/config` 配置或管理模型。
 
-如果 SourceLens 安装在 NAT 虚拟机中，需要先将宿主机 TCP 端口 `10080` 转发到
-虚拟机 TCP 端口 `10080`，再从宿主机浏览器访问。
+如果 SourceLens 安装在 NAT 虚拟机中，需要先将宿主机 TCP 端口 `10083` 转发到
+虚拟机 TCP 端口 `10083`，再从宿主机浏览器访问。
 
 测试本地修改时，将包含已初始化子模块的完整仓库传到目标机器，然后运行：
 
@@ -215,7 +215,7 @@ sudo bash /tmp/sourcelens-source/install.sh \
 ```
 
 `--source` 会从该目录读取安装和部署文件，应用镜像仍然从镜像仓库拉取。使用
-非默认安装目录时，安装器会创建隔离的测试环境，避免替换已有安装；如果 `10080`
+非默认安装目录时，安装器会创建隔离的测试环境，避免替换已有安装；如果 `10083`
 已占用，安装器会提示选择其他端口。
 
 默认安装目录为 `/opt/sourcelens`。使用新 tag 重复运行安装器即可原地升级，已有

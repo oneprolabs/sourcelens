@@ -53,7 +53,7 @@ GITEE_REPO="oneprolabs/sourcelens"
 GITEE_API="https://gitee.com/api/v5/repos/${GITEE_REPO}"
 GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw"
 DEFAULT_INSTALL_DIR="/opt/${APP_NAME}"
-DEFAULT_HTTP_PORT=10080
+DEFAULT_HTTP_PORT=10083
 DEFAULT_HTTPS_PORT=10443
 # Image registry prefixes. Docker Hub uses just the namespace; Aliyun ACR uses
 # host/namespace. Both carry sourcelens-{backend,frontend,lensnode}.
