@@ -2053,7 +2053,7 @@
       "contextLabel": "工作区指引（可选）",
       "contextHint": "用于告诉 Assistant 工作区目录结构、业务背景、团队约定、检索优先级和需要避开的目录。保存后会作为该 Assistant 的专属上下文注入。",
       "smartContextHint": "用于补充智能协作的项目背景、分工原则和检索优先级。",
-      "contextPlaceholder": "# 模型不读代码就不知道的信息，写在这里能让它更快、更准。\n\n## 项目说明\n# SourceLens 是一个私有部署的 AI 代码问答平台。\n# backend/ 是 Django REST API 主服务；lensnode/ 是独立部署的执行节点，\n# 负责运行 Deep Agent 并通过 WebSocket 把结果推回主服务。\n# frontend/ 是 Vue 3 管理台，只和 backend/ 的 REST API 通信。\n\n## 检索优先级\n# 业务逻辑找 backend/lens/；backend/agentcore/ 是 git 子模块，不要在那里找业务代码。\n# 前端页面在 frontend/src/pages/lens/，管理台组件在 frontend/src/admin/。\n# lensnode 的 agent 行为看 lensnode/lensnode/agent_runtime.py。\n\n## 避免误判\n# references/ 是参考文档，不是源码，不要当作代码分析对象。\n# backend/lens/migrations/ 只看最新迁移文件，不要从历史迁移推断当前字段结构。",
+      "contextPlaceholder": "# 模型不读代码就不知道的信息，写在这里能让它更快、更准。\n\n## 项目说明\n# SourceLens 是一个私有部署的 AI 代码问答平台。\n# backend/ 是 Django REST API 主服务；lensnode/ 是独立部署的执行节点，\n# 负责运行 Deep Agent 并通过 WebSocket 把结果推回主服务。\n# frontend/ 是 Vue 3 管理台，只和 backend/ 的 REST API 通信。\n\n## 检索优先级\n# 业务逻辑找 backend/lens/；agentcore 由 Python 包提供，不在 backend 源码中。\n# 前端页面在 frontend/src/pages/lens/，管理台组件在 frontend/src/admin/。\n# lensnode 的 agent 行为看 lensnode/lensnode/agent_runtime.py。\n\n## 避免误判\n# references/ 是参考文档，不是源码，不要当作代码分析对象。\n# backend/lens/migrations/ 只看最新迁移文件，不要从历史迁移推断当前字段结构。",
       "back": "上一步",
       "next": "下一步",
       "finish": "完成创建",

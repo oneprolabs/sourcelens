@@ -137,9 +137,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # agentcore-* are public submodules; recurse so the backend image
-          # build has their source (the default token fetches public repos).
-          submodules: recursive
           ref: ${{ needs.prepare-version.outputs.ref }}
 
       - name: Download release-note artifacts

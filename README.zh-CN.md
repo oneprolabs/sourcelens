@@ -71,23 +71,14 @@ sourcelens/
 ├── backend/                    # Django REST API
 │   ├── core/                   # 项目配置（settings/、urls.py、celery.py）
 │   ├── accounts/               # 用户认证、权限与角色管理
-│   └── agentcore/              # Git 子模块
-│       ├── agentcore-metering/  # LLM 用量追踪  → /api/v1/admin/
-│       ├── agentcore-task/      # 统一任务管理   → /api/v1/tasks/
-│       └── agentcore-notifier/  # 通知服务       → /api/v1/admin/notifications/
+│   └── lens/                   # 助手、会话、运行与数据源
 ├── frontend/                   # Vue 3（Vite + Pinia + Tailwind + vue-i18n）
 └── docs/                       # 设计文档
 ```
 
 ## 快速上手
 
-### 1. 拉取子模块
-
-```bash
-git submodule update --init --recursive
-```
-
-### 2. Docker 本地开发
+### 1. Docker 本地开发
 
 > **前置要求**：必须使用 Docker Compose **V2**（`docker compose`）。开发栈依赖
 > Compose V2 特性——顶层 `name` 字段（dev/prod 项目隔离）、`pull_policy` 和
@@ -101,7 +92,7 @@ cp env.sample .env.dev
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 3. 访问服务
+### 2. 访问服务
 
 | 服务 | 地址 |
 |---|---|
@@ -110,7 +101,7 @@ docker compose -f docker-compose.dev.yml up -d
 | 管理后台 | http://localhost:8000/admin/ |
 | Flower | http://localhost:5555 |
 
-### 4. 常用命令
+### 3. 常用命令
 
 ```bash
 # 后端测试
@@ -134,21 +125,15 @@ npm run lint
 npm run test:e2e     # Playwright E2E
 ```
 
-## Agentcore 子模块
+## Agentcore 包
 
-| 子模块 | Django App | URL 前缀 |
-|---|---|---|
-| `agentcore-metering` | `agentcore_metering.adapters.django` | `/api/v1/admin/` |
-| `agentcore-task` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
-| `agentcore-notifier` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
+Agentcore 通过项目依赖从 Python 包索引安装。
 
-本地可编辑安装：
-
-```bash
-for d in backend/agentcore/*/; do
-  [ -f "${d}pyproject.toml" ] && pip install -e "$d"
-done
-```
+| 包 | 最低版本 | Django App | URL 前缀 |
+|---|---|---|---|
+| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` |
+| `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
+| `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
 
 ## Celery 任务机制
 
@@ -206,7 +191,7 @@ curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
 如果 SourceLens 安装在 NAT 虚拟机中，需要先将宿主机 TCP 端口 `10083` 转发到
 虚拟机 TCP 端口 `10083`，再从宿主机浏览器访问。
 
-测试本地修改时，将包含已初始化子模块的完整仓库传到目标机器，然后运行：
+测试本地修改时，将完整仓库传到目标机器，然后运行：
 
 ```bash
 sudo bash /tmp/sourcelens-source/install.sh \

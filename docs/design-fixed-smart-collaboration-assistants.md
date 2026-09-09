@@ -328,7 +328,7 @@ not expected to change.
 - Store member configuration only in frontend state.
 - Resolve members by mutable names or slugs in runtime snapshots.
 - Expose the hidden system coordinator in Assistant lists.
-- Modify agentcore submodules for this feature.
+- Modify agentcore packages for this feature.
 - Run Playwright for acceptance unless explicitly requested.
 
 ## Success criteria

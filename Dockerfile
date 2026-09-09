@@ -55,15 +55,8 @@ COPY backend /opt/backend
 COPY plugins /opt/plugins
 COPY pyproject.toml /opt/backend/
 
-# Always install agentcore from the bundled, pinned submodules so image builds
-# cannot drift to an unpinned Git ref.
 ARG DEV_MODE=0
 RUN set -eux; \
-    sed -i \
-        -e 's#agentcore-metering @ git+https://github.com/cloud2ai/agentcore-metering.git#agentcore-metering @ file:///opt/backend/agentcore/agentcore-metering#' \
-        -e 's#agentcore-task @ git+https://github.com/cloud2ai/agentcore-task.git#agentcore-task @ file:///opt/backend/agentcore/agentcore-task#' \
-        -e 's#agentcore-notifier @ git+https://github.com/cloud2ai/agentcore-notifier.git#agentcore-notifier @ file:///opt/backend/agentcore/agentcore-notifier#' \
-        pyproject.toml; \
     compile_options=(); \
     if [ "$DEV_MODE" = "1" ]; then \
         compile_options+=(--extra dev); \
@@ -80,22 +73,6 @@ RUN set -eux; \
         --index-url "$PIP_INDEX_URL" \
         --trusted-host "$PIP_TRUSTED_HOST"
 
-# In dev mode, overlay editable agentcore installs so volume-mounted source
-# changes are picked up without rebuilding the image.
-RUN set -eux; \
-    if [ "$DEV_MODE" = "1" ]; then \
-        for d in /opt/backend/agentcore/*/; do \
-            if [ -f "${d}pyproject.toml" ]; then \
-                echo "Dev mode: installing ${d} as editable"; \
-                (cd "$d" && uv pip install \
-                    --python /opt/venv/bin/python \
-                    --index-url "$PIP_INDEX_URL" \
-                    --trusted-host "$PIP_TRUSTED_HOST" \
-                    -e .); \
-            fi; \
-        done; \
-    fi
-
 # DJANGO_DEBUG is scoped to this build step because production-only settings
 # require secrets that are unavailable while the image is built.
 RUN DJANGO_DEBUG=true python manage.py compilemessages -l zh_Hans -l en -l es \
@@ -103,8 +80,6 @@ RUN DJANGO_DEBUG=true python manage.py compilemessages -l zh_Hans -l en -l es \
     && find /opt/venv -type d -name __pycache__ -prune \
         -exec rm -rf {} + \
     && find /opt/backend -type d -name __pycache__ -prune \
-        -exec rm -rf {} + \
-    && find /opt/backend/agentcore -type d -name build -prune \
         -exec rm -rf {} +
 
 # -----------------------------------------------------------------------------

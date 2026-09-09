@@ -46,11 +46,9 @@ dependencies = [
     "opentelemetry-sdk==1.28.0",
     "opentelemetry-exporter-otlp==1.28.0",
     "pydantic-settings",
-    # Agentcore submodules. Docker local builds rewrite these to local
-    # file paths from backend/agentcore to avoid GitHub during image builds.
-    "agentcore-metering @ git+https://github.com/cloud2ai/agentcore-metering.git",
-    "agentcore-task @ git+https://github.com/cloud2ai/agentcore-task.git",
-    "agentcore-notifier @ git+https://github.com/cloud2ai/agentcore-notifier.git",
+    "agentcore-metering>=0.2.0",
+    "agentcore-task>=0.1.0",
+    "agentcore-notifier>=0.1.0",
 ]
 
 [project.optional-dependencies]
