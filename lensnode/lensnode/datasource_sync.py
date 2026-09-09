@@ -223,6 +223,7 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
         changed_paths=changed_paths,
         deleted_paths=deleted_paths,
         stats=_sync_summary_from_result(result),
+        changed_only=True,
     )
     sync_details = _sync_details_by_metric(
         sync_items,

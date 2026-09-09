@@ -60,6 +60,7 @@ class SyncResult:
     changed_paths: list = field(default_factory=list)
     deleted_paths: list = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    changed_only: bool = False
 
 
 def write_datasource_marker(target, context):

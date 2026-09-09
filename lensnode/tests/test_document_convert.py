@@ -133,6 +133,35 @@ def test_xlsx_stats_stops_after_cell_scan_budget(tmp_path):
     assert stats["scanned_cells"] == 3
 
 
+def test_post_process_converts_only_changed_datasource_items(tmp_path):
+    """Datasource sync conversion must not revisit unchanged files."""
+
+    changed = tmp_path / "changed.txt"
+    unchanged = tmp_path / "unchanged.txt"
+    changed.write_text("new content", encoding="utf-8")
+    unchanged.write_text("old content", encoding="utf-8")
+
+    summary = post_process_documents(
+        {
+            "datasource_uuid": "ds1",
+            "name": "repo",
+            "source_type": "git",
+            "target_path": str(tmp_path),
+            "conversion": {"document": True},
+        },
+        SyncResult(
+            items=[sync_item(changed), sync_item(unchanged)],
+            changed_paths=["changed.txt"],
+            changed_only=True,
+        ),
+    )
+
+    assert summary["candidates"] == 1
+    assert summary["converted"] == 1
+    assert (tmp_path / "changed.txt.sourcelens" / "content.md").is_file()
+    assert not (tmp_path / "unchanged.txt.sourcelens").exists()
+
+
 def test_xlsx_stats_stops_after_scanning_style_only_cells(tmp_path):
     """Style-only cells cannot exhaust conversion work without truncation."""
 

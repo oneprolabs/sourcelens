@@ -332,6 +332,9 @@ def post_process_documents(context, sync_result, emit=None):
         context.get("datasource_uuid") or "",
         excluded_roots,
         conversion,
+        changed_paths=(
+            sync_result.changed_paths if sync_result.changed_only else None
+        ),
     )
     total = len(candidates)
     summary = {
@@ -792,15 +795,19 @@ def conversion_candidates(
     datasource_uuid,
     excluded_roots,
     conversion,
+    changed_paths=None,
 ):
     """Return manifest items eligible for conversion."""
 
     candidates = []
+    changed = set(changed_paths) if changed_paths is not None else None
     for item in items or []:
         if item.get("status") == "deleted":
             continue
         local_path = manifest_local_path(item)
         if not local_path:
+            continue
+        if changed is not None and local_path not in changed:
             continue
         path = (target / local_path).resolve()
         if not path.is_file() or is_excluded_path(path, excluded_roots):
