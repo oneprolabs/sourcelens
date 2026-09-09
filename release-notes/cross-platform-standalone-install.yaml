@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Improved standalone installation across Linux, macOS, and Windows Git Bash,
+  including platform-appropriate storage, paths, permissions, and recovery from
+  stale Docker bind mounts.
+zh-CN: >-
+  改进 Linux、macOS 和 Windows Git Bash 上的 standalone 安装流程，包括适配
+  各平台的存储、路径和权限，并支持从失效的 Docker bind mount 中自动恢复。
