@@ -283,7 +283,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
     except (TypeError, ValueError) as exc:
         raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
 
-    files = []
+    candidates = []
     if source_type == "managed_workspace":
         manifest_items = _managed_workspace_catalog_items(target)
     else:
@@ -291,26 +291,35 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
             manifest_store.read_manifest(target)
         )
     for item in manifest_items:
-        entry = _datasource_file_entry(target, item)
+        local_path = manifest_store.manifest_local_path(item)
+        if not local_path:
+            continue
+        display_path = Path(local_path).as_posix()
+        public_status = _public_sync_status(item.get("status"))
+        if query and query not in display_path.lower():
+            continue
+        if sync_status and public_status != sync_status:
+            continue
+        entry = _datasource_file_entry(target, item, public_status)
         if entry is None:
             continue
-        if query and query not in entry["path"].lower():
-            continue
-        if sync_status and entry["sync_status"].lower() != sync_status:
-            continue
-        if (
-            conversion_status
-            and entry["conversion_status"].lower() != conversion_status
-        ):
-            continue
-        files.append(entry)
-    files.sort(key=lambda item: item["path"].lower())
+        candidates.append((display_path, entry))
+    candidates.sort(key=lambda item: item[0].lower())
+    if conversion_status:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate[1]["conversion_status"].lower() == conversion_status
+        ]
     start = (page - 1) * page_size
+    page_items = candidates[start : start + page_size]
     return {
-        "count": len(files),
+        "count": len(candidates),
         "page": page,
         "page_size": page_size,
-        "results": files[start : start + page_size],
+        "results": [
+            entry for _path, entry in page_items
+        ],
     }
 
 
@@ -325,7 +334,10 @@ def _managed_workspace_catalog_items(target):
             or _is_datasource_catalog_internal_path(target, path)
         ):
             continue
-        local_path = relative_path(target, path)
+        try:
+            local_path = relative_path(target, path)
+        except ValueError:
+            continue
         items.append(
             {
                 "local_path": local_path,
@@ -355,7 +367,7 @@ def _is_datasource_catalog_internal_path(target, path):
     return any(part.endswith(".sourcelens") for part in relative.parts)
 
 
-def _datasource_file_entry(target, item):
+def _datasource_file_entry(target, item, sync_status=None):
     """Return safe catalog data for one manifest item."""
 
     local_path = manifest_store.manifest_local_path(item)
@@ -376,12 +388,19 @@ def _datasource_file_entry(target, item):
             or item.get("file_extension")
             or Path(local_path).suffix.lstrip(".")
         ).lower(),
-        "sync_status": str(item.get("status") or "synced"),
+        "sync_status": sync_status or _public_sync_status(item.get("status")),
         "conversion_status": conversion["status"],
         "source_updated_at": str(metadata.get("modified_time") or ""),
         "converted_at": conversion["generated_at"],
         "conversion_error": conversion["error"],
     }
+
+
+def _public_sync_status(value):
+    """Return the catalog's stable public sync state."""
+
+    status = str(value or "synced").lower()
+    return "synced" if status in {"cataloged", "skipped"} else status
 
 
 def _read_datasource_conversion(path):
@@ -4605,6 +4624,7 @@ def _manifest_item_to_sync_item(item, target):
         status=item.get("status") or "synced",
         metadata=item.get("metadata") or {},
         remote=item.get("remote") or {"token": token, "type": item.get("type")},
+        missing_scans=int(item.get("missing_scans") or 0),
     )
 
 

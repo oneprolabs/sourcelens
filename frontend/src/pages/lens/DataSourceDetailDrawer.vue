@@ -447,12 +447,12 @@
               t('lensAdmin.datasourceDetail.files.searchPlaceholder')
             "
             type="search"
-            @keyup.enter="loadFiles"
+            @keyup.enter="searchFiles"
           />
           <select
             v-model="fileSyncStatus"
             class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
-            @change="loadFiles"
+            @change="searchFiles"
           >
             <option value="">
               {{ t('lensAdmin.datasourceDetail.files.allSync') }}
@@ -470,7 +470,7 @@
           <select
             v-model="fileConversionStatus"
             class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
-            @change="loadFiles"
+            @change="searchFiles"
           >
             <option value="">
               {{ t('lensAdmin.datasourceDetail.files.allConversion') }}
@@ -684,6 +684,7 @@ const fileQuery = ref('')
 const fileSyncStatus = ref('')
 const fileConversionStatus = ref('')
 const fileListContextKey = ref('')
+const fileRequestSeq = ref(0)
 
 const expandedTaskId = ref(null)
 const expandedTask = ref(null)
@@ -762,6 +763,8 @@ function resetFileList() {
 }
 
 async function loadFiles() {
+  const requestSeq = fileRequestSeq.value + 1
+  fileRequestSeq.value = requestSeq
   const uuid = props.datasource?.uuid
   if (!uuid) {
     resetFileList()
@@ -780,15 +783,34 @@ async function loadFiles() {
       }
     })
     const data = extractResponseData(res) || {}
+    if (
+      requestSeq !== fileRequestSeq.value ||
+      uuid !== props.datasource?.uuid
+    ) {
+      return
+    }
     files.value = Array.isArray(data.results) ? data.results : []
     filesCount.value = Number(data.count) || 0
     filesTotalPages.value = Math.max(1, Math.ceil(filesCount.value / pageSize))
   } catch (error) {
+    if (
+      requestSeq !== fileRequestSeq.value ||
+      uuid !== props.datasource?.uuid
+    ) {
+      return
+    }
     resetFileList()
     filesError.value = extractErrorMessage(error, t('common.error'))
   } finally {
-    filesLoading.value = false
+    if (requestSeq === fileRequestSeq.value) {
+      filesLoading.value = false
+    }
   }
+}
+
+function searchFiles() {
+  filePage.value = 1
+  loadFiles()
 }
 
 function goPrevFilePage() {
@@ -1020,6 +1042,7 @@ watch(
   () => [props.datasource?.uuid, props.show, activeTab.value],
   ([uuid, visible, tab]) => {
     if (!visible || !uuid || tab !== 'files') {
+      fileRequestSeq.value += 1
       fileListContextKey.value = ''
       resetFileList()
       return

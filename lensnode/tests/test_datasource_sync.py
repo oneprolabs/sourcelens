@@ -9,7 +9,7 @@ from threading import Event
 import httpx
 import pytest
 
-from lensnode.datasource_manifest import MARKER_FILE
+from lensnode.datasource_manifest import MARKER_FILE, SyncResult, build_manifest
 from lensnode.datasource_sync import (
     DataSourceSyncError,
     _cleanup_removed_git_repositories,
@@ -143,6 +143,89 @@ def test_list_datasource_files_lists_managed_workspace_files(tmp_path):
     assert result["count"] == 1
     assert result["results"][0]["path"] == "notes.txt"
     assert result["results"][0]["conversion_status"] == "not_converted"
+
+
+def test_list_datasource_files_normalizes_unchanged_sync_status(tmp_path):
+    """A current file remains visible through the public synced filter."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "report.txt").write_text("report", encoding="utf-8")
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"local_path": "report.txt", "status": "skipped"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "sync_status": "synced",
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["results"][0]["sync_status"] == "synced"
+
+
+def test_list_datasource_files_skips_unsafe_manifest_paths(tmp_path):
+    """A corrupt manifest entry cannot break or escape the file catalog."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"local_path": "../outside.txt", "status": "synced"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "conversion_status": "success",
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["count"] == 0
+    assert result["results"] == []
+
+
+def test_manifest_normalization_preserves_missing_scan_count(tmp_path):
+    """A deferred deletion survives the top-level manifest rewrite."""
+
+    item = _manifest_item_to_sync_item(
+        {
+            "local_path": "missing.docx",
+            "status": "missing",
+            "missing_scans": 1,
+        },
+        tmp_path,
+    )
+
+    manifest = build_manifest({}, SyncResult(items=[item]))
+
+    assert manifest["items"][0]["missing_scans"] == 1
 
 
 def test_managed_workspace_path_must_exist(tmp_path):

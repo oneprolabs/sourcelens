@@ -22,6 +22,7 @@ class SyncItem:
     status: str
     metadata: dict = field(default_factory=dict)
     remote: dict = field(default_factory=dict)
+    missing_scans: int = 0
 
     def get(self, key, default=None):
         """Return a manifest value using dict-compatible access."""
@@ -49,6 +50,8 @@ class SyncItem:
         token = self.remote.get("token")
         if token:
             payload["token"] = token
+        if self.missing_scans:
+            payload["missing_scans"] = self.missing_scans
         return payload
 
 
