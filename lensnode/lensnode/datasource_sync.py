@@ -3113,6 +3113,17 @@ def _finalize_feishu_missing_items(
             manifest_items.append({**item, "status": "skipped"})
             stats["skipped"] += 1
             continue
+        missing_scans = int(item.get("missing_scans") or 0) + 1
+        if missing_scans < 2:
+            manifest_items.append(
+                {
+                    **item,
+                    "status": "missing",
+                    "missing_scans": missing_scans,
+                }
+            )
+            stats["skipped"] += 1
+            continue
         deleted_item = {**item, "status": "deleted"}
         manifest_items.append(deleted_item)
         stats["deleted"] += 1
@@ -3388,17 +3399,16 @@ def _sync_feishu_folder(config, target, headers, emit, max_workers=1):
                 summary=stats,
             )
 
-    for token, item in previous_items.items():
-        if token in seen_tokens:
-            continue
-        deleted_item = {**item, "status": "deleted"}
-        manifest_items.append(deleted_item)
-        stats["deleted"] += 1
-        local_path = _manifest_local_path(item)
-        if local_path:
-            deleted_paths.append(local_path)
-        if delete_missing and local_path:
-            _delete_manifest_file(target, local_path)
+    _finalize_feishu_missing_items(
+        target,
+        previous_items,
+        seen_tokens,
+        manifest_items,
+        deleted_paths,
+        stats,
+        delete_missing=delete_missing,
+        scan_complete=True,
+    )
     _write_manifest(
         target,
         {
@@ -4411,6 +4421,7 @@ def _feishu_manifest_item_from_previous(
         "metadata": _feishu_item_sync_metadata(item),
         "remote": {"token": token, "type": item_type},
         "status": "skipped",
+        "missing_scans": 0,
     }
 
 

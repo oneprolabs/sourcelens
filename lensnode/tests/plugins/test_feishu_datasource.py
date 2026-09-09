@@ -396,6 +396,76 @@ def test_delete_missing_false_keeps_local_file_and_sidecar(
     assert result["_deleted_paths"] == []
 
 
+def test_delete_missing_requires_two_complete_scans(tmp_path, monkeypatch):
+    old_path = tmp_path / "folders" / "old" / "Old.docx"
+    sidecar = Path(f"{old_path}.sourcelens")
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"old")
+    sidecar.mkdir()
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "document",
+                        "token": "doc_old",
+                        "name": "Old",
+                        "file": "folders/old/Old.docx",
+                        "local_path": "folders/old/Old.docx",
+                        "type": "docx",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._list_feishu_folder_children",
+        lambda _folder_token, _headers: [],
+    )
+    config = {
+        "resources": [{"kind": "folder", "token": "fld_one"}],
+        "recursive": True,
+        "max_depth": 10,
+        "incremental": True,
+        "delete_missing": True,
+    }
+
+    first = _sync_feishu_resources(
+        config,
+        Path(tmp_path),
+        {"Authorization": "Bearer tenant-token"},
+        None,
+        max_workers=2,
+    )
+    first_manifest = json.loads(
+        (tmp_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    first_item = first_manifest["items"][0]
+
+    assert first["_deleted_paths"] == []
+    assert old_path.is_file()
+    assert sidecar.is_dir()
+    assert first_item["status"] == "missing"
+    assert first_item["missing_scans"] == 1
+
+    second = _sync_feishu_resources(
+        config,
+        Path(tmp_path),
+        {"Authorization": "Bearer tenant-token"},
+        None,
+        max_workers=2,
+    )
+    second_manifest = json.loads(
+        (tmp_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    second_item = second_manifest["items"][0]
+
+    assert second["_deleted_paths"] == ["folders/old/Old.docx"]
+    assert not old_path.exists()
+    assert second_item["status"] == "deleted"
+
+
 def test_resource_sync_stops_before_scanning_when_cancelled(tmp_path):
     cancel_event = Event()
     cancel_event.set()
