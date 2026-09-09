@@ -135,7 +135,7 @@ urlpatterns = [
         'api/v1/admin/notifications/',
         include('agentcore_notifier.adapters.django.urls')
     ),
-    # LLM metering admin API (agentcore-metering submodule)
+    # LLM metering admin API (agentcore-metering package)
     path('api/v1/admin/', include('agentcore_metering.adapters.django.urls')),
 
     # Custom OAuth callback redirect with JWT tokens

@@ -239,8 +239,8 @@ SourceLens has three primary runtime units:
 - frontend: Vue 3 and Vite UI for chat, run history, Shared Q&A, and
   administration.
 
-Primary backend apps are accounts, lens, and core. Shared agentcore git
-submodules provide task, LLM metering, and notification infrastructure.
+Primary backend apps are accounts, lens, and core. Shared published agentcore
+packages provide task, LLM metering, and notification infrastructure.
 
 The answer execution flow is:
 
@@ -378,9 +378,9 @@ branch or the migration files visible in the pull request.
   duplicate or missing metering.
 - Keep user, model, Run or task, token, and cost attribution accurate.
 - Keep specific agentcore routes ahead of broad administration routes.
-- Consume agentcore public interfaces rather than submodule internals.
-- For a gitlink update, review the target commit, migrations, compatibility,
-  parent-repository integration, and release order.
+- Consume agentcore public interfaces rather than package internals.
+- For an agentcore version update, review release changes, migrations,
+  compatibility, parent-repository integration, and release order.
 
 ## Celery and Startup Focus
 
@@ -456,7 +456,8 @@ capability.
 
 ## Deployment and Configuration Focus
 
-- Clone and build processes must initialize agentcore submodules recursively.
+- Builds must resolve the declared agentcore package versions from the
+  configured Python package index.
 - Production builds create backend, frontend, and lensnode images. Shared
   protocol changes require compatible image combinations and rollout order.
 - Development Compose uses source mounts and DEV_MODE=1. Production
@@ -482,7 +483,7 @@ PR-Agent Action does not execute them.
 | Python style | Black at line length 79 and isort for affected Python roots |
 | frontend logic or styles | Non-fixing ESLint and npm run build |
 | Critical frontend flows | npm run test:e2e or explicit manual verification |
-| Agentcore gitlink | Affected submodule tests and parent compatibility tests |
+| Agentcore dependency | Parent compatibility tests and backend image build |
 | Docker or deployment | Affected image builds and startup or health checks |
 | GitHub workflow | Syntax validation and a safe non-production test run |
 

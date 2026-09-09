@@ -1,9 +1,0 @@
-[submodule "backend/agentcore/agentcore-metering"]
-	path = backend/agentcore/agentcore-metering
-	url = https://github.com/cloud2ai/agentcore-metering.git
-[submodule "backend/agentcore/agentcore-task"]
-	path = backend/agentcore/agentcore-task
-	url = https://github.com/cloud2ai/agentcore-task.git
-[submodule "backend/agentcore/agentcore-notifier"]
-	path = backend/agentcore/agentcore-notifier
-	url = https://github.com/cloud2ai/agentcore-notifier.git

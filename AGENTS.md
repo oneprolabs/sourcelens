@@ -77,15 +77,10 @@ implementation rather than after mistakes.
 SourceLens 是一个保留基础架构的新项目，包含 Django REST API 后端和 Vue 3 前端。当前核心能力集中在用户认证、权限/角色管理、agentcore 管理台集成、任务调度基础设施和通知/LLM 管理能力。
 
 核心开发目录：
-- `backend/` — Django REST API、accounts、core 配置和 agentcore 子模块
+- `backend/` — Django REST API、accounts、core 配置和 agentcore 集成
 - `frontend/` — Vue 3 + Vite 前端和管理台页面
 
 ## 常用命令
-
-### 初始化（克隆后必执行）
-```bash
-git submodule update --init --recursive   # 拉取 agentcore 子模块
-```
 
 ### Docker 本地开发
 ```bash
@@ -139,8 +134,6 @@ curl -fsSL https://raw.githubusercontent.com/HyperBDR/sourcelens/<tag>/scripts/i
 ### Python 开发（非 Docker）
 ```bash
 pip install -e .[dev]
-# 本地 agentcore editable 模式:
-for d in backend/agentcore/*/; do [ -f "${d}pyproject.toml" ] && pip install -e "$d"; done
 ```
 
 ### 测试与代码质量
@@ -185,15 +178,15 @@ npm run test:e2e     # Playwright E2E
 - **`celery.py`** — Celery app 配置，含 autodiscover_tasks() 自动发现各 app 的 tasks.py
 - **`periodic_registry.py`** — 定时任务注册器，所有 app 的 periodic_tasks 通过 `register_periodic_tasks()` 写入 django_celery_beat
 
-### agentcore 子模块（git submodules under `backend/agentcore/`）
+### agentcore 包
 
-agentcore 是独立维护的包，通过 git submodule 引入。子模块被当作 Django app 使用：
+agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 Django app 使用：
 
-| 子模块 | INSTALLED_APPS | 路由前缀 | 功能 |
-|---|---|---|---|
-| `agentcore-metering` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 用量追踪 |
-| `agentcore-task` | `agentcore_task.adapters.django` | `/api/v1/tasks/` | 统一任务管理 |
-| `agentcore-notifier` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` | 飞书通知 |
+| 包 | 最低版本 | INSTALLED_APPS | 路由前缀 | 功能 |
+|---|---|---|---|---|
+| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 用量追踪 |
+| `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` | 统一任务管理 |
+| `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` | 飞书通知 |
 
 ### 定时任务机制（Celery Beat）
 

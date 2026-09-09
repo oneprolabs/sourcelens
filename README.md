@@ -71,23 +71,14 @@ sourcelens/
 ├── backend/                    # Django REST API
 │   ├── core/                   # Project config (settings/, urls.py, celery.py)
 │   ├── accounts/               # Auth, roles, permissions
-│   └── agentcore/              # Git submodules
-│       ├── agentcore-metering/  # LLM usage tracking  → /api/v1/admin/
-│       ├── agentcore-task/      # Unified task mgmt     → /api/v1/tasks/
-│       └── agentcore-notifier/  # Notifications         → /api/v1/admin/notifications/
+│   └── lens/                   # Assistants, sessions, runs, and data sources
 ├── frontend/                   # Vue 3 (Vite + Pinia + Tailwind + vue-i18n)
 └── docs/                       # Design docs
 ```
 
 ## Quick Start
 
-### 1. Clone with submodules
-
-```bash
-git submodule update --init --recursive
-```
-
-### 2. Docker dev
+### 1. Docker dev
 
 > **Prerequisite:** Docker Compose **V2** (`docker compose`) is required. The dev
 > stack relies on Compose V2 features — the top-level `name` field (dev/prod
@@ -101,7 +92,7 @@ cp env.sample .env.dev
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 3. Services
+### 2. Services
 
 | Service | URL |
 |---|---|
@@ -110,7 +101,7 @@ docker compose -f docker-compose.dev.yml up -d
 | Admin | http://localhost:8000/admin/ |
 | Flower | http://localhost:5555 |
 
-### 4. Common Commands
+### 3. Common Commands
 
 ```bash
 # Backend
@@ -134,21 +125,16 @@ npm run lint
 npm run test:e2e     # Playwright E2E
 ```
 
-## Agentcore Submodules
+## Agentcore Packages
 
-| Submodule | Django App | URL prefix |
-|---|---|---|
-| `agentcore-metering` | `agentcore_metering.adapters.django` | `/api/v1/admin/` |
-| `agentcore-task` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
-| `agentcore-notifier` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
+Agentcore is installed from the Python package index through the project
+dependencies.
 
-Local editable install:
-
-```bash
-for d in backend/agentcore/*/; do
-  [ -f "${d}pyproject.toml" ] && pip install -e "$d"
-done
-```
+| Package | Minimum version | Django App | URL prefix |
+|---|---|---|---|
+| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` |
+| `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
+| `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
 
 ## Celery Task System
 
@@ -210,8 +196,8 @@ later at `http://<host>:10083/management/llm/config`.
 When SourceLens is installed in a NAT virtual machine, forward host TCP port
 `10083` to guest TCP port `10083` before opening the site in the host browser.
 
-To test local changes, transfer the complete repository (including initialized
-submodules) to the target machine, then run:
+To test local changes, transfer the complete repository to the target machine,
+then run:
 
 ```bash
 sudo bash /tmp/sourcelens-source/install.sh \
