@@ -48,6 +48,9 @@ Conversion is a separate, non-exclusive task with its own recovery lifecycle.
 4. Add retry state, no-progress timeout, and failure retry API.
 5. Introduce the physical source/derived layout only after read compatibility
    is verified.
+6. Expose a paginated, read-only file catalog from the LensNode manifest.
+   The catalog uses original relative paths and never returns internal
+   directories or absolute workspace paths.
 
 ## Verification
 

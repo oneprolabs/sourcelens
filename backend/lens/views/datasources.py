@@ -14,6 +14,7 @@ from lens.datasource_services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
+    list_datasource_files,
 )
 from lens.models import (
     CredentialLease,
@@ -540,6 +541,45 @@ class DataSourceViewSet(BaseAdminViewSet):
             ]
         )
         return Response(DataSourceSerializer(datasource).data)
+
+    @action(detail=True, methods=["get"], url_path="files")
+    def files(self, request, uuid=None):
+        """Return the current manifest-backed datasource file catalog."""
+
+        datasource = self.get_object()
+        try:
+            page = max(1, int(request.query_params.get("page") or 1))
+            page_size = min(
+                100,
+                max(1, int(request.query_params.get("page_size") or 20)),
+            )
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "DATASOURCE_FILE_QUERY_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            result = list_datasource_files(
+                datasource,
+                page=page,
+                page_size=page_size,
+                query=request.query_params.get("query") or "",
+                sync_status=request.query_params.get("sync_status") or "",
+                conversion_status=(
+                    request.query_params.get("conversion_status") or ""
+                ),
+            )
+        except (DataSourcePathError, DataSourceDispatchError) as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if result.get("error"):
+            return Response(
+                {"detail": result["error"]},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(result)
 
     @action(detail=True, methods=["get"], url_path="sync-tasks")
     def sync_tasks(self, request, uuid=None):

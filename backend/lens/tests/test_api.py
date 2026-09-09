@@ -6237,6 +6237,40 @@ class LensApiTests(TestCase):
         self.assertEqual(task.created_by, self.user)
         self.assertEqual(task.metadata["celery_task_id"], celery_task_id)
 
+    @patch("lens.views.datasources.list_datasource_files")
+    def test_datasource_files_returns_manifest_catalog(self, list_files):
+        list_files.return_value = {
+            "count": 1,
+            "page": 1,
+            "page_size": 20,
+            "results": [
+                {
+                    "path": "MIW Production Export/report.pdf",
+                    "name": "report.pdf",
+                    "extension": "pdf",
+                    "sync_status": "synced",
+                    "conversion_status": "success",
+                    "source_updated_at": "2026-09-09T00:00:00Z",
+                    "converted_at": "2026-09-09T00:01:00Z",
+                    "conversion_error": "",
+                }
+            ],
+        }
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/files/",
+            {"query": "MIW", "page": 1, "page_size": 20},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["path"],
+            "MIW Production Export/report.pdf",
+        )
+        self.assertNotIn("/workspace", response.data["results"][0]["path"])
+        list_files.assert_called_once()
+
     def test_disabled_datasource_rejects_manual_sync(self):
         self.datasource.status = DataSource.Status.DISABLED
         self.datasource.save(update_fields=["status", "updated_at"])

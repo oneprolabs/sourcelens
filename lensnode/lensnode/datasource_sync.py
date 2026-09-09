@@ -24,6 +24,7 @@ from .path_rules import is_excluded_path
 from .path_rules import normalize_excluded_roots
 from .path_rules import relative_path
 from .path_rules import safe_filename
+from .path_rules import sidecar_path
 from .path_rules import source_sha256
 from .path_rules import stable_suffix
 from .path_rules import unique_child_path
@@ -253,6 +254,150 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
     conversion_summary["deleted_sidecars"] = deleted_sidecars
     result["conversion_summary"] = conversion_summary
     return result
+
+
+def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
+    """Return one safe, paginated view of a datasource manifest."""
+
+    target = normalize_target_path(command.get("target_path"), workspace_path)
+    datasource_uuid = str(command.get("datasource_uuid") or "")
+    source_type = str(command.get("source_type") or "")
+    marker = manifest_store.read_manifest_marker(target)
+    if (
+        source_type != "managed_workspace"
+        and (
+            not datasource_uuid
+            or marker.get("datasource_uuid") != datasource_uuid
+        )
+    ):
+        raise DataSourceSyncError("DATASOURCE_MANIFEST_NOT_FOUND")
+
+    query = str(command.get("query") or "").strip().lower()
+    sync_status = str(command.get("sync_status") or "").strip().lower()
+    conversion_status = str(
+        command.get("conversion_status") or ""
+    ).strip().lower()
+    try:
+        page = max(1, int(command.get("page") or 1))
+        page_size = min(100, max(1, int(command.get("page_size") or 20)))
+    except (TypeError, ValueError) as exc:
+        raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
+
+    files = []
+    if source_type == "managed_workspace":
+        manifest_items = _managed_workspace_catalog_items(target)
+    else:
+        manifest_items = manifest_store.manifest_items(
+            manifest_store.read_manifest(target)
+        )
+    for item in manifest_items:
+        entry = _datasource_file_entry(target, item)
+        if entry is None:
+            continue
+        if query and query not in entry["path"].lower():
+            continue
+        if sync_status and entry["sync_status"].lower() != sync_status:
+            continue
+        if (
+            conversion_status
+            and entry["conversion_status"].lower() != conversion_status
+        ):
+            continue
+        files.append(entry)
+    files.sort(key=lambda item: item["path"].lower())
+    start = (page - 1) * page_size
+    return {
+        "count": len(files),
+        "page": page,
+        "page_size": page_size,
+        "results": files[start : start + page_size],
+    }
+
+
+def _managed_workspace_catalog_items(target):
+    """Return manifest-compatible items from a managed workspace directory."""
+
+    target = Path(target)
+    items = []
+    for path in target.rglob("*"):
+        if (
+            not path.is_file()
+            or _is_datasource_catalog_internal_path(target, path)
+        ):
+            continue
+        local_path = relative_path(target, path)
+        items.append(
+            {
+                "local_path": local_path,
+                "name": path.name,
+                "file_extension": path.suffix.lstrip(".").lower(),
+                "status": "synced",
+                "metadata": {
+                    "modified_time": datetime.fromtimestamp(
+                        path.stat().st_mtime,
+                        timezone.utc,
+                    ).isoformat(),
+                },
+            }
+        )
+    return items
+
+
+def _is_datasource_catalog_internal_path(target, path):
+    """Return whether a path is internal datasource bookkeeping content."""
+
+    relative = path.resolve().relative_to(Path(target).resolve())
+    if relative.name in {
+        manifest_store.MANIFEST_FILE,
+        manifest_store.MARKER_FILE,
+    }:
+        return True
+    return any(part.endswith(".sourcelens") for part in relative.parts)
+
+
+def _datasource_file_entry(target, item):
+    """Return safe catalog data for one manifest item."""
+
+    local_path = manifest_store.manifest_local_path(item)
+    if not local_path:
+        return None
+    path = (Path(target) / local_path).resolve()
+    try:
+        path.relative_to(Path(target).resolve())
+    except ValueError:
+        return None
+    conversion = _read_datasource_conversion(path)
+    metadata = item.get("metadata") or {}
+    return {
+        "path": Path(local_path).as_posix(),
+        "name": str(item.get("name") or Path(local_path).name),
+        "extension": str(
+            item.get("extension")
+            or item.get("file_extension")
+            or Path(local_path).suffix.lstrip(".")
+        ).lower(),
+        "sync_status": str(item.get("status") or "synced"),
+        "conversion_status": conversion["status"],
+        "source_updated_at": str(metadata.get("modified_time") or ""),
+        "converted_at": conversion["generated_at"],
+        "conversion_error": conversion["error"],
+    }
+
+
+def _read_datasource_conversion(path):
+    """Return the public conversion state for one source file."""
+
+    meta_path = sidecar_path(path) / "meta.json"
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    conversion = payload.get("conversion") or {}
+    return {
+        "status": str(conversion.get("status") or "not_converted"),
+        "generated_at": str(conversion.get("generated_at") or ""),
+        "error": str(conversion.get("error") or ""),
+    }
 
 
 def convert_managed_workspace(

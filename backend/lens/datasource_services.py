@@ -222,6 +222,38 @@ def check_datasource_path(lensnode, target_path, source_type, config=None):
     )
 
 
+def list_datasource_files(datasource, page=1, page_size=20, **filters):
+    """Return a paginated, safe datasource file catalog from its LensNode."""
+
+    datasource = DataSource.objects.select_related("lensnode").get(
+        pk=datasource.pk
+    )
+    target_path = normalize_workspace_target_path(
+        datasource.target_path,
+        datasource.lensnode.workspace_path,
+    )
+    request_id = uuid.uuid4().hex
+    _send_lensnode_command(
+        datasource.lensnode,
+        {
+            "type": "datasource_list_files",
+            "request_id": request_id,
+            "datasource_uuid": str(datasource.uuid),
+            "source_type": datasource.source_type,
+            "target_path": target_path,
+            "page": page,
+            "page_size": page_size,
+            "query": filters.get("query") or "",
+            "sync_status": filters.get("sync_status") or "",
+            "conversion_status": filters.get("conversion_status") or "",
+        },
+    )
+    return _wait_cache_result(
+        f"lens:datasource_files:{request_id}",
+        timeout_s=15,
+    )
+
+
 def test_datasource_connection(
     lensnode,
     source_type,

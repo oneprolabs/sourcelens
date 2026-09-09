@@ -21,7 +21,8 @@ from .checkpoint import (
 from .config import load_config
 from .datasource_sync import DataSourceSyncError
 from .datasource_sync import convert_managed_workspace
-from .datasource_sync import inspect_datasource_path, sync_datasource
+from .datasource_sync import inspect_datasource_path, list_datasource_files
+from .datasource_sync import sync_datasource
 from .datasource_sync import test_datasource_connection
 from .datasource_sync import upload_managed_workspace
 from .delegation_events import delegation_events
@@ -557,6 +558,8 @@ class LensNodeClient:
             await self._handle_list_dirs(message)
         elif message_type == "datasource_check_path":
             await self._handle_datasource_check_path(message)
+        elif message_type == "datasource_list_files":
+            await self._handle_datasource_list_files(message)
         elif message_type == "datasource_test_connection":
             await self._handle_datasource_test_connection(message)
         elif message_type == "datasource_sync":
@@ -834,6 +837,26 @@ class LensNodeClient:
         self._enqueue(
             {
                 "type": "datasource_path_result",
+                "request_id": request_id,
+                "result": result,
+            }
+        )
+
+    async def _handle_datasource_list_files(self, message):
+        """Read one datasource manifest and reply with safe file metadata."""
+
+        request_id = str(message.get("request_id") or "")
+        try:
+            result = await asyncio.to_thread(
+                list_datasource_files,
+                message,
+                self.config.workspace_path,
+            )
+        except DataSourceSyncError as exc:
+            result = {"error": str(exc)}
+        self._enqueue(
+            {
+                "type": "datasource_files_result",
                 "request_id": request_id,
                 "result": result,
             }

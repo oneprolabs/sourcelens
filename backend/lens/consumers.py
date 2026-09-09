@@ -96,6 +96,8 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_list_dirs_result(content)
         elif frame_type == "datasource_path_result":
             await self._handle_datasource_path_result(content)
+        elif frame_type == "datasource_files_result":
+            await self._handle_datasource_files_result(content)
         elif frame_type == "datasource_connection_result":
             await self._handle_datasource_connection_result(content)
         elif frame_type == "datasource_sync_event":
@@ -510,6 +512,22 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         from django.core.cache import cache
 
         cache.set(f"lens:datasource_path:{request_id}", result, timeout=30)
+
+    async def _handle_datasource_files_result(self, content):
+        """Store one datasource file catalog response for the HTTP request."""
+
+        request_id = content.get("request_id") or ""
+        if request_id:
+            await database_sync_to_async(self._cache_datasource_files_result)(
+                request_id,
+                content.get("result") or {},
+            )
+
+    @staticmethod
+    def _cache_datasource_files_result(request_id, result):
+        from django.core.cache import cache
+
+        cache.set(f"lens:datasource_files:{request_id}", result, timeout=30)
 
     async def _handle_datasource_connection_result(self, content):
         """Store datasource connection test result for the waiting request."""

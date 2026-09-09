@@ -25,6 +25,14 @@
           >
             {{ t('lensAdmin.datasourceDetail.tabs.details') }}
           </button>
+          <button
+            type="button"
+            class="detail-tab"
+            :class="activeTab === 'files' ? 'detail-tab-active' : ''"
+            @click="activeTab = 'files'"
+          >
+            {{ t('lensAdmin.datasourceDetail.tabs.files') }}
+          </button>
         </div>
       </div>
     </template>
@@ -430,6 +438,135 @@
           </div>
         </div>
       </div>
+      <div v-show="activeTab === 'files'" class="space-y-4">
+        <div class="flex flex-wrap gap-2">
+          <input
+            v-model="fileQuery"
+            class="min-w-48 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-primary-500"
+            :placeholder="
+              t('lensAdmin.datasourceDetail.files.searchPlaceholder')
+            "
+            type="search"
+            @keyup.enter="loadFiles"
+          />
+          <select
+            v-model="fileSyncStatus"
+            class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
+            @change="loadFiles"
+          >
+            <option value="">
+              {{ t('lensAdmin.datasourceDetail.files.allSync') }}
+            </option>
+            <option value="synced">
+              {{ t('lensAdmin.datasourceDetail.files.syncSynced') }}
+            </option>
+            <option value="missing">
+              {{ t('lensAdmin.datasourceDetail.files.syncMissing') }}
+            </option>
+            <option value="failed">
+              {{ t('lensAdmin.datasourceDetail.files.syncFailed') }}
+            </option>
+          </select>
+          <select
+            v-model="fileConversionStatus"
+            class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
+            @change="loadFiles"
+          >
+            <option value="">
+              {{ t('lensAdmin.datasourceDetail.files.allConversion') }}
+            </option>
+            <option value="success">
+              {{ t('lensAdmin.datasourceDetail.files.conversionSuccess') }}
+            </option>
+            <option value="failed">
+              {{ t('lensAdmin.datasourceDetail.files.conversionFailed') }}
+            </option>
+            <option value="skipped">
+              {{ t('lensAdmin.datasourceDetail.files.conversionSkipped') }}
+            </option>
+            <option value="not_converted">
+              {{ t('lensAdmin.datasourceDetail.files.notConverted') }}
+            </option>
+          </select>
+        </div>
+        <div class="overflow-hidden rounded-lg border border-line bg-surface">
+          <div
+            class="hidden grid-cols-[minmax(0,1fr)_90px_110px_110px] gap-3 bg-surface-sunken px-4 py-2 text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
+          >
+            <span>{{ t('lensAdmin.datasourceDetail.files.path') }}</span>
+            <span>{{ t('lensAdmin.datasourceDetail.files.type') }}</span>
+            <span>{{ t('lensAdmin.datasourceDetail.files.syncStatus') }}</span>
+            <span>{{
+              t('lensAdmin.datasourceDetail.files.conversionStatus')
+            }}</span>
+          </div>
+          <div
+            v-if="filesLoading"
+            class="px-4 py-8 text-center text-sm text-ink-500"
+          >
+            {{ t('common.loading') }}
+          </div>
+          <div
+            v-else-if="filesError"
+            class="px-4 py-8 text-center text-sm text-danger-600"
+          >
+            {{ filesError }}
+          </div>
+          <div
+            v-else-if="!files.length"
+            class="px-4 py-8 text-center text-sm text-ink-500"
+          >
+            {{ t('lensAdmin.datasourceDetail.files.empty') }}
+          </div>
+          <ul v-else class="divide-y divide-line">
+            <li
+              v-for="file in files"
+              :key="file.path"
+              class="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_90px_110px_110px] sm:items-center sm:gap-3"
+            >
+              <p
+                class="truncate font-mono text-xs text-ink-800"
+                :title="file.path"
+              >
+                {{ file.path }}
+              </p>
+              <span class="text-xs text-ink-500">{{
+                file.extension || emptyValue
+              }}</span>
+              <span class="text-xs text-ink-700">{{ file.sync_status }}</span>
+              <span class="text-xs text-ink-700" :title="file.conversion_error">
+                {{ file.conversion_status }}
+              </span>
+            </li>
+          </ul>
+        </div>
+        <div
+          v-if="filesCount > 0"
+          class="flex items-center justify-between gap-2"
+        >
+          <p class="text-sm text-ink-500">
+            {{ t('common.pagination.showing', filesPaginationShowing) }}
+          </p>
+          <div class="flex gap-2">
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :disabled="filesLoading || filePage <= 1"
+              @click="goPrevFilePage"
+            >
+              {{ t('common.pagination.previous') }}
+            </BaseButton>
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :disabled="filesLoading || filePage >= filesTotalPages"
+              @click="goNextFilePage"
+            >
+              {{ t('common.pagination.next') }}
+            </BaseButton>
+          </div>
+        </div>
+      </div>
     </div>
     <div v-else class="py-12 text-center text-sm text-ink-500">
       {{ t('lensAdmin.datasourceDetail.selectHint') }}
@@ -537,6 +674,17 @@ const tasksLoadInFlight = ref(false)
 const taskRequestSeq = ref(0)
 const taskListContextKey = ref('')
 
+const files = ref([])
+const filesLoading = ref(false)
+const filesError = ref('')
+const filesCount = ref(0)
+const filePage = ref(1)
+const filesTotalPages = ref(1)
+const fileQuery = ref('')
+const fileSyncStatus = ref('')
+const fileConversionStatus = ref('')
+const fileListContextKey = ref('')
+
 const expandedTaskId = ref(null)
 const expandedTask = ref(null)
 const expandedTaskDetailLoading = ref(false)
@@ -565,6 +713,12 @@ const paginationShowing = computed(() => ({
   from: (currentPage.value - 1) * pageSize + 1,
   to: Math.min(currentPage.value * pageSize, totalCount.value),
   total: totalCount.value
+}))
+
+const filesPaginationShowing = computed(() => ({
+  from: (filePage.value - 1) * pageSize + 1,
+  to: Math.min(filePage.value * pageSize, filesCount.value),
+  total: filesCount.value
 }))
 
 function mapTaskStatus(status) {
@@ -598,6 +752,55 @@ function resetTaskList() {
   totalPages.value = 1
   expandedTaskId.value = null
   expandedTask.value = null
+}
+
+function resetFileList() {
+  files.value = []
+  filesCount.value = 0
+  filesTotalPages.value = 1
+  filesError.value = ''
+}
+
+async function loadFiles() {
+  const uuid = props.datasource?.uuid
+  if (!uuid) {
+    resetFileList()
+    return
+  }
+  filesLoading.value = true
+  filesError.value = ''
+  try {
+    const res = await api.get(`/lens/admin/datasources/${uuid}/files/`, {
+      params: {
+        page: filePage.value,
+        page_size: pageSize,
+        query: fileQuery.value,
+        sync_status: fileSyncStatus.value,
+        conversion_status: fileConversionStatus.value
+      }
+    })
+    const data = extractResponseData(res) || {}
+    files.value = Array.isArray(data.results) ? data.results : []
+    filesCount.value = Number(data.count) || 0
+    filesTotalPages.value = Math.max(1, Math.ceil(filesCount.value / pageSize))
+  } catch (error) {
+    resetFileList()
+    filesError.value = extractErrorMessage(error, t('common.error'))
+  } finally {
+    filesLoading.value = false
+  }
+}
+
+function goPrevFilePage() {
+  if (filesLoading.value || filePage.value <= 1) return
+  filePage.value -= 1
+  loadFiles()
+}
+
+function goNextFilePage() {
+  if (filesLoading.value || filePage.value >= filesTotalPages.value) return
+  filePage.value += 1
+  loadFiles()
 }
 
 function hasProcessingTasks() {
@@ -809,6 +1012,23 @@ watch(
         stopProcessingRefresh()
       }
     })
+  },
+  { immediate: true }
+)
+
+watch(
+  () => [props.datasource?.uuid, props.show, activeTab.value],
+  ([uuid, visible, tab]) => {
+    if (!visible || !uuid || tab !== 'files') {
+      fileListContextKey.value = ''
+      resetFileList()
+      return
+    }
+    const contextKey = `${uuid}:${tab}`
+    if (fileListContextKey.value === contextKey) return
+    fileListContextKey.value = contextKey
+    filePage.value = 1
+    loadFiles()
   },
   { immediate: true }
 )

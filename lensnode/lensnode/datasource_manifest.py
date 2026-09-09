@@ -80,6 +80,19 @@ def write_datasource_marker(target, context):
     )
 
 
+def read_manifest_marker(target):
+    """Read a datasource root marker file."""
+
+    path = Path(target) / MARKER_FILE
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def read_manifest(target):
     """Read a datasource manifest file."""
 
@@ -180,12 +193,8 @@ def should_skip_dir(path, current_datasource_uuid, excluded_roots):
     path = Path(path)
     if is_sidecar_dir(path) or is_excluded_path(path, excluded_roots):
         return True
-    marker = path / MARKER_FILE
-    if not marker.is_file():
-        return False
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    payload = read_manifest_marker(path)
+    if not payload:
         return False
     return payload.get("datasource_uuid") != current_datasource_uuid
 
