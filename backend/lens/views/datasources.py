@@ -591,15 +591,41 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
-        queryset = TaskExecution.objects.filter(
-            module="lens_datasource",
-            metadata__datasource_uuid=str(datasource.uuid),
-        ).order_by("-created_at")
+        queryset = (
+            TaskExecution.objects.filter(
+                module="lens_datasource",
+                metadata__datasource_uuid=str(datasource.uuid),
+            )
+            .select_related("created_by")
+            .only(
+                "id",
+                "task_id",
+                "task_name",
+                "module",
+                "status",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "metadata",
+                "created_by_id",
+                "created_by__id",
+                "created_by__username",
+            )
+            .order_by("-created_at")
+        )
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = TaskExecutionListSerializer(page, many=True)
+            serializer = TaskExecutionListSerializer(
+                page,
+                many=True,
+                context={"request": request},
+            )
             return self.get_paginated_response(serializer.data)
-        serializer = TaskExecutionListSerializer(queryset, many=True)
+        serializer = TaskExecutionListSerializer(
+            queryset,
+            many=True,
+            context={"request": request},
+        )
         return Response(serializer.data)
 
     @action(detail=True, methods=["get"], url_path="conversion-tasks")

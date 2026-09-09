@@ -3,7 +3,7 @@
     :show="show"
     :title="t('lensAdmin.datasourceDetail.title')"
     :subtitle="datasource?.name || ''"
-    width="2xl"
+    width="5xl"
     @close="$emit('close')"
   >
     <template v-if="datasource" #tabs>

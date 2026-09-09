@@ -6237,6 +6237,33 @@ class LensApiTests(TestCase):
         self.assertEqual(task.created_by, self.user)
         self.assertEqual(task.metadata["celery_task_id"], celery_task_id)
 
+    def test_datasource_sync_tasks_uses_a_fixed_query_count(self):
+        for index in range(10):
+            TaskExecution.objects.create(
+                task_id=f"datasource-sync-history-{index}",
+                task_name="datasource_sync:Repo Cache",
+                module="lens_datasource",
+                status="SUCCESS",
+                created_by=self.user,
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "trigger": "scheduled",
+                },
+            )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(
+                f"/api/lens/admin/datasources/{self.datasource.uuid}/sync-tasks/",
+                {"page": 1, "page_size": 10, "metadata_fields": "trigger"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertLessEqual(len(queries), 3)
+        self.assertEqual(len(response.data["results"]), 10)
+        self.assertEqual(response.data["results"][0]["metadata"], {
+            "trigger": "scheduled",
+        })
+
     @patch("lens.views.datasources.list_datasource_files")
     def test_datasource_files_returns_manifest_catalog(self, list_files):
         list_files.return_value = {
