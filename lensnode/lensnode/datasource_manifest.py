@@ -22,6 +22,7 @@ class SyncItem:
     status: str
     metadata: dict = field(default_factory=dict)
     remote: dict = field(default_factory=dict)
+    missing_scans: int = 0
 
     def get(self, key, default=None):
         """Return a manifest value using dict-compatible access."""
@@ -49,6 +50,8 @@ class SyncItem:
         token = self.remote.get("token")
         if token:
             payload["token"] = token
+        if self.missing_scans:
+            payload["missing_scans"] = self.missing_scans
         return payload
 
 
@@ -60,6 +63,7 @@ class SyncResult:
     changed_paths: list = field(default_factory=list)
     deleted_paths: list = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    changed_only: bool = False
 
 
 def write_datasource_marker(target, context):
@@ -77,6 +81,19 @@ def write_datasource_marker(target, context):
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def read_manifest_marker(target):
+    """Read a datasource root marker file."""
+
+    path = Path(target) / MARKER_FILE
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def read_manifest(target):
@@ -179,12 +196,8 @@ def should_skip_dir(path, current_datasource_uuid, excluded_roots):
     path = Path(path)
     if is_sidecar_dir(path) or is_excluded_path(path, excluded_roots):
         return True
-    marker = path / MARKER_FILE
-    if not marker.is_file():
-        return False
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    payload = read_manifest_marker(path)
+    if not payload:
         return False
     return payload.get("datasource_uuid") != current_datasource_uuid
 

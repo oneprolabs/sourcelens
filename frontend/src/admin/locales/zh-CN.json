@@ -1565,7 +1565,25 @@
       "basicInfo": "基本信息",
       "tabs": {
         "basic": "基本信息",
-        "details": "同步记录"
+        "details": "同步记录",
+        "files": "文件清单"
+      },
+      "files": {
+        "searchPlaceholder": "按路径搜索",
+        "allSync": "全部同步状态",
+        "allConversion": "全部转换状态",
+        "path": "路径",
+        "type": "类型",
+        "syncStatus": "同步状态",
+        "conversionStatus": "转换状态",
+        "syncSynced": "已同步",
+        "syncMissing": "待确认删除",
+        "syncFailed": "同步失败",
+        "conversionSuccess": "转换成功",
+        "conversionFailed": "转换失败",
+        "conversionSkipped": "已跳过",
+        "notConverted": "未转换",
+        "empty": "当前数据源没有可展示的文件。"
       },
       "connection": "连接信息",
       "resourceAndTarget": "资源与目标",

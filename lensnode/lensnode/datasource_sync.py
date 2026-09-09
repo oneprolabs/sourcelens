@@ -24,6 +24,7 @@ from .path_rules import is_excluded_path
 from .path_rules import normalize_excluded_roots
 from .path_rules import relative_path
 from .path_rules import safe_filename
+from .path_rules import sidecar_path
 from .path_rules import source_sha256
 from .path_rules import stable_suffix
 from .path_rules import unique_child_path
@@ -223,6 +224,7 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
         changed_paths=changed_paths,
         deleted_paths=deleted_paths,
         stats=_sync_summary_from_result(result),
+        changed_only=True,
     )
     sync_details = _sync_details_by_metric(
         sync_items,
@@ -252,6 +254,169 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
     conversion_summary["deleted_sidecars"] = deleted_sidecars
     result["conversion_summary"] = conversion_summary
     return result
+
+
+def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
+    """Return one safe, paginated view of a datasource manifest."""
+
+    target = normalize_target_path(command.get("target_path"), workspace_path)
+    datasource_uuid = str(command.get("datasource_uuid") or "")
+    source_type = str(command.get("source_type") or "")
+    marker = manifest_store.read_manifest_marker(target)
+    if (
+        source_type != "managed_workspace"
+        and (
+            not datasource_uuid
+            or marker.get("datasource_uuid") != datasource_uuid
+        )
+    ):
+        raise DataSourceSyncError("DATASOURCE_MANIFEST_NOT_FOUND")
+
+    query = str(command.get("query") or "").strip().lower()
+    sync_status = str(command.get("sync_status") or "").strip().lower()
+    conversion_status = str(
+        command.get("conversion_status") or ""
+    ).strip().lower()
+    try:
+        page = max(1, int(command.get("page") or 1))
+        page_size = min(100, max(1, int(command.get("page_size") or 20)))
+    except (TypeError, ValueError) as exc:
+        raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
+
+    candidates = []
+    if source_type == "managed_workspace":
+        manifest_items = _managed_workspace_catalog_items(target)
+    else:
+        manifest_items = manifest_store.manifest_items(
+            manifest_store.read_manifest(target)
+        )
+    for item in manifest_items:
+        local_path = manifest_store.manifest_local_path(item)
+        if not local_path:
+            continue
+        display_path = Path(local_path).as_posix()
+        public_status = _public_sync_status(item.get("status"))
+        if query and query not in display_path.lower():
+            continue
+        if sync_status and public_status != sync_status:
+            continue
+        entry = _datasource_file_entry(target, item, public_status)
+        if entry is None:
+            continue
+        candidates.append((display_path, entry))
+    candidates.sort(key=lambda item: item[0].lower())
+    if conversion_status:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate[1]["conversion_status"].lower() == conversion_status
+        ]
+    start = (page - 1) * page_size
+    page_items = candidates[start : start + page_size]
+    return {
+        "count": len(candidates),
+        "page": page,
+        "page_size": page_size,
+        "results": [
+            entry for _path, entry in page_items
+        ],
+    }
+
+
+def _managed_workspace_catalog_items(target):
+    """Return manifest-compatible items from a managed workspace directory."""
+
+    target = Path(target)
+    items = []
+    for path in target.rglob("*"):
+        if (
+            not path.is_file()
+            or _is_datasource_catalog_internal_path(target, path)
+        ):
+            continue
+        try:
+            local_path = relative_path(target, path)
+        except ValueError:
+            continue
+        items.append(
+            {
+                "local_path": local_path,
+                "name": path.name,
+                "file_extension": path.suffix.lstrip(".").lower(),
+                "status": "synced",
+                "metadata": {
+                    "modified_time": datetime.fromtimestamp(
+                        path.stat().st_mtime,
+                        timezone.utc,
+                    ).isoformat(),
+                },
+            }
+        )
+    return items
+
+
+def _is_datasource_catalog_internal_path(target, path):
+    """Return whether a path is internal datasource bookkeeping content."""
+
+    relative = path.resolve().relative_to(Path(target).resolve())
+    if relative.name in {
+        manifest_store.MANIFEST_FILE,
+        manifest_store.MARKER_FILE,
+    }:
+        return True
+    return any(part.endswith(".sourcelens") for part in relative.parts)
+
+
+def _datasource_file_entry(target, item, sync_status=None):
+    """Return safe catalog data for one manifest item."""
+
+    local_path = manifest_store.manifest_local_path(item)
+    if not local_path:
+        return None
+    path = (Path(target) / local_path).resolve()
+    try:
+        path.relative_to(Path(target).resolve())
+    except ValueError:
+        return None
+    conversion = _read_datasource_conversion(path)
+    metadata = item.get("metadata") or {}
+    return {
+        "path": Path(local_path).as_posix(),
+        "name": str(item.get("name") or Path(local_path).name),
+        "extension": str(
+            item.get("extension")
+            or item.get("file_extension")
+            or Path(local_path).suffix.lstrip(".")
+        ).lower(),
+        "sync_status": sync_status or _public_sync_status(item.get("status")),
+        "conversion_status": conversion["status"],
+        "source_updated_at": str(metadata.get("modified_time") or ""),
+        "converted_at": conversion["generated_at"],
+        "conversion_error": conversion["error"],
+    }
+
+
+def _public_sync_status(value):
+    """Return the catalog's stable public sync state."""
+
+    status = str(value or "synced").lower()
+    return "synced" if status in {"cataloged", "skipped"} else status
+
+
+def _read_datasource_conversion(path):
+    """Return the public conversion state for one source file."""
+
+    meta_path = sidecar_path(path) / "meta.json"
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    conversion = payload.get("conversion") or {}
+    return {
+        "status": str(conversion.get("status") or "not_converted"),
+        "generated_at": str(conversion.get("generated_at") or ""),
+        "error": str(conversion.get("error") or ""),
+    }
 
 
 def convert_managed_workspace(
@@ -3113,6 +3278,17 @@ def _finalize_feishu_missing_items(
             manifest_items.append({**item, "status": "skipped"})
             stats["skipped"] += 1
             continue
+        missing_scans = int(item.get("missing_scans") or 0) + 1
+        if missing_scans < 2:
+            manifest_items.append(
+                {
+                    **item,
+                    "status": "missing",
+                    "missing_scans": missing_scans,
+                }
+            )
+            stats["skipped"] += 1
+            continue
         deleted_item = {**item, "status": "deleted"}
         manifest_items.append(deleted_item)
         stats["deleted"] += 1
@@ -3388,17 +3564,16 @@ def _sync_feishu_folder(config, target, headers, emit, max_workers=1):
                 summary=stats,
             )
 
-    for token, item in previous_items.items():
-        if token in seen_tokens:
-            continue
-        deleted_item = {**item, "status": "deleted"}
-        manifest_items.append(deleted_item)
-        stats["deleted"] += 1
-        local_path = _manifest_local_path(item)
-        if local_path:
-            deleted_paths.append(local_path)
-        if delete_missing and local_path:
-            _delete_manifest_file(target, local_path)
+    _finalize_feishu_missing_items(
+        target,
+        previous_items,
+        seen_tokens,
+        manifest_items,
+        deleted_paths,
+        stats,
+        delete_missing=delete_missing,
+        scan_complete=True,
+    )
     _write_manifest(
         target,
         {
@@ -4411,6 +4586,7 @@ def _feishu_manifest_item_from_previous(
         "metadata": _feishu_item_sync_metadata(item),
         "remote": {"token": token, "type": item_type},
         "status": "skipped",
+        "missing_scans": 0,
     }
 
 
@@ -4448,6 +4624,7 @@ def _manifest_item_to_sync_item(item, target):
         status=item.get("status") or "synced",
         metadata=item.get("metadata") or {},
         remote=item.get("remote") or {"token": token, "type": item.get("type")},
+        missing_scans=int(item.get("missing_scans") or 0),
     )
 
 

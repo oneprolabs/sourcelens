@@ -1565,7 +1565,25 @@
       "basicInfo": "Basic Information",
       "tabs": {
         "basic": "Basic Information",
-        "details": "Sync history"
+        "details": "Sync history",
+        "files": "Files"
+      },
+      "files": {
+        "searchPlaceholder": "Search paths",
+        "allSync": "All sync states",
+        "allConversion": "All conversion states",
+        "path": "Path",
+        "type": "Type",
+        "syncStatus": "Sync status",
+        "conversionStatus": "Conversion status",
+        "syncSynced": "Synced",
+        "syncMissing": "Pending deletion",
+        "syncFailed": "Sync failed",
+        "conversionSuccess": "Converted",
+        "conversionFailed": "Conversion failed",
+        "conversionSkipped": "Skipped",
+        "notConverted": "Not converted",
+        "empty": "No files are available for this data source."
       },
       "connection": "Connection",
       "resourceAndTarget": "Resource and target",

@@ -1,0 +1,8 @@
+type: improvement
+audience: admin
+en: >-
+  Datasource details now show the current file catalog, retain files until a
+  second complete scan confirms removal, and load synchronization history more
+  efficiently.
+zh-CN: >-
+  数据源详情现在展示当前文件清单；文件会在第二次完整扫描确认移除后才删除，并且同步历史加载效率更高。

@@ -44,6 +44,7 @@ DEFAULT_TOKEN_CHARS = 4
 DETAIL_ITEMS_LIMIT = 200
 DEFAULT_MAX_SPREADSHEET_CELLS = 100000
 DEFAULT_MAX_SPREADSHEET_XML_BYTES = 50 * 1024 * 1024
+MAX_AUTOMATIC_CONVERSION_ATTEMPTS = 3
 
 
 def _check_runtime_cancelled(context):
@@ -332,6 +333,10 @@ def post_process_documents(context, sync_result, emit=None):
         context.get("datasource_uuid") or "",
         excluded_roots,
         conversion,
+        changed_paths=(
+            sync_result.changed_paths if sync_result.changed_only else None
+        ),
+        force=bool(context.get("force")),
     )
     total = len(candidates)
     summary = {
@@ -792,10 +797,13 @@ def conversion_candidates(
     datasource_uuid,
     excluded_roots,
     conversion,
+    changed_paths=None,
+    force=False,
 ):
     """Return manifest items eligible for conversion."""
 
     candidates = []
+    changed = set(changed_paths) if changed_paths is not None else None
     for item in items or []:
         if item.get("status") == "deleted":
             continue
@@ -803,6 +811,12 @@ def conversion_candidates(
         if not local_path:
             continue
         path = (target / local_path).resolve()
+        if (
+            changed is not None
+            and local_path not in changed
+            and not _conversion_needs_recheck(path, conversion, force)
+        ):
+            continue
         if not path.is_file() or is_excluded_path(path, excluded_roots):
             continue
         if not is_convertible(path, conversion):
@@ -816,6 +830,31 @@ def conversion_candidates(
             continue
         candidates.append(item)
     return candidates
+
+
+def _conversion_needs_recheck(path, conversion, force=False):
+    """Return whether an unchanged source still needs conversion evaluation."""
+
+    payload = read_json(sidecar_path(path) / "meta.json")
+    previous = payload.get("conversion") or {}
+    if force or previous.get("options") != conversion:
+        return True
+    if previous.get("status") == "success":
+        return False
+    if previous.get("status") == "failed":
+        return _conversion_attempts(previous) < (
+            MAX_AUTOMATIC_CONVERSION_ATTEMPTS
+        )
+    return True
+
+
+def _conversion_attempts(conversion):
+    """Return a safe persisted conversion attempt count."""
+
+    try:
+        return max(0, int(conversion.get("attempts") or 0))
+    except (AttributeError, TypeError, ValueError):
+        return 0
 
 
 def has_foreign_marker(parent, target, datasource_uuid, excluded_roots):
@@ -2376,6 +2415,21 @@ def write_success_meta(
 def write_failed_meta(target, path, item, context, error):
     """Write failed conversion metadata."""
 
+    previous = read_json(sidecar_path(path) / "meta.json")
+    previous_conversion = previous.get("conversion") or {}
+    previous_source = previous.get("source") or {}
+    source_digest = source_sha256(path) if path.is_file() else ""
+    retrying_same_conversion = (
+        previous_conversion.get("status") == "failed"
+        and previous_conversion.get("options")
+        == (context.get("conversion") or {})
+        and previous_source.get("sha256") == source_digest
+    )
+    attempts = (
+        _conversion_attempts(previous_conversion) + 1
+        if retrying_same_conversion
+        else 1
+    )
     write_meta(
         target,
         path,
@@ -2386,7 +2440,8 @@ def write_failed_meta(target, path, item, context, error):
             "error": error,
             "fingerprint": "",
             "stats": {},
-            "source_sha256": "",
+            "source_sha256": source_digest,
+            "attempts": attempts,
         },
     )
 
@@ -2437,6 +2492,7 @@ def write_meta(target, path, item, context, conversion):
             "status": conversion.get("status"),
             "error": conversion.get("error", ""),
             "fingerprint": conversion.get("fingerprint", ""),
+            "attempts": _conversion_attempts(conversion),
             "generated_at": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ",
                 time.gmtime(),

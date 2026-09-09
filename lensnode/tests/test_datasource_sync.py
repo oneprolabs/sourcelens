@@ -9,7 +9,7 @@ from threading import Event
 import httpx
 import pytest
 
-from lensnode.datasource_manifest import MARKER_FILE
+from lensnode.datasource_manifest import MARKER_FILE, SyncResult, build_manifest
 from lensnode.datasource_sync import (
     DataSourceSyncError,
     _cleanup_removed_git_repositories,
@@ -32,6 +32,7 @@ from lensnode.datasource_sync import (
     _validate_git_tree_size,
     _http_json,
     _manifest_item_to_sync_item,
+    list_datasource_files,
     _poll_feishu_export_task,
     _raise_feishu_business_error,
     _resolve_git_repository_target,
@@ -52,6 +53,179 @@ def test_datasource_sync_workers_defaults_to_four():
     assert datasource_sync_workers({}) == 4
     assert datasource_sync_workers({"max_workers": "8"}) == 8
     assert datasource_sync_workers({"max_workers": "invalid"}) == 4
+
+
+def test_list_datasource_files_returns_safe_paginated_manifest_items(tmp_path):
+    """Datasource file catalogs expose relative paths, never workspace paths."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "report.pdf").write_bytes(b"pdf")
+    sidecar = target / "report.pdf.sourcelens"
+    sidecar.mkdir()
+    (sidecar / "meta.json").write_text(
+        json.dumps(
+            {
+                "conversion": {
+                    "status": "success",
+                    "generated_at": "2026-09-09T00:00:00Z",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "source_id": "feishu:token:doc_one",
+                        "local_path": "report.pdf",
+                        "name": "Report",
+                        "file_extension": "pdf",
+                        "status": "synced",
+                        "metadata": {"modified_time": "2026-09-08T00:00:00Z"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "page": 1,
+            "page_size": 20,
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["count"] == 1
+    assert result["results"] == [
+        {
+            "path": "report.pdf",
+            "name": "Report",
+            "extension": "pdf",
+            "sync_status": "synced",
+            "conversion_status": "success",
+            "source_updated_at": "2026-09-08T00:00:00Z",
+            "converted_at": "2026-09-09T00:00:00Z",
+            "conversion_error": "",
+        }
+    ]
+
+
+def test_list_datasource_files_lists_managed_workspace_files(tmp_path):
+    """Managed workspaces list source files without exposing sidecar content."""
+
+    target = tmp_path / "managed"
+    target.mkdir()
+    (target / "notes.txt").write_text("notes", encoding="utf-8")
+    sidecar = target / "notes.txt.sourcelens"
+    sidecar.mkdir()
+    (sidecar / "content.md").write_text("derived", encoding="utf-8")
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "source_type": "managed_workspace",
+            "target_path": str(target),
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["count"] == 1
+    assert result["results"][0]["path"] == "notes.txt"
+    assert result["results"][0]["conversion_status"] == "not_converted"
+
+
+def test_list_datasource_files_normalizes_unchanged_sync_status(tmp_path):
+    """A current file remains visible through the public synced filter."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "report.txt").write_text("report", encoding="utf-8")
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"local_path": "report.txt", "status": "skipped"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "sync_status": "synced",
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["results"][0]["sync_status"] == "synced"
+
+
+def test_list_datasource_files_skips_unsafe_manifest_paths(tmp_path):
+    """A corrupt manifest entry cannot break or escape the file catalog."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"local_path": "../outside.txt", "status": "synced"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "conversion_status": "success",
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["count"] == 0
+    assert result["results"] == []
+
+
+def test_manifest_normalization_preserves_missing_scan_count(tmp_path):
+    """A deferred deletion survives the top-level manifest rewrite."""
+
+    item = _manifest_item_to_sync_item(
+        {
+            "local_path": "missing.docx",
+            "status": "missing",
+            "missing_scans": 1,
+        },
+        tmp_path,
+    )
+
+    manifest = build_manifest({}, SyncResult(items=[item]))
+
+    assert manifest["items"][0]["missing_scans"] == 1
 
 
 def test_managed_workspace_path_must_exist(tmp_path):

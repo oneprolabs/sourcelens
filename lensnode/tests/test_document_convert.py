@@ -133,6 +133,114 @@ def test_xlsx_stats_stops_after_cell_scan_budget(tmp_path):
     assert stats["scanned_cells"] == 3
 
 
+def test_post_process_converts_only_changed_datasource_items(tmp_path):
+    """Datasource sync conversion must not revisit unchanged files."""
+
+    changed = tmp_path / "changed.txt"
+    unchanged = tmp_path / "unchanged.txt"
+    changed.write_text("new content", encoding="utf-8")
+    unchanged.write_text("old content", encoding="utf-8")
+    unchanged_sidecar = tmp_path / "unchanged.txt.sourcelens"
+    unchanged_sidecar.mkdir()
+    (unchanged_sidecar / "meta.json").write_text(
+        json.dumps(
+            {
+                "conversion": {
+                    "status": "success",
+                    "options": {"document": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = post_process_documents(
+        {
+            "datasource_uuid": "ds1",
+            "name": "repo",
+            "source_type": "git",
+            "target_path": str(tmp_path),
+            "conversion": {"document": True},
+        },
+        SyncResult(
+            items=[sync_item(changed), sync_item(unchanged)],
+            changed_paths=["changed.txt"],
+            changed_only=True,
+        ),
+    )
+
+    assert summary["candidates"] == 1
+    assert summary["converted"] == 1
+    assert (tmp_path / "changed.txt.sourcelens" / "content.md").is_file()
+    assert not (unchanged_sidecar / "content.md").exists()
+
+
+def test_post_process_rechecks_unchanged_files_after_policy_change(tmp_path):
+    """A policy change can convert a file skipped by an earlier sync."""
+
+    document = tmp_path / "document.txt"
+    document.write_text("content", encoding="utf-8")
+
+    summary = post_process_documents(
+        {
+            "datasource_uuid": "ds1",
+            "name": "repo",
+            "source_type": "git",
+            "target_path": str(tmp_path),
+            "conversion": {"document": True},
+        },
+        SyncResult(
+            items=[sync_item(document)],
+            changed_paths=[],
+            changed_only=True,
+        ),
+    )
+
+    assert summary["converted"] == 1
+    assert (tmp_path / "document.txt.sourcelens" / "content.md").is_file()
+
+
+def test_post_process_stops_retrying_unchanged_failed_file_after_limit(
+    tmp_path,
+):
+    """Scheduled syncs do not retry a failed conversion indefinitely."""
+
+    document = tmp_path / "document.txt"
+    document.write_text("content", encoding="utf-8")
+    sidecar = tmp_path / "document.txt.sourcelens"
+    sidecar.mkdir()
+    (sidecar / "meta.json").write_text(
+        json.dumps(
+            {
+                "source": {"sha256": "unchanged"},
+                "conversion": {
+                    "status": "failed",
+                    "attempts": 3,
+                    "options": {"document": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = post_process_documents(
+        {
+            "datasource_uuid": "ds1",
+            "name": "repo",
+            "source_type": "git",
+            "target_path": str(tmp_path),
+            "conversion": {"document": True},
+        },
+        SyncResult(
+            items=[sync_item(document)],
+            changed_paths=[],
+            changed_only=True,
+        ),
+    )
+
+    assert summary["candidates"] == 0
+
+
 def test_xlsx_stats_stops_after_scanning_style_only_cells(tmp_path):
     """Style-only cells cannot exhaust conversion work without truncation."""
 
