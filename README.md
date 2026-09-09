@@ -158,19 +158,49 @@ health.
 
 Requirements:
 
-- Docker with Compose V2 (`docker compose`)
+- Docker with Compose V2 (`docker compose`) must already be installed and
+  running. The SourceLens installer does not install Docker.
+- Supported platforms: Linux, macOS, and Windows through Git Bash
+- Linux uses Docker Engine and does not require a desktop environment; macOS
+  and Windows use Docker Desktop
+- `amd64` or `arm64` CPU architecture
+- At least 4 GB available memory and 20 GB free disk space
+
+Run on Linux or macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | \
-  sudo bash
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | sudo bash
 ```
 
-For networks with limited GitHub access, use the China distribution channel:
+On Windows, run the equivalent command in Git Bash. Docker Desktop must be
+installed and running:
 
 ```bash
-curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
-  sudo bash -s -- --channel cn --download-source gitee
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | bash
 ```
+
+If access to GitHub is slow or restricted, use the China distribution channel:
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee
+```
+
+When running the China-channel command in Windows Git Bash, replace
+`sudo bash` with `bash`. Do not run this Bash installer directly in PowerShell
+or Command Prompt.
+
+The SourceLens repository is published as `oneprolabs/sourcelens` on both
+GitHub and Gitee. The installer automatically selects an available download
+source and its corresponding image registry. The China channel downloads
+release files from Gitee and pulls SourceLens application images from Aliyun
+ACR. To accept all defaults and skip interactive model setup, add `--yes`:
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee --yes
+```
+
+Common options include `--dir /srv/sourcelens`, `--port 10083`,
+`--https-port 10443`, `--domain lens.example.com`, and `--version 0.49.6`.
 
 For a fresh installation, the installer selects the latest available release
 tag. An existing installation reuses its current version by default; to
@@ -210,9 +240,10 @@ application images are still pulled from the registry. A non-default install
 directory creates an isolated test environment so an existing installation is
 not replaced; the installer will ask for another port if `10083` is busy.
 
-The default installation directory is `/opt/sourcelens`. Re-running the
-installer with a newer tag upgrades the installation in place. Existing `.env`
-configuration and application data are preserved.
+The default installation directory is `/opt/sourcelens` on Linux,
+`/Users/Shared/sourcelens` on macOS, and `$HOME/sourcelens` on Windows Git
+Bash. Re-running the installer with a newer tag upgrades the installation in
+place. Existing `.env` configuration and application data are preserved.
 
 For zero-downtime upgrades, see
 [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md).

@@ -8,8 +8,7 @@
 # docker-compose.yml. Pick ONE production shape per host: both share the
 # "sourcelens" compose project.
 #
-#   curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/<tag>/install.sh \
-#       -o install.sh && chmod +x install.sh && ./install.sh <tag>
+# See README.md for the Linux, macOS, and Windows Git Bash commands.
 #
 # What it does, every single run (idempotent; re-running upgrades):
 #   1. Fetches the small set of declarative deploy files (docker-compose
@@ -52,7 +51,6 @@ GITHUB_RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}"
 GITEE_REPO="oneprolabs/sourcelens"
 GITEE_API="https://gitee.com/api/v5/repos/${GITEE_REPO}"
 GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw"
-DEFAULT_INSTALL_DIR="/opt/${APP_NAME}"
 DEFAULT_HTTP_PORT=10083
 DEFAULT_HTTPS_PORT=10443
 # Image registry prefixes. Docker Hub uses just the namespace; Aliyun ACR uses
@@ -78,14 +76,29 @@ RELEASE_FILES=(
   docker/postgresql/initdb.d/002-setup-log-permissions.sh
 )
 
-# Detect host platform early: macOS and Linux differ in memory detection and
-# networking helpers.
+# Detect the host platform before selecting platform-specific paths and
+# preflight checks.
 case "$(uname -s)" in
   Darwin)                PLATFORM="macos" ;;
   Linux)                 PLATFORM="linux" ;;
   MINGW*|MSYS*|CYGWIN*)  PLATFORM="windows" ;;
   *)                     PLATFORM="unknown" ;;
 esac
+
+default_install_dir_for_platform() {
+  case "$1" in
+    macos) printf '/Users/Shared/%s' "${APP_NAME}" ;;
+    windows) printf '%s/%s' "${HOME}" "${APP_NAME}" ;;
+    *) printf '/opt/%s' "${APP_NAME}" ;;
+  esac
+}
+
+DEFAULT_INSTALL_DIR="$(default_install_dir_for_platform "${PLATFORM}")"
+LEGACY_DEFAULT_INSTALL_DIR="/opt/${APP_NAME}"
+if [[ "${PLATFORM}" == "macos" && \
+      -f "${LEGACY_DEFAULT_INSTALL_DIR}/${COMPOSE_FILE}" ]]; then
+  DEFAULT_INSTALL_DIR="${LEGACY_DEFAULT_INSTALL_DIR}"
+fi
 
 # ---------------------------------------------------------------------------
 # Defaults (overridable via SOURCELENS_* environment variables / CLI flags)
@@ -164,8 +177,8 @@ usage() {
 Usage: install.sh [options] [tag]
 
 Installs/upgrades the standalone (single-instance) SourceLens stack by driving
-docker-compose.standalone.yml. Supported platforms: Linux, macOS. Requires
-Docker and Docker Compose V2 (\`docker compose\`).
+docker-compose.standalone.yml. Supported platforms: Linux, macOS, and Windows
+through Git Bash. Requires Docker and Docker Compose V2 (\`docker compose\`).
 
 Options:
   -d, --dir DIR            Install directory (default: ${DEFAULT_INSTALL_DIR})
@@ -244,6 +257,10 @@ prompt_value() {
 # Preflight checks
 # ---------------------------------------------------------------------------
 require_root() {
+  if [[ "${PLATFORM}" == "windows" ]]; then
+    log_info "Running in Windows Git Bash; Docker Desktop provides the engine"
+    return 0
+  fi
   if [[ "$(id -u)" -eq 0 ]]; then return 0; fi
   if command -v sudo >/dev/null 2>&1 && [[ -f "$0" && "$0" != "bash" && "$0" != "-bash" ]]; then
     log_warn "not running as root, re-executing with sudo"
@@ -256,13 +273,18 @@ detect_os() {
   OS_ID="unknown"; OS_NAME="unknown"
   if [[ "${PLATFORM}" == "macos" ]]; then
     OS_ID="macos"; OS_NAME="macOS $(sw_vers -productVersion 2>/dev/null)"
+  elif [[ "${PLATFORM}" == "windows" ]]; then
+    OS_ID="windows"; OS_NAME="Windows (Git Bash)"
   elif [[ -r /etc/os-release ]]; then
     OS_ID=$(. /etc/os-release; printf '%s' "${ID:-unknown}")
     OS_NAME=$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-unknown}")
   fi
   log_info "OS: ${OS_NAME} (${OS_ID})"
-  if [[ "${PLATFORM}" != "macos" && "${PLATFORM}" != "linux" ]]; then
-    abort "unsupported platform '${PLATFORM}'; supported: Linux, macOS"
+  if [[ "${PLATFORM}" != "macos" && "${PLATFORM}" != "linux" && \
+        "${PLATFORM}" != "windows" ]]; then
+    local message="unsupported platform '${PLATFORM}'; supported: Linux, "
+    message+="macOS, Windows Git Bash"
+    abort "${message}"
   fi
 }
 
@@ -285,6 +307,9 @@ check_memory() {
     ps="$(vm_stat 2>/dev/null | awk '/Pages speculative/ {print $3}' | tr -d '.')"
     pf="${pf:-0}"; pi="${pi:-0}"; ps="${ps:-0}"
     mem_kb="$(( (pf + pi + ps) * pagesize / 1024 ))"
+  elif [[ "${PLATFORM}" == "windows" ]]; then
+    log_warn "memory detection is unavailable in Git Bash; skipping check"
+    return 0
   else
     mem_kb="$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
   fi
@@ -320,6 +345,10 @@ check_tools() {
   for tool in curl tar gzip openssl; do
     command -v "${tool}" >/dev/null 2>&1 || abort "required tool not found: ${tool}"
   done
+  if [[ "${PLATFORM}" == "windows" ]] && \
+     ! command -v cygpath >/dev/null 2>&1; then
+    abort "cygpath not found; run this installer from Windows Git Bash"
+  fi
   log_ok "Required tools present (curl, tar, gzip, openssl)"
 }
 
@@ -474,8 +503,10 @@ configure() {
     if [[ "${PLATFORM}" == "linux" ]]; then
       DOMAIN="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -n1)"
       [[ -z "${DOMAIN}" ]] && DOMAIN="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-    else
+    elif [[ "${PLATFORM}" == "macos" ]]; then
       DOMAIN="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+    else
+      DOMAIN="127.0.0.1"
     fi
     [[ -z "${DOMAIN}" ]] && DOMAIN="$(hostname -f 2>/dev/null || hostname)"
     [[ -z "${DOMAIN}" ]] && DOMAIN="127.0.0.1"
@@ -492,6 +523,16 @@ port_in_use() {
   local port="$1"
   if [[ "${PLATFORM}" == "macos" ]] && command -v lsof >/dev/null 2>&1; then
     lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  if [[ "${PLATFORM}" == "windows" ]] && \
+     command -v netstat >/dev/null 2>&1; then
+    local netstat_program=""
+    netstat_program='$1 ~ /^TCP/ && $4 == "LISTENING" && $2 ~ p '
+    netstat_program+='{found=1} END {exit !found}'
+    netstat -ano 2>/dev/null \
+      | awk -v p=":${port}$" \
+          "${netstat_program}"
     return $?
   fi
   if command -v ss >/dev/null 2>&1; then
@@ -841,6 +882,7 @@ patch_compose() {
   if ! grep -q "image: ${REGISTRY}/sourcelens-backend:${VERSION}" "${compose}"; then
     abort "failed to pin image references in ${compose}"
   fi
+  patch_platform_compose "${compose}"
   if [[ -n "${SOURCE_DIR}" && "${INSTALL_DIR}" != "${DEFAULT_INSTALL_DIR}" ]]; then
     local project_name=""
     project_name="$(basename "${INSTALL_DIR}" \
@@ -857,6 +899,46 @@ patch_compose() {
   log_ok "Compose patched (registry: ${REGISTRY}, images tagged :${VERSION})"
 }
 
+patch_platform_compose() {
+  local compose="$1"
+  if [[ "${PLATFORM}" == "windows" ]]; then
+    local pg_pattern="" redis_pattern="" log_pattern=""
+    pg_pattern='s#^([[:space:]]*)-[[:space:]]+\./data/postgresql/'
+    pg_pattern+='data:/var/lib/postgresql/data[[:space:]]*$#'
+    pg_pattern+='\1- postgresql_data:/var/lib/postgresql/data#'
+    redis_pattern='s#^([[:space:]]*)-[[:space:]]+\./data/redis:'
+    redis_pattern+='/data[[:space:]]*$#\1- redis_data:/data#'
+    log_pattern='/^[[:space:]]*-[[:space:]]+\.\/data\/logs\/'
+    log_pattern+='(postgresql|redis):\/var\/log\/'
+    log_pattern+='(postgresql|redis)[[:space:]]*$/d'
+    sed_inplace "${compose}" -E "${pg_pattern}"
+    sed_inplace "${compose}" -E "${redis_pattern}"
+    sed_inplace "${compose}" -E "${log_pattern}"
+    {
+      printf '\nvolumes:\n'
+      printf '  postgresql_data:\n'
+      printf '  redis_data:\n'
+    } >>"${compose}"
+    grep -q 'postgresql_data:/var/lib/postgresql/data' "${compose}" \
+      || abort "failed to configure PostgreSQL storage on Windows"
+    grep -q 'redis_data:/data' "${compose}" \
+      || abort "failed to configure Redis storage on Windows"
+    log_info "PostgreSQL and Redis use Docker volumes on Windows"
+    return 0
+  fi
+  [[ "${PLATFORM}" == "macos" ]] || return 0
+  local log_pattern=""
+  log_pattern='^[[:space:]]*-[[:space:]]+\.\/data\/logs\/postgresql:'
+  log_pattern+='\/var\/log\/postgresql[[:space:]]*$'
+  sed_inplace "${compose}" -E "/${log_pattern}/d"
+  if grep -qE "${log_pattern}" "${compose}"; then
+    abort "failed to disable the PostgreSQL log bind mount on macOS"
+  fi
+  local message="PostgreSQL logs use container storage on macOS"
+  message+=" (view with: docker logs sourcelens-postgres)"
+  log_info "${message}"
+}
+
 # ---------------------------------------------------------------------------
 # TLS certificate (self-signed for the nginx HTTPS server block)
 # ---------------------------------------------------------------------------
@@ -866,15 +948,36 @@ generate_certs() {
   mkdir -p "${certs_dir}"
   if [[ ! -f "${certs_dir}/nginx-selfsigned.crt" || ! -f "${certs_dir}/nginx-selfsigned.key" ]]; then
     log_info "Generating self-signed certificate for ${DOMAIN} (replace with a real certificate for production)"
-    docker run --rm -v "${certs_dir}:/certs" alpine/openssl req -x509 \
-      -newkey rsa:2048 -nodes -days 3650 \
-      -keyout /certs/nginx-selfsigned.key -out /certs/nginx-selfsigned.crt \
-      -subj "/CN=${DOMAIN}" \
-      -addext "subjectAltName=DNS:${DOMAIN},DNS:localhost,IP:127.0.0.1" 2>/dev/null \
-      || docker run --rm -v "${certs_dir}:/certs" alpine/openssl req -x509 \
-           -newkey rsa:2048 -nodes -days 3650 \
-           -keyout /certs/nginx-selfsigned.key -out /certs/nginx-selfsigned.crt \
-           -subj "/CN=${DOMAIN}"
+    if [[ "${PLATFORM}" == "windows" ]]; then
+      (
+        cd "${certs_dir}"
+        MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 \
+          -nodes -days 3650 \
+          -keyout nginx-selfsigned.key \
+          -out nginx-selfsigned.crt \
+          -subj "/CN=${DOMAIN}" \
+          -addext \
+          "subjectAltName=DNS:${DOMAIN},DNS:localhost,IP:127.0.0.1" \
+          2>/dev/null \
+          || MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 \
+               -nodes -days 3650 \
+               -keyout nginx-selfsigned.key \
+               -out nginx-selfsigned.crt \
+               -subj "/CN=${DOMAIN}"
+      )
+    else
+      docker run --rm -v "${certs_dir}:/certs" \
+        alpine/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout /certs/nginx-selfsigned.key \
+        -out /certs/nginx-selfsigned.crt -subj "/CN=${DOMAIN}" \
+        -addext \
+        "subjectAltName=DNS:${DOMAIN},DNS:localhost,IP:127.0.0.1" \
+        2>/dev/null \
+        || docker run --rm -v "${certs_dir}:/certs" \
+             alpine/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+             -keyout /certs/nginx-selfsigned.key \
+             -out /certs/nginx-selfsigned.crt -subj "/CN=${DOMAIN}"
+    fi
     chmod 600 "${certs_dir}/nginx-selfsigned.key"
   fi
   log_ok "TLS certificate ready"
@@ -891,26 +994,72 @@ create_dirs() {
   log_ok "Directories created under ${INSTALL_DIR}"
 }
 
+macos_docker_owner() {
+  local uid="${SUDO_UID:-}" gid="${SUDO_GID:-}" console_owner=""
+  if [[ "${uid}" =~ ^[0-9]+$ && "${gid}" =~ ^[0-9]+$ && \
+        "${uid}" != "0" ]]; then
+    printf '%s:%s' "${uid}" "${gid}"
+    return 0
+  fi
+  console_owner="$(stat -f '%u:%g' /dev/console 2>/dev/null || true)"
+  if [[ "${console_owner}" =~ ^[1-9][0-9]*:[0-9]+$ ]]; then
+    printf '%s' "${console_owner}"
+    return 0
+  fi
+  return 1
+}
+
+prepare_macos_mount_permissions() {
+  [[ "${PLATFORM}" == "macos" ]] || return 0
+  [[ ! -f "${INSTALL_DIR}/install-info.env" ]] || return 0
+  local owner=""
+  owner="$(macos_docker_owner)" \
+    || abort "could not identify the macOS Docker Desktop user"
+  chown -R "${owner}" "${INSTALL_DIR}/data" \
+    "${INSTALL_DIR}/docker/nginx/certs" \
+    || abort "could not prepare macOS bind-mount permissions"
+  log_info "Docker Desktop bind mounts prepared for macOS user ${owner}"
+}
+
 # ---------------------------------------------------------------------------
 # Docker Compose lifecycle
 # ---------------------------------------------------------------------------
+docker_host_path() {
+  if [[ "${PLATFORM}" == "windows" ]] && \
+     command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 run_compose() {
-  local -a compose_files=(-f "${INSTALL_DIR}/${COMPOSE_FILE}")
+  local project_dir=""
+  local -a compose_files
+  project_dir="$(docker_host_path "${INSTALL_DIR}")"
+  compose_files=(-f \
+    "$(docker_host_path "${INSTALL_DIR}/${COMPOSE_FILE}")")
   if [[ -n "${SOURCE_DIR}" && \
         -f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}" ]]; then
-    compose_files+=(-f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")
+    compose_files+=(-f \
+      "$(docker_host_path "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")")
   fi
-  "${COMPOSE_CMD[@]}" --project-directory "${INSTALL_DIR}" \
+  "${COMPOSE_CMD[@]}" --project-directory "${project_dir}" \
     "${compose_files[@]}" "$@" 2>&1 | tee -a "${LOG_FILE}"
 }
 
 run_compose_quiet() {
-  local -a compose_files=(-f "${INSTALL_DIR}/${COMPOSE_FILE}")
+  local project_dir=""
+  local -a compose_files
+  project_dir="$(docker_host_path "${INSTALL_DIR}")"
+  compose_files=(-f \
+    "$(docker_host_path "${INSTALL_DIR}/${COMPOSE_FILE}")")
   if [[ -n "${SOURCE_DIR}" && \
         -f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}" ]]; then
-    compose_files+=(-f "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")
+    compose_files+=(-f \
+      "$(docker_host_path "${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}")")
   fi
-  "${COMPOSE_CMD[@]}" --project-directory "${INSTALL_DIR}" \
+  "${COMPOSE_CMD[@]}" --project-directory "${project_dir}" \
     "${compose_files[@]}" "$@"
 }
 
@@ -931,6 +1080,12 @@ pull_image_label() {
     alpine/openssl*) printf 'TLS Helper' ;;
     *) printf '%s' "${1##*/}" ;;
   esac
+}
+
+tls_helper_image_required() {
+  [[ "${PLATFORM}" != "windows" && \
+     (! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.crt" || \
+      ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.key") ]]
 }
 
 pull_layer_progress() {
@@ -1050,8 +1205,7 @@ pull_images() {
   while IFS= read -r img; do
     [[ -n "${img}" ]] && images+=("${img}")
   done < <(run_compose_quiet config --images 2>/dev/null | sort -u)
-  if [[ ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.crt" || \
-        ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.key" ]]; then
+  if tls_helper_image_required; then
     images+=("alpine/openssl")
   fi
 
@@ -1201,14 +1355,47 @@ spinner_stop() {
   _spinner_on=0
 }
 
+stale_mount_namespace_detected() {
+  local container="" health_output=""
+  while IFS= read -r container; do
+    [[ -n "${container}" ]] || continue
+    health_output="$(
+      docker inspect --format \
+        '{{if .State.Health}}{{range .State.Health.Log}}'\
+'{{println .Output}}{{end}}{{end}}' \
+        "${container}" 2>/dev/null || true
+    )"
+    local stale_message="current working directory is outside of container "
+    stale_message+="mount namespace root"
+    if [[ "${health_output}" == *"${stale_message}"* ]]; then
+      return 0
+    fi
+  done < <(run_compose_quiet ps -aq 2>/dev/null || true)
+  return 1
+}
+
 start_stack() {
   log_step "Starting SourceLens"
   local attempt=1 max_attempts=5 backoff=20
+  local -a up_args
+  up_args=(up -d --no-build --remove-orphans)
+  if [[ "${EXISTING}" == "0" || \
+        ! -f "${INSTALL_DIR}/install-info.env" ]]; then
+    up_args+=(--force-recreate)
+    log_info "Fresh or incomplete install will recreate stale containers"
+  elif stale_mount_namespace_detected; then
+    up_args+=(--force-recreate)
+    local stale_warning="Docker reported a stale bind-mount working "
+    stale_warning+="directory; "
+    stale_warning+="recreating containers while preserving SourceLens data"
+    log_warn "${stale_warning}"
+  fi
   if [[ -t 1 ]]; then
     log_info "Starting SourceLens (details logged to ${LOG_FILE})"
     spinner_start "Starting SourceLens"
   fi
-  until run_compose_quiet up -d --no-build --remove-orphans >>"${LOG_FILE}" 2>&1; do
+  until run_compose_quiet "${up_args[@]}" >>"${LOG_FILE}" 2>&1; do
+    up_args=(up -d --no-build --remove-orphans)
     spinner_stop
     if ((attempt >= max_attempts)); then
       log_error "SourceLens failed to start after ${max_attempts} attempts"
@@ -1490,6 +1677,7 @@ main() {
   patch_compose
   pull_images
   generate_certs
+  prepare_macos_mount_permissions
   start_stack
   health_check
   configure_ai_model

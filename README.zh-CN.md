@@ -156,19 +156,47 @@ SourceLens 有两种生产部署方式，每台主机选择一种：
 
 前置要求：
 
-- Docker + Docker Compose V2（`docker compose`）
+- 必须预先安装并启动 Docker + Docker Compose V2（`docker compose`）；
+  SourceLens 安装器不会自动安装 Docker
+- Linux 服务器不需要桌面环境，使用 Docker Engine；macOS 和 Windows 使用
+  Docker Desktop
+- Linux、macOS，或安装了 Git Bash 的 Windows
+- `amd64` 或 `arm64` CPU 架构
+- 至少 4 GB 可用内存和 20 GB 可用磁盘空间
+
+在 Linux 或 macOS 上运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | \
-  sudo bash
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | sudo bash
+```
+
+Windows 用户从 Git Bash 运行对应命令，并确保 Docker Desktop 已安装并启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | bash
 ```
 
 网络无法稳定访问 GitHub 时，使用中国分发通道：
 
 ```bash
-curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | \
-  sudo bash -s -- --channel cn --download-source gitee
+curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee
 ```
+
+Windows Git Bash 使用中国分发通道时，将同一条命令中的 `sudo bash` 替换为
+`bash`。不要直接在 PowerShell 或命令提示符中运行这个 Bash 安装器。
+
+GitHub 和 Gitee 都使用 `oneprolabs/sourcelens` 作为源代码仓库。安装程序会自动选择
+可用的下载源和对应的镜像仓库。中国分发通道从 Gitee 下载发布文件，并从阿里云 ACR
+拉取 SourceLens 应用镜像。使用 `--yes` 可按默认配置非交互式安装，并跳过交互式模型
+配置：
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee --yes
+```
+
+常用选项包括 `--dir /srv/sourcelens`、`--port 10083`、
+`--https-port 10443`、`--domain lens.example.com` 和 `--version 0.49.6`。
+运行 `install.sh --help` 查看完整列表。
 
 全新安装时，安装器会选择当前可用的最新 release tag。已有安装默认沿用当前版本；
 如需升级或安装指定版本，增加 `--version <version>`。完整选项见
@@ -203,8 +231,9 @@ sudo bash /tmp/sourcelens-source/install.sh \
 非默认安装目录时，安装器会创建隔离的测试环境，避免替换已有安装；如果 `10083`
 已占用，安装器会提示选择其他端口。
 
-默认安装目录为 `/opt/sourcelens`。使用新 tag 重复运行安装器即可原地升级，已有
-`.env` 配置和应用数据会被保留。
+Linux 默认安装目录为 `/opt/sourcelens`，macOS 默认为
+`/Users/Shared/sourcelens`，Windows Git Bash 默认为 `$HOME/sourcelens`。使用新
+tag 重复运行安装器即可原地升级，已有 `.env` 配置和应用数据会被保留。
 
 如需零停机升级，请参阅
 [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)。

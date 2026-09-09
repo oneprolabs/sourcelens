@@ -248,7 +248,8 @@ services:
     image: redis:alpine
     container_name: sourcelens-redis
     restart: unless-stopped
-    command: redis-server
+    working_dir: /tmp
+    command: redis-server --dir /data
     volumes:
       - ./data/redis:/data
       - ./data/logs/redis:/var/log/redis
