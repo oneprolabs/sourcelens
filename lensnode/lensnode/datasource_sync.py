@@ -156,9 +156,64 @@ def inspect_datasource_path(command, workspace_path=WORKSPACE_ROOT):
         result["message"] = "Directory is empty and can be used."
         return result
 
-    if source_type == "git" and config.get("git_organization_parent"):
+    repositories = [
+        item
+        for item in config.get("repositories") or []
+        if isinstance(item, dict) and item.get("enabled", True)
+    ]
+    if source_type == "git" and len(repositories) == 1:
+        if result["is_git_repo"]:
+            return _inspect_git_path(target, repositories[0], result)
+        try:
+            _identity, repository_target = _resolve_git_repository_target(
+                target,
+                repositories[0],
+                command.get("datasource_uuid"),
+                single_repository=True,
+            )
+        except DataSourceSyncError as exc:
+            result.update(
+                {
+                    "source_compatible": False,
+                    "status": "blocked",
+                    "message_code": "git_layout_migration_required",
+                    "message": str(exc),
+                }
+            )
+            return result
+        if repository_target != target:
+            nested = inspect_datasource_path(
+                {
+                    "source_type": "git",
+                    "target_path": str(repository_target),
+                    "config": repositories[0],
+                },
+                workspace_path=workspace_path,
+            )
+            nested["container_path"] = str(target)
+            return nested
+
+    if source_type == "git" and (
+        config.get("git_organization_parent") or len(repositories) > 1
+    ):
+        if result["is_git_repo"]:
+            result.update(
+                {
+                    "source_compatible": False,
+                    "status": "blocked",
+                    "message_code": "git_layout_migration_required",
+                    "message": (
+                        "A Git repository cannot be used as a "
+                        "multi-repository parent directory."
+                    ),
+                }
+            )
+            return result
         result["message_code"] = "merge"
-        result["message"] = "Directory exists; repositories will be stored in child directories."
+        result["message"] = (
+            "Directory exists; repositories will be stored in child "
+            "directories."
+        )
         return result
 
     if source_type == "git":
@@ -2317,6 +2372,8 @@ def _resolve_git_repository_target(
         raise DataSourceSyncError(
             "LENS_SOURCE_GIT_LAYOUT_MIGRATION_REQUIRED"
         )
+    if single_repository:
+        return identity, root
     return identity, canonical
 
 

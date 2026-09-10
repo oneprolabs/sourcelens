@@ -2178,25 +2178,31 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def get_current_sync(self, datasource):
         """Return the latest running datasource sync task, if any."""
 
-        from agentcore_task.adapters.django.models import TaskExecution
-        from agentcore_task.constants import TaskStatus
-
-        task = (
-            TaskExecution.objects.filter(
-                module__in=[
-                    "lens_datasource",
-                    "lens_datasource_conversion",
-                ],
-                metadata__datasource_uuid=str(datasource.uuid),
-                status__in=[
-                    TaskStatus.PENDING,
-                    *TaskStatus.get_running_statuses(),
-                    "CANCELLING",
-                ],
-            )
-            .order_by("-created_at")
-            .first()
+        current_sync_by_uuid = self.context.get(
+            "datasource_current_sync_by_uuid"
         )
+        if current_sync_by_uuid is not None:
+            task = current_sync_by_uuid.get(str(datasource.uuid))
+        else:
+            from agentcore_task.adapters.django.models import TaskExecution
+            from agentcore_task.constants import TaskStatus
+
+            task = (
+                TaskExecution.objects.filter(
+                    module__in=[
+                        "lens_datasource",
+                        "lens_datasource_conversion",
+                    ],
+                    metadata__datasource_uuid=str(datasource.uuid),
+                    status__in=[
+                        TaskStatus.PENDING,
+                        *TaskStatus.get_running_statuses(),
+                        "CANCELLING",
+                    ],
+                )
+                .order_by("-created_at")
+                .first()
+            )
         if task is None:
             return None
         return {
@@ -2239,11 +2245,17 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         from .periodic_tasks import estimate_datasource_next_run
 
-        record = ScheduledTask.objects.filter(
-            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
-            target_type="datasource",
-            target_id=datasource.uuid,
-        ).first()
+        sync_state_by_uuid = self.context.get(
+            "datasource_sync_state_by_uuid"
+        )
+        if sync_state_by_uuid is not None:
+            record = sync_state_by_uuid.get(str(datasource.uuid))
+        else:
+            record = ScheduledTask.objects.filter(
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=datasource.uuid,
+            ).first()
         if record is None:
             return {
                 "enabled": datasource.status != DataSource.Status.DISABLED,

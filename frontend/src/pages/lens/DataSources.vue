@@ -435,6 +435,7 @@ import {
   listCredentials,
   listConnections,
   listDataSources,
+  listDataSourceSyncStatuses,
   listLensNodes,
   listPlugins,
   scanLensNodeDirs,
@@ -470,6 +471,11 @@ import {
   directoryRefreshPaths,
   mergeRefreshedDirectories
 } from './directoryRefresh'
+import {
+  mergeDataSourceSyncStatuses,
+  nextSyncStatusRefreshDelay
+} from './dataSourceSyncRefresh'
+import { buildPluginGitPathCheckConfig } from './dataSourcePathCheck'
 import { useShortDateTime } from './useShortDateTime'
 
 const { t, te } = useI18n()
@@ -540,6 +546,9 @@ const syncCron = ref('0 2 * * *')
 const syncTimezone = ref('Asia/Shanghai')
 const dynamicRefreshTimer = ref(null)
 const dynamicRefreshInFlight = ref(false)
+const dynamicRefreshStartedAt = ref(0)
+const dynamicRefreshDelay = ref(5000)
+const dynamicRefreshSnapshot = ref('')
 
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(totalDataSources.value / pageSize.value))
@@ -734,7 +743,8 @@ function searchFilterLabel(filter) {
   return option?.label || t('lensAdmin.datasourceSearch.all')
 }
 
-const DYNAMIC_REFRESH_INTERVAL_MS = 3000
+const SYNC_STATUS_REFRESH_BASE_DELAY_MS = 5000
+const SYNC_STATUS_REFRESH_MAX_DURATION_MS = 5 * 60 * 1000
 
 const formatDateTime = useShortDateTime()
 
@@ -913,6 +923,7 @@ function connectionEndpoint(row) {
 }
 
 async function load() {
+  stopDynamicRefresh()
   loading.value = true
   formError.value = ''
   try {
@@ -994,6 +1005,7 @@ function applyDataSourceRows(rows, options = {}) {
 }
 
 async function refreshDataSourceRows() {
+  dynamicRefreshTimer.value = null
   if (!shouldRefreshDataSources() || dynamicRefreshInFlight.value) {
     if (!shouldRefreshDataSources()) {
       stopDynamicRefresh()
@@ -1002,36 +1014,67 @@ async function refreshDataSourceRows() {
   }
   dynamicRefreshInFlight.value = true
   try {
-    applyDataSourceRows(await listDataSources(datasourceListParams()))
-    updateDynamicRefresh()
+    const statuses = await listDataSourceSyncStatuses(
+      dataSources.value.map((row) => row.uuid)
+    )
+    const snapshot = JSON.stringify(statuses)
+    const changed = snapshot !== dynamicRefreshSnapshot.value
+    dynamicRefreshSnapshot.value = snapshot
+    dynamicRefreshDelay.value = nextSyncStatusRefreshDelay(
+      dynamicRefreshDelay.value,
+      changed
+    )
+    dataSources.value = mergeDataSourceSyncStatuses(dataSources.value, statuses)
+    const selectedUuid = selectedDataSource.value?.uuid
+    selectedDataSource.value =
+      dataSources.value.find((row) => row.uuid === selectedUuid) ||
+      selectedDataSource.value
   } catch {
+    dynamicRefreshDelay.value = nextSyncStatusRefreshDelay(
+      dynamicRefreshDelay.value,
+      false
+    )
     // Silent refresh should not interrupt the datasource management workflow.
   } finally {
     dynamicRefreshInFlight.value = false
+    updateDynamicRefresh()
   }
 }
 
 function startDynamicRefresh() {
-  if (!shouldRefreshDataSources()) {
+  if (!shouldRefreshDataSources() || document.visibilityState === 'hidden') {
     stopDynamicRefresh()
     return
   }
   if (dynamicRefreshTimer.value) {
     return
   }
-  stopDynamicRefresh()
-  dynamicRefreshTimer.value = window.setInterval(
+  if (!dynamicRefreshStartedAt.value) {
+    dynamicRefreshStartedAt.value = Date.now()
+    dynamicRefreshDelay.value = SYNC_STATUS_REFRESH_BASE_DELAY_MS
+    dynamicRefreshSnapshot.value = ''
+  }
+  if (
+    Date.now() - dynamicRefreshStartedAt.value >=
+    SYNC_STATUS_REFRESH_MAX_DURATION_MS
+  ) {
+    stopDynamicRefresh()
+    return
+  }
+  dynamicRefreshTimer.value = window.setTimeout(
     refreshDataSourceRows,
-    DYNAMIC_REFRESH_INTERVAL_MS
+    dynamicRefreshDelay.value
   )
 }
 
 function stopDynamicRefresh() {
-  if (!dynamicRefreshTimer.value) {
-    return
+  if (dynamicRefreshTimer.value) {
+    window.clearTimeout(dynamicRefreshTimer.value)
+    dynamicRefreshTimer.value = null
   }
-  window.clearInterval(dynamicRefreshTimer.value)
-  dynamicRefreshTimer.value = null
+  dynamicRefreshStartedAt.value = 0
+  dynamicRefreshDelay.value = SYNC_STATUS_REFRESH_BASE_DELAY_MS
+  dynamicRefreshSnapshot.value = ''
 }
 
 function hasRunningDataSourceSync() {
@@ -1052,6 +1095,14 @@ function updateDynamicRefresh() {
   } else {
     stopDynamicRefresh()
   }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    stopDynamicRefresh()
+    return
+  }
+  updateDynamicRefresh()
 }
 
 function startCreate() {
@@ -1590,6 +1641,19 @@ async function checkDatasourcePath() {
 }
 
 function buildDatasourcePathCheckConfig() {
+  if (
+    isPluginSourceType(form.value.source_type) &&
+    normalizedSourceType(form.value.source_type) === 'git'
+  ) {
+    const connection = connections.value.find(
+      (item) => item.uuid === form.value.connection_uuid
+    )
+    return buildPluginGitPathCheckConfig({
+      pluginKey: form.value.plugin_key,
+      endpoint: connection?.endpoint,
+      datasourceConfig: buildPluginDatasourceConfig()
+    })
+  }
   const config = buildDatasourceConfig()
   if (isGitOrganizationSelectionMode()) {
     config.git_organization_parent = true
@@ -2134,6 +2198,7 @@ async function cancelSync(row) {
 }
 
 onMounted(async () => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   await load()
 })
 
@@ -2142,6 +2207,7 @@ onBeforeRouteLeave(() => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopDynamicRefresh()
   revokePluginIconUrls()
 })

@@ -55,6 +55,158 @@ def test_datasource_sync_workers_defaults_to_four():
     assert datasource_sync_workers({"max_workers": "invalid"}) == 4
 
 
+def test_git_collection_path_accepts_non_git_parent_directory(tmp_path):
+    """Multi-repository checks treat the datasource root as a container."""
+
+    target = tmp_path / "collection"
+    (target / "group" / "repo").mkdir(parents=True)
+
+    result = inspect_datasource_path(
+        {
+            "source_type": "git",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {
+                        "repo_url": "https://git.example.com/group/a.git",
+                        "target_subdir": "group/a",
+                    },
+                    {
+                        "repo_url": "https://git.example.com/group/b.git",
+                        "target_subdir": "group/b",
+                    },
+                ]
+            },
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["status"] == "available"
+    assert result["message_code"] == "merge"
+    assert result["is_git_repo"] is False
+
+
+def test_git_collection_path_rejects_repository_as_parent(tmp_path):
+    """A multi-repository root cannot also be a standalone repository."""
+
+    target = tmp_path / "collection"
+    (target / ".git").mkdir(parents=True)
+
+    result = inspect_datasource_path(
+        {
+            "source_type": "git",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {"target_subdir": "group/a"},
+                    {"target_subdir": "group/b"},
+                ]
+            },
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["message_code"] == "git_layout_migration_required"
+
+
+def test_single_git_collection_path_rejects_unknown_non_empty_root(tmp_path):
+    """Direct single-repository sync never overwrites unrelated files."""
+
+    target = tmp_path / "collection"
+    target.mkdir()
+    (target / "unrelated.txt").write_text("keep", encoding="utf-8")
+
+    result = inspect_datasource_path(
+        {
+            "source_type": "git",
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {
+                        "repo_url": "https://git.example.com/group/repo.git",
+                        "target_subdir": "group/repo",
+                    }
+                ]
+            },
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["message_code"] == "not_git_repo"
+
+
+def test_single_git_path_rejects_unrelated_existing_repository(
+    tmp_path,
+    monkeypatch,
+):
+    """A single repository target must match the configured remote."""
+
+    target = tmp_path / "repository"
+    (target / ".git").mkdir(parents=True)
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._git_output",
+        lambda *args, **kwargs: "https://git.example.com/other/repo.git",
+    )
+
+    result = inspect_datasource_path(
+        {
+            "source_type": "git",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {
+                        "repo_url": "https://git.example.com/group/repo.git",
+                        "target_subdir": "group/repo",
+                    }
+                ]
+            },
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["message_code"] == "remote_mismatch"
+
+
+def test_single_git_collection_path_checks_existing_canonical_child(
+    tmp_path,
+    monkeypatch,
+):
+    """An existing one-repository child layout remains editable."""
+
+    target = tmp_path / "collection"
+    repository = target / "group" / "repo"
+    (repository / ".git").mkdir(parents=True)
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._git_output",
+        lambda *args, **kwargs: "https://git.example.com/group/repo.git",
+    )
+
+    result = inspect_datasource_path(
+        {
+            "source_type": "git",
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "config": {
+                "repositories": [
+                    {
+                        "repo_url": "https://git.example.com/group/repo.git",
+                        "target_subdir": "group/repo",
+                    }
+                ]
+            },
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["status"] == "available"
+    assert result["message_code"] == "git_update"
+    assert result["path"] == str(repository.resolve())
+
+
 def test_list_datasource_files_returns_safe_paginated_manifest_items(tmp_path):
     """Datasource file catalogs expose relative paths, never workspace paths."""
 
@@ -577,7 +729,7 @@ def test_repository_target_reuses_owned_legacy_leaf_path(tmp_path):
     assert target == legacy.resolve()
 
 
-def test_repository_target_uses_canonical_path_for_new_repository(tmp_path):
+def test_repository_target_uses_root_for_new_single_repository(tmp_path):
     identity, target = _resolve_git_repository_target(
         tmp_path,
         {"target_subdir": "group/team/repo"},
@@ -586,7 +738,7 @@ def test_repository_target_uses_canonical_path_for_new_repository(tmp_path):
     )
 
     assert identity == "group/team/repo"
-    assert target == (tmp_path / "group" / "team" / "repo").resolve()
+    assert target == tmp_path.resolve()
 
 
 def test_repository_target_blocks_unrecognized_existing_single_layout(tmp_path):
@@ -607,7 +759,7 @@ def test_repository_target_blocks_unrecognized_existing_single_layout(tmp_path):
         )
 
 
-def test_new_git_datasource_syncs_to_canonical_resource_path(tmp_path):
+def test_new_single_git_datasource_syncs_directly_to_target_path(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     subprocess.run(["git", "init"], cwd=source, check=True, capture_output=True)
@@ -651,11 +803,10 @@ def test_new_git_datasource_syncs_to_canonical_resource_path(tmp_path):
         workspace_path=workspace,
     )
 
-    repository = target / "group" / "repo"
     manifest = json.loads((target / "manifest.json").read_text())
     assert result["status"] == "success"
-    assert (repository / ".git").is_dir()
-    assert manifest["items"][0]["local_path"] == "group/repo/README.md"
+    assert (target / ".git").is_dir()
+    assert manifest["items"][0]["local_path"] == "README.md"
     assert manifest["items"][0]["source_id"] == (
         f"git:{source}:main:README.md"
     )

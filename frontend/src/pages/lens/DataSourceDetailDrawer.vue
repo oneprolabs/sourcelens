@@ -518,27 +518,11 @@
           >
             {{ t('lensAdmin.datasourceDetail.files.empty') }}
           </div>
-          <ul v-else class="divide-y divide-line">
-            <li
-              v-for="file in files"
-              :key="file.path"
-              class="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_90px_110px_110px] sm:items-center sm:gap-3"
-            >
-              <p
-                class="truncate font-mono text-xs text-ink-800"
-                :title="file.path"
-              >
-                {{ file.path }}
-              </p>
-              <span class="text-xs text-ink-500">{{
-                file.extension || emptyValue
-              }}</span>
-              <span class="text-xs text-ink-700">{{ file.sync_status }}</span>
-              <span class="text-xs text-ink-700" :title="file.conversion_error">
-                {{ file.conversion_status }}
-              </span>
-            </li>
-          </ul>
+          <DataSourceFileTree
+            v-else
+            :files="files"
+            :aria-label="t('lensAdmin.datasourceDetail.tabs.files')"
+          />
         </div>
         <div
           v-if="filesCount > 0"
@@ -641,6 +625,7 @@ import {
   isOrganizationDataSource,
   isDataSourceSyncing
 } from './datasourceHelpers'
+import DataSourceFileTree from './components/DataSourceFileTree.vue'
 import { useShortDateTime } from './useShortDateTime'
 
 const props = defineProps({
