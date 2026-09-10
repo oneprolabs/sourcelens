@@ -156,6 +156,20 @@ The one-command installer defaults to HTTP 10083 and HTTPS 10443.
 The one-command installer sets up and starts SourceLens, then checks service
 health.
 
+For day-2 runtime operations, use `scripts/sourcelensctl.sh`. `restart` only
+restarts existing containers; `recreate` applies the current `.env` and Compose
+configuration but does not pull images. Both commands accept `workers`,
+`scheduler`, `lensnode`, or `runtime` (`runtime` means all three services):
+
+```bash
+./scripts/sourcelensctl.sh restart lensnode
+./scripts/sourcelensctl.sh recreate runtime
+```
+
+These commands do not operate on blue/green API/UI, nginx, PostgreSQL, or
+Redis. Use `scripts/install.sh` for API/UI deployments and configuration
+changes that require a blue/green traffic switch.
+
 Requirements:
 
 - Docker with Compose V2 (`docker compose`) must already be installed and

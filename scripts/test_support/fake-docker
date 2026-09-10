@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+
+printf '%s\n' "$*" >> "${DOCKER_CALLS:?}"
