@@ -49,6 +49,7 @@ class LensNodeConfig:
     stream_recovery_attempts: int = 3
     stream_recovery_backoff_s: float = 1.0
     stream_recovery_backoff_max_s: float = 8.0
+    max_concurrent_datasource_syncs: int = 1
 
 
 def _optional_int(value):
@@ -157,6 +158,9 @@ def load_config():
             os.getenv("LENSNODE_DRAIN_TIMEOUT_S", "240")
         ),
         max_concurrent_runs=int(os.getenv("LENSNODE_MAX_CONCURRENT_RUNS", "1")),
+        max_concurrent_datasource_syncs=int(
+            os.getenv("LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS", "1")
+        ),
         summary_trigger_tokens=int(
             os.getenv("LENSNODE_SUMMARY_TRIGGER_TOKENS", "48000")
         ),

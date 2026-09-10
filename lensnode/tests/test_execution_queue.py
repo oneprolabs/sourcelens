@@ -28,9 +28,9 @@ def test_standard_work_runs_in_parallel_up_to_configured_limit():
 
     asyncio.run(exercise())
 
-def test_waiting_exclusive_work_blocks_later_standard_work():
+def test_exclusive_work_does_not_block_later_standard_work():
     async def exercise():
-        queue = LensNodeExecutionQueue(max_standard_concurrency=2)
+        queue = LensNodeExecutionQueue(max_standard_concurrency=1)
         await queue.acquire(ExecutionClass.STANDARD)
 
         exclusive_started = asyncio.Event()
@@ -49,16 +49,36 @@ def test_waiting_exclusive_work_blocks_later_standard_work():
         later_standard = asyncio.create_task(acquire_later_standard())
         await asyncio.sleep(0)
 
-        assert not exclusive_started.is_set()
+        await asyncio.wait_for(exclusive_started.wait(), timeout=1)
         assert not later_standard_started.is_set()
 
         await queue.release(ExecutionClass.STANDARD)
-        await asyncio.wait_for(exclusive_started.wait(), timeout=1)
+        await asyncio.wait_for(later_standard_started.wait(), timeout=1)
 
         await queue.release(ExecutionClass.EXCLUSIVE)
-        await asyncio.wait_for(later_standard_started.wait(), timeout=1)
         await queue.release(ExecutionClass.STANDARD)
         await asyncio.gather(exclusive, later_standard)
+
+    asyncio.run(exercise())
+
+
+def test_exclusive_work_is_limited_independently():
+    async def exercise():
+        queue = LensNodeExecutionQueue(
+            max_standard_concurrency=1,
+            max_exclusive_concurrency=2,
+        )
+        await queue.acquire(ExecutionClass.EXCLUSIVE)
+        await queue.acquire(ExecutionClass.EXCLUSIVE)
+
+        queued = asyncio.create_task(queue.acquire(ExecutionClass.EXCLUSIVE))
+        await asyncio.sleep(0)
+        assert not queued.done()
+
+        await queue.release(ExecutionClass.EXCLUSIVE)
+        await asyncio.wait_for(queued, timeout=1)
+        await queue.release(ExecutionClass.EXCLUSIVE)
+        await queue.release(ExecutionClass.EXCLUSIVE)
 
     asyncio.run(exercise())
 

@@ -1,8 +1,8 @@
+import hashlib
+import os
 from contextlib import contextmanager
 from datetime import timedelta
-import hashlib
 from importlib import import_module
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -19,9 +19,7 @@ from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 
 from core.asgi import application
-from core.management.commands.register_periodic_tasks import (
-    discover_and_register,
-)
+from core.management.commands.register_periodic_tasks import discover_and_register
 from core.periodic_registry import TASK_REGISTRY
 from lens.consumers import LensNodeConsumer
 from lens.datasource_services import (
@@ -47,27 +45,20 @@ from lens.models import (
     Session,
     Skill,
 )
-from lens.periodic_tasks import (
-    ensure_datasource_periodic_task,
-    register_periodic_tasks,
-)
+from lens.periodic_tasks import ensure_datasource_periodic_task, register_periodic_tasks
 from lens.runtime_events import (
     public_step_detail,
     sanitize_runtime_event,
     sanitize_termination_detail,
 )
-from lens.serializers import (
-    DataSourceSerializer,
-    MessageSerializer,
-    RunSerializer,
-)
+from lens.serializers import DataSourceSerializer, MessageSerializer, RunSerializer
 from lens.services import (
     AssistantNotRunnableError,
     LensNodeDispatchError,
     _build_sync_event,
     _step_sequence,
-    build_clarification_continuation_question,
     append_lensnode_output,
+    build_clarification_continuation_question,
     build_run_history,
     build_run_history_artifacts,
     create_delegated_run,
@@ -83,17 +74,21 @@ from lens.services import (
     validate_run_dispatch,
 )
 from lens.tasks import (
+    _datasource_capacity_available,
+    _datasource_capacity_slot_key,
     acquire_datasource_lock,
     cleanup_stale_datasource_sync_tasks,
-    confirm_orphaned_datasource_conversion,
     complete_datasource_conversion_task,
     complete_datasource_sync_task,
+    complete_datasource_upload_task,
+    confirm_orphaned_datasource_conversion,
     datasource_conversion_task,
     datasource_lock,
     lensnode_health_task,
-    register_datasource_conversion_task,
     reconcile_orphaned_datasource_conversions,
+    register_datasource_conversion_task,
     register_datasource_sync_task,
+    register_datasource_upload_task,
     release_datasource_lock,
     source_sync_task,
 )
@@ -2971,6 +2966,122 @@ class LensServiceTests(TransactionTestCase):
             "conversion",
         )
 
+    def test_lensnode_reconnect_rebinds_active_source_sync(self):
+        task = register_datasource_sync_task(
+            self.datasource,
+            "reconnect-sync",
+            "manual",
+        )
+        task.status = "STARTED"
+        task.metadata.update(
+            {
+                "lensnode_connection_id": "old-connection",
+                "lock_token": task.task_id,
+                "admission_state": "DISPATCHED",
+            }
+        )
+        task.save(update_fields=["status", "metadata"])
+
+        count = reconcile_orphaned_datasource_conversions(
+            self.lensnode.uuid,
+            "new-connection",
+            [
+                {
+                    "task_id": task.task_id,
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "operation": "sync",
+                    "phase": "running",
+                }
+            ],
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            task.metadata["lensnode_connection_id"],
+            "new-connection",
+        )
+        self.assertEqual(
+            task.metadata["last_lensnode_operation"]["operation"],
+            "sync",
+        )
+
+    def test_lensnode_reconnect_does_not_orphan_queued_source_sync(self):
+        task = register_datasource_sync_task(
+            self.datasource,
+            "queued-sync",
+            "manual",
+        )
+        task.metadata.update(
+            {
+                "lensnode_connection_id": "old-connection",
+                "admission_state": "QUEUED",
+            }
+        )
+        task.save(update_fields=["metadata"])
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as confirm:
+            count = reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                [],
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(count, 0)
+        self.assertEqual(task.status, "PENDING")
+        self.assertEqual(
+            task.metadata["lensnode_connection_id"],
+            "new-connection",
+        )
+        confirm.assert_not_called()
+
+    def test_unreported_source_sync_is_failed_after_reconnect_grace(self):
+        task = register_datasource_sync_task(
+            self.datasource,
+            "orphaned-sync",
+            "manual",
+        )
+        task.status = "STARTED"
+        task.metadata.update(
+            {
+                "lensnode_connection_id": "old-connection",
+                "lock_token": task.task_id,
+                "admission_state": "DISPATCHED",
+            }
+        )
+        task.save(update_fields=["status", "metadata"])
+        acquire_datasource_lock(
+            self.datasource.uuid,
+            token=task.task_id,
+            ttl_s=60,
+        )
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as confirm:
+            count = reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                [],
+            )
+
+        self.assertEqual(count, 0)
+        confirm.assert_called_once()
+        task.refresh_from_db()
+        self.assertTrue(
+            confirm_orphaned_datasource_conversion(
+                task.task_id,
+                "new-connection",
+            )
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "DATASOURCE_SYNC_ORPHANED")
+        self.assertIsNone(cache.get(f"lens:datasource-sync:{self.datasource.uuid}"))
+
     def test_lensnode_websocket_rejects_revoked_token(self):
         token = issue_lensnode_token(self.lensnode)
         self.lensnode.token_revoked = True
@@ -4358,6 +4469,136 @@ class LensServiceTests(TransactionTestCase):
             task.metadata["progress_message"],
             "LENS_SOURCE_SYNC_BUSY",
         )
+
+    def test_source_sync_waits_for_lensnode_capacity_without_dispatching(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 1}
+        self.lensnode.save(update_fields=["labels"])
+        other_datasource = DataSource.objects.create(
+            name="Other Repo",
+            source_type=DataSource.SourceType.GIT,
+            status=DataSource.Status.ACTIVE,
+            lensnode=self.lensnode,
+            target_path="/workspace/other-repo",
+            config={"repo_url": "https://example.com/other.git"},
+            sync_policy={"interval_seconds": 3600},
+        )
+        TaskExecution.objects.create(
+            task_id="running-sync",
+            task_name="datasource_sync:Other Repo",
+            module="lens_datasource",
+            status="PENDING",
+            metadata={
+                "datasource_uuid": str(other_datasource.uuid),
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "admission_state": "DISPATCHED",
+            },
+        )
+
+        with (
+            patch("lens.tasks.dispatch_datasource_sync_async") as dispatch,
+            patch("lens.tasks.source_sync_task.apply_async") as retry,
+        ):
+            result = source_sync_task(
+                str(self.datasource.uuid),
+                task_id="queued-for-capacity",
+            )
+
+        self.assertEqual(result, 0)
+        dispatch.assert_not_called()
+        retry.assert_called_once()
+        task = TaskExecution.objects.get(task_id="queued-for-capacity")
+        self.assertEqual(task.status, "PENDING")
+        self.assertEqual(task.metadata["admission_state"], "QUEUED")
+        self.assertEqual(task.metadata["queue_state"], "QUEUED")
+        self.assertEqual(
+            task.metadata["queue_reason"],
+            "Waiting for LensNode datasource sync capacity.",
+        )
+
+    def test_datasource_capacity_slots_are_atomic_and_idempotent(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 2}
+        self.lensnode.save(update_fields=["labels"])
+        for task_id in ["capacity-1", "capacity-2", "capacity-3"]:
+            register_datasource_sync_task(self.datasource, task_id, "manual")
+
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-2"))
+        self.assertFalse(_datasource_capacity_available(self.lensnode, "capacity-3"))
+        self.assertEqual(
+            cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0)),
+            "capacity-1",
+        )
+        self.assertEqual(
+            cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 1)),
+            "capacity-2",
+        )
+
+        release_datasource_lock(self.datasource.uuid, token="capacity-1")
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
+
+    def test_complete_upload_releases_datasource_capacity_slot(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = register_datasource_upload_task(
+            datasource,
+            "managed-upload-complete",
+            "report.docx",
+        )
+        task.status = "STARTED"
+        task.metadata.update(
+            {
+                "admission_state": "DISPATCHED",
+                "admission_slot": 0,
+                "admission_capacity": 1,
+                "lensnode_connection_id": self.lensnode.connection_id,
+            }
+        )
+        task.save(update_fields=["status", "metadata"])
+        cache.set(
+            _datasource_capacity_slot_key(self.lensnode.uuid, 0),
+            task.task_id,
+        )
+
+        complete_datasource_upload_task(
+            task.task_id,
+            {"status": "success", "uploaded": 1},
+            connection_id=self.lensnode.connection_id,
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+        self.assertIsNone(
+            cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0))
+        )
+
+    def test_upload_done_uses_upload_completion_handler(self):
+        with (
+            patch(
+                "lens.tasks.resolve_datasource_upload_task_id",
+                return_value="upload-task",
+            ),
+            patch("lens.tasks.complete_datasource_upload_task") as complete_upload,
+            patch(
+                "lens.tasks.complete_datasource_conversion_task"
+            ) as complete_conversion,
+        ):
+            LensNodeConsumer._complete_datasource_upload_done(
+                "upload-request",
+                {"status": "success"},
+                "connection",
+            )
+
+        complete_upload.assert_called_once_with(
+            "upload-task",
+            {"status": "success"},
+            connection_id="connection",
+        )
+        complete_conversion.assert_not_called()
 
     def test_cleanup_stale_datasource_sync_releases_lock(self):
         GlobalSetting.objects.create(

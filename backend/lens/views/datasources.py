@@ -48,6 +48,7 @@ from lens.tasks import (
     register_datasource_conversion_task,
     register_datasource_sync_task,
     register_datasource_upload_task,
+    release_datasource_lock,
     source_sync_task,
 )
 from rest_framework import status
@@ -826,7 +827,8 @@ class DataSourceViewSet(BaseAdminViewSet):
 
             metadata["manual_revoked_at"] = timezone.now().isoformat()
             metadata["manual_revoked_by"] = request.user.pk
-            dispatched = bool(
+            queued = metadata.get("admission_state") == "QUEUED"
+            dispatched = not queued and bool(
                 metadata.get("lock_token")
                 or metadata.get("datasource_sync_request_id")
                 or task.status in TaskStatus.get_running_statuses()
@@ -851,6 +853,11 @@ class DataSourceViewSet(BaseAdminViewSet):
                     "metadata",
                 ]
             )
+            if queued:
+                release_datasource_lock(
+                    str(datasource.uuid),
+                    token=task.task_id,
+                )
         return Response(
             {
                 "uuid": str(datasource.uuid),
@@ -897,7 +904,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         now = timezone.now()
         metadata["manual_revoked_at"] = now.isoformat()
         metadata["manual_revoked_by"] = request.user.pk
-        queued = task.status == TaskStatus.PENDING
+        queued = metadata.get("admission_state") == "QUEUED"
         task.status = TaskStatus.REVOKED if queued else DATASOURCE_CANCELLING_STATUS
         task.finished_at = now if queued else None
         task.error = "DATASOURCE_CONVERSION_CANCELLED" if queued else ""
@@ -916,6 +923,11 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "metadata",
             ]
         )
+        if queued:
+            release_datasource_lock(
+                str(datasource.uuid),
+                token=task.task_id,
+            )
         datasource.last_conversion_status = task.status
         datasource.last_conversion_at = now if queued else None
         datasource.save(
