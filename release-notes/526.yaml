@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Improve datasource path safety and reduce sync status polling overhead.
+zh-CN: 优化数据源路径安全校验并减少同步状态轮询开销。
