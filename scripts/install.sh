@@ -207,9 +207,9 @@ bootstrap_runtime_state
 # Sourced only now — guaranteed present by this point, either just fetched above
 # (remote mode) or already on disk (--local). Provides
 # current_color/other_color/wait_for_healthy/switch_traffic, shared with
-# scripts/sourcelensctl.sh (day-2 ops: status/restart-workers/rollback —
-# deliberately a separate script, not more subcommands bolted onto this one; see
-# CLAUDE.md's "零停机部署" section for why).
+# scripts/sourcelensctl.sh (day-2 ops: status/restart-workers/restart/recreate/
+# rollback — deliberately a separate script, not more subcommands bolted onto
+# this one; see CLAUDE.md's "零停机部署" section for why).
 # shellcheck source=./lib/deploy-common.sh
 source "$DEPLOY_PATH/scripts/lib/deploy-common.sh"
 

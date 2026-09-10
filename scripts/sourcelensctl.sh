@@ -1,10 +1,10 @@
 #!/bin/bash
 # Day-2 operations for an already-installed sourcelens — status, restarting
-# services, rolling back a blue/green switch. NOT for installing or upgrading to
-# a new version — that's scripts/install.sh. Deliberately a separate script
-# rather than more subcommands on install.sh: "install a new version" and
-# "operate on what's already running" have different risk profiles and don't
-# belong behind the same entrypoint.
+# or recreating runtime services, and rolling back a blue/green switch. NOT for
+# installing or upgrading to a new version — that's scripts/install.sh.
+# Deliberately a separate script rather than more subcommands on install.sh:
+# "install a new version" and "operate on what's already running" have
+# different risk profiles and don't belong behind the same entrypoint.
 #
 # Installed/refreshed automatically every time install.sh runs (it's in
 # install.sh's ASSETS list) — no separate curl needed once install.sh has run at
@@ -12,6 +12,8 @@
 #
 #   ./scripts/sourcelensctl.sh status            # active color + health + which containers are up
 #   ./scripts/sourcelensctl.sh restart-workers   # graceful restart, no image pull, no color switch
+#   ./scripts/sourcelensctl.sh restart lensnode  # restart one runtime service
+#   ./scripts/sourcelensctl.sh recreate runtime  # reread .env and recreate all
 #   ./scripts/sourcelensctl.sh rollback          # flip traffic back to the other color, no pull/build/migrate
 set -euo pipefail
 
@@ -69,11 +71,49 @@ cmd_status() {
 }
 
 cmd_restart_workers() {
+    cmd_restart runtime
+}
+
+services_for_target() {
+    case "$1" in
+        workers) echo "backend-worker" ;;
+        scheduler) echo "backend-scheduler" ;;
+        lensnode) echo "lensnode" ;;
+        runtime) echo "backend-worker backend-scheduler lensnode" ;;
+        *) die "Unsupported target '$1'. Choose workers, scheduler,"\
+            " lensnode, or runtime" ;;
+    esac
+}
+
+cmd_restart() {
+    local target="${1:-}"
+    local services
+    local -a service_args
+    [ -n "$target" ] || die "Usage: $0 restart"\
+        " <workers|scheduler|lensnode|runtime>"
+    services="$(services_for_target "$target")"
+    read -r -a service_args <<< "$services"
+
     acquire_deploy_lock
-    log "Restarting backend-worker / backend-scheduler / lensnode"
-    log "(graceful: CELERY_TASK_ACKS_LATE + stop_grace_period mean in-flight"
-    log "tasks finish before the old process exits, not a hard kill)"
-    docker compose restart backend-worker backend-scheduler lensnode
+    log "Restarting ${target}: ${services}"
+    log "(graceful: stop_grace_period lets in-flight work drain)"
+    docker compose restart "${service_args[@]}"
+    log "Done"
+}
+
+cmd_recreate() {
+    local target="${1:-}"
+    local services
+    local -a service_args
+    [ -n "$target" ] || die "Usage: $0 recreate"\
+        " <workers|scheduler|lensnode|runtime>"
+    services="$(services_for_target "$target")"
+    read -r -a service_args <<< "$services"
+
+    acquire_deploy_lock
+    log "Recreating ${target}: ${services}"
+    log "(no image pull; --no-deps prevents touching PostgreSQL or Redis)"
+    docker compose up -d --force-recreate --no-deps "${service_args[@]}"
     log "Done"
 }
 
@@ -134,6 +174,8 @@ cmd_rollback() {
 case "${1:-}" in
     status) cmd_status ;;
     restart-workers) cmd_restart_workers ;;
+    restart) cmd_restart "${2:-}" ;;
+    recreate) cmd_recreate "${2:-}" ;;
     rollback) cmd_rollback ;;
-    *) die "Usage: $0 {status|restart-workers|rollback}" ;;
+    *) die "Usage: $0 {status|restart-workers|restart|recreate|rollback}" ;;
 esac

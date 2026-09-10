@@ -98,7 +98,8 @@ is by design; `install.sh` is its only entrypoint.
   the self-signed TLS cert.
 - **Two scripts, shared lib.**
   - `scripts/install.sh` — install **and** upgrade (idempotent, one command).
-  - `scripts/<app>ctl.sh` — day-2 ops: `status` / `restart-workers` / `rollback`.
+  - `scripts/<app>ctl.sh` — day-2 ops: `status` / `restart-workers` /
+    `restart` / `recreate` / `rollback`.
   - `scripts/lib/deploy-common.sh` — `current_color` / `other_color` /
     `wait_for_healthy` / `switch_traffic` shared by both.
 
@@ -273,7 +274,9 @@ same dir):
    reload → `/health` recovers within `valid=10s`.
 4. **Day-2:** `<app>ctl.sh status` shows the active color healthy; `rollback`
    flips to the other color **without a rebuild** and lands on the *old* version;
-   `restart-workers` restarts workers gracefully.
+   `restart` and `recreate` operate only on runtime services (`workers`,
+   `scheduler`, `lensnode`, or `runtime`). They never directly restart or
+   recreate blue/green API/UI, nginx, PostgreSQL, or Redis.
 5. **WS worker (if any):** start a long run, switch mid-run → the run stays
    RUNNING, the worker reconnects, buffered frames flush, the run completes; keep
    the worker down past the grace window → the run correctly fails.
