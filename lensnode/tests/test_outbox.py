@@ -402,6 +402,23 @@ def test_reconnect_hello_claims_buffered_terminal_run_before_flush():
     asyncio.run(exercise())
 
 
+def test_datasource_sync_terminal_frame_replays_until_acknowledged():
+    client = _make_client()
+    payload = {
+        "type": "datasource_sync_done",
+        "task_id": "sync-1",
+        "status": "success",
+    }
+
+    client._enqueue(payload)
+    assert client._pending_datasource_terminal_frames["sync-1"] is payload
+
+    client._acknowledge_datasource_terminal_frame(payload)
+
+    assert "sync-1" not in client._pending_datasource_terminal_frames
+    assert "sync-1" not in client.active_datasource_operations
+
+
 def test_hello_does_not_advertise_resume_when_checkpointing_is_disabled(
     monkeypatch,
 ):

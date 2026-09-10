@@ -1,7 +1,7 @@
 import json
 import logging
-from urllib.parse import parse_qs
 import uuid
+from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -654,10 +654,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         ]:
             if key in content:
                 metadata_update[key] = content.get(key)
-        is_conversion = (
-            content.get("category") == "conversion"
-            or str(content.get("step") or "").startswith("conversion")
-        )
+        is_conversion = content.get("category") == "conversion" or str(
+            content.get("step") or ""
+        ).startswith("conversion")
         if content.get("substantive_progress") or (
             is_conversion
             and (
@@ -665,9 +664,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 or content.get("progress_current")
             )
         ):
-            metadata_update["last_substantive_progress_at"] = step[
-                "timestamp"
-            ]
+            metadata_update["last_substantive_progress_at"] = step["timestamp"]
         if is_conversion:
             summary = LensNodeConsumer._merge_realtime_summary(
                 metadata.get("conversion_summary") or {},
@@ -884,9 +881,17 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         task_id = content.get("task_id") or ""
         if not request_id and not task_id:
             return
-        await database_sync_to_async(self._complete_datasource_sync_done)(
+        resolved_task_id = await database_sync_to_async(
+            self._complete_datasource_sync_done
+        )(
             request_id,
             content,
+        )
+        await self.send_json(
+            {
+                "type": "datasource_terminal_ack",
+                "task_id": resolved_task_id or task_id,
+            }
         )
 
     @staticmethod
@@ -927,6 +932,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         task_id = resolve_datasource_sync_task_id(request_id, content)
         if task_id:
             complete_datasource_sync_task(task_id, content)
+        return task_id
 
     async def _handle_datasource_conversion_done(self, content):
         """Complete managed workspace conversion from LensNode result."""
@@ -935,13 +941,15 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         task_id = content.get("task_id") or ""
         if not request_id and not task_id:
             return
-        await database_sync_to_async(self._complete_datasource_conversion_done)(
+        resolved_task_id = await database_sync_to_async(
+            self._complete_datasource_conversion_done
+        )(
             request_id, content, self.channel_name
         )
         await self.send_json(
             {
                 "type": "datasource_terminal_ack",
-                "task_id": task_id,
+                "task_id": resolved_task_id or task_id,
             }
         )
 
@@ -952,7 +960,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         task_id = content.get("task_id") or ""
         if not request_id and not task_id:
             return
-        await database_sync_to_async(self._complete_datasource_upload_done)(
+        resolved_task_id = await database_sync_to_async(
+            self._complete_datasource_upload_done
+        )(
             request_id,
             content,
             self.channel_name,
@@ -960,24 +970,25 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(
             {
                 "type": "datasource_terminal_ack",
-                "task_id": task_id,
+                "task_id": resolved_task_id or task_id,
             }
         )
 
     @staticmethod
     def _complete_datasource_upload_done(request_id, content, connection_id):
         from .tasks import (
-            complete_datasource_conversion_task,
+            complete_datasource_upload_task,
             resolve_datasource_upload_task_id,
         )
 
         task_id = resolve_datasource_upload_task_id(request_id, content)
         if task_id:
-            complete_datasource_conversion_task(
+            complete_datasource_upload_task(
                 task_id,
                 content,
                 connection_id=connection_id,
             )
+        return task_id
 
     @staticmethod
     def _complete_datasource_conversion_done(
@@ -1000,6 +1011,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 content,
                 connection_id=connection_id,
             )
+        return task_id
 
     async def _send_bad_frame(self, message):
         await self.send_json(

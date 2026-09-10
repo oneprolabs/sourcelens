@@ -5529,6 +5529,117 @@ class LensApiTests(TestCase):
         self.assertEqual(all_response.status_code, 200, all_response.data)
         self.assertEqual(all_response.data["count"], 2)
 
+    def test_datasource_list_uses_a_fixed_query_count_for_sync_state(self):
+        datasources = [self.datasource]
+        for index in range(9):
+            datasources.append(
+                DataSource.objects.create(
+                    name=f"Repo Cache {index}",
+                    source_type="git",
+                    lensnode=self.lensnode,
+                    config={"repo_url": f"https://example.com/repo-{index}.git"},
+                    sync_policy={"interval_seconds": 3600},
+                    target_path=f"/workspace/repo-cache-{index}",
+                )
+            )
+        for index, datasource in enumerate(datasources):
+            ScheduledTask.objects.create(
+                name=f"Datasource sync {index}",
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=datasource.uuid,
+                last_status=ScheduledTask.Status.RUNNING,
+            )
+            TaskExecution.objects.create(
+                task_id=f"running-datasource-sync-{index}",
+                task_name=f"source_sync:{datasource.name}",
+                module="lens_datasource",
+                status="STARTED",
+                metadata={"datasource_uuid": str(datasource.uuid)},
+            )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(
+                "/api/lens/admin/datasources/",
+                {"page": 1, "page_size": 20},
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertLessEqual(len(queries), 4)
+        self.assertEqual(response.data["count"], 10)
+        self.assertTrue(
+            all(row["current_sync"] for row in response.data["results"])
+        )
+        self.assertTrue(
+            all(
+                row["sync_state"]["last_status"] == "running"
+                for row in response.data["results"]
+            )
+        )
+
+    def test_datasource_sync_statuses_returns_lightweight_page_updates(self):
+        schedule = ScheduledTask.objects.create(
+            name="Datasource sync",
+            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+            last_status=ScheduledTask.Status.RUNNING,
+        )
+        task = TaskExecution.objects.create(
+            task_id="running-datasource-sync-status",
+            task_name="source_sync:Repo Cache",
+            module="lens_datasource",
+            status="STARTED",
+            metadata={
+                "datasource_uuid": str(self.datasource.uuid),
+                "progress_percent": 42,
+                "progress_message": "Indexing files",
+            },
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(
+                "/api/lens/admin/datasources/sync-statuses/",
+                {"uuids": str(self.datasource.uuid)},
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertLessEqual(len(queries), 3)
+        self.assertEqual(
+            response.data,
+            [
+                {
+                    "uuid": str(self.datasource.uuid),
+                    "current_sync": {
+                        "id": task.id,
+                        "task_id": task.task_id,
+                        "task_name": task.task_name,
+                        "status": task.status,
+                        "started_at": None,
+                        "created_at": task.created_at,
+                        "progress_step": "",
+                        "progress_message": "Indexing files",
+                        "progress_percent": 42,
+                        "phase": "",
+                        "overall_progress_percent": None,
+                        "phase_progress": {},
+                        "progress_counts": {},
+                        "last_substantive_progress_at": None,
+                    },
+                    "sync_state": {
+                        "enabled": schedule.enabled,
+                        "last_status": "running",
+                        "last_error": "",
+                        "last_run_at": None,
+                        "last_metrics": {},
+                        "next_run_at": None,
+                    },
+                    "last_synced_at": None,
+                    "last_error": "",
+                }
+            ],
+        )
+
     def test_datasource_delete_rejects_active_sync(self):
         TaskExecution.objects.create(
             task_id="running-datasource-sync",

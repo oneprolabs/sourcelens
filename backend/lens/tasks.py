@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .datasource_services import (
+    DataSourceDispatchError,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
     get_datasource_conversion_timeout_s,
@@ -38,6 +39,15 @@ SESSION_TITLE_TASK_EXPIRY_SECONDS = 900
 SESSION_TITLE_TASK_NAME = "lens.generate_session_title.v2"
 DATASOURCE_CANCELLING_STATUS = "CANCELLING"
 DATASOURCE_RETRY_SECONDS = 5
+DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
+DATASOURCE_ADMISSION_STATE = "admission_state"
+DATASOURCE_ADMITTED = "DISPATCHED"
+DATASOURCE_QUEUED = "QUEUED"
+DATASOURCE_OPERATION_MODULES = [
+    "lens_datasource",
+    "lens_datasource_conversion",
+    "lens_datasource_upload",
+]
 
 
 @shared_task(name="lens.execute_run_diagnostic", queue="lens")
@@ -385,11 +395,198 @@ def _datasource_active_statuses(task_status):
     ]
 
 
+def _datasource_capacity(lensnode):
+    """Return the datasource execution capacity advertised by a LensNode."""
+
+    labels = (lensnode.labels if lensnode else {}) or {}
+    value = labels.get("datasource_sync_capacity", 1)
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _datasource_capacity_slot_key(lensnode_uuid, slot):
+    """Return the cache key for one LensNode datasource capacity slot."""
+
+    return f"lens:datasource-capacity:{lensnode_uuid}:{slot}"
+
+
+def _datasource_capacity_lease_ttl():
+    """Return the expiry used for datasource capacity leases."""
+
+    return (
+        max(
+            get_datasource_sync_timeout_s(),
+            get_datasource_conversion_timeout_s(),
+            get_datasource_upload_timeout_s(),
+        )
+        + DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS
+    )
+
+
+def _acquire_datasource_capacity(lensnode, task_id):
+    """Atomically acquire an idempotent datasource slot on a LensNode."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    if lensnode is None:
+        return None
+    capacity = _datasource_capacity(lensnode)
+    lensnode_uuid = str(lensnode.uuid)
+    slot_keys = [
+        _datasource_capacity_slot_key(lensnode_uuid, slot) for slot in range(capacity)
+    ]
+    for slot, key in enumerate(slot_keys):
+        if cache.get(key) == task_id:
+            return slot
+
+    legacy_tasks = TaskExecution.objects.filter(
+        module__in=DATASOURCE_OPERATION_MODULES,
+        status__in=_datasource_active_statuses(TaskStatus),
+        metadata__lensnode_uuid=str(lensnode.uuid),
+        metadata__admission_state=DATASOURCE_ADMITTED,
+    ).exclude(task_id=task_id)
+    legacy_count = sum(
+        1
+        for metadata in legacy_tasks.values_list("metadata", flat=True)
+        if (metadata or {}).get("admission_slot") is None
+    )
+    occupied_count = sum(cache.get(key) is not None for key in slot_keys)
+    if legacy_count + occupied_count >= capacity:
+        return None
+
+    for slot, key in enumerate(slot_keys):
+        if cache.add(
+            key,
+            task_id,
+            timeout=_datasource_capacity_lease_ttl(),
+        ):
+            return slot
+    return None
+
+
+def _release_datasource_capacity(task):
+    """Release the capacity slot owned by a datasource task."""
+
+    metadata = dict(task.metadata or {})
+    lensnode_uuid = metadata.get("lensnode_uuid")
+    if not lensnode_uuid:
+        return False
+    slot = metadata.get("admission_slot")
+    if slot is not None:
+        key = _datasource_capacity_slot_key(lensnode_uuid, slot)
+        if cache.get(key) == task.task_id:
+            cache.delete(key)
+            return True
+        return False
+    released = False
+    capacity = metadata.get("admission_capacity")
+    if capacity is None:
+        lensnode = LensNode.objects.filter(uuid=lensnode_uuid).first()
+        capacity = _datasource_capacity(lensnode)
+    try:
+        capacity = max(1, int(capacity))
+    except (TypeError, ValueError):
+        capacity = 1
+    for index in range(capacity):
+        key = _datasource_capacity_slot_key(lensnode_uuid, index)
+        if cache.get(key) == task.task_id:
+            cache.delete(key)
+            released = True
+    return released
+
+
+def _datasource_capacity_available(lensnode, task_id):
+    """Return whether a datasource operation can acquire a node slot."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+
+    if lensnode is None:
+        raise DataSourceDispatchError("LENSNODE_REQUIRED")
+    slot = _acquire_datasource_capacity(lensnode, task_id)
+    if slot is None:
+        return False
+    TaskTracker.update_task_status(
+        task_id,
+        TaskStatus.PENDING,
+        metadata={
+            "admission_slot": slot,
+            "admission_capacity": _datasource_capacity(lensnode),
+        },
+    )
+    return True
+
+
+def _refresh_datasource_lock(datasource_uuid, token, ttl_s):
+    """Refresh a queued datasource lock while its task is being retried."""
+
+    key = f"lens:datasource-sync:{datasource_uuid}"
+    if cache.get(key) != token:
+        return False
+    return cache.touch(key, timeout=ttl_s)
+
+
+def _queue_datasource_task(task_id, message):
+    """Keep a datasource task pending while it waits for node capacity."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+
+    TaskTracker.update_task_status(
+        task_id,
+        TaskStatus.PENDING,
+        metadata={
+            DATASOURCE_ADMISSION_STATE: DATASOURCE_QUEUED,
+            "queue_state": "QUEUED",
+            "queue_reason": message,
+        },
+    )
+
+
+def _mark_datasource_task_dispatched(task_id):
+    """Record that a datasource task has acquired a LensNode slot."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+
+    TaskTracker.update_task_status(
+        task_id,
+        TaskStatus.PENDING,
+        metadata={
+            DATASOURCE_ADMISSION_STATE: DATASOURCE_ADMITTED,
+            "queue_state": "DISPATCHED",
+        },
+    )
+
+
+def _schedule_source_sync_retry(datasource, trigger, task_id):
+    """Retry a queued datasource sync without creating a new task record."""
+
+    source_sync_task.apply_async(
+        args=[str(datasource.uuid), trigger],
+        kwargs={"task_id": task_id},
+        countdown=DATASOURCE_RETRY_SECONDS,
+    )
+
+
 def _schedule_conversion_retry(datasource, conversion, force, task_id):
     """Retry a lock-blocked conversion without creating another task."""
 
     datasource_conversion_task.apply_async(
         args=[str(datasource.uuid), dict(conversion or {}), bool(force)],
+        kwargs={"task_id": task_id},
+        countdown=DATASOURCE_RETRY_SECONDS,
+    )
+
+
+def _schedule_upload_retry(datasource_uuid, storage_name, filename, task_id):
+    """Retry a queued upload without creating another task record."""
+
+    datasource_upload_task.apply_async(
+        args=[str(datasource_uuid), storage_name, filename],
         kwargs={"task_id": task_id},
         countdown=DATASOURCE_RETRY_SECONDS,
     )
@@ -447,6 +644,8 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
         )
         if task_execution.status in TaskStatus.get_completed_statuses():
             return 0
+        if task_execution.status == DATASOURCE_CANCELLING_STATUS:
+            return 0
         now = timezone.now()
         record.last_status = ScheduledTask.Status.RUNNING
         record.last_error = ""
@@ -465,13 +664,36 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             "prepare",
             "queued",
             "Datasource sync submitted to the LensNode queue.",
+            task_status=TaskStatus.PENDING,
         )
         try:
-            acquire_datasource_lock(
-                datasource.uuid,
-                token=task_id,
-                ttl_s=get_datasource_sync_timeout_s(),
-            )
+            lock_key = f"lens:datasource-sync:{datasource.uuid}"
+            if cache.get(lock_key) != task_id:
+                acquire_datasource_lock(
+                    datasource.uuid,
+                    token=task_id,
+                    ttl_s=get_datasource_sync_timeout_s(),
+                )
+            if not _datasource_capacity_available(datasource.lensnode, task_id):
+                _queue_datasource_task(
+                    task_id,
+                    "Waiting for LensNode datasource sync capacity.",
+                )
+                _append_datasource_task_step(
+                    task_id,
+                    "admission",
+                    "queued",
+                    "Waiting for LensNode datasource sync capacity.",
+                    task_status=TaskStatus.PENDING,
+                )
+                _refresh_datasource_lock(
+                    datasource.uuid,
+                    task_id,
+                    get_datasource_sync_timeout_s(),
+                )
+                _schedule_source_sync_retry(datasource, trigger, task_id)
+                return 0
+            _mark_datasource_task_dispatched(task_id)
         except SourceSyncBusy as exc:
             record.last_error = str(exc)
             record.last_run_at = timezone.now()
@@ -518,7 +740,8 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     "completion_source": "lensnode_callback",
                     "datasource_sync_request_id": request_id,
                     "lock_token": task_id,
-                    "queue_state": "QUEUED",
+                    "queue_state": "DISPATCHED",
+                    DATASOURCE_ADMISSION_STATE: DATASOURCE_ADMITTED,
                     "execution_class": "exclusive",
                 },
             )
@@ -577,6 +800,24 @@ def datasource_conversion_task(
     )
     if task_execution.status in TaskStatus.get_completed_statuses():
         return 0
+    if task_execution.status == DATASOURCE_CANCELLING_STATUS:
+        return 0
+    if datasource.lensnode is None:
+        TaskTracker.update_task_status(
+            task_id,
+            TaskStatus.FAILURE,
+            error="LENSNODE_REQUIRED",
+        )
+        datasource.last_conversion_status = TaskStatus.FAILURE
+        datasource.last_conversion_at = timezone.now()
+        datasource.save(
+            update_fields=[
+                "last_conversion_status",
+                "last_conversion_at",
+                "updated_at",
+            ]
+        )
+        return 0
     if datasource.status == DataSource.Status.DISABLED:
         TaskTracker.update_task_status(
             task_id,
@@ -611,13 +852,36 @@ def datasource_conversion_task(
         "prepare",
         "queued",
         "Managed workspace conversion submitted to the LensNode queue.",
+        task_status=TaskStatus.PENDING,
     )
     try:
-        acquire_datasource_lock(
-            datasource.uuid,
-            token=task_id,
-            ttl_s=get_datasource_sync_timeout_s(),
-        )
+        lock_key = f"lens:datasource-sync:{datasource.uuid}"
+        if cache.get(lock_key) != task_id:
+            acquire_datasource_lock(
+                datasource.uuid,
+                token=task_id,
+                ttl_s=get_datasource_sync_timeout_s(),
+            )
+        if not _datasource_capacity_available(datasource.lensnode, task_id):
+            _queue_datasource_task(
+                task_id,
+                "Waiting for LensNode datasource sync capacity.",
+            )
+            _append_datasource_task_step(
+                task_id,
+                "admission",
+                "queued",
+                "Waiting for LensNode datasource sync capacity.",
+                task_status=TaskStatus.PENDING,
+            )
+            _refresh_datasource_lock(
+                datasource.uuid,
+                task_id,
+                get_datasource_sync_timeout_s(),
+            )
+            _schedule_conversion_retry(datasource, conversion, force, task_id)
+            return 0
+        _mark_datasource_task_dispatched(task_id)
         _append_datasource_task_step(
             task_id,
             "dispatch",
@@ -652,9 +916,7 @@ def datasource_conversion_task(
         if terminal_status:
             release_datasource_lock(datasource.uuid, token=task_id)
             if terminal_status == TaskStatus.REVOKED:
-                from .services import (
-                    cancel_datasource_conversion_on_lensnode,
-                )
+                from .services import cancel_datasource_conversion_on_lensnode
 
                 cancel_datasource_conversion_on_lensnode(
                     datasource.lensnode,
@@ -716,6 +978,7 @@ def datasource_upload_task(
     datasource_uuid,
     storage_name,
     filename,
+    task_id=None,
 ):
     """Send one stored Managed Workspace upload to its LensNode."""
 
@@ -725,18 +988,66 @@ def datasource_upload_task(
 
     from .datasource_services import dispatch_datasource_upload_async
 
-    task_id = self.request.id
+    task_id = task_id or self.request.id
     datasource = DataSource.objects.select_related("lensnode").get(uuid=datasource_uuid)
     task = TaskExecution.objects.get(task_id=task_id)
     if task.status in TaskStatus.get_completed_statuses():
         return 0
+    if datasource.lensnode is None:
+        TaskTracker.update_task_status(
+            task_id,
+            TaskStatus.FAILURE,
+            error="LENSNODE_REQUIRED",
+        )
+        if default_storage.exists(storage_name):
+            default_storage.delete(storage_name)
+        return 0
+    task_metadata = dict(task.metadata or {})
+    try:
+        lock_key = f"lens:datasource-sync:{datasource.uuid}"
+        if cache.get(lock_key) != task_id:
+            acquire_datasource_lock(
+                datasource.uuid,
+                token=task_id,
+                ttl_s=get_datasource_upload_timeout_s(),
+            )
+    except SourceSyncBusy as exc:
+        _queue_datasource_task(task_id, str(exc))
+        _schedule_upload_retry(
+            datasource.uuid,
+            storage_name,
+            filename,
+            task_id,
+        )
+        return 0
+    if not _datasource_capacity_available(datasource.lensnode, task_id):
+        _queue_datasource_task(
+            task_id,
+            "Waiting for LensNode datasource sync capacity.",
+        )
+        _refresh_datasource_lock(
+            datasource.uuid,
+            task_id,
+            get_datasource_upload_timeout_s(),
+        )
+        _schedule_upload_retry(
+            datasource.uuid,
+            storage_name,
+            filename,
+            task_id,
+        )
+        return 0
+    _mark_datasource_task_dispatched(task_id)
     try:
         with default_storage.open(storage_name, "rb") as stream:
             content = stream.read()
         TaskTracker.update_task_status(
             task_id,
             TaskStatus.STARTED,
-            metadata={"progress_message": "Uploading file to LensNode."},
+            metadata={
+                "lock_token": task_id,
+                "progress_message": "Uploading file to LensNode.",
+            },
         )
         request_id = dispatch_datasource_upload_async(
             datasource,
@@ -750,6 +1061,10 @@ def datasource_upload_task(
             metadata={"datasource_upload_request_id": request_id},
         )
     except Exception as exc:
+        release_datasource_lock(
+            datasource.uuid,
+            token=task_id,
+        )
         TaskTracker.update_task_status(
             task_id,
             TaskStatus.FAILURE,
@@ -862,12 +1177,8 @@ def complete_datasource_conversion_task(
                 },
                 "progress_counts": {
                     "total": int(conversion_summary.get("total") or 0),
-                    "candidates": int(
-                        conversion_summary.get("candidates") or 0
-                    ),
-                    "processed": int(
-                        conversion_summary.get("total") or 0
-                    ),
+                    "candidates": int(conversion_summary.get("candidates") or 0),
+                    "processed": int(conversion_summary.get("total") or 0),
                     "converted": int(
                         conversion_summary.get("converted")
                         or conversion_summary.get("success")
@@ -875,9 +1186,7 @@ def complete_datasource_conversion_task(
                     ),
                     "failed": int(conversion_summary.get("failed") or 0),
                     "skipped": int(conversion_summary.get("skipped") or 0),
-                    "unsupported": int(
-                        conversion_summary.get("unsupported") or 0
-                    ),
+                    "unsupported": int(conversion_summary.get("unsupported") or 0),
                 },
                 "last_substantive_progress_at": timezone.now().isoformat(),
             }
@@ -892,6 +1201,75 @@ def complete_datasource_conversion_task(
         result=task_result,
         error=error or None,
         metadata=completion_metadata,
+    )
+
+
+def complete_datasource_upload_task(
+    task_id,
+    result,
+    connection_id=None,
+):
+    """Complete a managed workspace upload from a LensNode callback."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    task = TaskExecution.objects.filter(task_id=task_id).first()
+    if task is None:
+        return None
+    metadata = task.metadata or {}
+    owner_connection_id = metadata.get("lensnode_connection_id") or ""
+    if (
+        connection_id
+        and owner_connection_id
+        and owner_connection_id != connection_id
+        and task.status not in TaskStatus.get_completed_statuses()
+    ):
+        return task
+
+    if task.status in TaskStatus.get_completed_statuses():
+        release_datasource_lock(
+            metadata.get("datasource_uuid"),
+            token=metadata.get("lock_token") or task_id,
+        )
+        return TaskTracker.update_task_status(
+            task_id,
+            task.status,
+            metadata={"upload_result": result},
+        )
+
+    status_value = str(result.get("status") or "failed").lower()
+    status_map = {
+        "success": (TaskStatus.SUCCESS, ""),
+        "cancelled": (
+            TaskStatus.REVOKED,
+            "DATASOURCE_UPLOAD_CANCELLED",
+        ),
+        "failed": (TaskStatus.FAILURE, "DATASOURCE_UPLOAD_FAILED"),
+    }
+    task_status, default_error = status_map.get(
+        status_value,
+        status_map["failed"],
+    )
+    error = str(result.get("error") or default_error)
+    release_datasource_lock(
+        metadata.get("datasource_uuid"),
+        token=metadata.get("lock_token") or task_id,
+    )
+    return TaskTracker.update_task_status(
+        task_id,
+        task_status,
+        result=result,
+        error=error or None,
+        metadata={
+            "upload_result": result,
+            "progress_message": (
+                "Managed workspace upload completed."
+                if task_status == TaskStatus.SUCCESS
+                else error
+            ),
+        },
     )
 
 
@@ -1149,7 +1527,7 @@ def _release_orphaned_datasource_lock(datasource_uuid):
 
     running_statuses = _datasource_active_statuses(TaskStatus)
     owner_exists = TaskExecution.objects.filter(
-        module__in=["lens_datasource", "lens_datasource_conversion"],
+        module__in=DATASOURCE_OPERATION_MODULES,
         status__in=running_statuses,
         metadata__datasource_uuid=str(datasource_uuid),
         metadata__lock_token=lock_token,
@@ -1163,11 +1541,19 @@ def _release_orphaned_datasource_lock(datasource_uuid):
 def release_datasource_lock(datasource_uuid, token=None):
     """Release a datasource sync lock when ownership is known."""
 
-    key = f"lens:datasource-sync:{datasource_uuid}"
-    if token is None or cache.get(key) == token:
-        cache.delete(key)
-        return True
-    return False
+    released = False
+    if datasource_uuid:
+        key = f"lens:datasource-sync:{datasource_uuid}"
+        if token is None or cache.get(key) == token:
+            cache.delete(key)
+            released = True
+    if token is not None:
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        task = TaskExecution.objects.filter(task_id=token).first()
+        if task is not None:
+            released = _release_datasource_capacity(task) or released
+    return released
 
 
 def reconcile_orphaned_datasource_conversions(
@@ -1187,10 +1573,7 @@ def reconcile_orphaned_datasource_conversions(
 
     active_statuses = _datasource_active_statuses(TaskStatus)
     tasks = TaskExecution.objects.filter(
-        module__in=[
-            "lens_datasource_conversion",
-            "lens_datasource_upload",
-        ],
+        module__in=DATASOURCE_OPERATION_MODULES,
         status__in=active_statuses,
         metadata__lensnode_uuid=str(lensnode_uuid),
     ).exclude(
@@ -1207,8 +1590,17 @@ def reconcile_orphaned_datasource_conversions(
         metadata = dict(task.metadata or {})
         operation = operations.get(task.task_id)
         expected_operation = (
-            "upload" if task.module == "lens_datasource_upload" else "conversion"
+            "sync"
+            if task.module == "lens_datasource"
+            else ("upload" if task.module == "lens_datasource_upload" else "conversion")
         )
+        if metadata.get(DATASOURCE_ADMISSION_STATE) == DATASOURCE_QUEUED:
+            metadata["lensnode_connection_id"] = str(connection_id)
+            metadata["reconnected_at"] = timezone.now().isoformat()
+            metadata.pop("datasource_orphan_confirmation_connection_id", None)
+            task.metadata = metadata
+            task.save(update_fields=["metadata"])
+            continue
         if legacy_node or (
             operation
             and str(operation.get("datasource_uuid"))
@@ -1280,8 +1672,15 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
     now = timezone.now()
     is_upload = task.module == "lens_datasource_upload"
     datasource_uuid = metadata.get("datasource_uuid")
+    is_sync = task.module == "lens_datasource"
     error = (
-        "DATASOURCE_UPLOAD_ORPHANED" if is_upload else "DATASOURCE_CONVERSION_ORPHANED"
+        "DATASOURCE_SYNC_ORPHANED"
+        if is_sync
+        else (
+            "DATASOURCE_UPLOAD_ORPHANED"
+            if is_upload
+            else "DATASOURCE_CONVERSION_ORPHANED"
+        )
     )
     metadata.update(
         {
@@ -1306,15 +1705,30 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
         return False
     datasource = DataSource.objects.filter(uuid=datasource_uuid).first()
     if datasource is not None:
-        datasource.last_conversion_status = TaskStatus.FAILURE
-        datasource.last_conversion_at = now
-        datasource.save(
-            update_fields=[
-                "last_conversion_status",
-                "last_conversion_at",
-                "updated_at",
-            ]
-        )
+        if is_sync:
+            record = _get_or_create_source_sync_record(datasource)
+            record.last_status = ScheduledTask.Status.FAILED
+            record.last_error = error
+            record.last_run_at = now
+            record.save(
+                update_fields=[
+                    "last_status",
+                    "last_error",
+                    "last_run_at",
+                ]
+            )
+            datasource.last_error = error
+            datasource.save(update_fields=["last_error", "updated_at"])
+        else:
+            datasource.last_conversion_status = TaskStatus.FAILURE
+            datasource.last_conversion_at = now
+            datasource.save(
+                update_fields=[
+                    "last_conversion_status",
+                    "last_conversion_at",
+                    "updated_at",
+                ]
+            )
     release_datasource_lock(
         datasource_uuid,
         token=metadata.get("lock_token") or task.task_id,
@@ -1546,7 +1960,13 @@ def _conversion_enabled(conversion):
     )
 
 
-def _append_datasource_task_step(task_id, name, status, message):
+def _append_datasource_task_step(
+    task_id,
+    name,
+    status,
+    message,
+    task_status=None,
+):
     """Append one datasource task step to TaskExecution metadata."""
 
     from agentcore_task.adapters.django import TaskTracker
@@ -1554,7 +1974,7 @@ def _append_datasource_task_step(task_id, name, status, message):
 
     TaskTracker.update_task_status(
         task_id,
-        TaskStatus.STARTED,
+        task_status or TaskStatus.STARTED,
         metadata=_datasource_step_metadata(task_id, name, status, message),
     )
 

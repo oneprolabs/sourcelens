@@ -144,6 +144,7 @@ services:
         condition: service_healthy
     command: celery
 
+
   backend-scheduler:
     image: oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
     container_name: sourcelens-scheduler
@@ -209,6 +210,7 @@ services:
       # Max concurrent runs per node. Each run holds a slot for the full answer
       # duration; without this it falls back to 1 and questions queue.
       LENSNODE_MAX_CONCURRENT_RUNS: ${LENSNODE_MAX_CONCURRENT_RUNS:-8}
+      LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS: ${LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS:-1}
       LENSNODE_MEMORY_LIMIT_MB: ${LENSNODE_MEMORY_LIMIT_MB:-}
       LENSNODE_NODE_MAX_OLD_SPACE_MB: ${LENSNODE_NODE_MAX_OLD_SPACE_MB:-}
       LENSNODE_NODE_OPTIONS: ${LENSNODE_NODE_OPTIONS:-}

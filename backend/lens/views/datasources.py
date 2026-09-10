@@ -48,6 +48,7 @@ from lens.tasks import (
     register_datasource_conversion_task,
     register_datasource_sync_task,
     register_datasource_upload_task,
+    release_datasource_lock,
     source_sync_task,
 )
 from rest_framework import status
@@ -65,6 +66,84 @@ class DataSourceViewSet(BaseAdminViewSet):
     queryset = DataSource.objects.all()
     serializer_class = DataSourceSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    @staticmethod
+    def _sync_serializer_context(datasources):
+        """Bulk-load task and schedule state for datasource serialization."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+        from agentcore_task.constants import TaskStatus
+
+        datasource_uuids = [str(item.uuid) for item in datasources]
+        current_sync_by_uuid = {}
+        sync_state_by_uuid = {}
+        if not datasource_uuids:
+            return {
+                "datasource_current_sync_by_uuid": current_sync_by_uuid,
+                "datasource_sync_state_by_uuid": sync_state_by_uuid,
+            }
+
+        active_statuses = [
+            TaskStatus.PENDING,
+            *TaskStatus.get_running_statuses(),
+            DATASOURCE_CANCELLING_STATUS,
+        ]
+        tasks = (
+            TaskExecution.objects.filter(
+                module__in=[
+                    "lens_datasource",
+                    "lens_datasource_conversion",
+                ],
+                metadata__datasource_uuid__in=datasource_uuids,
+                status__in=active_statuses,
+            )
+            .only(
+                "id",
+                "task_id",
+                "task_name",
+                "status",
+                "created_at",
+                "started_at",
+                "metadata",
+            )
+            .order_by("-created_at")
+        )
+        for task in tasks:
+            datasource_uuid = str(
+                (task.metadata or {}).get("datasource_uuid") or ""
+            )
+            if datasource_uuid and datasource_uuid not in current_sync_by_uuid:
+                current_sync_by_uuid[datasource_uuid] = task
+
+        schedules = ScheduledTask.objects.filter(
+            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+            target_type="datasource",
+            target_id__in=datasource_uuids,
+        )
+        for record in schedules:
+            sync_state_by_uuid[str(record.target_id)] = record
+
+        return {
+            "datasource_current_sync_by_uuid": current_sync_by_uuid,
+            "datasource_sync_state_by_uuid": sync_state_by_uuid,
+        }
+
+    def list(self, request, *args, **kwargs):
+        """List datasources with sync state loaded in a fixed query count."""
+
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        datasources = list(page if page is not None else queryset)
+        context = self.get_serializer_context()
+        context.update(self._sync_serializer_context(datasources))
+        serializer = self.get_serializer(
+            datasources,
+            many=True,
+            context=context,
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     def get_queryset(self):
         """Return datasources filtered by optional search query."""
@@ -581,6 +660,62 @@ class DataSourceViewSet(BaseAdminViewSet):
             )
         return Response(result)
 
+    @action(detail=False, methods=["get"], url_path="sync-statuses")
+    def sync_statuses(self, request):
+        """Return lightweight sync state for datasources on the visible page."""
+
+        raw_uuids = str(request.query_params.get("uuids") or "")
+        datasource_uuids = []
+        for value in raw_uuids.split(","):
+            value = value.strip()
+            if not value:
+                continue
+            try:
+                datasource_uuids.append(uuid_mod.UUID(value))
+            except ValueError:
+                return Response(
+                    {"detail": "DATASOURCE_UUID_INVALID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        if not datasource_uuids:
+            return Response([])
+        if len(datasource_uuids) > 100:
+            return Response(
+                {"detail": "DATASOURCE_UUID_LIMIT_EXCEEDED"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        datasources = list(
+            DataSource.objects.filter(uuid__in=datasource_uuids).only(
+                "uuid",
+                "source_type",
+                "status",
+                "sync_policy",
+                "last_synced_at",
+                "last_error",
+            )
+        )
+        order = {
+            str(datasource_uuid): index
+            for index, datasource_uuid in enumerate(datasource_uuids)
+        }
+        datasources.sort(key=lambda item: order[str(item.uuid)])
+        context = self.get_serializer_context()
+        context.update(self._sync_serializer_context(datasources))
+        serializer = self.get_serializer(context=context)
+        return Response(
+            [
+                {
+                    "uuid": str(datasource.uuid),
+                    "current_sync": serializer.get_current_sync(datasource),
+                    "sync_state": serializer.get_sync_state(datasource),
+                    "last_synced_at": datasource.last_synced_at,
+                    "last_error": datasource.last_error,
+                }
+                for datasource in datasources
+            ]
+        )
+
     @action(detail=True, methods=["get"], url_path="sync-tasks")
     def sync_tasks(self, request, uuid=None):
         """List sync task executions for this datasource (paginated)."""
@@ -692,7 +827,8 @@ class DataSourceViewSet(BaseAdminViewSet):
 
             metadata["manual_revoked_at"] = timezone.now().isoformat()
             metadata["manual_revoked_by"] = request.user.pk
-            dispatched = bool(
+            queued = metadata.get("admission_state") == "QUEUED"
+            dispatched = not queued and bool(
                 metadata.get("lock_token")
                 or metadata.get("datasource_sync_request_id")
                 or task.status in TaskStatus.get_running_statuses()
@@ -717,6 +853,11 @@ class DataSourceViewSet(BaseAdminViewSet):
                     "metadata",
                 ]
             )
+            if queued:
+                release_datasource_lock(
+                    str(datasource.uuid),
+                    token=task.task_id,
+                )
         return Response(
             {
                 "uuid": str(datasource.uuid),
@@ -763,7 +904,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         now = timezone.now()
         metadata["manual_revoked_at"] = now.isoformat()
         metadata["manual_revoked_by"] = request.user.pk
-        queued = task.status == TaskStatus.PENDING
+        queued = metadata.get("admission_state") == "QUEUED"
         task.status = TaskStatus.REVOKED if queued else DATASOURCE_CANCELLING_STATUS
         task.finished_at = now if queued else None
         task.error = "DATASOURCE_CONVERSION_CANCELLED" if queued else ""
@@ -782,6 +923,11 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "metadata",
             ]
         )
+        if queued:
+            release_datasource_lock(
+                str(datasource.uuid),
+                token=task.task_id,
+            )
         datasource.last_conversion_status = task.status
         datasource.last_conversion_at = now if queued else None
         datasource.save(

@@ -112,9 +112,15 @@ class LensNodeClient:
                 config,
                 "max_concurrent_runs",
                 1,
-            )
+            ),
+            max_exclusive_concurrency=getattr(
+                config,
+                "max_concurrent_datasource_syncs",
+                1,
+            ),
         )
         self.datasource_conversion_cancels = {}
+        self.datasource_upload_cancels = {}
         self.active_datasource_operations = {}
         self._datasource_operations_lock = threading.Lock()
         self.datasource_sync_cancels = {}
@@ -169,6 +175,7 @@ class LensNodeClient:
             while len(self._pending_terminal_frames) > self._outbox_max:
                 self._pending_terminal_frames.popitem(last=False)
         if payload.get("type") in {
+            "datasource_sync_done",
             "datasource_convert_done",
             "datasource_upload_done",
         } and payload.get("task_id"):
@@ -510,7 +517,11 @@ class LensNodeClient:
             str(frame.get("task_id") or "")
             for frame in self._outbox
             if frame.get("type")
-            in {"datasource_convert_done", "datasource_upload_done"}
+            in {
+                "datasource_sync_done",
+                "datasource_convert_done",
+                "datasource_upload_done",
+            }
         }
         for task_id, frame in self._pending_datasource_terminal_frames.items():
             if task_id not in queued_task_ids:
@@ -585,7 +596,10 @@ class LensNodeClient:
             )
         elif message_type == "datasource_cancel":
             task_id = str(message.get("task_id") or "")
-            cancel_event = self.datasource_sync_cancels.get(task_id)
+            cancel_event = (
+                self.datasource_sync_cancels.get(task_id)
+                or self.datasource_upload_cancels.get(task_id)
+            )
             if cancel_event is not None:
                 cancel_event.set()
             LOGGER.info(
@@ -657,6 +671,7 @@ class LensNodeClient:
                     if not (
                         item.get("type")
                         in {
+                            "datasource_sync_done",
                             "datasource_convert_done",
                             "datasource_upload_done",
                         }
@@ -894,8 +909,16 @@ class LensNodeClient:
             return
 
         task_key = f"datasource:{task_id}"
+        if task_key in self.running_tasks:
+            return
         cancel_event = threading.Event()
         self.datasource_sync_cancels[task_id] = cancel_event
+        self._record_datasource_operation(
+            task_id,
+            message.get("datasource_uuid"),
+            "sync",
+            "starting",
+        )
         message = {**message, "cancel_event": cancel_event}
         task = asyncio.create_task(self._execute_datasource_sync(message, plugin))
         self.running_tasks[task_key] = task
@@ -1391,13 +1414,19 @@ class LensNodeClient:
         task_key = f"datasource-upload:{task_id}"
         if task_key in self.running_tasks:
             return
+        cancel_event = threading.Event()
+        self.datasource_upload_cancels[task_id] = cancel_event
         self._record_datasource_operation(
             task_id,
             message.get("datasource_uuid"),
             "upload",
             "starting",
         )
-        task = asyncio.create_task(self._execute_datasource_upload(message))
+        task = asyncio.create_task(
+            self._execute_datasource_upload(
+                {**message, "cancel_event": cancel_event}
+            )
+        )
         self.running_tasks[task_key] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
 
@@ -1407,7 +1436,13 @@ class LensNodeClient:
         request_id = str(message.get("request_id") or "")
         task_id = str(message.get("task_id") or request_id)
         task_key = f"datasource-upload:{task_id}"
+        slot_acquired = False
         try:
+            await self._acquire_execution(
+                ExecutionClass.EXCLUSIVE,
+                cancel_event=message.get("cancel_event"),
+            )
+            slot_acquired = True
             result = await asyncio.to_thread(
                 upload_managed_workspace,
                 message,
@@ -1443,6 +1478,9 @@ class LensNodeClient:
                 }
             )
         finally:
+            if slot_acquired:
+                await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
+            self.datasource_upload_cancels.pop(task_id, None)
             self.running_tasks.pop(task_key, None)
 
     async def _acquire_execution(
@@ -1641,6 +1679,7 @@ class LensNodeClient:
         """Clear reconnect state after a datasource terminal frame is sent."""
 
         if payload.get("type") not in {
+            "datasource_sync_done",
             "datasource_convert_done",
             "datasource_upload_done",
         }:
@@ -1716,6 +1755,16 @@ class LensNodeClient:
                     "active_datasource_operations": active_datasource_operations,
                     "labels": {
                         "mode": "local",
+                        "datasource_sync_capacity": max(
+                            1,
+                            int(
+                                getattr(
+                                    self.config,
+                                    "max_concurrent_datasource_syncs",
+                                    1,
+                                )
+                            ),
+                        ),
                         "run_document_attachments": True,
                         "run_checkpoint_resume": checkpoint_resume_ready,
                         "run_admission_checkpoint_v1": True,

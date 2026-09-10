@@ -117,6 +117,7 @@ services:
         condition: service_healthy
     command: celery
 
+
   backend-scheduler:
     image: oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
     container_name: sourcelens-scheduler
@@ -175,6 +176,7 @@ services:
       # Graceful-drain budget on shutdown/upgrade. Keep below stop_grace_period.
       LENSNODE_DRAIN_TIMEOUT_S: ${LENSNODE_DRAIN_TIMEOUT_S:-240}
       LENSNODE_MAX_CONCURRENT_RUNS: ${LENSNODE_MAX_CONCURRENT_RUNS:-8}
+      LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS: ${LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS:-1}
       LENSNODE_MEMORY_LIMIT_MB: ${LENSNODE_MEMORY_LIMIT_MB:-}
       LENSNODE_NODE_MAX_OLD_SPACE_MB: ${LENSNODE_NODE_MAX_OLD_SPACE_MB:-}
       LENSNODE_NODE_OPTIONS: ${LENSNODE_NODE_OPTIONS:-}
