@@ -1,0 +1,4 @@
+type: feature
+audience: user
+en: Added interactive mindmaps to chat for explicitly requested mindmap responses, with collapsible nodes and keyboard interaction.
+zh-CN: 为聊天中明确请求的思维导图响应新增交互式思维导图，支持节点折叠和键盘操作。
