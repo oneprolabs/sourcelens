@@ -83,6 +83,21 @@ def _confidentiality_guidance():
     )
 
 
+def _interactive_visualization_guidance():
+    """Return the chat format contract for interactive visualizations."""
+
+    return (
+        "Interactive visualization formatting:\n"
+        "- When the user explicitly asks for a mindmap or thought map and "
+        "the result is intended to be shown in chat, emit one fenced "
+        "`mindmap` code block. Inside it, use Markdown headings for major "
+        "branches and indented Markdown bullets for child nodes.\n"
+        "- Keep any short explanation outside the `mindmap` code block. "
+        "Do not use Mermaid for this format unless the user explicitly "
+        "requests Mermaid.\n"
+    )
+
+
 def _subject_display_names(command):
     """Return safe public names for user-uploaded documents."""
 
@@ -130,6 +145,7 @@ def _knowledge_system_prompt(
     subjects, references = _public_source_inventory(command)
     answer_language = _command_answer_language(command)
     language_requirement = _answer_language_requirement(answer_language)
+    visualization_guidance = _interactive_visualization_guidance()
     context_guidance = _context_guidance(context_skill_contents or [])
     runtime_guidance_text = "\n".join(runtime_guidance or ())
     code_analysis_guidance = ""
@@ -196,6 +212,7 @@ def _knowledge_system_prompt(
         collaboration_guidance +
         f"{_platform_safety_boundary()}\n"
         f"{language_requirement}\n\n"
+        f"{visualization_guidance}\n"
         f"{_workspace_guide_prompt(workspace_guide)}"
         f"{_platform_safety_boundary()}\n"
         f"{scenario['prompt']}\n\n"
@@ -346,6 +363,7 @@ def _general_chat_system_prompt(
     skill_guidance = _general_chat_guidance(context_skill_contents or [])
     history_artifact_guidance = _history_artifact_guidance(command)
     confidentiality_guidance = _confidentiality_guidance()
+    visualization_guidance = _interactive_visualization_guidance()
     report_guidance = _report_execution_guidance(command)
     return (
         f"{_platform_safety_boundary()}\n"
@@ -353,6 +371,7 @@ def _general_chat_system_prompt(
         f"{_workspace_guide_prompt(workspace_guide)}"
         "You are running inside SourceLens LensNode as General Chat.\n\n"
         f"{confidentiality_guidance}\n\n"
+        f"{visualization_guidance}\n\n"
         "Skills and Plugin virtual Skills provide optional task guidance. "
         "Use them when relevant, but decide from the user's request and all "
         "currently authorized tools; a missing or incomplete Skill must not "
