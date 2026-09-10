@@ -43,7 +43,13 @@ export function sanitizeHtml(dirty) {
       'td',
       'span',
       'div',
-      'button'
+      'button',
+      'svg',
+      'g',
+      'path',
+      'circle',
+      'text',
+      'tspan'
     ],
     ALLOWED_ATTR: [
       'href',
@@ -55,7 +61,31 @@ export function sanitizeHtml(dirty) {
       'rel',
       'type',
       'aria-label',
-      'data-markdown-code-copy'
+      'data-markdown-code-copy',
+      'data-mindmap-root',
+      'data-mindmap-action',
+      'data-mindmap-toggle',
+      'data-mindmap-path',
+      'data-mindmap-has-children',
+      'data-mindmap-collapsed',
+      'data-mindmap-link',
+      'viewBox',
+      'preserveAspectRatio',
+      'aria-hidden',
+      'role',
+      'tabindex',
+      'cx',
+      'cy',
+      'r',
+      'd',
+      'fill',
+      'stroke',
+      'stroke-width',
+      'x',
+      'y',
+      'dx',
+      'dy',
+      'text-anchor'
     ]
   })
 }

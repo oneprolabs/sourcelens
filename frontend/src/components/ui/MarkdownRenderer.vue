@@ -3,6 +3,7 @@
     class="markdown-content prose max-w-none"
     v-html="renderedContent"
     @click="handleMarkdownClick"
+    @keydown="handleMarkdownKeydown"
   ></div>
 </template>
 
@@ -13,6 +14,7 @@ import hljs from 'highlight.js/lib/core'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '@/utils/clipboard'
 import { sanitizeHtml, escapeHtml } from '@/utils/sanitize'
+import { renderMindmap } from '@/utils/mindmap'
 
 // Import common languages for syntax highlighting
 import javascript from 'highlight.js/lib/languages/javascript'
@@ -61,6 +63,9 @@ const languageLabels = {
 const renderer = new marked.Renderer()
 renderer.code = ({ text, lang }) => {
   const declaredLanguage = typeof lang === 'string' ? lang.trim() : ''
+  if (declaredLanguage.toLowerCase() === 'mindmap') {
+    return renderMindmap(text)
+  }
   const language =
     props.enableHighlight &&
     declaredLanguage &&
@@ -279,6 +284,29 @@ const renderedContent = computed(() => {
 })
 
 async function handleMarkdownClick(event) {
+  const action = event.target.closest('[data-mindmap-action]')
+  if (action) {
+    const mindmap = action.closest('[data-mindmap-root]')
+    if (!mindmap) return
+    const shouldCollapse = action.dataset.mindmapAction === 'collapse'
+    mindmap
+      .querySelectorAll(
+        '[data-mindmap-toggle][data-mindmap-has-children="true"]'
+      )
+      .forEach((node) => {
+        node.dataset.mindmapCollapsed = shouldCollapse ? 'true' : 'false'
+        node.setAttribute('aria-expanded', String(!shouldCollapse))
+      })
+    updateMindmapVisibility(mindmap)
+    return
+  }
+
+  const mindmapNode = event.target.closest('[data-mindmap-toggle]')
+  if (mindmapNode) {
+    toggleMindmapNode(mindmapNode)
+    return
+  }
+
   const button = event.target.closest('[data-markdown-code-copy]')
   if (!button) return
 
@@ -305,6 +333,55 @@ async function handleMarkdownClick(event) {
       copyResetTimers.delete(button)
     }, 1800)
   )
+}
+
+function handleMarkdownKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  const mindmapNode = event.target.closest('[data-mindmap-toggle]')
+  if (!mindmapNode) return
+  event.preventDefault()
+  toggleMindmapNode(mindmapNode)
+}
+
+function toggleMindmapNode(mindmapNode) {
+  const mindmap = mindmapNode.closest('[data-mindmap-root]')
+  if (!mindmap) return
+  mindmapNode.dataset.mindmapCollapsed =
+    mindmapNode.dataset.mindmapCollapsed === 'true' ? 'false' : 'true'
+  mindmapNode.setAttribute(
+    'aria-expanded',
+    mindmapNode.dataset.mindmapCollapsed !== 'true'
+  )
+  updateMindmapVisibility(mindmap)
+}
+
+function updateMindmapVisibility(mindmap) {
+  const nodes = [...mindmap.querySelectorAll('[data-mindmap-toggle]')]
+  const collapsedPaths = new Set(
+    nodes
+      .filter((node) => node.dataset.mindmapCollapsed === 'true')
+      .map((node) => node.dataset.mindmapPath)
+  )
+  const isHidden = (path) => {
+    const segments = path.split('.')
+    return segments.some((_, index) => {
+      if (index === 0) return false
+      return collapsedPaths.has(segments.slice(0, index).join('.'))
+    })
+  }
+
+  nodes.forEach((node) => {
+    node.classList.toggle(
+      'mindmap-node-hidden',
+      isHidden(node.dataset.mindmapPath)
+    )
+  })
+  mindmap.querySelectorAll('[data-mindmap-link]').forEach((link) => {
+    link.classList.toggle(
+      'mindmap-node-hidden',
+      isHidden(link.dataset.mindmapLink)
+    )
+  })
 }
 </script>
 
@@ -381,6 +458,101 @@ async function handleMarkdownClick(event) {
   background: #f3f3f3;
 }
 
+.markdown-content :deep(.markdown-mindmap) {
+  @apply my-4 w-full overflow-hidden rounded-lg border;
+  border-color: var(--sl-border, #e4e4e7);
+  background: var(--sl-bg-surface, #fff);
+}
+
+.markdown-content :deep(.mindmap-toolbar) {
+  @apply flex min-h-10 items-center gap-2 border-b px-3 py-2;
+  border-color: var(--sl-border, #e4e4e7);
+  background: var(--sl-bg-hover, #f8fafc);
+}
+
+.markdown-content :deep(.mindmap-toolbar-title) {
+  @apply mr-auto text-sm font-medium;
+  color: var(--sl-text-primary, #18181b);
+}
+
+.markdown-content :deep(.mindmap-toolbar button) {
+  @apply rounded-md border px-2 py-1 text-xs transition-colors;
+  border-color: var(--sl-border, #d4d4d8);
+  color: var(--sl-text-secondary, #52525b);
+  background: transparent;
+}
+
+.markdown-content :deep(.mindmap-toolbar button:hover) {
+  background: var(--sl-bg-surface, #fff);
+  color: var(--sl-text-primary, #18181b);
+}
+
+.markdown-content :deep(.mindmap-canvas) {
+  @apply max-w-full overflow-auto;
+  min-height: 180px;
+}
+
+.markdown-content :deep(.mindmap-svg) {
+  display: block;
+  width: max(100%, 560px);
+  min-width: 560px;
+  min-height: 180px;
+  color: var(--sl-text-primary, #18181b);
+}
+
+.markdown-content :deep(.mindmap-link) {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.markdown-content :deep(.mindmap-node) {
+  cursor: pointer;
+  outline: none;
+}
+
+.markdown-content :deep(.mindmap-node circle) {
+  stroke-width: 1.5;
+}
+
+.markdown-content :deep(.mindmap-node text) {
+  font: 400 14px/18px sans-serif;
+}
+
+.markdown-content :deep(.mindmap-node:hover text),
+.markdown-content :deep(.mindmap-node:focus text) {
+  font-weight: 600;
+}
+
+.markdown-content :deep(.mindmap-node:focus circle) {
+  stroke-width: 2.5;
+}
+
+.markdown-content :deep(.mindmap-node-hidden) {
+  display: none;
+}
+
+:global(:root[data-theme='dark'] .markdown-content .markdown-mindmap) {
+  border-color: #3f3f46;
+  background: #19191b;
+}
+
+:global(:root[data-theme='dark'] .markdown-content .mindmap-toolbar) {
+  border-color: #3f3f46;
+  background: #27272a;
+}
+
+:global(:root[data-theme='dark'] .markdown-content .mindmap-toolbar button) {
+  border-color: #52525b;
+  color: #d4d4d8;
+}
+
+:global(
+  :root[data-theme='dark'] .markdown-content .mindmap-toolbar button:hover
+) {
+  background: #3f3f46;
+  color: #fafafa;
+}
+
 .markdown-content :deep(.markdown-code-header) {
   @apply flex min-h-12 items-center border-b px-3.5 py-2;
   border-color: transparent;
@@ -411,7 +583,8 @@ async function handleMarkdownClick(event) {
   content: '';
 }
 
-.markdown-content :deep(.markdown-code-copy[data-markdown-code-copied]::before) {
+.markdown-content
+  :deep(.markdown-code-copy[data-markdown-code-copied]::before) {
   width: 0.8rem;
   height: 0.45rem;
   border-width: 0 0 1.75px 1.75px;
