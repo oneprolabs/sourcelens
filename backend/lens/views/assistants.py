@@ -10,7 +10,13 @@ from rest_framework.views import APIView
 from accounts.permissions import HasRequiredFeature
 
 from core.paginations import APIPagination
-from lens.models import Assistant, user_sees_all_assistants
+from lens.models import (
+    Assistant,
+    AssistantDataSourceBinding,
+    DataSource,
+    DataSourceItem,
+    user_sees_all_assistants,
+)
 from lens.serializers import AssistantListSerializer, AssistantSerializer
 from .base import BaseAuthenticatedViewSet
 
@@ -44,6 +50,26 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
     )
     serializer_class = AssistantSerializer
     pagination_class = AssistantPagination
+
+    @action(detail=True, methods=["get", "post"], url_path="datasources")
+    def datasources(self, request, pk=None):
+        """List or bind datasource resources to an assistant."""
+        assistant = self.get_object()
+        if request.method == "GET":
+            return Response(AssistantSerializer(assistant).data["datasource_bindings"])
+        datasource = DataSource.objects.get(uuid=request.data["datasource_uuid"])
+        item_uuid = request.data.get("item_uuid")
+        item = None
+        if item_uuid:
+            item = DataSourceItem.objects.get(uuid=item_uuid, datasource=datasource)
+        mount_name = str(request.data.get("mount_name") or "source")
+        if not mount_name.replace("_", "").isalnum():
+            return Response({"mount_name": "Invalid mount name"}, status=400)
+        binding = AssistantDataSourceBinding.objects.create(
+            assistant=assistant, datasource=datasource, item=item,
+            mount_name=mount_name, required=bool(request.data.get("required", True)),
+        )
+        return Response(AssistantSerializer(assistant).data["datasource_bindings"], status=201)
 
     def get_serializer_class(self):
         """Use the compact contract for the collection endpoint."""

@@ -44,6 +44,7 @@ from .models import (
     Connection,
     DataSource,
     DataSourceItem,
+    AssistantDataSourceBinding,
     DataSourceCredential,
     EnvironmentVariableSet,
     GlobalSetting,
@@ -787,6 +788,7 @@ class AssistantSerializer(serializers.ModelSerializer):
     skill_bindings = SkillBindingsField(required=False)
     mcp_bindings = McpBindingsField(required=False)
     plugin_bindings = PluginBindingsField(required=False)
+    datasource_bindings = serializers.SerializerMethodField()
     access_grants = AccessGrantsField(required=False)
     workspace_guide = serializers.JSONField(required=False)
     skill_summary = serializers.SerializerMethodField()
@@ -807,6 +809,7 @@ class AssistantSerializer(serializers.ModelSerializer):
         model = Assistant
         fields = [
             "uuid",
+            "datasource_bindings",
             "name",
             "description",
             "mode",
@@ -842,6 +845,21 @@ class AssistantSerializer(serializers.ModelSerializer):
             "can_process_images",
             "created_at",
             "updated_at",
+        ]
+
+    def get_datasource_bindings(self, assistant):
+        """Return stable data source references for assistant configuration."""
+        return [
+            {
+                "uuid": str(binding.uuid),
+                "datasource_uuid": str(binding.datasource.uuid),
+                "item_uuid": str(binding.item.uuid) if binding.item else None,
+                "mount_name": binding.mount_name,
+                "required": binding.required,
+            }
+            for binding in assistant.datasource_bindings.select_related(
+                "datasource", "item"
+            )
         ]
         read_only_fields = [
             "uuid",
