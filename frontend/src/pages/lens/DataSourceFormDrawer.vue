@@ -5,106 +5,7 @@
     :subtitle="drawerSubtitle"
     @close="$emit('close')"
   >
-    <div
-      class="mb-6 rounded-xl border border-line bg-surface-sunken px-4 py-3"
-      :aria-label="t('lensAdmin.datasourceWizard.progressLabel')"
-    >
-      <div class="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <p class="text-xs font-medium uppercase tracking-wide text-ink-500">
-            {{ t('lensAdmin.datasourceWizard.progressLabel') }}
-          </p>
-          <p class="mt-0.5 text-sm font-semibold text-ink-900">
-            {{ wizardStepsMeta[wizardStep - 1]?.title }}
-          </p>
-        </div>
-        <span class="text-xs font-medium tabular-nums text-ink-500">
-          {{ wizardStep }} / {{ wizardStepCount }}
-        </span>
-      </div>
-      <div class="flex items-center">
-        <template v-for="(step, i) in wizardStepsMeta" :key="step.key">
-          <button
-            type="button"
-            class="flex min-w-0 flex-col items-center rounded-md px-1 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            :aria-current="i + 1 === wizardStep ? 'step' : undefined"
-            :disabled="i + 1 > wizardStep"
-            @click="goToWizardStep(i + 1)"
-          >
-            <div
-              class="flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-medium transition-colors"
-              :class="
-                i + 1 < wizardStep
-                  ? 'border-brand-600 bg-brand-600 text-white'
-                  : i + 1 === wizardStep
-                    ? 'border-brand-600 text-brand-600'
-                    : 'border-line text-ink-400'
-              "
-            >
-              <span v-if="i + 1 < wizardStep">✓</span>
-              <span v-else>{{ i + 1 }}</span>
-            </div>
-            <span
-              class="mt-1 text-xs"
-              :class="
-                i + 1 === wizardStep
-                  ? 'font-medium text-brand-600'
-                  : 'text-ink-400'
-              "
-            >
-              {{ step.title }}
-            </span>
-          </button>
-          <div
-            v-if="i < wizardStepsMeta.length - 1"
-            class="mx-1 h-px flex-1 bg-line"
-          />
-        </template>
-      </div>
-    </div>
-
-    <section class="datasource-wizard-summary mb-6 rounded-xl border border-brand-200 bg-brand-50/60 px-4 py-3">
-      <div class="grid gap-3 sm:grid-cols-3">
-        <div class="min-w-0">
-          <p class="text-xs font-medium uppercase tracking-wide text-brand-700">
-            {{ t('lensAdmin.datasourceWizard.summarySource') }}
-          </p>
-          <p class="mt-1 truncate text-sm font-medium text-ink-900">
-            {{ form.name || t('lensAdmin.datasourceWizard.summaryPending') }}
-          </p>
-          <p class="mt-0.5 truncate text-xs text-ink-500">
-            {{ selectedSourceTypeLabel }}
-          </p>
-        </div>
-        <div class="min-w-0">
-          <p class="text-xs font-medium uppercase tracking-wide text-brand-700">
-            {{ t('lensAdmin.datasourceWizard.summaryResource') }}
-          </p>
-          <p class="mt-1 truncate text-sm font-medium text-ink-900">
-            {{ selectedConnection?.name || t('lensAdmin.datasourceWizard.summaryPending') }}
-          </p>
-          <p class="mt-0.5 truncate text-xs text-ink-500">
-            {{ selectedConnectionScopeSummary || t('lensAdmin.datasourceWizard.summaryNotSelected') }}
-          </p>
-        </div>
-        <div class="min-w-0">
-          <p class="text-xs font-medium uppercase tracking-wide text-brand-700">
-            {{ t('lensAdmin.datasourceWizard.summaryTarget') }}
-          </p>
-          <p class="mt-1 truncate text-sm font-medium text-ink-900">
-            {{ selectedLensNode?.name || t('lensAdmin.datasourceWizard.summaryPending') }}
-          </p>
-          <p class="mt-0.5 truncate font-mono text-xs text-ink-500">
-            {{ form.workspace_relative_path || t('lensAdmin.datasourceWizard.summaryNotSelected') }}
-          </p>
-        </div>
-      </div>
-    </section>
-
     <div v-if="activeStepKey === 'basic'" class="space-y-5">
-      <p class="text-sm text-ink-500">
-        {{ t('lensAdmin.datasourceWizard.step1Desc') }}
-      </p>
       <FormRow :label="t('lensAdmin.fields.name')" required>
         <input v-model="form.name" class="form-input" required />
       </FormRow>
@@ -125,9 +26,6 @@
     </div>
 
     <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
-      <p class="text-sm text-ink-500">
-        {{ t('lensAdmin.datasourceWizard.step2Desc') }}
-      </p>
       <template v-if="isPluginSourceType(form.source_type)">
         <FormRow :label="t('lensAdmin.pages.connections.label')" required>
           <BaseSelect
