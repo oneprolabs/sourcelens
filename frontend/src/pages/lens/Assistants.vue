@@ -147,7 +147,10 @@
                     class="table-cell text-ink-600"
                     :data-label="t('lensAdmin.columns.dataAndTools')"
                   >
-                    <div class="flex flex-wrap items-center gap-2">
+                    <div
+                      data-testid="assistant-tool-counts"
+                      class="flex flex-wrap items-center gap-2"
+                    >
                       <span
                         class="data-tool-count"
                         :title="dataScopeLabel(row)"
