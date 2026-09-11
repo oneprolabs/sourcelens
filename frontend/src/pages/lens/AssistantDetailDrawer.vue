@@ -19,15 +19,28 @@
     </template>
 
     <div v-if="assistant" class="space-y-6">
+      <div class="rounded-lg bg-surface-sunken p-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-sm font-medium text-ink-900">{{
+            assistantType
+          }}</span>
+          <StatusBadge :status="assistant.status" />
+          <span class="text-xs text-ink-500">{{
+            t(`lensAdmin.visibility.${visibility}`)
+          }}</span>
+        </div>
+        <p
+          v-if="assistant.description"
+          class="mt-3 whitespace-pre-wrap break-words text-sm text-ink-600"
+        >
+          {{ assistant.description }}
+        </p>
+      </div>
       <section class="space-y-3">
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantDetail.overview') }}
         </h3>
         <dl class="detail-overview">
-          <div>
-            <dt class="detail-label">{{ t('lensAdmin.fields.name') }}</dt>
-            <dd class="detail-value">{{ assistant.name || emptyValue }}</dd>
-          </div>
           <div>
             <dt class="detail-label">{{ t('lensAdmin.fields.slug') }}</dt>
             <dd class="detail-value font-mono">
@@ -37,10 +50,6 @@
           <div>
             <dt class="detail-label">{{ t('lensAdmin.fields.lensnode') }}</dt>
             <dd class="detail-value">{{ lensnodeName }}</dd>
-          </div>
-          <div>
-            <dt class="detail-label">{{ t('lensAdmin.fields.type') }}</dt>
-            <dd class="detail-value">{{ assistantType }}</dd>
           </div>
           <div>
             <dt class="detail-label">
@@ -54,46 +63,47 @@
               }}
             </dd>
           </div>
-          <div>
-            <dt class="detail-label">
-              {{ t('lensAdmin.fields.visibility') }}
-            </dt>
-            <dd class="detail-value">
-              {{ t(`lensAdmin.visibility.${visibility}`) }}
-            </dd>
-          </div>
-          <div>
-            <dt class="detail-label">{{ t('lensAdmin.fields.status') }}</dt>
-            <dd class="mt-1"><StatusBadge :status="assistant.status" /></dd>
-          </div>
-          <div class="sm:col-span-2">
-            <dt class="detail-label">
-              {{ t('lensAdmin.fields.description') }}
-            </dt>
-            <dd class="detail-value whitespace-pre-wrap">
-              {{ assistant.description || emptyValue }}
-            </dd>
-          </div>
         </dl>
       </section>
 
       <section class="space-y-3" data-testid="assistant-detail-datasources">
-        <h3 class="detail-heading">数据源</h3>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="detail-heading">
+            {{ t('lensAdmin.datasourceSelection.title') }}
+          </h3>
+          <span
+            class="rounded bg-surface-sunken px-2 py-1 text-xs text-ink-600"
+          >
+            {{ t(`lensAdmin.datasourceSelection.${dataMode}`) }}
+          </span>
+        </div>
         <ul v-if="assistant.datasource_bindings?.length" class="detail-list">
           <li
             v-for="binding in assistant.datasource_bindings"
             :key="binding.uuid"
-            class="flex items-center justify-between gap-3 px-4 py-3"
+            class="flex items-start gap-3 px-4 py-3"
           >
-            <span class="min-w-0 truncate text-sm text-ink-700">
-              {{ binding.mount_name }}
-            </span>
-            <span class="text-xs text-ink-400">
-              {{ binding.item_uuid ? '子数据源' : '全部子数据源' }}
-            </span>
+            <Database class="mt-0.5 h-4 w-4 shrink-0 text-ink-400" />
+            <div class="min-w-0">
+              <p class="break-words text-sm font-medium text-ink-700">
+                {{ binding.datasource_name }}
+              </p>
+              <p class="mt-1 break-words text-xs text-ink-500">
+                {{
+                  binding.item_name ||
+                  t('lensAdmin.assistantPresentation.allItems')
+                }}
+              </p>
+            </div>
           </li>
         </ul>
-        <p v-else class="detail-empty">未配置数据源</p>
+        <p v-else class="text-sm text-ink-500">
+          {{
+            t(
+              `lensAdmin.assistantPresentation.${dataMode === 'selected' ? 'noSources' : 'allSources'}`
+            )
+          }}
+        </p>
       </section>
 
       <section
@@ -121,7 +131,11 @@
         </p>
       </section>
 
-      <section data-testid="assistant-detail-directories" class="space-y-3">
+      <section
+        v-if="detail.workspaceDirectories.length"
+        data-testid="assistant-detail-directories"
+        class="space-y-3"
+      >
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantDetail.workspaceDirectories') }}
         </h3>
@@ -146,8 +160,19 @@
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantDetail.capabilities') }}
         </h3>
+        <p
+          v-if="
+            !detail.skills.length &&
+            !detail.mcps.length &&
+            !detail.plugins.length
+          "
+          class="text-sm text-ink-500"
+        >
+          {{ t('lensAdmin.assistantPresentation.noTools') }}
+        </p>
         <div class="grid gap-4 sm:grid-cols-2">
           <div
+            v-if="detail.skills.length"
             data-testid="assistant-detail-skills"
             class="overflow-hidden rounded-lg border border-line"
           >
@@ -173,6 +198,7 @@
           </div>
 
           <div
+            v-if="detail.mcps.length"
             data-testid="assistant-detail-mcps"
             class="overflow-hidden rounded-lg border border-line"
           >
@@ -199,6 +225,24 @@
         </div>
       </section>
 
+      <section v-if="detail.plugins.length" class="space-y-3">
+        <h3 class="detail-heading">
+          {{ t('lensAdmin.assistantPresentation.plugins') }}
+        </h3>
+        <ul class="detail-list">
+          <li
+            v-for="plugin in detail.plugins"
+            :key="plugin.name"
+            class="flex items-center justify-between gap-3 px-4 py-3"
+          >
+            <span class="min-w-0 break-words text-sm text-ink-700">{{
+              plugin.name
+            }}</span>
+            <StatusBadge :status="bindingStatus(plugin)" />
+          </li>
+        </ul>
+      </section>
+
       <section
         v-if="visibility === 'private'"
         data-testid="assistant-detail-access"
@@ -207,8 +251,19 @@
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantDetail.access') }}
         </h3>
+        <p
+          v-if="
+            !detail.authorizedUsers.length && !detail.authorizedGroups.length
+          "
+          class="text-sm text-ink-500"
+        >
+          {{ t('lensAdmin.assistantPresentation.adminOnly') }}
+        </p>
         <div class="grid gap-4 sm:grid-cols-2">
-          <div class="overflow-hidden rounded-lg border border-line">
+          <div
+            v-if="detail.authorizedUsers.length"
+            class="overflow-hidden rounded-lg border border-line"
+          >
             <div class="detail-card-heading">
               <User class="h-4 w-4 text-ink-400" />
               {{ t('lensAdmin.access.users') }}
@@ -235,7 +290,10 @@
             </p>
           </div>
 
-          <div class="overflow-hidden rounded-lg border border-line">
+          <div
+            v-if="detail.authorizedGroups.length"
+            class="overflow-hidden rounded-lg border border-line"
+          >
             <div class="detail-card-heading">
               <Users class="h-4 w-4 text-ink-400" />
               {{ t('lensAdmin.access.groups') }}
@@ -280,6 +338,7 @@
 import {
   BookOpen,
   Copy,
+  Database,
   Folder,
   Pencil,
   Server,
@@ -294,7 +353,7 @@ import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 import { EMPTY_VALUE } from './adminHelpers'
-import { buildAssistantDetail } from './assistantDetails'
+import { assistantDataMode, buildAssistantDetail } from './assistantDetails'
 
 const props = defineProps({
   show: Boolean,
@@ -308,6 +367,7 @@ defineEmits(['close', 'copy-share', 'edit'])
 const { t } = useI18n()
 const emptyValue = EMPTY_VALUE
 const detail = computed(() => buildAssistantDetail(props.assistant || {}))
+const dataMode = computed(() => assistantDataMode(props.assistant || {}))
 const visibility = computed(() => props.assistant?.visibility || 'public')
 
 function bindingStatus(binding) {

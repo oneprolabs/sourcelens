@@ -900,6 +900,17 @@
     }
   },
   "lensAdmin": {
+    "assistantPresentation": {
+      "plugins": "Plugins",
+      "automaticNode": "Automatic scheduling",
+      "nodeUnavailable": "Node unavailable",
+      "allSources": "All active data sources",
+      "noSources": "No sources selected",
+      "allItems": "All resources",
+      "noTools": "No enabled tools",
+      "adminOnly": "Administrators only",
+      "dataScope": "Data scope"
+    },
     "menuTitle": "Assistants",
     "total": "{label} · {count}",
     "tabs": {

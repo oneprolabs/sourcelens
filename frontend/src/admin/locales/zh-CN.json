@@ -900,6 +900,17 @@
     }
   },
   "lensAdmin": {
+    "assistantPresentation": {
+      "plugins": "插件",
+      "automaticNode": "自动调度",
+      "nodeUnavailable": "节点不可用",
+      "allSources": "全部启用的数据源",
+      "noSources": "未指定数据源",
+      "allItems": "全部资源",
+      "noTools": "未启用工具",
+      "adminOnly": "仅管理员可访问",
+      "dataScope": "数据范围"
+    },
     "menuTitle": "Assistant 管理",
     "total": "{label} · {count}",
     "tabs": {

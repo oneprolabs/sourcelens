@@ -36,6 +36,12 @@ export function buildAssistantDetail(assistant = {}) {
     )
     .filter(Boolean)
 
+  const plugins = (assistant.plugin_bindings || [])
+    .map((binding) =>
+      bindingItem(binding, binding?.connection_name, binding?.plugin_key)
+    )
+    .filter(Boolean)
+
   const grants = assistant.access_grants || []
   const authorizedUsers = grants
     .filter((grant) => grant?.type === 'user')
@@ -53,9 +59,19 @@ export function buildAssistantDetail(assistant = {}) {
 
   return {
     workspaceDirectories,
+    plugins,
     skills,
     mcps,
     authorizedUsers,
     authorizedGroups
   }
+}
+
+/** Keep list and detail labels aligned with the runtime routing default. */
+export function assistantDataMode(assistant = {}) {
+  return (
+    assistant.datasource_routing ||
+    assistant.settings?.datasource_routing ||
+    'auto'
+  )
 }

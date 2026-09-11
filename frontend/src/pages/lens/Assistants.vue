@@ -89,25 +89,23 @@
             class="assistants-table-wrap overflow-x-auto rounded-lg border border-line bg-surface"
           >
             <table
-              class="min-w-[72rem] w-full table-fixed divide-y divide-line"
+              class="assistants-table w-full table-fixed divide-y divide-line"
             >
               <colgroup>
-                <col style="width: 26%" />
-                <col style="width: 12%" />
-                <col style="width: 10%" />
-                <col style="width: 10rem" />
+                <col style="width: 20%" />
+                <col style="width: 11%" />
+                <col style="width: 18%" />
+                <col style="width: 16%" />
                 <col style="width: 10%" />
                 <col style="width: 8%" />
-                <col style="width: 12%" />
-                <col style="width: 11.5rem" />
+                <col style="width: 17%" />
               </colgroup>
               <thead class="bg-surface-sunken">
                 <tr>
                   <th
-                    v-for="(column, index) in activeColumns"
+                    v-for="column in activeColumns"
                     :key="column"
                     class="table-head"
-                    :class="{ 'assistant-type-column': index === 2 }"
                   >
                     {{ column }}
                   </th>
@@ -134,10 +132,10 @@
                       {{ row.slug }}
                     </div>
                   </td>
-                  <td class="table-cell text-ink-600">
-                    {{ lensNodeName(row) }}
-                  </td>
-                  <td class="assistant-type-column table-cell text-ink-600">
+                  <td
+                    class="table-cell text-ink-600"
+                    :data-label="t('lensAdmin.columns.type')"
+                  >
                     <div>
                       {{
                         (row.mode || row.routing_mode) === 'smart'
@@ -146,10 +144,28 @@
                       }}
                     </div>
                   </td>
-                  <td class="table-cell text-ink-600">
+                  <td
+                    class="table-cell"
+                    :data-label="t('lensAdmin.datasourceSelection.title')"
+                  >
+                    <div>
+                      {{
+                        t(
+                          `lensAdmin.datasourceSelection.${assistantDataMode(row)}`
+                        )
+                      }}
+                    </div>
+                    <div class="mt-1 text-xs text-ink-500 break-words">
+                      {{ dataScopeLabel(row) }}
+                    </div>
+                  </td>
+                  <td
+                    class="table-cell text-ink-600"
+                    :data-label="t('lensAdmin.columns.tools')"
+                  >
                     <div
                       data-testid="assistant-tool-counts"
-                      class="flex items-center gap-3"
+                      class="flex flex-wrap items-center gap-x-3 gap-y-2"
                     >
                       <span
                         class="tool-count"
@@ -160,7 +176,7 @@
                         :aria-label="skillCountLabel(row)"
                       >
                         <BookOpen :size="16" aria-hidden="true" />
-                        {{ row.skill_summary?.enabled || 0 }}
+                        Skills {{ row.skill_summary?.enabled || 0 }}
                       </span>
                       <span
                         class="tool-count"
@@ -171,22 +187,22 @@
                         :aria-label="mcpCountLabel(row)"
                       >
                         <Server :size="16" aria-hidden="true" />
-                        {{ row.mcp_summary?.enabled || 0 }}
+                        MCP {{ row.mcp_summary?.enabled || 0 }}
                       </span>
                       <span
+                        v-if="row.plugin_summary?.enabled"
                         class="tool-count"
-                        :class="{
-                          'tool-count-empty': !row.datasource_bindings?.length
-                        }"
-                        :title="`Datasources: ${row.datasource_bindings?.length || 0}`"
-                        :aria-label="`Datasources: ${row.datasource_bindings?.length || 0}`"
                       >
-                        <Database :size="16" aria-hidden="true" />
-                        {{ row.datasource_bindings?.length || 0 }}
+                        <Plug :size="16" aria-hidden="true" />
+                        {{ t('lensAdmin.assistantPresentation.plugins') }}
+                        {{ row.plugin_summary.enabled }}
                       </span>
                     </div>
                   </td>
-                  <td class="table-cell">
+                  <td
+                    class="table-cell"
+                    :data-label="t('lensAdmin.columns.visibility')"
+                  >
                     <span
                       class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold"
                       :class="
@@ -213,23 +229,14 @@
                       }}
                     </span>
                   </td>
-                  <td class="table-cell">
+                  <td
+                    class="table-cell"
+                    :data-label="t('lensAdmin.columns.status')"
+                  >
                     <StatusBadge :status="row.status" />
                   </td>
-                  <td class="table-cell">
-                    <BaseButton
-                      v-if="row.status === 'active'"
-                      size="sm"
-                      variant="outline"
-                      @click="copyShareUrl(row)"
-                    >
-                      <Copy :size="15" aria-hidden="true" />
-                      {{ t('lens.share.copyLink') }}
-                    </BaseButton>
-                    <span v-else class="text-ink-400">{{ emptyValue }}</span>
-                  </td>
                   <td class="table-cell assistant-actions-cell">
-                    <div class="flex flex-nowrap items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                       <BaseButton
                         v-if="row.status === 'active'"
                         size="sm"
@@ -237,6 +244,16 @@
                         @click="startEdit(row)"
                       >
                         {{ t('common.edit') }}
+                      </BaseButton>
+                      <BaseButton
+                        v-if="row.status === 'active'"
+                        size="sm"
+                        variant="ghost"
+                        :aria-label="t('lens.share.copyLink')"
+                        :title="t('lens.share.copyLink')"
+                        @click="copyShareUrl(row)"
+                      >
+                        <Copy :size="16" aria-hidden="true" />
                       </BaseButton>
                       <BaseButton
                         v-if="row.status === 'active'"
@@ -276,7 +293,7 @@
       <AssistantDetailDrawer
         :show="Boolean(detailAssistant)"
         :assistant="detailAssistant"
-        :lensnode-name="lensNodeName(detailAssistant?.lensnode)"
+        :lensnode-name="lensNodeName(detailAssistant)"
         :assistant-type="
           (detailAssistant?.mode || detailAssistant?.routing_mode) === 'smart'
             ? t('lensAdmin.routingModes.smart')
@@ -348,12 +365,13 @@
 <script setup>
 import {
   BookOpen,
-  Database,
+  Plug,
   Copy,
   Globe as GlobeIcon,
   Lock as LockIcon,
   Server
 } from '@lucide/vue'
+import { assistantDataMode } from './assistantDetails'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -396,7 +414,6 @@ import {
   buildSkillEnvironmentBinding
 } from './assistantEnvironment'
 import {
-  EMPTY_VALUE as emptyValue,
   formatAssistantType,
   listToText,
   normalizeList,
@@ -438,14 +455,17 @@ let globalSettingsPromise = null
 const activeColumns = computed(() =>
   [
     'assistant',
-    'lensnode',
     'type',
+    'dataAccess',
     'tools',
     'visibility',
     'status',
-    'shareUrl',
     'actions'
-  ].map((column) => t(`lensAdmin.columns.${column}`))
+  ].map((column) =>
+    column === 'dataAccess'
+      ? t('lensAdmin.datasourceSelection.title')
+      : t(`lensAdmin.columns.${column}`)
+  )
 )
 
 const totalPages = computed(() =>
@@ -472,9 +492,14 @@ function goNextPage() {
 
 function lensNodeName(value) {
   if (value?.lensnode_name) return value.lensnode_name
-  const uuid = typeof value === 'object' ? value?.uuid : value
+  const uuid = typeof value === 'object' ? value?.lensnode : value
   const found = lensnodes.value.find((lensnode) => lensnode.uuid === uuid)
-  return found?.name || uuid || emptyValue
+  return (
+    found?.name ||
+    (uuid
+      ? t('lensAdmin.assistantPresentation.nodeUnavailable')
+      : t('lensAdmin.assistantPresentation.automaticNode'))
+  )
 }
 
 function assistantTypeLabel(value) {
@@ -584,9 +609,14 @@ async function loadFormResources() {
         llmConfigOptions.value = normalizeList(llmRows)
         const plugins = normalizeList(installedPlugins)
         return Promise.all([
-          Promise.all(normalizeList(datasourceRows).map(async (source) => ({
-            ...source, items: await listDataSourceItems(source.uuid)
-          }))).then((sources) => { datasourceOptions.value = sources }),
+          Promise.all(
+            normalizeList(datasourceRows).map(async (source) => ({
+              ...source,
+              items: await listDataSourceItems(source.uuid)
+            }))
+          ).then((sources) => {
+            datasourceOptions.value = sources
+          }),
           Promise.all(plugins.map((plugin) => getPluginManifest(plugin.key))),
           loadPluginIcons(plugins)
         ]).then(([, manifests]) => {
@@ -656,7 +686,25 @@ async function startEdit(row) {
 }
 
 async function openDetails(row) {
-  detailAssistant.value = await getAssistant(row.uuid)
+  try {
+    detailAssistant.value = await getAssistant(row.uuid)
+  } catch (error) {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+  }
+}
+
+function dataScopeLabel(row) {
+  const names = [
+    ...new Set(
+      (row.datasource_bindings || [])
+        .map((binding) => binding.datasource_name)
+        .filter(Boolean)
+    )
+  ]
+  if (names.length) return names.join(' · ')
+  return t(
+    `lensAdmin.assistantPresentation.${assistantDataMode(row) === 'selected' ? 'noSources' : 'allSources'}`
+  )
 }
 
 function closeDetails() {
@@ -1036,7 +1084,7 @@ onBeforeUnmount(revokePluginIconUrls)
 }
 
 .table-cell {
-  @apply px-4 py-4 text-sm text-ink-700;
+  @apply px-3 py-4 text-sm text-ink-700 align-top;
 }
 
 .assistant-name-cell {
@@ -1057,16 +1105,8 @@ onBeforeUnmount(revokePluginIconUrls)
   white-space: nowrap;
 }
 
-.table-cell.assistant-type-column,
-.table-head.assistant-type-column {
-  white-space: nowrap;
-  word-break: keep-all;
-  padding-left: clamp(0.375rem, 0.9vw, 0.5rem);
-  padding-right: clamp(2.25rem, 4vw, 3rem);
-}
-
 .tool-count {
-  @apply inline-flex items-center gap-1 text-xs font-medium text-ink-600;
+  @apply inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-ink-600;
 }
 
 .tool-count-empty {
@@ -1076,5 +1116,50 @@ onBeforeUnmount(revokePluginIconUrls)
 .assistant-name-action {
   @apply font-medium text-ink-900 transition-colors;
   @apply hover:text-primary-700 hover:underline;
+}
+.assistants-table {
+  min-width: 64rem;
+}
+
+@media (max-width: 767px) {
+  .assistants-table {
+    display: block;
+    min-width: 0;
+  }
+  .assistants-table colgroup,
+  .assistants-table thead {
+    display: none;
+  }
+  .assistants-table tbody {
+    display: block;
+  }
+  .assistants-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 12px;
+    gap: 16px;
+  }
+  .table-cell {
+    display: block;
+    padding: 0;
+    min-width: 0;
+  }
+  .table-cell::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: rgb(var(--ink-500));
+  }
+  .assistant-name-cell,
+  .assistant-actions-cell {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+  .assistant-actions-cell {
+    border-top: 1px solid;
+    border-color: inherit;
+    padding-top: 12px;
+  }
 }
 </style>

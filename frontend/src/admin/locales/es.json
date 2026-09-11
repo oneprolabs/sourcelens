@@ -900,6 +900,17 @@
     }
   },
   "lensAdmin": {
+    "assistantPresentation": {
+      "plugins": "Plugins",
+      "automaticNode": "Asignación automática",
+      "nodeUnavailable": "Nodo no disponible",
+      "allSources": "Todas las fuentes activas",
+      "noSources": "Sin fuentes seleccionadas",
+      "allItems": "Todos los recursos",
+      "noTools": "Sin herramientas habilitadas",
+      "adminOnly": "Solo administradores",
+      "dataScope": "Ámbito de datos"
+    },
     "menuTitle": "Asistentes",
     "total": "{label} · {count}",
     "tabs": {

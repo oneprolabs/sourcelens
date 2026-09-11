@@ -656,6 +656,7 @@ class AccessGrantsField(serializers.Field):
 class AssistantListSerializer(serializers.ModelSerializer):
     """Compact assistant representation for collection responses."""
 
+    datasource_routing = serializers.SerializerMethodField()
     datasource_bindings = DatasourceBindingsField(read_only=True)
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
     lensnode_name = serializers.CharField(source="lensnode.name", read_only=True)
@@ -672,6 +673,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
         model = Assistant
         fields = [
             "uuid",
+            "datasource_routing",
             "datasource_bindings",
             "name",
             "capability",
@@ -690,6 +692,11 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "vision_model_capability",
             "can_process_images",
         ]
+
+    def get_datasource_routing(self, assistant):
+        """Expose the data selection mode without other runtime settings."""
+
+        return (assistant.settings or {}).get("datasource_routing", "auto")
 
     def get_collaboration_members(self, assistant):
         """Return prefetched Smart Assistant members for list views."""
