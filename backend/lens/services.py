@@ -3684,11 +3684,13 @@ def stream_run_events(run):
 
         if run.status == Run.Status.QUEUED:
             position = _queue_position(run)
-            if position != last_queue_position:
-                last_queue_position = position
+            waiting = _datasource_waiting(run)
+            if (position, waiting) != last_queue_position:
+                last_queue_position = (position, waiting)
                 yield {
                     "type": "queue_position",
                     "position": position,
+                    "datasource_waiting": waiting,
                     "ts": timezone.now().isoformat(),
                 }
         else:
@@ -3776,11 +3778,13 @@ async def stream_run_events_async(run):
 
         if run.status == Run.Status.QUEUED:
             position = await sync_to_async(_queue_position)(run)
-            if position != last_queue_position:
-                last_queue_position = position
+            waiting = await sync_to_async(_datasource_waiting)(run)
+            if (position, waiting) != last_queue_position:
+                last_queue_position = (position, waiting)
                 yield {
                     "type": "queue_position",
                     "position": position,
+                    "datasource_waiting": waiting,
                     "ts": timezone.now().isoformat(),
                 }
         else:
@@ -3969,3 +3973,12 @@ def _terminal_stream_event(run):
         "termination_detail": sanitize_termination_detail(run.termination_detail),
         "ts": timezone.now().isoformat(),
     }
+
+
+def _datasource_waiting(run):
+    """Return whether queued execution is waiting for datasource sync."""
+
+    state = RunExecution.objects.filter(run=run).values_list(
+        "runtime_snapshot", flat=True
+    ).first() or {}
+    return bool(state.get("datasource_waiting"))
