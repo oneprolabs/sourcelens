@@ -628,6 +628,28 @@ class DataSource(TimestampedUUIDModel):
         return self.name
 
 
+class DataSourceItem(TimestampedUUIDModel):
+    """Independently stored child resource belonging to a data source."""
+
+    datasource = models.ForeignKey(
+        DataSource, on_delete=models.CASCADE, related_name="items"
+    )
+    name = models.CharField(max_length=160)
+    source_type = models.CharField(max_length=32)
+    config = models.JSONField(default=dict, blank=True)
+    storage_key = models.CharField(max_length=500)
+    status = models.CharField(max_length=16, default="active")
+    current_version = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["datasource", "storage_key"],
+                name="lens_ds_item_storage_key_unique",
+            )
+        ]
+
+
 class DataSourceCredential(TimestampedUUIDModel):
     """Encrypted datasource credential used only during node execution."""
 
@@ -1065,6 +1087,28 @@ class AssistantMCP(models.Model):
         return result
 
 
+class AssistantDataSourceBinding(TimestampedUUIDModel):
+    """Data source or child resource selected by an assistant."""
+
+    assistant = models.ForeignKey(
+        Assistant, on_delete=models.CASCADE, related_name="datasource_bindings"
+    )
+    datasource = models.ForeignKey(DataSource, on_delete=models.PROTECT)
+    item = models.ForeignKey(
+        DataSourceItem, null=True, blank=True, on_delete=models.PROTECT
+    )
+    mount_name = models.CharField(max_length=120)
+    required = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["assistant", "mount_name"],
+                name="lens_assistant_datasource_mount_unique",
+            )
+        ]
+
+
 class AssistantPluginBinding(models.Model):
     """Assistant access to one reusable Plugin connection.
 
@@ -1144,6 +1188,21 @@ class Session(TimestampedUUIDModel):
 
     def __str__(self):
         return self.title or str(self.uuid)
+
+
+class SessionDataSource(TimestampedUUIDModel):
+    """Immutable data source selection captured when a Session starts."""
+
+    session = models.ForeignKey(
+        Session, on_delete=models.CASCADE, related_name="datasource_snapshots"
+    )
+    datasource = models.ForeignKey(DataSource, on_delete=models.PROTECT)
+    item = models.ForeignKey(
+        DataSourceItem, null=True, blank=True, on_delete=models.PROTECT
+    )
+    datasource_version = models.CharField(max_length=64, blank=True, default="")
+    mount_name = models.CharField(max_length=120)
+    storage_key = models.CharField(max_length=500)
 
 
 class Message(models.Model):
