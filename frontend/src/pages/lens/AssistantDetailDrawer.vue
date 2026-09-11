@@ -18,7 +18,7 @@
       </BaseButton>
     </template>
 
-    <div v-if="assistant" class="space-y-6">
+    <div v-if="assistant" class="assistant-detail space-y-6">
       <div class="rounded-lg bg-surface-sunken p-4">
         <div class="flex flex-wrap items-center gap-2">
           <span class="text-sm font-medium text-ink-900">{{
@@ -47,11 +47,11 @@
               {{ assistant.slug || emptyValue }}
             </dd>
           </div>
-          <div>
+          <div class="detail-overview-row">
             <dt class="detail-label">{{ t('lensAdmin.fields.lensnode') }}</dt>
             <dd class="detail-value">{{ lensnodeName }}</dd>
           </div>
-          <div>
+          <div class="detail-overview-row">
             <dt class="detail-label">
               {{ t('lensAdmin.fields.routingMode') }}
             </dt>
@@ -376,9 +376,17 @@ function bindingStatus(binding) {
 </script>
 
 <style scoped>
+.assistant-detail {
+  --detail-label-width: 7.5rem;
+}
+
 .detail-overview {
-  @apply grid gap-4 rounded-lg border border-line p-4;
-  @apply sm:grid-cols-2;
+  @apply rounded-lg border border-line p-4;
+}
+
+.detail-overview-row {
+  @apply grid items-start gap-2 border-b border-line/70 py-2 last:border-0;
+  grid-template-columns: var(--detail-label-width) minmax(0, 1fr);
 }
 
 .detail-list {
@@ -394,6 +402,10 @@ function bindingStatus(binding) {
   @apply text-xs font-medium uppercase tracking-wide text-ink-400;
 }
 
+.detail-overview-row .detail-value {
+  @apply mt-0 min-w-0;
+}
+
 .detail-value {
   @apply mt-1 break-words text-sm text-ink-700;
 }
@@ -407,4 +419,11 @@ function bindingStatus(binding) {
   @apply rounded-lg border border-line bg-surface-sunken px-4 py-5;
   @apply text-center text-sm text-ink-400;
 }
+
+@media (max-width: 639px) {
+  .assistant-detail {
+    --detail-label-width: 6.5rem;
+  }
+}
+
 </style>
