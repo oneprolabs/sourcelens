@@ -610,6 +610,11 @@ export async function uploadDataSourceFile(uuid, file) {
   return unwrapResponse(response)
 }
 
+export async function getDataSourceUploadLimits() {
+  const response = await api.get('/lens/admin/datasources/upload-limits/')
+  return unwrapResponse(response)
+}
+
 export async function cancelDataSourceSync(uuid) {
   const response = await api.post(
     `/lens/admin/datasources/${uuid}/cancel-sync/`

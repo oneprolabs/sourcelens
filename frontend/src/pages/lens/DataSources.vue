@@ -340,6 +340,14 @@
                       t('lensAdmin.actions.refreshAvailability')
                     }}</BaseButton
                   >
+                  <BaseButton
+                    v-if="row.source_type === 'managed_workspace'"
+                    size="sm"
+                    variant="outline"
+                    @click.stop="openUpload(row)"
+                  >
+                    {{ t('lensAdmin.actions.uploadFile') }}
+                  </BaseButton>
                   <RowActions :row="row" @edit="startEdit" @delete="remove" />
                 </div>
               </div>
@@ -441,6 +449,7 @@ import {
   scanLensNodeDirs,
   refreshDataSourceAvailability,
   uploadDataSourceFile,
+  getDataSourceUploadLimits,
   setDataSourceEnabled,
   syncDataSource,
   testLensNodeDataSourceConnection,
@@ -2161,12 +2170,14 @@ async function uploadFile(event) {
     uploadDataSource.value = null
     return
   }
-  if (file.size > 50 * 1024 * 1024) {
-    showError(t('lensAdmin.messages.uploadTooLarge'))
-    uploadDataSource.value = null
-    return
-  }
   try {
+    const limits = await getDataSourceUploadLimits()
+    if (file.size > limits.max_bytes) {
+      showError(t('lensAdmin.messages.uploadTooLarge', {
+        size: limits.max_bytes / (1024 * 1024)
+      }))
+      return
+    }
     const result = await uploadDataSourceFile(row.uuid, file)
     showSuccess(
       `${t('lensAdmin.messages.uploadStarted')} (${result.task_id || ''})`

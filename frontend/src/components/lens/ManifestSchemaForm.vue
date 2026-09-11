@@ -175,7 +175,7 @@
           <input
             :id="arrayItemId(field, index)"
             :value="item"
-            :class="[controlClass, 'min-w-0 flex-1 font-mono']"
+        :class="[controlClass, 'min-w-0 flex-1 font-mono']"
             :type="arrayInputType(field)"
             :aria-label="`${field.title || field.key} ${index + 1}`"
             :placeholder="field.description || ''"
@@ -232,7 +232,7 @@
       <input
         v-else
         :id="fieldId(field)"
-        :class="controlClass"
+        :class="[controlClass, isInvalid(field) ? 'border-danger-500 ring-2 ring-danger-500/20' : '']"
         :type="inputType(field)"
         :value="fieldValue(field)"
         :min="field.minimum"
@@ -244,6 +244,9 @@
         :placeholder="inputPlaceholder(field)"
         @input="setField(field, normalizeInput(field, $event.target.value))"
       />
+      <p v-if="isInvalid(field)" class="text-xs text-danger-600">
+        {{ requiredFieldError }}
+      </p>
       <p
         v-if="isResourceOptionLoading(field)"
         class="text-xs leading-5 text-ink-500"
@@ -284,6 +287,8 @@ const props = defineProps({
   removeArrayItemLabel: { type: String, default: 'Remove' },
   selectOptionLabel: { type: String, default: 'Select an option' },
   loadingOptionsLabel: { type: String, default: 'Loading options…' },
+  invalidFields: { type: Array, default: () => [] },
+  requiredFieldError: { type: String, default: 'This field is required.' },
   controlClass: { type: String, default: 'manifest-schema-control' },
   readOnly: { type: Boolean, default: false }
 })
@@ -304,6 +309,10 @@ const fields = computed(() => {
 
 function fieldId(field) {
   return `manifest-field-${field.key}`
+}
+
+function isInvalid(field) {
+  return props.invalidFields.includes(field.key)
 }
 
 function isRequired(field) {

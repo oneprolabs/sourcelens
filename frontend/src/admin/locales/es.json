@@ -1750,6 +1750,12 @@
       "saveChanges": "Guardar cambios"
     },
     "resourceSettings": {
+      "max_bytes": "Límite del archivo subido",
+      "max_bytesDesc": "Tamaño máximo del archivo en bytes.",
+      "max_extracted_bytes": "Límite del tamaño extraído",
+      "max_extracted_bytesDesc": "Tamaño total máximo extraído en bytes.",
+      "max_extracted_files": "Límite de archivos extraídos",
+      "max_extracted_filesDesc": "Número máximo de archivos en el archivo comprimido.",
       "groups": {
         "datasource": "Sincronización de la fuente de datos"
       },
@@ -2119,7 +2125,7 @@
       "uploadStarted": "Inicio de subida",
       "uploadFailed": "La subida falló",
       "uploadZipOnly": "Las cargas del espacio gestionado solo admiten archivos ZIP.",
-      "uploadTooLarge": "El archivo ZIP debe tener como máximo 50 MB.",
+      "uploadTooLarge": "El archivo ZIP debe tener como máximo {size} MiB.",
       "archiveSuccess": "Asistente archivado",
       "archiveFailed": "Error al archivar asistente",
       "restoreSuccess": "Asistente restaurado",

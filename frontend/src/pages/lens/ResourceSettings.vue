@@ -180,6 +180,9 @@ const globalSettings = ref([])
 const llmConfigOptions = ref([])
 
 const defaultSettings = {
+  'lens.datasource_upload.max_bytes': 52428800,
+  'lens.datasource_upload.max_extracted_bytes': 104857600,
+  'lens.datasource_upload.max_extracted_files': 300,
   'lens.datasource_sync.timeout_s': 360,
   'lens.datasource_sync.workers': 4,
   'lens.datasource_conversion.vision_model_ref': '',
@@ -191,6 +194,16 @@ const initialSettings = ref({ ...defaultSettings })
 
 const settingDefinitions = computed(() => {
   return [
+    ...['max_bytes', 'max_extracted_bytes', 'max_extracted_files'].map(
+      (key) => ({
+        key: `lens.datasource_upload.${key}`,
+        group: 'datasource',
+        label: t(`lensAdmin.resourceSettings.${key}`),
+        description: t(`lensAdmin.resourceSettings.${key}Desc`),
+        type: 'number',
+        unit: key === 'max_extracted_files' ? '' : 'bytes'
+      })
+    ),
     {
       key: 'lens.datasource_sync.timeout_s',
       group: 'datasource',

@@ -1768,6 +1768,12 @@
       "saveChanges": "Save Changes"
     },
     "resourceSettings": {
+      "max_bytes": "Upload archive size limit",
+      "max_bytesDesc": "Maximum uploaded archive size in bytes.",
+      "max_extracted_bytes": "Extracted size limit",
+      "max_extracted_bytesDesc": "Maximum total extracted size in bytes.",
+      "max_extracted_files": "Extracted file limit",
+      "max_extracted_filesDesc": "Maximum number of files in an archive.",
       "groups": {
         "datasource": "Data Source Sync"
       },
@@ -2137,7 +2143,7 @@
       "uploadStarted": "Upload started",
       "uploadFailed": "Upload failed",
       "uploadZipOnly": "Only ZIP archives are supported for Managed Workspace uploads.",
-      "uploadTooLarge": "The ZIP archive must be 50 MB or smaller.",
+      "uploadTooLarge": "The ZIP archive must be {size} MiB or smaller.",
       "archiveSuccess": "Assistant archived",
       "archiveFailed": "Failed to archive assistant",
       "restoreSuccess": "Assistant restored",

@@ -481,6 +481,14 @@ test('managed workspace setup does not request a credential', async () => {
     /if \(isManagedWorkspace\.value\) \{\s*return false/)
 })
 
+test('managed workspace cards expose a direct upload action', async () => {
+  const page = await source('pages/lens/DataSources.vue')
+
+  assert.match(page, /row\.source_type === 'managed_workspace'/)
+  assert.match(page, /@click\.stop="openUpload\(row\)"/)
+  assert.match(page, /lensAdmin\.actions\.uploadFile/)
+})
+
 test('datasource target path check follows the semantic sync step', async () => {
   const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
 

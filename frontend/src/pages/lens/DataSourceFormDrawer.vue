@@ -132,6 +132,7 @@
         <FormRow :label="t('lensAdmin.pages.connections.label')" required>
           <BaseSelect
             :model-value="form.connection_uuid"
+            :class="{ 'border-danger-500 ring-2 ring-danger-500/20': connectionFieldInvalid }"
             @update:model-value="handlePluginConnectionChange"
           >
             <option value="">
@@ -145,6 +146,9 @@
               {{ connection.name }}
             </option>
           </BaseSelect>
+          <p v-if="connectionFieldInvalid" class="mt-1 text-xs text-danger-600">
+            {{ t('lensAdmin.datasourceWizard.requiredField') }}
+          </p>
           <p class="mt-1 text-xs text-ink-500">
             {{ t('lensAdmin.datasourceWizard.createConnectionHint') }}
             <a
@@ -179,6 +183,8 @@
           "
           :resource-count-label="t('lensAdmin.pluginForm.resources')"
           :selected-count-label="t('lensAdmin.pluginForm.selected')"
+          :invalid-fields="missingDatasourceFields"
+          :required-field-error="t('lensAdmin.datasourceWizard.requiredField')"
           :private-resource-label="t('lensAdmin.pluginForm.private')"
           :select-option-label="t('lensAdmin.pluginForm.selectOption')"
           :loading-options-label="t('lensAdmin.pluginForm.loadingOptions')"
@@ -1738,6 +1744,19 @@ const connectionResultMessage = computed(() => {
   }
   return props.connectionResult.message || ''
 })
+
+const missingDatasourceFields = computed(() => {
+  if (!datasourceSchema.value || !isPluginSourceType(props.form.source_type)) return []
+  return (datasourceSchema.value.required || []).filter((key) => {
+    const value = props.config?.[key]
+    return value === undefined || value === null || value === '' ||
+      (Array.isArray(value) && value.length === 0)
+  })
+})
+
+const connectionFieldInvalid = computed(() =>
+  isPluginSourceType(props.form.source_type) && !props.form.connection_uuid
+)
 
 const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'basic') {

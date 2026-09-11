@@ -198,6 +198,32 @@ def get_datasource_upload_timeout_s():
     return value if value > 0 else DEFAULT_DATASOURCE_UPLOAD_TIMEOUT_S
 
 
+def get_datasource_upload_limits():
+    """Return positive upload limits from global settings."""
+
+    defaults = {
+        "max_bytes": 50 * 1024 * 1024,
+        "max_extracted_bytes": 100 * 1024 * 1024,
+        "max_extracted_files": 300,
+    }
+    prefix = "lens.datasource_upload."
+    rows = {
+        row.key: row.value
+        for row in GlobalSetting.objects.filter(
+            key__in=[prefix + key for key in defaults]
+        )
+    }
+    result = {}
+    for key, default in defaults.items():
+        value = rows.get(prefix + key, default)
+        result[key] = (
+            value
+            if type(value) is int and value > 0
+            else default
+        )
+    return result
+
+
 def check_datasource_path(lensnode, target_path, source_type, config=None):
     """Ask a LensNode to inspect a datasource target path."""
 
@@ -427,7 +453,8 @@ def dispatch_datasource_upload_async(
     if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
     validate_datasource_lensnode(datasource.lensnode)
-    if len(content) > DATASOURCE_UPLOAD_MAX_BYTES:
+    upload_limits = get_datasource_upload_limits()
+    if len(content) > upload_limits["max_bytes"]:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_TOO_LARGE")
     upload_conversion = {"document": True, "image": True}
     upload_conversion.update(
@@ -446,6 +473,7 @@ def dispatch_datasource_upload_async(
             "target_path": datasource.target_path,
             "filename": filename,
             "content_base64": base64.b64encode(content).decode("ascii"),
+            "upload_limits": upload_limits,
             "conversion": upload_conversion,
             **_lensnode_gateway_config(),
             "excluded_datasource_roots": excluded_datasource_roots(
