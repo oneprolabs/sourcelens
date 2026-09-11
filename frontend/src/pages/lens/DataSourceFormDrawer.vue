@@ -538,7 +538,7 @@
       <p class="text-sm text-ink-500">
         {{ t('lensAdmin.datasourceWizard.step3Desc') }}
       </p>
-      <FormRow v-if="false" :label="t('lensAdmin.fields.lensnode')">
+      <FormRow v-if="isManagedWorkspace" :label="t('lensAdmin.fields.lensnode')">
         <BaseSelect v-model="form.lensnode_uuid">
           <option value="">
             {{ t('lensAdmin.placeholders.selectLensNode') }}
@@ -555,7 +555,7 @@
           {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
         </p>
       </FormRow>
-      <div v-if="false"
+      <div v-if="isManagedWorkspace"
         v-if="!onlineLensNodes.length"
         class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
       >
