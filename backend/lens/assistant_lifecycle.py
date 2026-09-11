@@ -4,6 +4,7 @@ from django.core.cache import cache
 from django.db import transaction
 
 from .models import Assistant, GlobalSetting, Session
+from .datasource_snapshots import capture_session_datasources
 
 
 SMART_COLLABORATION_SLUG = "__system-smart-collaboration__"
@@ -74,7 +75,7 @@ def create_assistant_session(assistant_uuid, user, title=""):
     normalized_title = " ".join(str(title or "").split())
     if assistant.mode_handler.supports_members and not assistant.is_system:
         members = fixed_collaboration_assistants(assistant, user)
-        return Session.objects.create(
+        session = Session.objects.create(
             assistant=assistant,
             user=user,
             title=normalized_title,
@@ -87,11 +88,13 @@ def create_assistant_session(assistant_uuid, user, title=""):
                 else Session.TitleGenerationStatus.PENDING
             ),
         )
+        capture_session_datasources(session, assistant)
+        return session
     if not normalized_title:
         existing = _find_reusable_empty_session(assistant, user)
         if existing is not None:
             return existing
-    return Session.objects.create(
+    session = Session.objects.create(
         assistant=assistant,
         user=user,
         title=normalized_title,
@@ -102,6 +105,8 @@ def create_assistant_session(assistant_uuid, user, title=""):
             else Session.TitleGenerationStatus.PENDING
         ),
     )
+    capture_session_datasources(session, assistant)
+    return session
 
 
 def fixed_collaboration_assistants(assistant, user):
