@@ -27,6 +27,7 @@ from lens.plugins.registry import (
     discover_plugins,
     installed_plugin,
 )
+from lens.plugins.package_loader import load_control_contract
 from lens.plugins.tool_snapshots import (
     ACTIVE_RUN_STATUSES,
     ToolSnapshotError,
@@ -56,6 +57,27 @@ SENSITIVE_KEYS = frozenset(
         "token",
     }
 )
+
+
+class PluginRPCView(APIView):
+    """Dispatch a declared Plugin-owned control RPC method."""
+
+    permission_classes = [__import__("rest_framework.permissions", fromlist=["IsAdminUser"]).IsAdminUser]
+
+    def post(self, request, plugin_key):
+        method = request.data.get("method")
+        params = request.data.get("params") or {}
+        if not isinstance(method, str) or not isinstance(params, dict):
+            return Response({"ok": False, "error": {"code": "RPC_INVALID"}}, status=400)
+        try:
+            plugin = installed_plugin(plugin_key)
+            handler = load_control_contract(plugin).rpc_handler
+            if not callable(handler):
+                raise DatasourceProviderError("PLUGIN_RPC_UNSUPPORTED")
+            result = handler(method, params)
+        except (PluginNotFoundError, DatasourceProviderError) as exc:
+            return Response({"ok": False, "error": {"code": str(exc)}}, status=400)
+        return Response({"ok": True, "result": result})
 
 
 def _active_connection_secret(connection):

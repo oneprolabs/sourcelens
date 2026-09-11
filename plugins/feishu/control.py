@@ -2,6 +2,8 @@
 
 import json
 import re
+import secrets
+from urllib.parse import urlsplit
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -49,6 +51,79 @@ ALLOWED_DATASOURCE_KEYS = frozenset(
         "resources",
     }
 )
+
+REGISTRATION_URL = "https://accounts.feishu.cn/oauth/v1/app/registration"
+
+
+def execute_rpc(method, params):
+    """Dispatch Plugin-owned control RPC methods."""
+
+    if method == "self_register.begin":
+        return begin_self_registration()
+    if method == "self_register.poll":
+        return poll_self_registration((params or {}).get("device_code"))
+    raise DatasourceProviderError("PLUGIN_RPC_METHOD_UNSUPPORTED")
+
+
+def begin_self_registration(client=None):
+    """Start Feishu user-owned application registration."""
+
+    http_client = client or httpx.Client(timeout=15, follow_redirects=False)
+    try:
+        response = http_client.post(
+            REGISTRATION_URL,
+            data={
+                "action": "begin",
+                "archetype": "PersonalAgent",
+                "auth_method": "client_secret",
+                "request_user_info": "open_id tenant_brand",
+            },
+        )
+        if response.status_code not in (200, 400):
+            raise DatasourceProviderError("FEISHU_REGISTRATION_FAILED")
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise DatasourceProviderError("FEISHU_REGISTRATION_FAILED") from exc
+    uri = payload.get("verification_uri_complete")
+    if not isinstance(payload.get("device_code"), str) or not isinstance(uri, str):
+        raise DatasourceProviderError("FEISHU_REGISTRATION_RESPONSE_INVALID")
+    parsed = urlsplit(uri)
+    if parsed.scheme != "https" or parsed.hostname != "accounts.feishu.cn":
+        raise DatasourceProviderError("FEISHU_REGISTRATION_RESPONSE_INVALID")
+    return {
+        "device_code": payload["device_code"],
+        "verification_uri_complete": uri,
+        "interval": min(60, max(5, int(payload.get("interval") or 5))),
+        "expires_in": min(600, max(1, int(payload.get("expires_in") or payload.get("expire_in") or 600))),
+    }
+
+
+def poll_self_registration(device_code, client=None):
+    """Poll one Feishu user-owned application registration attempt."""
+
+    if not isinstance(device_code, str) or not device_code:
+        raise DatasourceProviderError("FEISHU_DEVICE_CODE_INVALID")
+    http_client = client or httpx.Client(timeout=15, follow_redirects=False)
+    try:
+        response = http_client.post(
+            REGISTRATION_URL,
+            data={"action": "poll", "device_code": device_code},
+        )
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise DatasourceProviderError("FEISHU_REGISTRATION_FAILED") from exc
+    states = {
+        "authorization_pending": "pending", "slow_down": "slow_down",
+        "access_denied": "denied", "expired_token": "expired",
+        "invalid_grant": "expired",
+    }
+    if payload.get("error"):
+        return {"status": states.get(payload["error"], "error")}
+    app_id = payload.get("client_id")
+    app_secret = payload.get("client_secret")
+    if not isinstance(app_id, str) or not app_id.startswith("cli_") or not isinstance(app_secret, str):
+        raise DatasourceProviderError("FEISHU_REGISTRATION_RESPONSE_INVALID")
+    return {"status": "success", "app_id": app_id, "app_secret": app_secret}
 
 
 class FeishuDatasourceProvider(DatasourceProvider):

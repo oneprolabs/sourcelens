@@ -1,5 +1,6 @@
 """Feishu LensNode datasource runtime entrypoint."""
 
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -12,6 +13,7 @@ FEISHU_API_URL = "https://open.feishu.cn"
 RESOURCE_KINDS = frozenset(
     {"bitable", "docx", "folder", "sheet", "slides", "wiki"}
 )
+TOOL_KEYS = frozenset({"feishu_get_document"})
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{4,255}$")
 DATASOURCE_CONFIG_KEYS = frozenset(
     {
@@ -33,17 +35,38 @@ def http_origins(endpoint):
 
 
 def build_tool(definition, executor):
-    """Reject model tools for the datasource-only Plugin."""
-
-    del definition, executor
-    raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    """Build a read-only Feishu document tool."""
+    key = definition.get("key") if isinstance(definition, dict) else None
+    if key not in TOOL_KEYS:
+        raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    from langchain.tools import ToolRuntime, tool
+    def invoke(runtime: ToolRuntime, **arguments):
+        return executor(key, arguments, runtime)
+    return tool(key, description=definition["description"],
+                args_schema=definition["input_schema"])(invoke)
 
 
 def execute_tool(key, client, arguments, secret, endpoint, config):
-    """Reject model tools for the datasource-only Plugin."""
-
-    del key, client, arguments, secret, endpoint, config
-    raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    """Read an authorized Feishu document through the Open Platform API."""
+    if key not in TOOL_KEYS or _endpoint(endpoint) != FEISHU_API_URL:
+        raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    token = arguments.get("token") if isinstance(arguments, dict) else None
+    if not isinstance(token, str) or not TOKEN_PATTERN.fullmatch(token):
+        raise PluginRuntimeError("PLUGIN_CONFIG_INVALID")
+    access_token = secret.get("access_token") if isinstance(secret, dict) else secret
+    if not isinstance(access_token, str) or not access_token:
+        raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
+    response = client.get(
+        "/open-apis/docx/v1/documents/" + token + "/raw_content",
+        headers={"Authorization": "Bearer " + access_token},
+    )
+    if response.status_code >= 400:
+        raise PluginRuntimeError("FEISHU_DOCUMENT_READ_FAILED")
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise PluginRuntimeError("FEISHU_RESPONSE_INVALID") from exc
+    return {"token": token, "content": payload.get("data", {}).get("content", "")}
 
 
 def build_datasource_command(snapshot, material, trigger):

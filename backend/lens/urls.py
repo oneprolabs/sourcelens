@@ -34,6 +34,7 @@ from .views import (
     PluginExecutionSnapshotView,
     PluginInvocationViewSet,
     PluginToolExecutionSnapshotView,
+    PluginRPCView,
     PublicAssistantView,
     PublicSharedQAFileView,
     PublicSharedQAListView,
@@ -48,6 +49,8 @@ from .views import (
     admin_run_trajectory_stream_view,
     run_stream_view,
 )
+
+from .views.feishu_registration import FeishuSelfRegisterView
 
 router = DefaultRouter()
 router.register("assistants", AssistantViewSet, basename="lens-assistants")
@@ -105,6 +108,7 @@ router.register(
 )
 
 urlpatterns = [
+    path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),
     path(
         "plugin-runtime/tool-snapshots/",
         PluginToolExecutionSnapshotView.as_view(),

@@ -501,6 +501,22 @@ export async function validateConnection(uuid) {
   return unwrapResponse(response)
 }
 
+export async function startFeishuSelfRegister() {
+  const response = await api.post('/lens/plugin-runtime/feishu/rpc/', {
+    method: 'self_register.begin',
+    params: {}
+  })
+  return unwrapResponse(response)
+}
+
+export async function pollFeishuSelfRegister(deviceCode) {
+  const response = await api.post('/lens/plugin-runtime/feishu/rpc/', {
+    method: 'self_register.poll',
+    params: { device_code: deviceCode }
+  })
+  return unwrapResponse(response)
+}
+
 export async function validateConnectionDatasource(uuid, payload) {
   const response = await api.post(
     `/lens/admin/connections/${uuid}/validate-datasource/`,

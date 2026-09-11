@@ -387,6 +387,13 @@
           <FeishuConnectionGuide
             v-if="form.plugin_key === 'feishu'"
           />
+          <section v-if="form.plugin_key === 'feishu'" class="rounded-xl border border-brand-200 bg-brand-50 p-4">
+            <h3 class="text-sm font-semibold text-ink-900">Feishu app setup</h3>
+            <p class="mt-1 text-xs text-ink-600">Scan to create an app in your Feishu tenant.</p>
+            <BaseButton class="mt-3" size="sm" variant="outline" :loading="feishuRegistering" @click="startFeishuScan">Scan to create app</BaseButton>
+            <img v-if="feishuQr" :src="feishuQr" alt="Feishu registration QR code" class="mt-3 h-48 w-48 rounded border bg-white p-2" />
+            <p v-if="feishuRegisterStatus" class="mt-2 text-xs text-ink-600">{{ feishuRegisterStatus }}</p>
+          </section>
           <GitHubConnectionGuide
             v-if="form.plugin_key === 'github'"
           />
@@ -442,6 +449,10 @@ import {
   updateConnection,
   validateConnection
 } from '@/api/lens'
+import {
+  pollFeishuSelfRegister,
+  startFeishuSelfRegister
+} from '@/api/plugins'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
 import {
@@ -469,6 +480,10 @@ const connectionSearch = ref('')
 const connectionPluginFilter = ref('all')
 const connectionStatusFilter = ref('all')
 const pluginIconUrls = ref({})
+const feishuRegistering = ref(false)
+const feishuQr = ref('')
+const feishuRegisterStatus = ref('')
+let feishuPollTimer = null
 const connectionDetailOpen = ref(false)
 const detailConnection = ref(null)
 const connectionResourceOptions = computed(() => ({
@@ -725,6 +740,39 @@ function closeDrawer() {
   drawerOpen.value = false
   formError.value = ''
   connectionResourceCandidates.value = []
+  stopFeishuPolling()
+}
+
+async function startFeishuScan() {
+  stopFeishuPolling()
+  feishuRegistering.value = true
+  feishuRegisterStatus.value = 'Waiting for scan...'
+  try {
+    const result = await startFeishuSelfRegister()
+    feishuQr.value = result.qr_code_base64 || ''
+    const deviceCode = result.device_code
+    const interval = Math.max(5, Number(result.interval || 5)) * 1000
+    feishuPollTimer = window.setInterval(async () => {
+      const status = await pollFeishuSelfRegister(deviceCode)
+      feishuRegisterStatus.value = status.status || 'pending'
+      if (status.status === 'success') {
+        stopFeishuPolling()
+        showSuccess('Feishu app created')
+        await load()
+      }
+      if (['denied', 'expired', 'error'].includes(status.status)) stopFeishuPolling()
+    }, interval)
+  } catch (error) {
+    stopFeishuPolling()
+    feishuRegisterStatus.value = extractErrorMessage(error, 'Registration failed')
+  } finally {
+    feishuRegistering.value = false
+  }
+}
+
+function stopFeishuPolling() {
+  if (feishuPollTimer) window.clearInterval(feishuPollTimer)
+  feishuPollTimer = null
 }
 
 function updateConnectionForm(nextForm) {
