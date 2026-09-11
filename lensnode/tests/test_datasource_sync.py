@@ -497,6 +497,58 @@ def test_managed_workspace_upload_rejects_archive_path_traversal(tmp_path):
     assert not (tmp_path / "outside.txt").exists()
 
 
+def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
+    """Replacement uploads remove stale files and preserve external files."""
+
+    target = tmp_path / "documents"
+    target.mkdir()
+    (target / "external.txt").write_text("keep", encoding="utf-8")
+
+    def archive_bytes(entries):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as package:
+            for name, content in entries.items():
+                package.writestr(name, content)
+        return base64.b64encode(archive.getvalue()).decode()
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {
+            "status": "success",
+            "conversion_summary": {"converted": 0},
+        },
+    )
+    try:
+        upload_managed_workspace(
+            {
+                "target_path": str(target),
+                "filename": "package.zip",
+                "content_base64": archive_bytes(
+                    {"old.txt": b"old", "same.txt": b"before"}
+                ),
+            },
+            workspace_path=tmp_path,
+        )
+        upload_managed_workspace(
+            {
+                "target_path": str(target),
+                "filename": "package.zip",
+                "content_base64": archive_bytes(
+                    {"new.txt": b"new", "same.txt": b"after"}
+                ),
+            },
+            workspace_path=tmp_path,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert not (target / "old.txt").exists()
+    assert (target / "new.txt").read_bytes() == b"new"
+    assert (target / "same.txt").read_bytes() == b"after"
+    assert (target / "external.txt").read_text(encoding="utf-8") == "keep"
+
+
 def test_git_auth_environment_keeps_token_out_of_repository_url():
     """Git credentials are supplied through ephemeral process config."""
 

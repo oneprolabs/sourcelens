@@ -2118,6 +2118,8 @@
       "saveFailed": "Error al guardar",
       "uploadStarted": "Inicio de subida",
       "uploadFailed": "La subida falló",
+      "uploadZipOnly": "Las cargas del espacio gestionado solo admiten archivos ZIP.",
+      "uploadTooLarge": "El archivo ZIP debe tener como máximo 50 MB.",
       "archiveSuccess": "Asistente archivado",
       "archiveFailed": "Error al archivar asistente",
       "restoreSuccess": "Asistente restaurado",

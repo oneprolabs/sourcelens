@@ -37,8 +37,8 @@ DEFAULT_CONVERSION_BATCH_SIZE = 16
 DEFAULT_CONVERSION_MAX_FILES = 100000
 GIT_MAX_FILES = 100000
 GIT_MAX_BYTES = 1024 * 1024 * 1024
-UPLOAD_MAX_EXTRACTED_BYTES = 250 * 1024 * 1024
-UPLOAD_MAX_EXTRACTED_FILES = 10000
+UPLOAD_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
+UPLOAD_MAX_EXTRACTED_FILES = 300
 DEFAULT_DATASOURCE_SYNC_WORKERS = 4
 FEISHU_EXPORT_PENDING_STATUSES = {1, 2}
 FEISHU_EXPORT_SUCCESS_STATUS = 0
@@ -685,15 +685,33 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     except (ValueError, TypeError) as exc:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_CONTENT_INVALID") from exc
     archive_path = target / filename
-    if archive_path.exists():
-        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_EXISTS")
-    archive_path.write_bytes(content)
+    staging = target / ".sourcelens-upload-staging.sourcelens"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir()
+    staged_archive = staging / filename
+    staged_archive.write_bytes(content)
     extracted = []
     try:
         if filename.lower().endswith(".zip"):
-            extracted = _extract_zip_archive(archive_path, target)
+            extracted = _extract_zip_archive(staged_archive, staging)
         elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
-            extracted = _extract_tar_archive(archive_path, target)
+            extracted = _extract_tar_archive(staged_archive, staging)
+        previous = target / ".sourcelens-uploaded.sourcelens"
+        if previous.exists():
+            for path in previous.read_text(encoding="utf-8").splitlines():
+                candidate = (target / path).resolve()
+                if candidate.is_file():
+                    candidate.unlink()
+        members = [filename] + [
+            path.relative_to(staging).as_posix() for path in extracted
+        ]
+        for member in members:
+            source = staging / member
+            destination = target / member
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(destination)
+        previous.write_text("\n".join(members), encoding="utf-8")
         result = convert_managed_workspace(
             {
                 **command,
@@ -705,10 +723,10 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
             workspace_path=workspace_path,
         )
     except Exception:
-        archive_path.unlink(missing_ok=True)
-        for path in reversed(extracted):
-            path.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     result["uploaded"] = filename
     result["extracted_files"] = [str(path) for path in extracted]
     return result

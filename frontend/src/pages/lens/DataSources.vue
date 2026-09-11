@@ -513,20 +513,7 @@ const selectedDataSource = ref(null)
 const uploadInput = ref(null)
 const uploadDataSource = ref(null)
 const uploadAccept = [
-  '.pdf',
-  '.docx',
-  '.pptx',
-  '.xlsx',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.bmp',
-  '.zip',
-  '.tar',
-  '.gz',
-  '.tgz'
+  '.zip'
 ].join(',')
 
 const datasourceConfig = ref({})
@@ -2169,6 +2156,16 @@ async function uploadFile(event) {
   const row = uploadDataSource.value
   event.target.value = ''
   if (!file || !row) return
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    showError(t('lensAdmin.messages.uploadZipOnly'))
+    uploadDataSource.value = null
+    return
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    showError(t('lensAdmin.messages.uploadTooLarge'))
+    uploadDataSource.value = null
+    return
+  }
   try {
     const result = await uploadDataSourceFile(row.uuid, file)
     showSuccess(

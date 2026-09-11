@@ -274,6 +274,13 @@
           </BaseSelect>
         </FormRow>
       </template>
+      <template v-else-if="isManagedWorkspace">
+        <div
+          class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-800"
+        >
+          {{ t('lensAdmin.datasourceWizard.managedWorkspaceDesc') }}
+        </div>
+      </template>
       <template v-else>
         <FormRow :label="t('lensAdmin.fields.credential')" required>
           <div class="flex flex-col gap-2">
@@ -1673,6 +1680,9 @@ const canCreateTargetDirectory = computed(
 )
 
 const canTestConnection = computed(() => {
+  if (isManagedWorkspace.value) {
+    return false
+  }
   if (isPluginSourceType(props.form.source_type)) {
     return !!props.form.connection_uuid
   }
@@ -1737,6 +1747,9 @@ const canProceedWizard = computed(() => {
     return !!props.form.lensnode_uuid
   }
   if (activeStepKey.value === 'connection') {
+    if (isManagedWorkspace.value) {
+      return true
+    }
     if (props.connectionResult?.status !== 'success') {
       return false
     }
@@ -2186,6 +2199,7 @@ function testConnectionIfVisible() {
     activeStepKey.value === 'connection'
   const legacyConnectionStep =
     !isPluginSourceType(props.form.source_type) &&
+    !isManagedWorkspace.value &&
     activeStepKey.value === 'sync'
   if (
     props.show &&

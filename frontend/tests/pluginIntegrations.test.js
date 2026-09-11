@@ -468,6 +468,19 @@ test('datasource wizard groups creation into three steps', async () => {
   assert.doesNotMatch(drawer, /key: 'conversion'/)
 })
 
+test('managed workspace setup does not request a credential', async () => {
+  const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
+
+  assert.match(drawer, /v-else-if="isManagedWorkspace"/)
+  assert.match(drawer, /managedWorkspaceDesc/)
+  assert.match(
+    drawer,
+    /if \(isManagedWorkspace\.value\) \{\s*return true/)
+  assert.match(
+    drawer,
+    /if \(isManagedWorkspace\.value\) \{\s*return false/)
+})
+
 test('datasource target path check follows the semantic sync step', async () => {
   const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
 
