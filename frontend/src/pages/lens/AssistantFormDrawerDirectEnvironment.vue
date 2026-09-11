@@ -286,32 +286,36 @@
         </p>
       </div>
       <template v-if="form.mode === 'direct'">
-        <fieldset class="space-y-3 rounded-md border border-line p-3">
-          <legend class="px-1 text-sm font-medium text-ink-700">{{ t('lensAdmin.datasourceSelection.title') }}</legend>
-          <BaseSelect
-            v-model="form.settings.datasource_routing"
-            :options="['auto', 'selected', 'all'].map(value => ({
-              value, label: t(`lensAdmin.datasourceSelection.${value}`)
-            }))"
-          />
-          <p class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.scope') }}</p>
-          <div v-for="source in datasourceOptions" :key="source.uuid" class="space-y-2">
-            <label class="flex items-center gap-2 text-sm">
-              <input type="checkbox" :checked="hasSource(source)"
-                :disabled="saving || source.status !== 'active'"
-                @change="selectSource(source, null, $event.target.checked)" />
-              <span>{{ source.name }}</span>
+        <fieldset class="datasource-picker space-y-4 rounded-xl border border-line bg-surface p-4">
+          <div class="flex items-center justify-between gap-3">
+            <legend class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.datasourceSelection.title') }}</legend>
+            <span class="text-xs text-ink-500">{{ selectedDatasourceCount }} {{ t('lensAdmin.datasourceSelection.selected') }}</span>
+          </div>
+          <div class="grid grid-cols-3 gap-1 rounded-lg bg-surface-sunken p-1" role="radiogroup">
+            <label v-for="value in ['auto', 'selected', 'all']" :key="value" class="cursor-pointer rounded-md px-2 py-2 text-center text-xs font-medium transition-colors" :class="form.settings.datasource_routing === value ? 'bg-surface text-brand-700 shadow-sm' : 'text-ink-500 hover:text-ink-700'">
+              <input v-model="form.settings.datasource_routing" type="radio" :value="value" class="sr-only" />
+              {{ t(`lensAdmin.datasourceSelection.${value}`) }}
             </label>
-            <div v-if="source.items?.length > 1" class="ml-6 space-y-2">
-              <label v-for="item in source.items" :key="item.uuid" class="flex items-center gap-2 text-sm text-ink-600">
-                <input type="checkbox" :checked="hasSource(source, item)"
-                  :disabled="saving || source.status !== 'active' || item.status !== 'active'"
-                  @change="selectSource(source, item, $event.target.checked)" />
-                <span>{{ item.name }}</span>
+          </div>
+          <p class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.scope') }}</p>
+          <div v-if="datasourceOptions.length" class="grid gap-2 sm:grid-cols-2">
+            <div v-for="source in datasourceOptions" :key="source.uuid" class="datasource-card" :class="{ 'datasource-card-selected': hasSource(source), 'datasource-card-disabled': saving || source.status !== 'active' }">
+              <label class="flex cursor-pointer items-start gap-3 p-3">
+                <input type="checkbox" :checked="hasSource(source)" :disabled="saving || source.status !== 'active'" class="mt-0.5 h-4 w-4 rounded border-line text-brand-600" @change="selectSource(source, null, $event.target.checked)" />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-sm font-medium text-ink-800">{{ source.name }}</span>
+                  <span class="mt-1 block text-xs text-ink-500">{{ source.items?.length || 0 }} {{ t('lensAdmin.datasourceSelection.resources') }}</span>
+                </span>
               </label>
+              <div v-if="source.items?.length > 1 && hasSource(source)" class="border-t border-line bg-surface-sunken px-3 py-2">
+                <label v-for="item in source.items" :key="item.uuid" class="flex items-center gap-2 py-1 text-xs text-ink-600">
+                  <input type="checkbox" :checked="hasSource(source, item)" :disabled="saving || source.status !== 'active' || item.status !== 'active'" class="h-3.5 w-3.5 rounded border-line text-brand-600" @change="selectSource(source, item, $event.target.checked)" />
+                  <span class="truncate">{{ item.name }}</span>
+                </label>
+              </div>
             </div>
           </div>
-          <p v-if="!datasourceOptions.length" class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.empty') }}</p>
+          <p v-else class="rounded-lg bg-surface-sunken p-4 text-center text-sm text-ink-500">{{ t('lensAdmin.datasourceSelection.empty') }}</p>
         </fieldset>
         <div v-if="requiresWorkspace && !form.datasource_bindings?.length && (!form.settings.datasource_routing || form.settings.datasource_routing === 'selected')">
           <div class="mb-1 flex items-center justify-between">
@@ -1548,6 +1552,8 @@ const assistantTypeOptions = computed(() => [
     label: t('lensAdmin.assistantTypes.knowledgeQa')
   }
 ])
+
+const selectedDatasourceCount = computed(() => (props.form.datasource_bindings || []).length)
 
 const isGeneralChatTask = computed(
   () => props.form.capability === 'general_chat'
