@@ -1077,10 +1077,6 @@ class AssistantSerializer(serializers.ModelSerializer):
                 Assistant.Capability.KNOWLEDGE_QA,
             }
         )
-        if requires_workspace and lensnode is None:
-            raise serializers.ValidationError(
-                {"lensnode_uuid": "A LensNode is required."}
-            )
         if lensnode is not None and capability not in _task_names(lensnode):
             raise serializers.ValidationError(
                 {"capability": "capability is not available on LensNode"}
@@ -1997,20 +1993,21 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
-        try:
-            validate_datasource_lensnode(lensnode)
-            attrs["target_path"] = normalize_workspace_target_path(
-                target_path,
-                lensnode.workspace_path,
-            )
-            _validate_unique_datasource_target_path(
-                attrs["target_path"],
-                lensnode,
-                self.instance,
-                source_type,
-            )
-        except (DataSourcePathError, DataSourceDispatchError) as exc:
-            raise serializers.ValidationError({"target_path": str(exc)})
+        if lensnode is not None:
+            try:
+                validate_datasource_lensnode(lensnode)
+                attrs["target_path"] = normalize_workspace_target_path(
+                    target_path,
+                    lensnode.workspace_path,
+                )
+                _validate_unique_datasource_target_path(
+                    attrs["target_path"],
+                    lensnode,
+                    self.instance,
+                    source_type,
+                )
+            except (DataSourcePathError, DataSourceDispatchError) as exc:
+                raise serializers.ValidationError({"target_path": str(exc)})
 
         credential = (
             attrs["credential"]

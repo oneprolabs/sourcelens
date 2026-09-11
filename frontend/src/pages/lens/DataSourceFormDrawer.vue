@@ -538,8 +538,8 @@
       <p class="text-sm text-ink-500">
         {{ t('lensAdmin.datasourceWizard.step3Desc') }}
       </p>
-      <FormRow :label="t('lensAdmin.fields.lensnode')" required>
-        <BaseSelect v-model="form.lensnode_uuid" required>
+      <FormRow v-if="false" :label="t('lensAdmin.fields.lensnode')">
+        <BaseSelect v-model="form.lensnode_uuid">
           <option value="">
             {{ t('lensAdmin.placeholders.selectLensNode') }}
           </option>
@@ -555,7 +555,7 @@
           {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
         </p>
       </FormRow>
-      <div
+      <div v-if="false"
         v-if="!onlineLensNodes.length"
         class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
       >
@@ -1762,9 +1762,7 @@ const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'basic') {
     return !!props.form.name?.trim() && !!props.form.source_type
   }
-  if (activeStepKey.value === 'node') {
-    return !!props.form.lensnode_uuid
-  }
+  if (activeStepKey.value === 'node') return true
   if (activeStepKey.value === 'connection') {
     if (isManagedWorkspace.value) {
       return true
