@@ -400,6 +400,8 @@ class DataSourceViewSet(BaseAdminViewSet):
             return
         if datasource.status == DataSource.Status.DISABLED:
             return
+        if datasource.lensnode_id is None:
+            return
         task_id = uuid_mod.uuid4().hex
         self._initial_sync_task_id = task_id
         user = self.request.user

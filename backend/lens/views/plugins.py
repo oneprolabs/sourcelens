@@ -170,6 +170,15 @@ def _resource_option_selection(connection, resource, request):
     if not value and provider_dependency != dependency:
         value = request.query_params.get(provider_dependency)
     if not value:
+        candidates = [
+            item
+            for key, item in request.query_params.items()
+            if key not in {"resource", dependency, provider_dependency}
+            and str(item or "").strip()
+        ]
+        if len(candidates) == 1:
+            value = candidates[0]
+    if not value:
         raise DatasourceProviderError("resource dependency is required")
     return {provider_dependency: value}
 
