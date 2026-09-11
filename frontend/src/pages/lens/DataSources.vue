@@ -245,10 +245,10 @@
                   <p
                     class="min-w-0 flex-1 truncate font-mono text-xs font-medium text-ink-800"
                     :title="
-                      dataSourceRepositoryUrl(row, connectionEndpoint(row))
+                      dataSourceRepository(row)
                     "
                   >
-                    {{ dataSourceRepositoryUrl(row, connectionEndpoint(row)) }}
+                    {{ dataSourceRepository(row) }}
                   </p>
                   <span
                     v-if="
@@ -452,7 +452,7 @@ import { EMPTY_VALUE as emptyValue, normalizeList } from './adminHelpers'
 import {
   dataSourceBranch,
   dataSourceRepositories,
-  dataSourceRepositoryUrl,
+  dataSourceRepository,
   isDataSourceEnabled,
   isOrganizationDataSource,
   isDataSourceSyncing,
