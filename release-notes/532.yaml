@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Fixed Feishu datasource setup getting stuck after entering or changing resource URLs.
+zh-CN: 修复飞书数据源在输入或修改资源地址后无法继续下一步的问题。
