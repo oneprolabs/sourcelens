@@ -11,6 +11,27 @@ class SessionWorkspaceError(RuntimeError):
     """Raised when a session workspace cannot be built safely."""
 
 
+def cleanup_session_workspace(session_uuid):
+    """Remove one session workspace without following symlinks."""
+
+    root = Path(getattr(settings, "LENS_SESSION_WORKSPACE_ROOT", ""))
+    if not root:
+        root = Path(settings.MEDIA_ROOT) / "sessions"
+    workspace = (root / str(session_uuid)).resolve()
+    base = root.resolve()
+    if base not in workspace.parents:
+        raise SessionWorkspaceError("SESSION_WORKSPACE_PATH_INVALID")
+    if not workspace.exists():
+        return False
+    for path in sorted(workspace.rglob("*"), reverse=True):
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            path.rmdir()
+    workspace.rmdir()
+    return True
+
+
 def build_session_workspace(session):
     """Create datasource symlinks and an immutable manifest for a session."""
 
