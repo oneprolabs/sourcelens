@@ -49,9 +49,8 @@
           </div>
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-ink-600">
-              {{ filteredTreeItemCount(field) }} /
+              {{ resourceCountLabel }}：{{ filteredTreeItemCount(field) }} /
               {{ optionsFor(field).length }}
-              {{ resourceCountLabel }}
             </span>
             <span
               class="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
