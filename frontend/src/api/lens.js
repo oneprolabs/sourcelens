@@ -421,6 +421,11 @@ export async function listDataSources(params = {}) {
   return Object.keys(params || {}).length ? payload : unwrapList(payload)
 }
 
+export async function listDataSourceItems(uuid) {
+  const response = await api.get(`/lens/admin/datasources/${uuid}/items/`)
+  return unwrapList(unwrapResponse(response))
+}
+
 export async function listDataSourceSyncStatuses(uuids) {
   const response = await api.get('/lens/admin/datasources/sync-statuses/', {
     params: { uuids: (uuids || []).join(',') }

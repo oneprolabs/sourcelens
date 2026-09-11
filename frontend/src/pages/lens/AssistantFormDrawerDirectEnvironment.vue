@@ -1207,6 +1207,7 @@ const props = defineProps({
   pluginManifests: { type: Object, default: () => ({}) },
   pluginIconUrls: { type: Object, default: () => ({}) },
   llmConfigOptions: { type: Array, default: () => [] },
+  datasourceOptions: { type: Array, default: () => [] },
   saving: Boolean,
   formError: { type: String, default: '' },
   refreshingDirs: Boolean

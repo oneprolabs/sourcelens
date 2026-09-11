@@ -301,6 +301,7 @@
         :plugin-manifests="pluginManifests"
         :plugin-icon-urls="pluginIconUrls"
         :llm-config-options="llmConfigOptions"
+        :datasource-options="datasourceOptions"
         :saving="saving"
         :form-error="formError"
         :refreshing-dirs="refreshingDirs"
@@ -368,6 +369,7 @@ import {
   getPluginIcon,
   getPluginManifest,
   listAssistants,
+  listDataSources,
   listConnections,
   listGlobalSettings,
   listLensNodes,
@@ -428,6 +430,7 @@ const pluginManifests = ref({})
 const pluginIconUrls = ref({})
 const globalSettings = ref([])
 const llmConfigOptions = ref([])
+const datasourceOptions = ref([])
 let formResourcesPromise = null
 let globalSettingsPromise = null
 
