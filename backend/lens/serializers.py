@@ -1884,6 +1884,9 @@ class DataSourceItemSerializer(serializers.ModelSerializer):
             "status", "current_version", "created_at", "updated_at",
         )
         read_only_fields = ("uuid", "created_at", "updated_at")
+        extra_kwargs = {
+            "storage_key": {"read_only": True},
+        }
 
 
 class DataSourceVersionSerializer(serializers.ModelSerializer):
