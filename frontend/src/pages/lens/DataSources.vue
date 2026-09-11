@@ -1780,7 +1780,13 @@ function feishuDatasourceAccessError(error) {
 async function loadPluginResourceOptions({ resource, selectedValues }) {
   const connectionUuid = form.value.connection_uuid
   const selection = selectedValues || {}
-  if (!connectionUuid || !resource || !Object.keys(selection).length) return
+  if (
+    !connectionUuid ||
+    !resource ||
+    !Object.values(selection).some((value) => String(value || '').trim())
+  ) {
+    return
+  }
   const requestId = ++pluginResourceRequestId
   loadingPluginResourceOptions.value = resource
   try {
