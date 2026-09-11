@@ -7,6 +7,8 @@
     @pointermove="handleMindmapPointerMove"
     @pointerup="handleMindmapPointerUp"
     @pointercancel="handleMindmapPointerUp"
+    @lostpointercapture="handleMindmapPointerUp"
+    @wheel="handleMindmapWheel"
     @keydown="handleMarkdownKeydown"
   ></div>
 </template>
@@ -50,6 +52,8 @@ const copyResetTimers = new WeakMap()
 const MINDMAP_MAX_ZOOM = 2
 const MINDMAP_MIN_ZOOM = 0.5
 const MINDMAP_ZOOM_STEP = 0.15
+const mindmapPointers = new WeakMap()
+const mindmapState = new WeakMap()
 
 const languageLabels = {
   bash: 'Bash',
@@ -362,6 +366,16 @@ async function handleMarkdownClick(event) {
 function handleMindmapPointerDown(event) {
   const canvas = event.target.closest('.mindmap-canvas')
   if (!canvas || event.target.closest('button, [data-mindmap-toggle]')) return
+  const pointers = mindmapPointers.get(canvas) || new Map()
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  mindmapPointers.set(canvas, pointers)
+  if (pointers.size > 1) {
+    canvas.dataset.dragging = 'false'
+    const [a, b] = [...pointers.values()]
+    canvas.dataset.pinchDistance = String(Math.hypot(a.x - b.x, a.y - b.y))
+    return
+  }
+  mindmapState.set(canvas, { x: event.clientX, y: event.clientY, left: canvas.scrollLeft, top: canvas.scrollTop })
   canvas.dataset.dragging = 'true'
   canvas.dataset.dragX = String(event.clientX)
   canvas.dataset.dragY = String(event.clientY)
@@ -372,7 +386,20 @@ function handleMindmapPointerDown(event) {
 
 function handleMindmapPointerMove(event) {
   const canvas = event.target.closest('.mindmap-canvas')
-  if (!canvas || canvas.dataset.dragging !== 'true') return
+  if (!canvas) return
+  const pointers = mindmapPointers.get(canvas)
+  if (pointers?.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  if (pointers?.size === 2) {
+    const [a, b] = [...pointers.values()]
+    const distance = Math.hypot(a.x - b.x, a.y - b.y)
+    const previous = Number(canvas.dataset.pinchDistance || distance)
+    const mindmap = canvas.closest('[data-mindmap-root]')
+    const rect = canvas.getBoundingClientRect()
+    setMindmapZoom(mindmap, Number(mindmap.dataset.mindmapZoom || 1) * distance / previous, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top)
+    canvas.dataset.pinchDistance = String(distance)
+    return
+  }
+  if (canvas.dataset.dragging !== 'true') return
   canvas.scrollLeft =
     Number(canvas.dataset.scrollLeft) -
     (event.clientX - Number(canvas.dataset.dragX))
@@ -384,8 +411,26 @@ function handleMindmapPointerMove(event) {
 function handleMindmapPointerUp(event) {
   const canvas = event.target.closest('.mindmap-canvas')
   if (!canvas) return
-  canvas.dataset.dragging = 'false'
+  const pointers = mindmapPointers.get(canvas)
+  pointers?.delete(event.pointerId)
+  if (pointers?.size !== 2) delete canvas.dataset.pinchDistance
+  if (pointers?.size === 1) {
+    const [point] = pointers.values()
+    canvas.dataset.dragging = 'true'
+    canvas.dataset.dragX = String(point.x)
+    canvas.dataset.dragY = String(point.y)
+    canvas.dataset.scrollLeft = String(canvas.scrollLeft)
+    canvas.dataset.scrollTop = String(canvas.scrollTop)
+  } else canvas.dataset.dragging = 'false'
   canvas.releasePointerCapture?.(event.pointerId)
+}
+
+function handleMindmapWheel(event) {
+  const canvas = event.target.closest('.mindmap-canvas')
+  if (!canvas || (!event.ctrlKey && !event.metaKey)) return
+  event.preventDefault()
+  const mindmap = canvas.closest('[data-mindmap-root]')
+  zoomMindmap(mindmap, event.deltaY < 0 ? 1 : -1)
 }
 
 function handleMarkdownKeydown(event) {
@@ -484,11 +529,12 @@ function clampMindmapZoom(value) {
   return Math.min(MINDMAP_MAX_ZOOM, Math.max(MINDMAP_MIN_ZOOM, value))
 }
 
-function setMindmapZoom(mindmap, zoom) {
+function setMindmapZoom(mindmap, zoom, focusX, focusY) {
   const svg = mindmap.querySelector('.mindmap-svg')
   const canvas = mindmap.querySelector('.mindmap-canvas')
   if (!svg || !canvas) return
   const normalizedZoom = clampMindmapZoom(zoom)
+  const currentZoom = Number(mindmap.dataset.mindmapZoom || 1)
   const baseWidth = Number(svg.dataset.mindmapWidth) || 560
   const baseHeight = Number(svg.dataset.mindmapHeight) || 180
   const viewportWidth = canvas.clientWidth || baseWidth
@@ -496,6 +542,10 @@ function setMindmapZoom(mindmap, zoom) {
   mindmap.dataset.mindmapZoom = String(normalizedZoom)
   svg.style.width = `${Math.max(viewportWidth, baseWidth * normalizedZoom)}px`
   svg.style.height = `${Math.max(180, baseHeight * normalizedZoom)}px`
+  if (focusX != null) {
+    canvas.scrollLeft = (canvas.scrollLeft + focusX) * normalizedZoom / currentZoom - focusX
+    canvas.scrollTop = (canvas.scrollTop + focusY) * normalizedZoom / currentZoom - focusY
+  }
 }
 </script>
 

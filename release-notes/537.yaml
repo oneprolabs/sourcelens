@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Improved mindmap canvas zoom interactions for touch and desktop devices.
+zh-CN: 优化思维导图画布交互，支持移动端双指缩放和桌面端滚轮缩放。
