@@ -44,6 +44,7 @@ from .models import (
     Connection,
     DataSource,
     DataSourceItem,
+    DataSourceVersion,
     AssistantDataSourceBinding,
     DataSourceCredential,
     EnvironmentVariableSet,
@@ -1887,6 +1888,18 @@ class DataSourceItemSerializer(serializers.ModelSerializer):
             "status", "current_version", "created_at", "updated_at",
         )
         read_only_fields = ("uuid", "created_at", "updated_at")
+
+
+class DataSourceVersionSerializer(serializers.ModelSerializer):
+    """Serialize immutable processed datasource versions."""
+
+    class Meta:
+        model = DataSourceVersion
+        fields = (
+            "uuid", "version", "storage_key", "status", "checksum",
+            "created_at", "updated_at",
+        )
+        read_only_fields = fields
 
 
 class DataSourceSerializer(serializers.ModelSerializer):

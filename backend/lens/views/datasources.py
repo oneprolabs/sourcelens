@@ -21,6 +21,7 @@ from lens.models import (
     CredentialLease,
     DataSource,
     DataSourceItem,
+    DataSourceVersion,
     ExecutionSnapshot,
     PluginInvocation,
     ScheduledTask,
@@ -40,6 +41,7 @@ from lens.serializers import (
     DataSourceConversionRequestSerializer,
     DataSourceSerializer,
     DataSourceItemSerializer,
+    DataSourceVersionSerializer,
 )
 from lens.services import (
     cancel_datasource_conversion_on_lensnode,
@@ -123,6 +125,17 @@ class DataSourceViewSet(BaseAdminViewSet):
             import shutil
             shutil.rmtree(storage)
         return Response(status=204)
+
+    @action(detail=True, methods=["get"], url_path="items/(?P<item_uuid>[^/.]+)/versions")
+    def versions(self, request, pk=None, item_uuid=None):
+        """List immutable processed versions for one child resource."""
+        datasource = self.get_object()
+        try:
+            item = datasource.items.get(uuid=item_uuid)
+        except DataSourceItem.DoesNotExist:
+            return Response({"detail": "Item not found"}, status=404)
+        rows = item.versions.order_by("-created_at")
+        return Response(DataSourceVersionSerializer(rows, many=True).data)
 
     @staticmethod
     def _sync_serializer_context(datasources):
