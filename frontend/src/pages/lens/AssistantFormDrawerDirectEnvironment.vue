@@ -205,20 +205,30 @@
       <div v-if="form.mode === 'direct'" class="space-y-4">
         <div class="grid gap-4 md:grid-cols-2">
           <FormRow :label="t('lensAdmin.fields.type')">
-            <BaseSelect v-model="form.capability" required>
-              <option value="" disabled>
-                {{ t('lensAdmin.placeholders.selectType') }}
-              </option>
-              <option value="general_chat">
-                {{ t('lensAdmin.assistantTypes.generalChat') }}
-              </option>
-              <option value="code_analysis">
-                {{ t('lensAdmin.assistantTypes.codeAnalysis') }}
-              </option>
-              <option value="knowledge_qa">
-                {{ t('lensAdmin.assistantTypes.knowledgeQa') }}
-              </option>
-            </BaseSelect>
+            <div class="grid gap-2 sm:grid-cols-3" role="radiogroup">
+              <label
+                v-for="type in assistantTypeOptions"
+                :key="type.value"
+                class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors"
+                :class="form.capability === type.value
+                  ? 'border-brand-600 bg-brand-50 text-brand-700'
+                  : 'border-line bg-surface text-ink-600 hover:border-brand-300'"
+              >
+                <input
+                  v-model="form.capability"
+                  type="radio"
+                  :value="type.value"
+                  class="sr-only"
+                />
+                <span
+                  class="h-3 w-3 rounded-full border-2"
+                  :class="form.capability === type.value
+                    ? 'border-brand-600 bg-brand-600'
+                    : 'border-line'"
+                />
+                <span>{{ type.label }}</span>
+              </label>
+            </div>
           </FormRow>
           <FormRow
             v-if="requiresNodeSelection"
@@ -1523,6 +1533,21 @@ const canProceedWizard = computed(() => {
   }
   return true
 })
+
+const assistantTypeOptions = computed(() => [
+  {
+    value: 'general_chat',
+    label: t('lensAdmin.assistantTypes.generalChat')
+  },
+  {
+    value: 'code_analysis',
+    label: t('lensAdmin.assistantTypes.codeAnalysis')
+  },
+  {
+    value: 'knowledge_qa',
+    label: t('lensAdmin.assistantTypes.knowledgeQa')
+  }
+])
 
 const isGeneralChatTask = computed(
   () => props.form.capability === 'general_chat'
