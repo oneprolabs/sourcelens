@@ -107,7 +107,12 @@
     "documentUnsupported": "The selected execution node does not support document attachments.",
     "documentStateUnavailable": "The document attachment state is unavailable. Please retry.",
     "documentUnavailable": "The document attachment is unavailable. Please upload it again.",
-    "attachmentUnreadable": "The attachment could not be read. Please upload it again."
+    "attachmentUnreadable": "The attachment could not be read. Please upload it again.",
+    "datasourceNoMatch": "No matching datasource. Include a project or repository name.",
+    "datasourceSyncFailed": "Datasource sync failed. Check the datasource before retrying.",
+    "datasourceSyncTimeout": "Timed out waiting for datasource sync. Retry later.",
+    "datasourceUploadRequired": "Upload files to this datasource before asking.",
+    "datasourceDisabled": "The selected datasource is disabled. Contact an administrator."
   },
   "lens": {
     "share": {
@@ -1447,5 +1452,16 @@
       "valueLabel": "Config (JSON)",
       "invalidJson": "Please enter valid JSON"
     }
-  }
+  },
+  "lensAdmin": {
+    "datasourceSelection": {
+      "title": "Data access",
+      "auto": "Automatic matching",
+      "selected": "Selected sources",
+      "all": "All sources",
+      "scope": "Select sources to limit access. In automatic or all mode, no selection allows all active sources.",
+      "empty": "No data sources"
+    }
+  },
+  "datasourceWaiting": "Preparing data sources. The answer will start after synchronization."
 }

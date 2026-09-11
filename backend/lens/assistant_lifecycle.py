@@ -4,7 +4,6 @@ from django.core.cache import cache
 from django.db import transaction
 
 from .models import Assistant, GlobalSetting, Session
-from .datasource_snapshots import capture_session_datasources
 
 
 SMART_COLLABORATION_SLUG = "__system-smart-collaboration__"
@@ -88,7 +87,6 @@ def create_assistant_session(assistant_uuid, user, title=""):
                 else Session.TitleGenerationStatus.PENDING
             ),
         )
-        capture_session_datasources(session, assistant)
         return session
     if not normalized_title:
         existing = _find_reusable_empty_session(assistant, user)
@@ -105,7 +103,6 @@ def create_assistant_session(assistant_uuid, user, title=""):
             else Session.TitleGenerationStatus.PENDING
         ),
     )
-    capture_session_datasources(session, assistant)
     return session
 
 

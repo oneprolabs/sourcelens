@@ -1181,6 +1181,18 @@ def create_execution_run(
     )
     input_message.run = run
     input_message.save(update_fields=["run"])
+    if not session.datasource_snapshots.exists():
+        from .datasource_routing import (
+            DatasourceRoutingError,
+            selected_bindings,
+        )
+        from .datasource_snapshots import capture_session_datasources
+
+        try:
+            bindings = selected_bindings(assistant, question)
+        except DatasourceRoutingError as exc:
+            raise LensNodeDispatchError(str(exc)) from exc
+        capture_session_datasources(session, assistant, bindings=bindings)
     create_run_execution_snapshot(
         run,
         answer_language=answer_language,
@@ -2275,7 +2287,6 @@ def create_run_execution_snapshot(
             loaded_plugins=loaded_plugins,
         )
     )
-    build_session_workspace(run.session)
     execution, _ = RunExecution.objects.get_or_create(
         run=run,
         defaults={

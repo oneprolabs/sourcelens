@@ -89,13 +89,13 @@
             class="assistants-table-wrap overflow-x-auto rounded-lg border border-line bg-surface"
           >
             <table
-              class="min-w-[72rem] w-full table-fixed divide-y divide-line md:min-w-0"
+              class="min-w-[72rem] w-full table-fixed divide-y divide-line"
             >
               <colgroup>
                 <col style="width: 26%" />
                 <col style="width: 12%" />
                 <col style="width: 10%" />
-                <col style="width: 8%" />
+                <col style="width: 10rem" />
                 <col style="width: 10%" />
                 <col style="width: 8%" />
                 <col style="width: 12%" />
@@ -737,7 +737,7 @@ function defaultForm() {
     access_group_ids: [],
     access_user_ids: [],
     access_grant_options: [],
-    settings: {},
+    settings: { datasource_routing: 'auto' },
     enable_codegraph: true,
     status: 'active',
     mode: 'direct',
@@ -828,7 +828,7 @@ function formFromRow(row) {
       .filter((g) => g.type === 'user')
       .map((g) => g.id),
     access_grant_options: row.access_grants || [],
-    settings: { ...(row.settings || {}) },
+    settings: { datasource_routing: 'selected', ...(row.settings || {}) },
     enable_codegraph: row.settings?.features?.codegraph !== false,
     status: row.status || 'active'
   }

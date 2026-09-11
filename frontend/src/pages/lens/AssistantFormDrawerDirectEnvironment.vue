@@ -278,6 +278,13 @@
       <template v-if="form.mode === 'direct'">
         <fieldset class="space-y-3 rounded-md border border-line p-3">
           <legend class="px-1 text-sm font-medium text-ink-700">{{ t('lensAdmin.datasourceSelection.title') }}</legend>
+          <BaseSelect
+            v-model="form.settings.datasource_routing"
+            :options="['auto', 'selected', 'all'].map(value => ({
+              value, label: t(`lensAdmin.datasourceSelection.${value}`)
+            }))"
+          />
+          <p class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.scope') }}</p>
           <div v-for="source in datasourceOptions" :key="source.uuid" class="space-y-2">
             <label class="flex items-center gap-2 text-sm">
               <input type="checkbox" :checked="hasSource(source)"
@@ -296,7 +303,7 @@
           </div>
           <p v-if="!datasourceOptions.length" class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.empty') }}</p>
         </fieldset>
-        <div v-if="requiresWorkspace && !form.datasource_bindings?.length">
+        <div v-if="requiresWorkspace && !form.datasource_bindings?.length && (!form.settings.datasource_routing || form.settings.datasource_routing === 'selected')">
           <div class="mb-1 flex items-center justify-between">
             <span class="text-sm font-medium text-ink-700">{{
               t('lensAdmin.fields.selectedDirs')
@@ -1497,7 +1504,7 @@ const canProceedWizard = computed(() => {
     }
     if (!props.form.capability) return false
     if (isGeneralChatTask.value) return true
-    return !!props.form.lensnode_uuid && (selectedDirs().length > 0 || props.form.datasource_bindings?.length > 0)
+    return (['auto', 'all'].includes(props.form.settings?.datasource_routing) || selectedDirs().length > 0 || props.form.datasource_bindings?.length > 0)
   }
   if (wizardStep.value === 3) {
     if (isSmartMode.value) return true
@@ -1529,7 +1536,7 @@ const requiresWorkspace = computed(() =>
   ['code_analysis', 'knowledge_qa'].includes(props.form.capability)
 )
 
-const requiresNodeSelection = computed(() => !!props.form.capability)
+const requiresNodeSelection = computed(() => false)
 
 watch(
   () => props.form.capability,

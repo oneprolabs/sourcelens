@@ -11,12 +11,13 @@ class DatasourceSnapshotError(RuntimeError):
     """Raised when a required datasource has no ready version."""
 
 
-def capture_session_datasources(session, assistant):
+def capture_session_datasources(session, assistant, bindings=None):
     """Expand assistant bindings into a reproducible session snapshot."""
 
-    bindings = AssistantDataSourceBinding.objects.filter(
-        assistant=assistant
-    ).select_related("datasource", "item")
+    if bindings is None:
+        bindings = AssistantDataSourceBinding.objects.filter(
+            assistant=assistant
+        ).select_related("datasource", "item")
     rows = []
     for binding in bindings:
         items = [binding.item] if binding.item_id else list(
@@ -33,8 +34,6 @@ def capture_session_datasources(session, assistant):
                 if item is not None
                 else None
             )
-            if item is not None and version is None and binding.required:
-                raise DatasourceSnapshotError("DATASOURCE_VERSION_NOT_READY")
             storage_key = (
                 version.storage_key if version is not None else item.storage_key
                 if item is not None
