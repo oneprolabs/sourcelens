@@ -20,6 +20,7 @@ from lens.datasource_services import (
 from lens.models import (
     CredentialLease,
     DataSource,
+    DataSourceItem,
     ExecutionSnapshot,
     PluginInvocation,
     ScheduledTask,
@@ -37,6 +38,7 @@ from lens.periodic_tasks import ensure_datasource_periodic_task
 from lens.serializers import (
     DataSourceConversionRequestSerializer,
     DataSourceSerializer,
+    DataSourceItemSerializer,
 )
 from lens.services import (
     cancel_datasource_conversion_on_lensnode,
@@ -67,6 +69,29 @@ class DataSourceViewSet(BaseAdminViewSet):
     queryset = DataSource.objects.all()
     serializer_class = DataSourceSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    @action(detail=True, methods=["get", "post"], url_path="items")
+    def items(self, request, pk=None):
+        """List or create independently managed child resources."""
+        datasource = self.get_object()
+        if request.method == "GET":
+            return Response(
+                DataSourceItemSerializer(
+                    datasource.items.order_by("created_at"), many=True
+                ).data
+            )
+        serializer = DataSourceItemSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save(
+            datasource=datasource,
+            storage_key=(
+                f"datasources/{datasource.uuid}/items/"
+                f"{serializer.validated_data.get('uuid', uuid_mod.uuid4())}"
+            ),
+        )
+        return Response(
+            DataSourceItemSerializer(item).data, status=status.HTTP_201_CREATED
+        )
 
     @staticmethod
     def _sync_serializer_context(datasources):

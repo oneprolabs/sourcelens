@@ -43,6 +43,7 @@ from .models import (
     AssistantSkill,
     Connection,
     DataSource,
+    DataSourceItem,
     DataSourceCredential,
     EnvironmentVariableSet,
     GlobalSetting,
@@ -1856,6 +1857,18 @@ def _validate_plugin_json(value, field_name):
     elif isinstance(value, list):
         for nested in value:
             _validate_plugin_json(nested, field_name)
+
+
+class DataSourceItemSerializer(serializers.ModelSerializer):
+    """Serialize an independently managed datasource child."""
+
+    class Meta:
+        model = DataSourceItem
+        fields = (
+            "uuid", "name", "source_type", "config", "storage_key",
+            "status", "current_version", "created_at", "updated_at",
+        )
+        read_only_fields = ("uuid", "created_at", "updated_at")
 
 
 class DataSourceSerializer(serializers.ModelSerializer):
