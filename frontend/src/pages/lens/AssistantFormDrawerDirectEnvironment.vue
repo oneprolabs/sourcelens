@@ -276,6 +276,25 @@
         </p>
       </div>
       <template v-if="form.mode === 'direct'">
+        <div class="space-y-2 rounded-md border border-line p-3">
+          <div class="text-sm font-medium text-ink-700">数据源</div>
+          <label
+            v-for="source in datasourceOptions"
+            :key="source.uuid"
+            class="flex items-center gap-2 text-sm"
+          >
+            <input
+              v-model="form.datasource_bindings"
+              type="checkbox"
+              :value="{ datasource_uuid: source.uuid, mount_name: source.name }"
+              class="h-4 w-4 rounded border-line text-brand-600"
+            />
+            <span>{{ source.name }}</span>
+          </label>
+          <p v-if="!datasourceOptions.length" class="text-xs text-ink-500">
+            暂无可用数据源
+          </p>
+        </div>
         <div v-if="requiresWorkspace">
           <div class="mb-1 flex items-center justify-between">
             <span class="text-sm font-medium text-ink-700">{{

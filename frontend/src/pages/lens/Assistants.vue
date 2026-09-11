@@ -735,7 +735,8 @@ function defaultForm() {
     enable_codegraph: true,
     status: 'active',
     mode: 'direct',
-    collaboration_member_uuids: []
+    collaboration_member_uuids: [],
+    datasource_bindings: []
   }
 }
 
