@@ -36,6 +36,24 @@
           {{ assistant.description }}
         </p>
       </div>
+      <div class="detail-stats" aria-label="Assistant summary">
+        <div class="detail-stat">
+          <Database class="h-4 w-4 text-brand-600" />
+          <span class="detail-stat-value">{{ datasourceCount }}</span>
+          <span class="detail-stat-label">{{ t('lensAdmin.datasourceSelection.title') }}</span>
+        </div>
+        <div class="detail-stat">
+          <Wrench class="h-4 w-4 text-brand-600" />
+          <span class="detail-stat-value">{{ toolCount }}</span>
+          <span class="detail-stat-label">{{ t('lensAdmin.columns.tools') }}</span>
+        </div>
+        <div class="detail-stat">
+          <Shield class="h-4 w-4 text-brand-600" />
+          <span class="detail-stat-value">{{ t(`lensAdmin.visibility.${visibility}`) }}</span>
+          <span class="detail-stat-label">{{ t('lensAdmin.assistantDetail.access') }}</span>
+        </div>
+      </div>
+
       <section class="space-y-3">
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantDetail.overview') }}
@@ -46,10 +64,6 @@
             <dd class="detail-value font-mono">
               {{ assistant.slug || emptyValue }}
             </dd>
-          </div>
-          <div class="detail-overview-row">
-            <dt class="detail-label">{{ t('lensAdmin.fields.lensnode') }}</dt>
-            <dd class="detail-value">{{ lensnodeName }}</dd>
           </div>
           <div class="detail-overview-row">
             <dt class="detail-label">
@@ -342,7 +356,9 @@ import {
   Folder,
   Pencil,
   Server,
+  Shield,
   User,
+  Wrench,
   Users
 } from '@lucide/vue'
 import { computed } from 'vue'
@@ -369,6 +385,12 @@ const emptyValue = EMPTY_VALUE
 const detail = computed(() => buildAssistantDetail(props.assistant || {}))
 const dataMode = computed(() => assistantDataMode(props.assistant || {}))
 const visibility = computed(() => props.assistant?.visibility || 'public')
+const datasourceCount = computed(() => props.assistant?.datasource_bindings?.length || 0)
+const toolCount = computed(() =>
+  (detail.value.skills.length || 0) +
+  (detail.value.mcps.length || 0) +
+  (detail.value.plugins.length || 0)
+)
 
 function bindingStatus(binding) {
   return binding.enabled ? 'enabled' : 'disabled'
@@ -378,6 +400,22 @@ function bindingStatus(binding) {
 <style scoped>
 .assistant-detail {
   --detail-label-width: 7.5rem;
+}
+
+.detail-stats {
+  @apply grid grid-cols-3 gap-2;
+}
+
+.detail-stat {
+  @apply flex min-w-0 flex-col items-center gap-1 rounded-lg border border-line bg-surface-sunken px-2 py-3 text-center;
+}
+
+.detail-stat-value {
+  @apply max-w-full truncate text-sm font-semibold text-ink-900;
+}
+
+.detail-stat-label {
+  @apply text-xs text-ink-500;
 }
 
 .detail-overview {
