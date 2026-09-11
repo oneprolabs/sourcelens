@@ -184,7 +184,7 @@
         >
           {{ t('lensAdmin.assistantPresentation.noTools') }}
         </p>
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div
             v-if="detail.skills.length"
             data-testid="assistant-detail-skills"
@@ -243,18 +243,23 @@
         <h3 class="detail-heading">
           {{ t('lensAdmin.assistantPresentation.plugins') }}
         </h3>
-        <ul class="detail-list">
-          <li
-            v-for="plugin in detail.plugins"
-            :key="plugin.name"
-            class="flex items-center justify-between gap-3 px-4 py-3"
-          >
-            <span class="min-w-0 break-words text-sm text-ink-700">{{
-              plugin.name
-            }}</span>
-            <StatusBadge :status="bindingStatus(plugin)" />
-          </li>
-        </ul>
+        <div class="detail-capability-card">
+          <div class="detail-card-heading">
+            <Plug class="h-4 w-4 text-ink-400" />
+            <span>{{ t('lensAdmin.assistantPresentation.plugins') }}</span>
+            <span class="ml-auto text-xs text-ink-400">{{ detail.plugins.length }}</span>
+          </div>
+          <ul class="divide-y divide-line">
+            <li
+              v-for="plugin in detail.plugins"
+              :key="plugin.name"
+              class="flex min-h-11 items-center justify-between gap-3 px-3 py-2"
+            >
+              <span class="min-w-0 truncate text-sm text-ink-700">{{ plugin.name }}</span>
+              <StatusBadge :status="bindingStatus(plugin)" />
+            </li>
+          </ul>
+        </div>
       </section>
 
       <section
@@ -425,6 +430,10 @@ function bindingStatus(binding) {
 .detail-overview-row {
   @apply grid items-start gap-2 border-b border-line/70 py-2 last:border-0;
   grid-template-columns: var(--detail-label-width) minmax(0, 1fr);
+}
+
+.detail-capability-card {
+  @apply overflow-hidden rounded-lg border border-line;
 }
 
 .detail-list {
