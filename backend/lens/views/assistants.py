@@ -51,17 +51,49 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
     serializer_class = AssistantSerializer
     pagination_class = AssistantPagination
 
-    @action(detail=True, methods=["get", "post"], url_path="datasources")
+    @action(
+        detail=True,
+        methods=["get", "post", "patch", "delete"],
+        url_path="datasources",
+    )
     def datasources(self, request, pk=None):
         """List or bind datasource resources to an assistant."""
         assistant = self.get_object()
         if request.method == "GET":
             return Response(AssistantSerializer(assistant).data["datasource_bindings"])
-        datasource = DataSource.objects.get(uuid=request.data["datasource_uuid"])
+        binding_uuid = request.data.get("binding_uuid")
+        if request.method in ("PATCH", "DELETE"):
+            try:
+                binding = assistant.datasource_bindings.get(uuid=binding_uuid)
+            except (TypeError, AssistantDataSourceBinding.DoesNotExist):
+                return Response({"binding_uuid": "Binding not found"}, status=404)
+            if request.method == "DELETE":
+                binding.delete()
+                return Response(status=204)
+            mount_name = request.data.get("mount_name")
+            if mount_name is not None:
+                if not mount_name.replace("_", "").isalnum():
+                    return Response({"mount_name": "Invalid mount name"}, status=400)
+                binding.mount_name = mount_name
+            if "required" in request.data:
+                binding.required = bool(request.data["required"])
+            binding.save(update_fields=["mount_name", "required", "updated_at"])
+            return Response(AssistantSerializer(assistant).data["datasource_bindings"])
+        try:
+            datasource = DataSource.objects.get(
+                uuid=request.data["datasource_uuid"]
+            )
+        except (KeyError, DataSource.DoesNotExist):
+            return Response({"datasource_uuid": "Datasource not found"}, status=404)
         item_uuid = request.data.get("item_uuid")
         item = None
         if item_uuid:
-            item = DataSourceItem.objects.get(uuid=item_uuid, datasource=datasource)
+            try:
+                item = DataSourceItem.objects.get(
+                    uuid=item_uuid, datasource=datasource
+                )
+            except DataSourceItem.DoesNotExist:
+                return Response({"item_uuid": "Item not found"}, status=404)
         mount_name = str(request.data.get("mount_name") or "source")
         if not mount_name.replace("_", "").isalnum():
             return Response({"mount_name": "Invalid mount name"}, status=400)
