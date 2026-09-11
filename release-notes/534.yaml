@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Refined interactive mindmap layout with clearer label spacing, canvas panning, and fullscreen zoom support.
+zh-CN: 优化交互式思维导图布局，改善文字与分支间距，并支持画布拖动和全屏缩放。
