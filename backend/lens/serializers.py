@@ -17,6 +17,9 @@ from .assistant_lifecycle import (
     fixed_collaboration_assistants,
     smart_collaboration_assistants,
 )
+from .datasource_bindings import (
+    DatasourceBindingsField, replace_datasource_bindings,
+)
 from .attachments import ATTACHMENT_MAX_PER_MESSAGE, AttachmentError
 from .citations import public_run_citations, sanitize_planned_evidence
 from .datasource_services import (
@@ -653,6 +656,7 @@ class AccessGrantsField(serializers.Field):
 class AssistantListSerializer(serializers.ModelSerializer):
     """Compact assistant representation for collection responses."""
 
+    datasource_bindings = DatasourceBindingsField(read_only=True)
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
     lensnode_name = serializers.CharField(source="lensnode.name", read_only=True)
     mode = serializers.CharField(read_only=True)
@@ -668,6 +672,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
         model = Assistant
         fields = [
             "uuid",
+            "datasource_bindings",
             "name",
             "capability",
             "slug",
@@ -789,7 +794,7 @@ class AssistantSerializer(serializers.ModelSerializer):
     skill_bindings = SkillBindingsField(required=False)
     mcp_bindings = McpBindingsField(required=False)
     plugin_bindings = PluginBindingsField(required=False)
-    datasource_bindings = serializers.SerializerMethodField()
+    datasource_bindings = DatasourceBindingsField(required=False)
     access_grants = AccessGrantsField(required=False)
     workspace_guide = serializers.JSONField(required=False)
     skill_summary = serializers.SerializerMethodField()
@@ -848,20 +853,6 @@ class AssistantSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_datasource_bindings(self, assistant):
-        """Return stable data source references for assistant configuration."""
-        return [
-            {
-                "uuid": str(binding.uuid),
-                "datasource_uuid": str(binding.datasource.uuid),
-                "item_uuid": str(binding.item.uuid) if binding.item else None,
-                "mount_name": binding.mount_name,
-                "required": binding.required,
-            }
-            for binding in assistant.datasource_bindings.select_related(
-                "datasource", "item"
-            )
-        ]
         read_only_fields = [
             "uuid",
             "lensnode",
@@ -1559,7 +1550,9 @@ class AssistantSerializer(serializers.ModelSerializer):
         plugin_bindings = validated_data.pop("plugin_bindings", None)
         access_grants = validated_data.pop("access_grants", None)
         workspace_guide = validated_data.pop("workspace_guide", None)
+        datasource_bindings = validated_data.pop("datasource_bindings", None)
         assistant = Assistant.objects.create(**validated_data)
+        replace_datasource_bindings(assistant, datasource_bindings)
         self._sync_bindings(
             assistant,
             {
@@ -1583,6 +1576,9 @@ class AssistantSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Update assistant and optional bindings."""
 
+        instance = Assistant.objects.select_for_update().get(pk=instance.pk)
+        datasource_bindings = validated_data.pop("datasource_bindings", None)
+        replace_datasource_bindings(instance, datasource_bindings)
         was_smart = instance.mode_handler.supports_members
         collaboration_member_uuids = validated_data.pop(
             "collaboration_member_uuids", None

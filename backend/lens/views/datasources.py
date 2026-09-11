@@ -74,7 +74,7 @@ class DataSourceViewSet(BaseAdminViewSet):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     @action(detail=True, methods=["get", "post"], url_path="items")
-    def items(self, request, pk=None):
+    def items(self, request, uuid=None):
         """List or create independently managed child resources."""
         datasource = self.get_object()
         if request.method == "GET":
@@ -97,7 +97,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
     @action(detail=True, methods=["delete"], url_path="items/(?P<item_uuid>[^/.]+)")
-    def delete_item(self, request, pk=None, item_uuid=None):
+    def delete_item(self, request, uuid=None, item_uuid=None):
         """Delete a child resource and its isolated local storage."""
         datasource = self.get_object()
         try:
@@ -127,7 +127,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         return Response(status=204)
 
     @action(detail=True, methods=["get"], url_path="items/(?P<item_uuid>[^/.]+)/versions")
-    def versions(self, request, pk=None, item_uuid=None):
+    def versions(self, request, uuid=None, item_uuid=None):
         """List immutable processed versions for one child resource."""
         datasource = self.get_object()
         try:

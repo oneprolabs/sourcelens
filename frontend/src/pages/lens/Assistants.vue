@@ -370,6 +370,7 @@ import {
   getPluginManifest,
   listAssistants,
   listDataSources,
+  listDataSourceItems,
   listConnections,
   listGlobalSettings,
   listLensNodes,
@@ -554,6 +555,7 @@ async function loadFormResources() {
 
   formResourcesPromise = Promise.all([
     listLensNodes(),
+    listDataSources({ page_size: 1000 }),
     listSkills(),
     listEnvironmentVariableSets(),
     listMcpServers(),
@@ -564,6 +566,7 @@ async function loadFormResources() {
     .then(
       ([
         lensnodeRows,
+        datasourceRows,
         skillRows,
         environmentVariableSetRows,
         mcpRows,
@@ -581,9 +584,12 @@ async function loadFormResources() {
         llmConfigOptions.value = normalizeList(llmRows)
         const plugins = normalizeList(installedPlugins)
         return Promise.all([
+          Promise.all(normalizeList(datasourceRows).map(async (source) => ({
+            ...source, items: await listDataSourceItems(source.uuid)
+          }))).then((sources) => { datasourceOptions.value = sources }),
           Promise.all(plugins.map((plugin) => getPluginManifest(plugin.key))),
           loadPluginIcons(plugins)
-        ]).then(([manifests]) => {
+        ]).then(([, manifests]) => {
           pluginManifests.value = Object.fromEntries(
             manifests.map((manifest) => [manifest.key, manifest])
           )
@@ -735,8 +741,7 @@ function defaultForm() {
     enable_codegraph: true,
     status: 'active',
     mode: 'direct',
-    collaboration_member_uuids: [],
-    datasource_bindings: []
+    collaboration_member_uuids: []
   }
 }
 
@@ -857,9 +862,9 @@ async function save() {
 
 async function saveByMode(uuid, payload, createFn, updateFn) {
   if (mode.value === 'create') {
-    await createFn(payload)
+    return createFn(payload)
   } else {
-    await updateFn(uuid, payload)
+    return updateFn(uuid, payload)
   }
 }
 
@@ -881,9 +886,9 @@ function buildPayload() {
     ...(form.value.lensnode_uuid
       ? { lensnode_uuid: form.value.lensnode_uuid }
       : {}),
+    datasource_bindings: form.value.datasource_bindings || [],
     selected_dirs:
       form.value.capability === 'general_chat' ? [] : buildSelectedDirs(),
-    datasource_bindings: form.value.datasource_bindings || [],
     agent_model_ref: form.value.agent_model_ref || null,
     agent_rounds: form.value.agent_rounds || 'balanced',
     ...(mode.value === 'edit'

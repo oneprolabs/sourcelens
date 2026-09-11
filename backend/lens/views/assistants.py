@@ -56,7 +56,7 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
         methods=["get", "post", "patch", "delete"],
         url_path="datasources",
     )
-    def datasources(self, request, pk=None):
+    def datasources(self, request, uuid=None):
         """List or bind datasource resources to an assistant."""
         assistant = self.get_object()
         if request.method == "GET":
@@ -113,6 +113,8 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
     def get_permissions(self):
         """Require the admin console feature for write actions."""
 
+        if self.action == "datasources" and self.request.method != "GET":
+            return [permissions.IsAuthenticated(), HasRequiredFeature()]
         if self.action in (
             "create",
             "update",

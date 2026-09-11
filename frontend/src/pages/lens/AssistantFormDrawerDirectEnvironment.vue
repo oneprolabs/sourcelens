@@ -276,26 +276,27 @@
         </p>
       </div>
       <template v-if="form.mode === 'direct'">
-        <div class="space-y-2 rounded-md border border-line p-3">
-          <div class="text-sm font-medium text-ink-700">数据源</div>
-          <label
-            v-for="source in datasourceOptions"
-            :key="source.uuid"
-            class="flex items-center gap-2 text-sm"
-          >
-            <input
-              v-model="form.datasource_bindings"
-              type="checkbox"
-              :value="{ datasource_uuid: source.uuid, mount_name: source.name }"
-              class="h-4 w-4 rounded border-line text-brand-600"
-            />
-            <span>{{ source.name }}</span>
-          </label>
-          <p v-if="!datasourceOptions.length" class="text-xs text-ink-500">
-            暂无可用数据源
-          </p>
-        </div>
-        <div v-if="requiresWorkspace">
+        <fieldset class="space-y-3 rounded-md border border-line p-3">
+          <legend class="px-1 text-sm font-medium text-ink-700">{{ t('lensAdmin.datasourceSelection.title') }}</legend>
+          <div v-for="source in datasourceOptions" :key="source.uuid" class="space-y-2">
+            <label class="flex items-center gap-2 text-sm">
+              <input type="checkbox" :checked="hasSource(source)"
+                :disabled="saving || source.status !== 'active'"
+                @change="selectSource(source, null, $event.target.checked)" />
+              <span>{{ source.name }}</span>
+            </label>
+            <div v-if="source.items?.length > 1" class="ml-6 space-y-2">
+              <label v-for="item in source.items" :key="item.uuid" class="flex items-center gap-2 text-sm text-ink-600">
+                <input type="checkbox" :checked="hasSource(source, item)"
+                  :disabled="saving || source.status !== 'active' || item.status !== 'active'"
+                  @change="selectSource(source, item, $event.target.checked)" />
+                <span>{{ item.name }}</span>
+              </label>
+            </div>
+          </div>
+          <p v-if="!datasourceOptions.length" class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.empty') }}</p>
+        </fieldset>
+        <div v-if="requiresWorkspace && !form.datasource_bindings?.length">
           <div class="mb-1 flex items-center justify-between">
             <span class="text-sm font-medium text-ink-700">{{
               t('lensAdmin.fields.selectedDirs')
@@ -1211,6 +1212,8 @@ import {
   sortSkillsBySelection
 } from './assistantSkills'
 
+import { toggleBinding } from './assistantDatasources'
+
 const props = defineProps({
   show: Boolean,
   mode: { type: String, default: 'create' },
@@ -1494,7 +1497,7 @@ const canProceedWizard = computed(() => {
     }
     if (!props.form.capability) return false
     if (isGeneralChatTask.value) return true
-    return !!props.form.lensnode_uuid && selectedDirs().length > 0
+    return !!props.form.lensnode_uuid && (selectedDirs().length > 0 || props.form.datasource_bindings?.length > 0)
   }
   if (wizardStep.value === 3) {
     if (isSmartMode.value) return true
@@ -1964,6 +1967,18 @@ function selectedMcpEnvironmentsConfigured() {
       savedKeys: selectedMcpEnvironmentSet(mcpUuid)?.keys
     })
   })
+}
+
+function hasSource(source, item = null) {
+  return (props.form.datasource_bindings || []).some((binding) =>
+    binding.datasource_uuid === source.uuid &&
+    (binding.item_uuid || null) === (item?.uuid || null))
+}
+
+function selectSource(source, item, checked) {
+  props.form.datasource_bindings = toggleBinding(
+    props.form.datasource_bindings || [], source, item, checked
+  )
 }
 
 function selectedDirs() {
