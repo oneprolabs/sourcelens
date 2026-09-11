@@ -67,6 +67,29 @@ test('Feishu datasource URLs are checked before they can be saved', async () => 
   )
 })
 
+test('Feishu datasource configuration changes re-run access validation', async () => {
+  const [drawer, page] = await Promise.all([
+    source('pages/lens/DataSourceFormDrawer.vue'),
+    source('pages/lens/DataSources.vue')
+  ])
+  const updatePluginConfig = drawer.match(
+    /function updatePluginConfig\(value\) \{[\s\S]*?\n\}/
+  )?.[0]
+  const scheduleValidation = drawer.match(
+    /function schedulePluginConnectionValidation\(\) \{[\s\S]*?\n\}/
+  )?.[0]
+
+  assert.ok(updatePluginConfig)
+  assert.match(updatePluginConfig, /schedulePluginConnectionValidation\(\)/)
+  assert.ok(scheduleValidation)
+  assert.match(scheduleValidation, /testConnectionIfVisible\(\)/)
+  assert.match(page, /const requestId = \+\+datasourceConnectionRequestId/)
+  assert.match(
+    page,
+    /if \(requestId !== datasourceConnectionRequestId\) return/
+  )
+})
+
 test('Feishu Connection keeps setup guidance beside editable fields', async () => {
   const [page, guide, drawer, chinese, manifestText] = await Promise.all([
     source('pages/lens/Connections.vue'),
