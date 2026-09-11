@@ -2195,6 +2195,16 @@
       "groupsFailed": "Error al cargar los grupos.",
       "usersFailed": "Error al cargar los usuarios.",
       "retry": "Reintentar"
+    },
+    "datasourceSelection": {
+      "title": "Acceso a datos",
+      "scope": "Elige las fuentes de datos disponibles.",
+      "auto": "Coincidencia automática",
+      "selected": "Fuentes seleccionadas",
+      "all": "Todas las fuentes",
+      "empty": "No hay fuentes disponibles",
+      "selectedLabel": "seleccionados",
+      "resources": "recursos"
     }
   }
 }

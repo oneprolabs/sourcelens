@@ -2213,6 +2213,16 @@
       "groupsFailed": "Failed to load groups.",
       "usersFailed": "Failed to load users.",
       "retry": "Retry"
+    },
+    "datasourceSelection": {
+      "title": "Data access",
+      "scope": "Choose the data sources this assistant can access.",
+      "auto": "Auto match",
+      "selected": "Selected sources",
+      "all": "All sources",
+      "empty": "No data sources available",
+      "selectedLabel": "selected",
+      "resources": "resources"
     }
   }
 }

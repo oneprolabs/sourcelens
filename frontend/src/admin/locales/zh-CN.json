@@ -2213,6 +2213,16 @@
       "groupsFailed": "组加载失败。",
       "usersFailed": "用户加载失败。",
       "retry": "重试"
+    },
+    "datasourceSelection": {
+      "title": "数据访问",
+      "scope": "选择助手可访问的数据源。",
+      "auto": "自动匹配",
+      "selected": "指定数据源",
+      "all": "全部数据源",
+      "empty": "暂无可用数据源",
+      "selectedLabel": "已选",
+      "resources": "个资源"
     }
   }
 }
