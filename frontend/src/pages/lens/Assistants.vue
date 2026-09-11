@@ -173,6 +173,17 @@
                         <Server :size="16" aria-hidden="true" />
                         {{ row.mcp_summary?.enabled || 0 }}
                       </span>
+                      <span
+                        class="tool-count"
+                        :class="{
+                          'tool-count-empty': !row.datasource_bindings?.length
+                        }"
+                        :title="`Datasources: ${row.datasource_bindings?.length || 0}`"
+                        :aria-label="`Datasources: ${row.datasource_bindings?.length || 0}`"
+                      >
+                        <Database :size="16" aria-hidden="true" />
+                        {{ row.datasource_bindings?.length || 0 }}
+                      </span>
                     </div>
                   </td>
                   <td class="table-cell">
@@ -336,6 +347,7 @@
 <script setup>
 import {
   BookOpen,
+  Database,
   Copy,
   Globe as GlobeIcon,
   Lock as LockIcon,

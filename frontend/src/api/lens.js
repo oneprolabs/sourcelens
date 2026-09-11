@@ -52,6 +52,28 @@ export async function updateAssistant(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function listAssistantDataSourceBindings(uuid) {
+  const response = await api.get(`/lens/assistants/${uuid}/datasources/`)
+  return unwrapResponse(response)
+}
+
+export async function bindAssistantDataSource(uuid, payload) {
+  const response = await api.post(`/lens/assistants/${uuid}/datasources/`, payload)
+  return unwrapResponse(response)
+}
+
+export async function updateAssistantDataSourceBinding(uuid, payload) {
+  const response = await api.patch(`/lens/assistants/${uuid}/datasources/`, payload)
+  return unwrapResponse(response)
+}
+
+export async function removeAssistantDataSourceBinding(uuid, bindingUuid) {
+  const response = await api.delete(`/lens/assistants/${uuid}/datasources/`, {
+    data: { binding_uuid: bindingUuid }
+  })
+  return unwrapResponse(response)
+}
+
 export async function archiveAssistant(uuid) {
   const response = await api.post(`/lens/assistants/${uuid}/archive/`)
   return unwrapResponse(response)
