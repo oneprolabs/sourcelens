@@ -1469,12 +1469,14 @@ const sourceTypes = computed(() => {
         description: localized.description || ''
       }
     }),
-    {
+  ]
+  if (props.mode === 'edit' && props.form.source_type === 'managed_workspace') {
+    types.push({
       value: 'managed_workspace',
       label: t('lensAdmin.datasourceWizard.managedWorkspace'),
       description: t('lensAdmin.datasourceWizard.managedWorkspaceDesc')
-    }
-  ]
+    })
+  }
   if (
     props.mode === 'edit' &&
     props.form.source_type === 'gitlab' &&
