@@ -650,6 +650,25 @@ class DataSourceItem(TimestampedUUIDModel):
         ]
 
 
+class DataSourceVersion(TimestampedUUIDModel):
+    """Immutable processed snapshot of a datasource child."""
+
+    item = models.ForeignKey(
+        DataSourceItem, on_delete=models.CASCADE, related_name="versions"
+    )
+    version = models.CharField(max_length=64)
+    storage_key = models.CharField(max_length=500)
+    status = models.CharField(max_length=16, default="ready")
+    checksum = models.CharField(max_length=128, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "version"], name="lens_ds_item_version_unique"
+            )
+        ]
+
+
 class DataSourceCredential(TimestampedUUIDModel):
     """Encrypted datasource credential used only during node execution."""
 
