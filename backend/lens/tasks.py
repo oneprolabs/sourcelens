@@ -19,6 +19,7 @@ from .datasource_services import (
     get_datasource_sync_timeout_s,
     get_datasource_upload_timeout_s,
 )
+from .datasource_versions import record_datasource_versions
 from .models import (
     CredentialLease,
     DataSource,
@@ -1148,6 +1149,8 @@ def complete_datasource_conversion_task(
                 "updated_at",
             ]
         )
+        if task_status == TaskStatus.SUCCESS:
+            record_datasource_versions(datasource)
     lock_token = metadata.get("lock_token") or task_id
     if datasource_uuid:
         release_datasource_lock(datasource_uuid, token=lock_token)
