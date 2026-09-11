@@ -555,13 +555,12 @@
           {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
         </p>
       </FormRow>
-      <div v-if="isManagedWorkspace"
-        v-if="!onlineLensNodes.length"
+      <div v-if="isManagedWorkspace && !onlineLensNodes.length"
         class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
       >
         {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
       </div>
-      <FormRow :label="t('lensAdmin.fields.targetPath')" required>
+      <FormRow v-if="isManagedWorkspace" :label="t('lensAdmin.fields.targetPath')" required>
         <div class="space-y-3">
           <input
             v-if="isManagedWorkspace"
