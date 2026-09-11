@@ -122,3 +122,33 @@ class PluginSnapshotTests(TestCase):
         self.assertIn("snapshot_uuid", payload)
         self.assertNotIn("config", payload)
         self.assertNotIn("access_token", json.dumps(payload))
+
+    def test_independent_snapshot_uses_admitted_node_without_binding(self):
+        self.datasource.lensnode = None
+        self.datasource.target_path = ''
+        self.datasource.save(update_fields=['lensnode', 'target_path'])
+        first = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        second = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        self.assertEqual(
+            first.resolved_config['lensnode_uuid'], str(self.node.uuid)
+        )
+        self.assertEqual(
+            first.resolved_config['target_path'],
+            second.resolved_config['target_path'],
+        )
+        self.datasource.datasource_config['branch'] = 'develop'
+        self.datasource.save(update_fields=['datasource_config'])
+        changed = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        self.assertNotEqual(
+            first.resolved_config['target_path'],
+            changed.resolved_config['target_path'],
+        )
+        self.datasource.refresh_from_db()
+        self.assertIsNone(self.datasource.lensnode_id)
+        self.assertEqual(self.datasource.target_path, '')

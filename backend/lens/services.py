@@ -64,7 +64,7 @@ from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
-from .session_workspace import build_session_workspace
+from .session_workspace import build_session_workspace, session_source_dirs
 from .session_titles import fallback_session_title
 from .trace_context import root_observation_id_for_run, trace_id_for_run
 
@@ -2106,8 +2106,12 @@ def validate_run_dispatch(run):
             raise LensNodeDispatchError("GENERAL_CHAT_SKILL_REQUIRED")
     else:
         available = available_dir_paths(lensnode)
+        session_paths = {
+            item["path"] for item in session_source_dirs(run.session)
+        }
         for item in execution.target_dirs or []:
-            if item.get("path") not in available:
+            path = item.get("path")
+            if path not in available and path not in session_paths:
                 raise LensNodeDispatchError("LENSNODE_DIR_UNAVAILABLE")
 
     for skill in runtime_skills:
@@ -2271,7 +2275,7 @@ def create_run_execution_snapshot(
             loaded_plugins=loaded_plugins,
         )
     )
-    workspace_path = build_session_workspace(run.session)
+    build_session_workspace(run.session)
     execution, _ = RunExecution.objects.get_or_create(
         run=run,
         defaults={
@@ -2282,9 +2286,7 @@ def create_run_execution_snapshot(
             "loaded_plugins": loaded_plugins,
             "agent_rounds": assistant.agent_rounds,
             "run_timeout_s": run_timeout_for_rounds(assistant.agent_rounds),
-            "target_dirs": [
-                {"path": str(workspace_path / "sources"), "name": "sources"}
-            ],
+            "target_dirs": session_source_dirs(run.session),
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],
             "token_budget_max_tokens": token_budget["max_tokens"],

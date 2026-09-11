@@ -17,7 +17,7 @@ def record_datasource_versions(datasource):
     for item in datasource.items.filter(status="active").select_for_update():
         version_name = uuid.uuid4().hex
         version_key = (
-            f"datasources/{datasource.uuid}/items/{item.uuid}/versions/"
+            f"datasources/{datasource.uuid}/versions/{item.uuid}/"
             f"{version_name}"
         )
         source = (Path(settings.MEDIA_ROOT) / item.storage_key).resolve()

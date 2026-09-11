@@ -1,8 +1,9 @@
 """Build isolated, reproducible datasource workspaces for Sessions."""
 
 import json
-import os
+import shutil
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from django.conf import settings
 
@@ -11,72 +12,89 @@ class SessionWorkspaceError(RuntimeError):
     """Raised when a session workspace cannot be built safely."""
 
 
-def cleanup_session_workspace(session_uuid):
-    """Remove one session workspace without following symlinks."""
+def session_workspace_path(session_uuid):
+    """Return a session directory confined to the configured root."""
 
-    root = Path(getattr(settings, "LENS_SESSION_WORKSPACE_ROOT", ""))
-    if not root:
-        root = Path(settings.MEDIA_ROOT) / "sessions"
-    workspace = (root / str(session_uuid)).resolve()
-    base = root.resolve()
-    if base not in workspace.parents:
+    root = Path(settings.LENS_SESSION_WORKSPACE_ROOT).resolve()
+    workspace = root / str(session_uuid)
+    if workspace.is_symlink() or workspace.resolve().parent != root:
         raise SessionWorkspaceError("SESSION_WORKSPACE_PATH_INVALID")
+    return workspace
+
+
+def session_source_dirs(session):
+    """Return only datasource mounts frozen for this session."""
+
+    sources = session_workspace_path(session.uuid) / "sources"
+    directories = []
+    for snapshot in session.datasource_snapshots.all():
+        name = snapshot.mount_name
+        if not name or name in {".", ".."} or Path(name).name != name:
+            raise SessionWorkspaceError("SESSION_MOUNT_NAME_CONFLICT")
+        directories.append({"path": str(sources / name), "name": name})
+    return directories
+
+
+def cleanup_session_workspace(session_uuid):
+    """Remove one session workspace without following datasource links."""
+
+    workspace = session_workspace_path(session_uuid)
     if not workspace.exists():
         return False
-    for path in sorted(workspace.rglob("*"), reverse=True):
-        if path.is_symlink() or path.is_file():
-            path.unlink(missing_ok=True)
-        elif path.is_dir():
-            path.rmdir()
-    workspace.rmdir()
+    shutil.rmtree(workspace)
     return True
 
 
 def build_session_workspace(session):
-    """Create datasource symlinks and an immutable manifest for a session."""
+    """Link immutable datasource versions into a session for retrieval."""
 
-    root = Path(getattr(settings, "LENS_SESSION_WORKSPACE_ROOT", ""))
-    if not root:
-        root = Path(settings.MEDIA_ROOT) / "sessions"
-    workspace = (root / str(session.uuid)).resolve()
+    workspace = session_workspace_path(session.uuid)
     workspace.mkdir(parents=True, exist_ok=True)
     sources = workspace / "sources"
+    if sources.is_symlink():
+        raise SessionWorkspaceError("SESSION_WORKSPACE_PATH_INVALID")
     sources.mkdir(exist_ok=True)
+    session_source_dirs(session)
+    media_root = Path(settings.MEDIA_ROOT).resolve()
     entries = []
     created_links = []
     try:
-        for snapshot in session.datasource_snapshots.select_related("item"):
-            target = (Path(settings.MEDIA_ROOT) / snapshot.storage_key).resolve()
-            media_root = Path(settings.MEDIA_ROOT).resolve()
-            if media_root not in target.parents and target != media_root:
-                raise SessionWorkspaceError("DATASOURCE_PATH_OUTSIDE_STORAGE_ROOT")
-            if not target.exists() or target.is_symlink():
+        for snapshot in session.datasource_snapshots.select_related(
+            "item", "datasource"
+        ):
+            source = media_root / snapshot.storage_key
+            target = source.resolve()
+            if target == media_root or not target.is_relative_to(media_root):
+                raise SessionWorkspaceError(
+                    "DATASOURCE_PATH_OUTSIDE_STORAGE_ROOT"
+                )
+            if source.is_symlink() or not target.is_dir():
                 raise SessionWorkspaceError("DATASOURCE_TARGET_UNAVAILABLE")
             link = sources / snapshot.mount_name
-            if link.is_symlink() and link.resolve() == target:
-                continue
-            if link.exists() or link.is_symlink():
-                raise SessionWorkspaceError("SESSION_MOUNT_NAME_CONFLICT")
-            os.symlink(target, link, target_is_directory=True)
-            created_links.append(link)
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except FileExistsError:
+                if not link.is_symlink() or link.resolve() != target:
+                    raise SessionWorkspaceError("SESSION_MOUNT_NAME_CONFLICT")
+            else:
+                created_links.append(link)
             entries.append({
-            "mount_name": snapshot.mount_name,
-            "datasource_uuid": str(snapshot.datasource.uuid),
-            "item_uuid": str(snapshot.item.uuid) if snapshot.item else None,
-            "version": snapshot.datasource_version,
-            "storage_key": snapshot.storage_key,
+                "mount_name": snapshot.mount_name,
+                "datasource_uuid": str(snapshot.datasource.uuid),
+                "item_uuid": str(snapshot.item.uuid) if snapshot.item else None,
+                "version": snapshot.datasource_version,
+                "storage_key": snapshot.storage_key,
             })
     except Exception:
         for link in created_links:
             link.unlink(missing_ok=True)
         raise
-    manifest = workspace / "manifest.json"
-    temporary = workspace / ".manifest.tmp"
-    temporary.write_text(
-        json.dumps(
-            {"session_uuid": str(session.uuid), "items": entries}, indent=2
-        ),
-        encoding="utf-8",
-    )
-    temporary.replace(manifest)
+    with NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=workspace, delete=False,
+    ) as temporary:
+        json.dump(
+            {"session_uuid": str(session.uuid), "items": entries},
+            temporary, indent=2,
+        )
+    Path(temporary.name).replace(workspace / "manifest.json")
     return workspace

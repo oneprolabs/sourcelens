@@ -346,7 +346,9 @@ def dispatch_datasource_sync(datasource, task_id, trigger="scheduled"):
     )
 
 
-def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
+def dispatch_datasource_sync_async(
+    datasource, task_id, trigger="scheduled", *, lensnode=None
+):
     """Dispatch one datasource synchronization without waiting for result."""
 
     datasource = DataSource.objects.select_related(
@@ -357,9 +359,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
     )
     if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
         raise DataSourceDispatchError("DATASOURCE_SYNC_NOT_SUPPORTED")
-    lensnode = resolve_datasource_lensnode(datasource)
+    lensnode = lensnode or resolve_datasource_lensnode(datasource)
+    validate_datasource_lensnode(lensnode)
     if datasource.connection_id and datasource.plugin_key:
-        snapshot = create_datasource_sync_snapshot(datasource)
+        snapshot = create_datasource_sync_snapshot(
+            datasource, lensnode=lensnode
+        )
         request_id = uuid.uuid4().hex
         _send_lensnode_command(
             lensnode,

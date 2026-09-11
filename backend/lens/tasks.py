@@ -1,11 +1,14 @@
 import logging
+import shutil
 import uuid
 from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
 
 from celery import shared_task
 from django.core.cache import cache
 from django.core.files.storage import default_storage
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -515,6 +518,8 @@ def _datasource_capacity_available(lensnode, task_id):
         task_id,
         TaskStatus.PENDING,
         metadata={
+            "lensnode_uuid": str(lensnode.uuid),
+            "lensnode_name": lensnode.name,
             "admission_slot": slot,
             "admission_capacity": _datasource_capacity(lensnode),
         },
@@ -629,7 +634,11 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     # final status.
     task_id = task_id or uuid.uuid4().hex
     with transaction.atomic():
-        datasource = DataSource.objects.select_for_update().get(uuid=datasource_uuid)
+        datasource = DataSource.objects.select_for_update().filter(
+            uuid=datasource_uuid
+        ).first()
+        if datasource is None:
+            return 0
         if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
             return 0
         record = _get_or_create_source_sync_record(datasource)
@@ -638,8 +647,6 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                 record.enabled = False
                 record.save(update_fields=["enabled"])
             return 0
-
-        execution_node = resolve_datasource_lensnode(datasource)
 
         task_execution = register_datasource_sync_task(
             datasource,
@@ -678,6 +685,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     token=task_id,
                     ttl_s=get_datasource_sync_timeout_s(),
                 )
+            execution_node = resolve_datasource_lensnode(datasource)
             if not _datasource_capacity_available(execution_node, task_id):
                 _queue_datasource_task(
                     task_id,
@@ -731,6 +739,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             datasource,
             task_id=task_id,
             trigger=trigger,
+            lensnode=execution_node,
         )
         with transaction.atomic():
             task_execution = TaskExecution.objects.select_for_update().get(
@@ -751,10 +760,13 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             )
         if cancelling:
             cancel_datasource_sync_on_lensnode(
-                datasource.lensnode,
+                execution_node,
                 task_id,
             )
     except Exception as exc:
+        _release_datasource_capacity(
+            TaskExecution.objects.get(task_id=task_id)
+        )
         release_datasource_lock(datasource.uuid, token=task_id)
         datasource.last_error = str(exc)
         datasource.save(update_fields=["last_error", "updated_at"])
@@ -1316,6 +1328,40 @@ def resolve_datasource_upload_task_id(request_id, content):
     return task.task_id if task else ""
 
 
+def _publish_independent_datasource(datasource, target_path):
+    """Publish a node workspace into control-plane datasource storage."""
+
+    source = Path(str(target_path or "")).resolve()
+    workspace = Path("/workspace").resolve()
+    if source == workspace or workspace not in source.parents or not source.is_dir():
+        raise ValueError("DATASOURCE_TARGET_UNAVAILABLE")
+    item = datasource.items.filter(status="active").order_by("uuid").first()
+    if item is None:
+        item_uuid = uuid.uuid4()
+        item = datasource.items.create(
+            uuid=item_uuid,
+            name=datasource.name,
+            source_type=datasource.source_type,
+            config=datasource.datasource_config,
+            storage_key=f"datasources/{datasource.uuid}/items/{item_uuid}",
+        )
+    destination = (Path(settings.MEDIA_ROOT) / item.storage_key).resolve()
+    media_root = Path(settings.MEDIA_ROOT).resolve()
+    if media_root not in destination.parents:
+        raise ValueError("DATASOURCE_STORAGE_PATH_INVALID")
+    temporary = destination.with_name(f".{destination.name}.syncing")
+    shutil.rmtree(temporary, ignore_errors=True)
+    for path in source.rglob("*"):
+        if path.is_symlink() and not path.resolve().is_relative_to(source):
+            raise ValueError("DATASOURCE_PATH_OUTSIDE_STORAGE_ROOT")
+    shutil.copytree(source, temporary, symlinks=True)
+    shutil.rmtree(destination, ignore_errors=True)
+    temporary.rename(destination)
+    item.current_version = ""
+    item.save(update_fields=["updated_at", "current_version"])
+    record_datasource_versions(datasource)
+
+
 def complete_datasource_sync_task(task_id, result):
     """Complete a datasource sync after LensNode reports final status."""
 
@@ -1362,6 +1408,17 @@ def complete_datasource_sync_task(task_id, result):
         "target_path": result.get("target_path")
         or (datasource.target_path if datasource else ""),
     }
+    if (
+        success
+        and task.status not in TaskStatus.get_completed_statuses()
+        and datasource is not None
+        and datasource.lensnode_id is None
+    ):
+        try:
+            _publish_independent_datasource(datasource, metrics["target_path"])
+        except (OSError, ValueError) as exc:
+            success = False
+            error = f"DATASOURCE_PUBLISH_FAILED: {exc}"
     conversion_summary = result.get("conversion_summary") or {}
     warnings = list(result.get("warnings") or [])
     if result.get("partial_success"):
@@ -1399,7 +1456,7 @@ def complete_datasource_sync_task(task_id, result):
         if success:
             datasource.last_error = ""
             datasource.last_synced_at = timezone.now()
-            if metrics["target_path"]:
+            if metrics["target_path"] and datasource.lensnode_id is not None:
                 datasource.target_path = metrics["target_path"]
             datasource.save(
                 update_fields=[
@@ -1999,6 +2056,7 @@ def _datasource_step_metadata(
     task = TaskExecution.objects.filter(task_id=task_id).first()
     metadata = dict(task.metadata or {}) if task else {}
     steps = list(metadata.get("steps") or [])
+    steps = steps[-99:]
     steps.append(
         {
             "name": name,

@@ -11,6 +11,7 @@ from lens.models import (
     Connection,
     CredentialLease,
     ExecutionSnapshot,
+    LensNode,
     PluginInvocation,
 )
 from lens.plugins.datasource_access import (
@@ -900,7 +901,11 @@ def _snapshot_node_id(snapshot):
         snapshot.kind == ExecutionSnapshot.Kind.DATASOURCE_SYNC
         and snapshot.datasource_id is not None
     ):
-        return snapshot.datasource.lensnode_id
+        lensnode_uuid = _parse_uuid(
+            snapshot.resolved_config.get("lensnode_uuid")
+        )
+        lensnode = LensNode.objects.filter(uuid=lensnode_uuid).only("pk").first()
+        return lensnode.pk if lensnode else None
     if (
         snapshot.kind == ExecutionSnapshot.Kind.TOOL_INVOKE
         and snapshot.run_id is not None

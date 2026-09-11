@@ -1,6 +1,8 @@
 """Create immutable resolved configuration for plugin executions."""
 
 from copy import deepcopy
+import hashlib
+import json
 
 from django.db import transaction
 
@@ -25,7 +27,7 @@ SENSITIVE_CONFIG_KEYS = frozenset(
 )
 
 
-def create_datasource_sync_snapshot(datasource):
+def create_datasource_sync_snapshot(datasource, *, lensnode=None):
     """Resolve one external datasource into an immutable execution snapshot."""
 
     datasource = DataSource.objects.select_related(
@@ -56,7 +58,8 @@ def create_datasource_sync_snapshot(datasource):
         raise PluginRegistryError(
             "datasource and connection plugin keys differ"
         )
-    if datasource.lensnode is None:
+    lensnode = lensnode or datasource.lensnode
+    if lensnode is None:
         raise PluginRegistryError("datasource LensNode is required")
     plugin = installed_plugin(datasource.plugin_key)
     if plugin.datasource is None:
@@ -83,14 +86,28 @@ def create_datasource_sync_snapshot(datasource):
         )
     except DatasourceProviderError as exc:
         raise PluginRegistryError(str(exc)) from exc
+    target_path = datasource.target_path
+    if not target_path:
+        config_hash = hashlib.sha256(
+            json.dumps(
+                datasource.datasource_config,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:12]
+        target_path = (
+            f"{lensnode.workspace_path}/datasources/"
+            f"{datasource.uuid}-{config_hash}"
+        )
     resolved_config = {
         "endpoint": endpoint,
         "connection_config": deepcopy(connection.config),
         "connection_scope": deepcopy(connection.allowed_scope),
         "datasource_config": datasource_config,
         "sync_policy": deepcopy(datasource.sync_policy),
-        "target_path": datasource.target_path,
-        "lensnode_uuid": str(datasource.lensnode.uuid),
+        "target_path": target_path,
+        "publish_artifact": datasource.lensnode_id is None,
+        "lensnode_uuid": str(lensnode.uuid),
     }
     with transaction.atomic():
         snapshot = ExecutionSnapshot.objects.create(
@@ -105,7 +122,7 @@ def create_datasource_sync_snapshot(datasource):
         )
         create_invocation_audit(
             snapshot,
-            lensnode=datasource.lensnode,
+            lensnode=lensnode,
             resource_summary=datasource_config,
         )
         return snapshot
