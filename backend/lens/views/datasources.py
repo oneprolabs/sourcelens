@@ -24,6 +24,7 @@ from lens.models import (
     ExecutionSnapshot,
     PluginInvocation,
     ScheduledTask,
+    Session,
 )
 from lens.plugins.datasource_access import (
     datasource_access_failure_detail,
@@ -101,6 +102,15 @@ class DataSourceViewSet(BaseAdminViewSet):
             item = datasource.items.get(uuid=item_uuid)
         except DataSourceItem.DoesNotExist:
             return Response({"detail": "Item not found"}, status=404)
+        in_use = Session.objects.filter(
+            status=Session.Status.ACTIVE,
+            datasource_snapshots__item=item,
+        ).exists()
+        if in_use:
+            return Response(
+                {"detail": "DATASOURCE_ITEM_IN_USE"},
+                status=status.HTTP_409_CONFLICT,
+            )
         from pathlib import Path
         from django.conf import settings
 
