@@ -1387,8 +1387,6 @@ function buildPayload() {
   const payload = {
     name: form.value.name,
     source_type: normalizedSourceType(form.value.source_type),
-    lensnode_uuid: form.value.lensnode_uuid,
-    target_path: datasourceTargetPath(),
     config: managedWorkspace ? {} : buildDatasourceConfig(),
     sync_policy: managedWorkspace ? {} : buildDatasourceSyncPolicy(),
     status: form.value.status || 'active',

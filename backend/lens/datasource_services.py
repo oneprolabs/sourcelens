@@ -249,7 +249,14 @@ def check_datasource_path(lensnode, target_path, source_type, config=None):
 
 
 def list_datasource_files(datasource, page=1, page_size=20, **filters):
-    """Return a paginated, safe datasource file catalog from its LensNode."""
+    """Return a paginated catalog from the datasource's storage."""
+
+    if datasource.lensnode_id is None:
+        from .datasource_catalog import list_stored_datasource_files
+
+        return list_stored_datasource_files(
+            datasource, page=page, page_size=page_size, **filters
+        )
 
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
