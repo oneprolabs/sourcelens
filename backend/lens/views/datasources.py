@@ -516,7 +516,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if uploaded.size > 25 * 1024 * 1024:
+        if uploaded.size > 50 * 1024 * 1024:
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,

@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Fixed Managed Workspace datasource setup and added safe replace-on-upload ZIP imports up to 50 MB.
+zh-CN: 修复托管工作区数据源配置，并支持安全替换上传的 50 MB 以内 ZIP 压缩包。

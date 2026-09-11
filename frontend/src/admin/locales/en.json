@@ -2136,6 +2136,8 @@
       "saveFailed": "Save failed",
       "uploadStarted": "Upload started",
       "uploadFailed": "Upload failed",
+      "uploadZipOnly": "Only ZIP archives are supported for Managed Workspace uploads.",
+      "uploadTooLarge": "The ZIP archive must be 50 MB or smaller.",
       "archiveSuccess": "Assistant archived",
       "archiveFailed": "Failed to archive assistant",
       "restoreSuccess": "Assistant restored",

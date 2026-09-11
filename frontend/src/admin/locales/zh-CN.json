@@ -2136,6 +2136,8 @@
       "saveFailed": "保存失败",
       "uploadStarted": "上传任务已开始",
       "uploadFailed": "上传失败",
+      "uploadZipOnly": "托管工作区上传仅支持 ZIP 压缩包。",
+      "uploadTooLarge": "ZIP 压缩包不能超过 50 MB。",
       "archiveSuccess": "助手已归档",
       "archiveFailed": "助手归档失败",
       "restoreSuccess": "助手已恢复",
