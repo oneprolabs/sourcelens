@@ -267,6 +267,7 @@
                   >
                 </div>
                 <div
+                  v-if="row.lensnode || row.target_path"
                   class="datasource-target-summary flex min-w-0 items-center gap-2 border-t border-line py-2"
                 >
                   <span class="w-14 shrink-0 text-xs text-ink-500">{{
