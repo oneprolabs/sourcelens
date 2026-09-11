@@ -1344,7 +1344,15 @@ import {
   X as XIcon,
   XCircle as XCircleIcon
 } from '@lucide/vue'
-import { computed, defineComponent, h, nextTick, ref, watch } from 'vue'
+import {
+  computed,
+  defineComponent,
+  h,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  watch
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -1408,6 +1416,7 @@ const gitRepositorySearch = ref('')
 const gitBulkBranch = ref('')
 const acceptedCredentialUuid = ref('')
 const conversionOpen = ref(false)
+let pluginValidationTimer = null
 
 const syncIntervalSeconds = computed({
   get() {
@@ -1933,6 +1942,26 @@ function updatePluginConfig(value) {
   })
   Object.assign(props.config, value)
   emit('connection-change')
+  schedulePluginConnectionValidation()
+}
+
+function schedulePluginConnectionValidation() {
+  if (pluginValidationTimer) {
+    clearTimeout(pluginValidationTimer)
+    pluginValidationTimer = null
+  }
+  if (
+    !isPluginSourceType(props.form.source_type) ||
+    props.form.plugin_key !== 'feishu' ||
+    activeStepKey.value !== 'connection' ||
+    !schemaRequiredFieldsHaveValues(datasourceSchema.value, props.config)
+  ) {
+    return
+  }
+  pluginValidationTimer = setTimeout(() => {
+    pluginValidationTimer = null
+    testConnectionIfVisible()
+  }, 350)
 }
 
 function credentialOptionLabel(credential) {
@@ -2196,6 +2225,13 @@ function testConnectionIfVisible() {
     (pluginConnectionStep || legacyConnectionStep) &&
     canTestConnection.value
   ) {
+    if (
+      pluginConnectionStep &&
+      props.form.plugin_key === 'feishu' &&
+      !schemaRequiredFieldsHaveValues(datasourceSchema.value, props.config)
+    ) {
+      return
+    }
     emit('test-connection')
   }
 }
@@ -2315,6 +2351,12 @@ watch(
   },
   { flush: 'post' }
 )
+
+onBeforeUnmount(() => {
+  if (pluginValidationTimer) {
+    clearTimeout(pluginValidationTimer)
+  }
+})
 
 function datasourceConnectionConfigSignature() {
   if (isPluginSourceType(props.form.source_type)) {

@@ -532,6 +532,7 @@ const loadingPluginResourceOptions = ref('')
 let pluginResourceRequestId = 0
 const suppressDatasourceConnectionReset = ref(false)
 const datasourceConnectionBaseSignature = ref('')
+let datasourceConnectionRequestId = 0
 const checkingDatasourcePath = ref(false)
 const testingDatasourceConnection = ref(false)
 const refreshingCredentials = ref(false)
@@ -1126,6 +1127,8 @@ function startEdit(row) {
 }
 
 function closeDrawer() {
+  datasourceConnectionRequestId++
+  testingDatasourceConnection.value = false
   showDrawer.value = false
   form.value = {}
   formError.value = ''
@@ -1668,6 +1671,8 @@ function canSaveDatasource() {
 }
 
 function resetDatasourceConnectionResult() {
+  datasourceConnectionRequestId++
+  testingDatasourceConnection.value = false
   if (suppressDatasourceConnectionReset.value) {
     suppressDatasourceConnectionReset.value = false
     return
@@ -1704,6 +1709,7 @@ function resetDatasourceConnectionResult() {
 }
 
 async function testDatasourceConnection() {
+  const requestId = ++datasourceConnectionRequestId
   testingDatasourceConnection.value = true
   datasourceConnectionResult.value = null
   try {
@@ -1714,6 +1720,7 @@ async function testDatasourceConnection() {
           form.value.connection_uuid,
           { datasource_config: buildPluginDatasourceConfig() }
         )
+        if (requestId !== datasourceConnectionRequestId) return
         datasourceConnectionResult.value = {
           status: 'success',
           message: t('lensAdmin.datasourceWizard.feishuResourcesAccessible'),
@@ -1727,6 +1734,7 @@ async function testDatasourceConnection() {
         return
       }
       const resources = await getConnectionResources(form.value.connection_uuid)
+      if (requestId !== datasourceConnectionRequestId) return
       datasourceConnectionResult.value = {
         status: 'success',
         message: 'Plugin Connection resources are available.',
@@ -1751,11 +1759,13 @@ async function testDatasourceConnection() {
         config: buildDatasourceConfig()
       }
     )
+    if (requestId !== datasourceConnectionRequestId) return
     applyDatasourceConnectionResult(result)
     datasourceConnectionResult.value = result
     datasourceConnectionBaseSignature.value =
       datasourceConnectionSignature(true)
   } catch (error) {
+    if (requestId !== datasourceConnectionRequestId) return
     datasourceConnectionResult.value = {
       status: 'failed',
       message:
@@ -1764,7 +1774,9 @@ async function testDatasourceConnection() {
         extractErrorMessage(error, t('lensAdmin.messages.loadFailed'))
     }
   } finally {
-    testingDatasourceConnection.value = false
+    if (requestId === datasourceConnectionRequestId) {
+      testingDatasourceConnection.value = false
+    }
   }
 }
 

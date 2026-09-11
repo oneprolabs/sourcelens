@@ -86,24 +86,86 @@ function flattenTree(root) {
   return nodes
 }
 
-function wrapLabel(label, maxChars = 28) {
-  const chars = Array.from(label)
-  const lines = []
-  for (let index = 0; index < chars.length; index += maxChars) {
-    lines.push(chars.slice(index, index + maxChars).join(''))
+const ROOT_X = 112
+const DOT_GAP = 12
+const TEXT_GAP = 10
+const COLUMN_GAP = 40
+const ROOT_GAP = 104
+const LINE_HEIGHT = 20
+const LEAF_GAP = 12
+const MIN_LEAF_ADVANCE = 34
+const WRAP_WIDTH = 240
+
+function measureWidth(text) {
+  let width = 0
+  for (const char of String(text)) {
+    width += char.codePointAt(0) > 0x2e7f ? 14 : 7.5
   }
-  return lines.length ? lines : ['']
+  return width
+}
+
+function wrapLabel(label, maxWidth = WRAP_WIDTH) {
+  const chars = Array.from(String(label))
+  if (!chars.length) return ['']
+  const lines = []
+  let current = ''
+  let width = 0
+  for (const char of chars) {
+    const charWidth = char.codePointAt(0) > 0x2e7f ? 14 : 7.5
+    if (current && width + charWidth > maxWidth) {
+      lines.push(current)
+      current = ''
+      width = 0
+    }
+    current += char
+    width += charWidth
+  }
+  lines.push(current)
+  return lines
 }
 
 function layoutTree(root) {
   const nodes = flattenTree(root)
-  let nextY = 28
+  const maxDepth = rootDepth(root)
 
+  nodes.forEach((node) => {
+    node.lines = node.depth === 0 ? [] : wrapLabel(node.label)
+    node.textWidth = node.lines.reduce(
+      (width, line) => Math.max(width, measureWidth(line)),
+      0
+    )
+  })
+
+  const columnWidths = []
+  nodes.forEach((node) => {
+    columnWidths[node.depth] = Math.max(
+      columnWidths[node.depth] || 0,
+      node.textWidth
+    )
+  })
+
+  // Labels are left-aligned per depth. Only nodes with children get a dot,
+  // and it sits just after the label; leaves have no dot. A branch leaves
+  // from its parent's dot and stops before the child label, so connectors
+  // remain visually separated from text.
+  const labelX = [ROOT_X]
+  for (let depth = 1; depth <= maxDepth; depth += 1) {
+    labelX[depth] =
+      depth === 1
+        ? ROOT_X + ROOT_GAP
+        : labelX[depth - 1] + columnWidths[depth - 1] + DOT_GAP + COLUMN_GAP
+  }
+
+  let nextY = 24
   const place = (node) => {
-    node.x = 24 + node.depth * 236
+    node.labelX = labelX[node.depth]
+    node.labelEnd = node.labelX + node.textWidth
+    node.hasChildren = node.children.length > 0
+    node.dotX = node.depth === 0 ? ROOT_X : node.labelEnd + DOT_GAP
     if (!node.children.length) {
       node.y = nextY
-      nextY += Math.max(30, wrapLabel(node.label).length * 20 + 10)
+      const lineCount = Math.max(1, node.lines.length)
+      nextY += Math.max(MIN_LEAF_ADVANCE, lineCount * LINE_HEIGHT + LEAF_GAP)
       return
     }
     node.children.forEach(place)
@@ -112,17 +174,13 @@ function layoutTree(root) {
   }
   place(root)
 
-  const maxTextWidth = nodes.reduce((width, node) => {
-    const longestLine = Math.max(
-      ...wrapLabel(node.label).map((line) => Array.from(line).length)
-    )
-    return Math.max(width, longestLine * 9)
-  }, 0)
-
+  const lastWidth = columnWidths[maxDepth] || 0
+  const lastDot =
+    maxDepth === 0 ? ROOT_X : labelX[maxDepth] + lastWidth + DOT_GAP
   return {
     nodes,
-    width: Math.max(560, 24 + rootDepth(root) * 236 + maxTextWidth + 60),
-    height: Math.max(150, nextY + 12)
+    width: Math.max(560, lastDot + 24),
+    height: Math.max(150, nextY + 8)
   }
 }
 
@@ -143,10 +201,14 @@ function branchColor(node) {
 }
 
 function renderText(node) {
-  return wrapLabel(node.label)
+  const textX = node.labelX
+  const firstLineOffset = -((node.lines.length - 1) * LINE_HEIGHT) / 2
+  return node.lines
     .map(
       (line, index) =>
-        `<tspan x="12" dy="${index === 0 ? 0 : 18}">${escapeXml(line)}</tspan>`
+        `<tspan x="${textX}" ` +
+        `dy="${index === 0 ? firstLineOffset : LINE_HEIGHT}">` +
+        `${escapeXml(line)}</tspan>`
     )
     .join('')
 }
@@ -167,11 +229,13 @@ export function renderMindmap(markdown) {
       )
       if (!parent) return ''
       const color = branchColor(node)
-      const middleX = (parent.x + node.x) / 2
+      const startX = parent.dotX
+      const endX = node.labelX - TEXT_GAP
+      const middleX = (startX + endX) / 2
       return (
         `<path class="mindmap-link" data-mindmap-link="${node.path}" ` +
-        `d="M${parent.x},${parent.y} C${middleX},${parent.y} ` +
-        `${middleX},${node.y} ${node.x},${node.y}" stroke="${color}" />`
+        `d="M${startX},${parent.y} C${middleX},${parent.y} ` +
+        `${middleX},${node.y} ${endX},${node.y}" stroke="${color}" />`
       )
     })
     .join('')
@@ -179,41 +243,58 @@ export function renderMindmap(markdown) {
   const renderedNodes = nodes
     .map((node) => {
       const color = branchColor(node)
-      const hasChildren = node.children.length > 0
-      const radius = node.depth === 0 ? 7 : hasChildren ? 6 : 4
+      const radius = node.depth === 0 ? 7 : 6
       const label = node.depth === 0 ? '' : renderText(node)
+      const dot = node.hasChildren
+        ? `<circle cx="${node.dotX}" cy="${node.y}" r="${radius}" ` +
+          `stroke="${color}" fill="white" />`
+        : ''
       return (
         `<g class="mindmap-node" data-mindmap-toggle="true" ` +
         `data-mindmap-path="${node.path}" ` +
-        `data-mindmap-has-children="${hasChildren}" ` +
-        `role="treeitem" tabindex="0" aria-expanded="${hasChildren}" ` +
-        `aria-label="${escapeXml(node.label)}" ` +
-        `transform="translate(${node.x} ${node.y})">` +
-        `<circle cx="0" cy="0" r="${radius}" ` +
-        `stroke="${color}" fill="white" />` +
-        `<text fill="currentColor">${label}</text></g>`
+        `data-mindmap-has-children="${node.hasChildren}" ` +
+        `role="treeitem" tabindex="0" aria-expanded="${node.hasChildren}" ` +
+        `aria-label="${escapeXml(node.label)}">` +
+        dot +
+        `<text x="${node.labelX}" y="${node.y}" ` +
+        `fill="currentColor" dominant-baseline="middle">${label}</text></g>`
       )
     })
     .join('')
 
   return (
     `<div class="markdown-mindmap" data-mindmap-root>` +
-    `<div class="mindmap-toolbar" role="toolbar" ` +
-    `aria-label="思维导图操作">` +
-    `<span class="mindmap-toolbar-title">思维导图</span>` +
-    `<button type="button" data-mindmap-action="expand" ` +
-    `aria-label="全部展开">全部展开</button>` +
-    `<button type="button" data-mindmap-action="collapse" ` +
-    `aria-label="全部收起">全部收起</button>` +
-    `</div>` +
     `<div class="mindmap-canvas" role="group" ` +
     `aria-label="${escapeXml(root.label)}">` +
     `<svg class="mindmap-svg" role="tree" ` +
     `viewBox="0 0 ${width} ${height}" ` +
+    `data-mindmap-width="${width}" data-mindmap-height="${height}" ` +
     `preserveAspectRatio="xMinYMin meet" ` +
     `aria-label="${escapeXml(root.label)}">` +
     `<g class="mindmap-links">${links}</g>` +
     `<g class="mindmap-nodes">${renderedNodes}</g>` +
-    `</svg></div></div>`
+    `</svg>` +
+    `<pre class="mindmap-code-panel" aria-hidden="true">` +
+    `<code>${escapeXml(markdown)}</code></pre></div>` +
+    `<div class="mindmap-toolbar" role="toolbar" ` +
+    `aria-label="思维导图操作">` +
+    `<button type="button" class="mindmap-tool-button ` +
+    `mindmap-tool-zoom-out" data-mindmap-action="zoom-out" ` +
+    `aria-label="缩小" title="缩小"></button>` +
+    `<button type="button" class="mindmap-tool-button ` +
+    `mindmap-tool-zoom-in" data-mindmap-action="zoom-in" ` +
+    `aria-label="放大" title="放大"></button>` +
+    `<button type="button" class="mindmap-tool-button ` +
+    `mindmap-tool-fit" data-mindmap-action="fit" ` +
+    `aria-label="适应画布" title="适应画布"></button>` +
+    `<button type="button" class="mindmap-tool-button ` +
+    `mindmap-tool-fullscreen" data-mindmap-action="fullscreen" ` +
+    `aria-label="全屏查看" title="全屏查看"></button>` +
+    `<span class="mindmap-toolbar-divider" aria-hidden="true"></span>` +
+    `<button type="button" class="mindmap-tool-code" ` +
+    `data-mindmap-action="code" aria-label="查看代码" ` +
+    `title="查看代码"><span aria-hidden="true">&lt;/&gt;</span>` +
+    `<span class="mindmap-tool-code-label">查看代码</span></button>` +
+    `</div></div>`
   )
 }
