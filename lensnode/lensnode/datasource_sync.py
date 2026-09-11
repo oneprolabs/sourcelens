@@ -684,6 +684,12 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         )
     except (ValueError, TypeError) as exc:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_CONTENT_INVALID") from exc
+    limits = command.get("upload_limits") or {}
+    max_bytes = limits.get("max_bytes", 50 * 1024 * 1024)
+    if type(max_bytes) is not int or max_bytes <= 0:
+        max_bytes = 50 * 1024 * 1024
+    if len(content) > max_bytes:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
     archive_path = target / filename
     staging = target / ".sourcelens-upload-staging.sourcelens"
     if staging.exists():
@@ -694,9 +700,9 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     extracted = []
     try:
         if filename.lower().endswith(".zip"):
-            extracted = _extract_zip_archive(staged_archive, staging)
+            extracted = _extract_zip_archive(staged_archive, staging, limits)
         elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
-            extracted = _extract_tar_archive(staged_archive, staging)
+            extracted = _extract_tar_archive(staged_archive, staging, limits)
         previous = target / ".sourcelens-uploaded.sourcelens"
         if previous.exists():
             for path in previous.read_text(encoding="utf-8").splitlines():
@@ -751,19 +757,34 @@ def _archive_member_path(root, name):
     return path
 
 
-def _extract_zip_archive(archive_path, root):
+def _upload_extraction_limits(limits):
+    """Normalize optional limits for compatibility with older servers."""
+
+    limits = limits if isinstance(limits, dict) else {}
+    defaults = (UPLOAD_MAX_EXTRACTED_BYTES, UPLOAD_MAX_EXTRACTED_FILES)
+    keys = ("max_extracted_bytes", "max_extracted_files")
+    return tuple(
+        limits[key]
+        if type(limits.get(key)) is int and limits[key] > 0
+        else default
+        for key, default in zip(keys, defaults)
+    )
+
+
+def _extract_zip_archive(archive_path, root, limits=None):
     """Extract a ZIP archive without permitting unsafe members."""
 
     extracted = []
     extracted_bytes = 0
+    max_bytes, max_files = _upload_extraction_limits(limits)
     with zipfile.ZipFile(archive_path) as archive:
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            if len(extracted) >= UPLOAD_MAX_EXTRACTED_FILES:
+            if len(extracted) >= max_files:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_LIMIT")
             extracted_bytes += info.file_size
-            if extracted_bytes > UPLOAD_MAX_EXTRACTED_BYTES:
+            if extracted_bytes > max_bytes:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_SIZE_LIMIT")
             mode = (info.external_attr >> 16) & 0o170000
             if mode == 0o120000:
@@ -778,21 +799,22 @@ def _extract_zip_archive(archive_path, root):
     return extracted
 
 
-def _extract_tar_archive(archive_path, root):
+def _extract_tar_archive(archive_path, root, limits=None):
     """Extract a tar archive without permitting unsafe members."""
 
     extracted = []
     extracted_bytes = 0
+    max_bytes, max_files = _upload_extraction_limits(limits)
     with tarfile.open(archive_path, "r:*") as archive:
         for member in archive.getmembers():
             if member.issym() or member.islnk():
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_LINK_INVALID")
             if not member.isfile():
                 continue
-            if len(extracted) >= UPLOAD_MAX_EXTRACTED_FILES:
+            if len(extracted) >= max_files:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_LIMIT")
             extracted_bytes += member.size
-            if extracted_bytes > UPLOAD_MAX_EXTRACTED_BYTES:
+            if extracted_bytes > max_bytes:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_SIZE_LIMIT")
             path = _archive_member_path(root, member.name)
             if path.exists():

@@ -1768,6 +1768,12 @@
       "saveChanges": "保存修改"
     },
     "resourceSettings": {
+      "max_bytes": "上传压缩包大小上限",
+      "max_bytesDesc": "上传压缩包的最大字节数。",
+      "max_extracted_bytes": "解压总大小上限",
+      "max_extracted_bytesDesc": "解压后所有文件的最大总字节数。",
+      "max_extracted_files": "解压文件数上限",
+      "max_extracted_filesDesc": "压缩包中允许的最大文件数量。",
       "groups": {
         "datasource": "数据源同步"
       },
@@ -2137,7 +2143,7 @@
       "uploadStarted": "上传任务已开始",
       "uploadFailed": "上传失败",
       "uploadZipOnly": "托管工作区上传仅支持 ZIP 压缩包。",
-      "uploadTooLarge": "ZIP 压缩包不能超过 50 MB。",
+      "uploadTooLarge": "ZIP 压缩包不能超过 {size} MiB。",
       "archiveSuccess": "助手已归档",
       "archiveFailed": "助手归档失败",
       "restoreSuccess": "助手已恢复",

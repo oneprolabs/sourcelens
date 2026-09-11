@@ -3547,6 +3547,9 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
         value = attrs.get("value", getattr(self.instance, "value", {}))
 
         positive_integer_keys = {
+            "lens.datasource_upload.max_bytes": "max_bytes",
+            "lens.datasource_upload.max_extracted_bytes": "max_extracted_bytes",
+            "lens.datasource_upload.max_extracted_files": "max_extracted_files",
             "retention.run_days": "run_days",
             "lensnode.defaults.timeout": "timeout",
             "lensnode.defaults.idle_timeout": "idle_timeout",
@@ -3558,7 +3561,7 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
             "lens.datasource_sync.workers": "workers",
         }
         if key in positive_integer_keys:
-            if not isinstance(value, int) or value <= 0:
+            if type(value) is not int or value <= 0:
                 name = positive_integer_keys[key]
                 raise serializers.ValidationError(
                     {"value": f"{name} must be a positive integer"}

@@ -11,6 +11,7 @@ from django.db.models import Q
 from django.utils import timezone
 from lens.datasource_services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
+    get_datasource_upload_limits,
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
@@ -495,6 +496,12 @@ class DataSourceViewSet(BaseAdminViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @action(detail=False, methods=["get"], url_path="upload-limits")
+    def upload_limits(self, request):
+        """Expose effective limits for client-side upload validation."""
+
+        return Response(get_datasource_upload_limits())
+
     @action(detail=True, methods=["post"], url_path="upload")
     def upload(self, request, uuid=None):
         """Queue one file upload into a Managed Workspace."""
@@ -516,7 +523,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if uploaded.size > 50 * 1024 * 1024:
+        if uploaded.size > get_datasource_upload_limits()["max_bytes"]:
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
