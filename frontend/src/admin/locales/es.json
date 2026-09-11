@@ -2205,7 +2205,8 @@
       "empty": "No hay fuentes disponibles",
       "selectedLabel": "seleccionados",
       "resources": "recursos",
-      "placeholder": "Selecciona fuentes"
+      "placeholder": "Selecciona fuentes",
+      "search": "Buscar fuentes"
     }
   }
 }

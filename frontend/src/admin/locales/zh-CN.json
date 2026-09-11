@@ -2223,7 +2223,8 @@
       "empty": "暂无可用数据源",
       "selectedLabel": "已选",
       "resources": "个资源",
-      "placeholder": "请选择数据源"
+      "placeholder": "请选择数据源",
+      "search": "搜索数据源"
     }
   }
 }
