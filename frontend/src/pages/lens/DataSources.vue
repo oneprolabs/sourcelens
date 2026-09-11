@@ -266,25 +266,6 @@
                     {{ t('lensAdmin.pluginForm.resources') }}</span
                   >
                 </div>
-                <div
-                  v-if="row.lensnode || row.target_path"
-                  class="datasource-target-summary flex min-w-0 items-center gap-2 border-t border-line py-2"
-                >
-                  <span class="w-14 shrink-0 text-xs text-ink-500">{{
-                    t('lensAdmin.datasourceCard.target')
-                  }}</span>
-                  <p
-                    class="min-w-0 flex-1 truncate font-mono text-xs text-ink-700"
-                    :title="row.target_path || emptyValue"
-                  >
-                    {{ row.target_path || emptyValue }}
-                  </p>
-                  <span
-                    class="max-w-28 shrink-0 truncate text-xs text-ink-500"
-                    :title="row.lensnode_name || lensNodeName(row.lensnode)"
-                    >{{ row.lensnode_name || lensNodeName(row.lensnode) }}</span
-                  >
-                </div>
               </div>
 
               <div
