@@ -340,6 +340,14 @@
                       t('lensAdmin.actions.refreshAvailability')
                     }}</BaseButton
                   >
+                  <BaseButton
+                    v-if="row.source_type === 'managed_workspace'"
+                    size="sm"
+                    variant="outline"
+                    @click.stop="openUpload(row)"
+                  >
+                    {{ t('lensAdmin.actions.uploadFile') }}
+                  </BaseButton>
                   <RowActions :row="row" @edit="startEdit" @delete="remove" />
                 </div>
               </div>
