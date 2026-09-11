@@ -2222,7 +2222,8 @@
       "all": "All sources",
       "empty": "No data sources available",
       "selectedLabel": "selected",
-      "resources": "resources"
+      "resources": "resources",
+      "placeholder": "Select data sources"
     }
   }
 }

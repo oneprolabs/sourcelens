@@ -2222,7 +2222,8 @@
       "all": "全部数据源",
       "empty": "暂无可用数据源",
       "selectedLabel": "已选",
-      "resources": "个资源"
+      "resources": "个资源",
+      "placeholder": "请选择数据源"
     }
   }
 }

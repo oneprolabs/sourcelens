@@ -298,23 +298,27 @@
             </label>
           </div>
           <p class="text-xs text-ink-500">{{ t('lensAdmin.datasourceSelection.scope') }}</p>
-          <div v-if="datasourceOptions.length" class="grid gap-2 sm:grid-cols-2">
-            <div v-for="source in datasourceOptions" :key="source.uuid" class="datasource-card" :class="{ 'datasource-card-selected': hasSource(source), 'datasource-card-disabled': saving || source.status !== 'active' }">
-              <label class="flex cursor-pointer items-start gap-3 p-3">
-                <input type="checkbox" :checked="hasSource(source)" :disabled="saving || source.status !== 'active'" class="mt-0.5 h-4 w-4 rounded border-line text-brand-600" @change="selectSource(source, null, $event.target.checked)" />
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-medium text-ink-800">{{ source.name }}</span>
-                  <span class="mt-1 block text-xs text-ink-500">{{ source.items?.length || 0 }} {{ t('lensAdmin.datasourceSelection.resources') }}</span>
-                </span>
+          <details v-if="datasourceOptions.length" class="relative">
+            <summary class="flex cursor-pointer items-center justify-between rounded-lg border border-line bg-surface-sunken px-3 py-2.5 text-sm text-ink-700">
+              <span>{{ selectedDatasourceCount ? `${selectedDatasourceCount} ${t('lensAdmin.datasourceSelection.selected')}` : t('lensAdmin.datasourceSelection.placeholder') }}</span>
+              <span class="text-xs text-ink-400">⌄</span>
+            </summary>
+            <div class="absolute z-10 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-line bg-surface p-2 shadow-lg">
+              <label v-for="source in datasourceOptions" :key="source.uuid" class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-surface-sunken">
+                <input type="checkbox" :checked="hasSource(source)" :disabled="saving || source.status !== 'active'" class="h-4 w-4 rounded border-line text-brand-600" @change="selectSource(source, null, $event.target.checked)" />
+                <span class="min-w-0 flex-1 truncate">{{ source.name }}</span>
+                <span class="text-xs text-ink-400">{{ source.items?.length || 0 }}</span>
               </label>
-              <div v-if="source.items?.length > 1 && hasSource(source)" class="border-t border-line bg-surface-sunken px-3 py-2">
-                <label v-for="item in source.items" :key="item.uuid" class="flex items-center gap-2 py-1 text-xs text-ink-600">
-                  <input type="checkbox" :checked="hasSource(source, item)" :disabled="saving || source.status !== 'active' || item.status !== 'active'" class="h-3.5 w-3.5 rounded border-line text-brand-600" @change="selectSource(source, item, $event.target.checked)" />
-                  <span class="truncate">{{ item.name }}</span>
-                </label>
+              <div v-for="source in datasourceOptions" :key="`${source.uuid}-items`">
+                <div v-if="hasSource(source) && source.items?.length > 1" class="ml-6 border-l border-line pl-2">
+                  <label v-for="item in source.items" :key="item.uuid" class="flex cursor-pointer items-center gap-2 py-1.5 text-xs text-ink-600">
+                    <input type="checkbox" :checked="hasSource(source, item)" :disabled="saving || source.status !== 'active' || item.status !== 'active'" class="h-3.5 w-3.5 rounded border-line text-brand-600" @change="selectSource(source, item, $event.target.checked)" />
+                    <span class="truncate">{{ item.name }}</span>
+                  </label>
+                </div>
               </div>
             </div>
-          </div>
+          </details>
           <p v-else class="rounded-lg bg-surface-sunken p-4 text-center text-sm text-ink-500">{{ t('lensAdmin.datasourceSelection.empty') }}</p>
         </fieldset>
         <div v-if="requiresWorkspace && !form.datasource_bindings?.length && (!form.settings.datasource_routing || form.settings.datasource_routing === 'selected')">
