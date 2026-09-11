@@ -707,6 +707,7 @@ function defaultForm() {
     slug: '',
     lensnode_uuid: '',
     selected_dirs: [],
+    datasource_bindings: [],
     agent_model_ref: '',
     agent_rounds: 'balanced',
     max_concurrency: 5,
@@ -755,6 +756,9 @@ function formFromRow(row) {
     slug: row.slug || '',
     lensnode_uuid: row.lensnode?.uuid || row.lensnode || '',
     selected_dirs: selectedDirsFromValue(row.selected_dirs || []),
+    datasource_bindings: Array.isArray(row.datasource_bindings)
+      ? row.datasource_bindings
+      : [],
     agent_model_ref: row.agent_model_ref || '',
     agent_rounds: row.agent_rounds || 'balanced',
     max_concurrency: row.max_concurrency ?? 5,
@@ -875,6 +879,7 @@ function buildPayload() {
       : {}),
     selected_dirs:
       form.value.capability === 'general_chat' ? [] : buildSelectedDirs(),
+    datasource_bindings: form.value.datasource_bindings || [],
     agent_model_ref: form.value.agent_model_ref || null,
     agent_rounds: form.value.agent_rounds || 'balanced',
     ...(mode.value === 'edit'

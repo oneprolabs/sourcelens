@@ -77,6 +77,25 @@
         </dl>
       </section>
 
+      <section class="space-y-3" data-testid="assistant-detail-datasources">
+        <h3 class="detail-heading">数据源</h3>
+        <ul v-if="assistant.datasource_bindings?.length" class="detail-list">
+          <li
+            v-for="binding in assistant.datasource_bindings"
+            :key="binding.uuid"
+            class="flex items-center justify-between gap-3 px-4 py-3"
+          >
+            <span class="min-w-0 truncate text-sm text-ink-700">
+              {{ binding.mount_name }}
+            </span>
+            <span class="text-xs text-ink-400">
+              {{ binding.item_uuid ? '子数据源' : '全部子数据源' }}
+            </span>
+          </li>
+        </ul>
+        <p v-else class="detail-empty">未配置数据源</p>
+      </section>
+
       <section
         v-if="(assistant.mode || assistant.routing_mode) === 'smart'"
         data-testid="assistant-detail-collaboration-members"
