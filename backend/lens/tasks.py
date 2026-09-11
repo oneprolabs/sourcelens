@@ -638,6 +638,24 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                 record.save(update_fields=["enabled"])
             return 0
 
+        if datasource.lensnode is None:
+            record = _get_or_create_source_sync_record(datasource)
+            task_execution = register_datasource_sync_task(
+                datasource,
+                task_id,
+                trigger,
+            )
+            TaskTracker.update_task_status(
+                task_id,
+                TaskStatus.FAILURE,
+                error="LENSNODE_REQUIRED",
+            )
+            record.last_status = ScheduledTask.Status.FAILED
+            record.last_error = "LENSNODE_REQUIRED"
+            record.last_run_at = timezone.now()
+            record.save(update_fields=["last_status", "last_error", "last_run_at"])
+            return 0
+
         task_execution = register_datasource_sync_task(
             datasource,
             task_id,
