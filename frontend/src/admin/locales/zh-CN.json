@@ -1217,7 +1217,8 @@
       "workspaceGuideTag": "工作区指引",
       "workspaceGuideHint": "由所属助手的「工作区背景」自动生成，请在对应助手中编辑",
       "shareUrl": "对外链接",
-      "visibility": "可见性"
+      "visibility": "可见性",
+      "dataAndTools": "数据与工具"
     },
     "tasks": {
       "title": "默认定时任务",
@@ -1515,7 +1516,7 @@
       "validationSuccess": "连接验证成功，可用资源 {count} 个",
       "validationFailed": "连接验证失败",
       "deleteConfirm": "确定删除这个连接？",
-        "deleteSuccess": "连接已删除",
+      "deleteSuccess": "连接已删除",
       "deleteFailed": "连接删除失败",
       "pause": "暂停连接",
       "resume": "恢复连接",

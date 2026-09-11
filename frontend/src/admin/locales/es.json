@@ -1217,7 +1217,8 @@
       "workspaceGuideTag": "Guía del espacio de trabajo",
       "workspaceGuideHint": "Generado automáticamente desde el Contexto del Espacio de Trabajo del asistente; edítalo en ese asistente",
       "shareUrl": "Compartir enlace",
-      "visibility": "Visibilidad"
+      "visibility": "Visibilidad",
+      "dataAndTools": "Datos y herramientas"
     },
     "tasks": {
       "title": "Tareas programadas predeterminadas",

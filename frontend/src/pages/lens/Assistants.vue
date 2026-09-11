@@ -94,8 +94,7 @@
               <colgroup>
                 <col style="width: 20%" />
                 <col style="width: 11%" />
-                <col style="width: 18%" />
-                <col style="width: 16%" />
+                <col style="width: 34%" />
                 <col style="width: 10%" />
                 <col style="width: 8%" />
                 <col style="width: 17%" />
@@ -145,58 +144,49 @@
                     </div>
                   </td>
                   <td
-                    class="table-cell"
-                    :data-label="t('lensAdmin.datasourceSelection.title')"
-                  >
-                    <div>
-                      {{
-                        t(
-                          `lensAdmin.datasourceSelection.${assistantDataMode(row)}`
-                        )
-                      }}
-                    </div>
-                    <div class="mt-1 text-xs text-ink-500 break-words">
-                      {{ dataScopeLabel(row) }}
-                    </div>
-                  </td>
-                  <td
                     class="table-cell text-ink-600"
-                    :data-label="t('lensAdmin.columns.tools')"
+                    :data-label="t('lensAdmin.columns.dataAndTools')"
                   >
-                    <div
-                      data-testid="assistant-tool-counts"
-                      class="flex flex-wrap items-center gap-x-3 gap-y-2"
-                    >
-                      <span
-                        class="tool-count"
-                        :class="{
-                          'tool-count-empty': !row.skill_summary?.enabled
-                        }"
-                        :title="skillCountLabel(row)"
-                        :aria-label="skillCountLabel(row)"
-                      >
-                        <BookOpen :size="16" aria-hidden="true" />
-                        Skills {{ row.skill_summary?.enabled || 0 }}
-                      </span>
-                      <span
-                        class="tool-count"
-                        :class="{
-                          'tool-count-empty': !row.mcp_summary?.enabled
-                        }"
-                        :title="mcpCountLabel(row)"
-                        :aria-label="mcpCountLabel(row)"
-                      >
-                        <Server :size="16" aria-hidden="true" />
-                        MCP {{ row.mcp_summary?.enabled || 0 }}
-                      </span>
-                      <span
-                        v-if="row.plugin_summary?.enabled"
-                        class="tool-count"
-                      >
-                        <Plug :size="16" aria-hidden="true" />
-                        {{ t('lensAdmin.assistantPresentation.plugins') }}
-                        {{ row.plugin_summary.enabled }}
-                      </span>
+                    <div class="space-y-2">
+                      <div>
+                        <div class="text-xs font-medium text-ink-500">
+                          {{ t('lensAdmin.datasourceSelection.title') }}
+                        </div>
+                        <div>
+                          {{ t(`lensAdmin.datasourceSelection.${assistantDataMode(row)}`) }}
+                        </div>
+                        <div class="mt-1 break-words text-xs text-ink-500">
+                          {{ dataScopeLabel(row) }}
+                        </div>
+                      </div>
+                      <div data-testid="assistant-tool-counts" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <span class="text-xs font-medium text-ink-500">
+                          {{ t('lensAdmin.columns.tools') }}
+                        </span>
+                        <span
+                          class="tool-count"
+                          :class="{ 'tool-count-empty': !row.skill_summary?.enabled }"
+                          :title="skillCountLabel(row)"
+                          :aria-label="skillCountLabel(row)"
+                        >
+                          <BookOpen :size="16" aria-hidden="true" />
+                          Skills {{ row.skill_summary?.enabled || 0 }}
+                        </span>
+                        <span
+                          class="tool-count"
+                          :class="{ 'tool-count-empty': !row.mcp_summary?.enabled }"
+                          :title="mcpCountLabel(row)"
+                          :aria-label="mcpCountLabel(row)"
+                        >
+                          <Server :size="16" aria-hidden="true" />
+                          MCP {{ row.mcp_summary?.enabled || 0 }}
+                        </span>
+                        <span v-if="row.plugin_summary?.enabled" class="tool-count">
+                          <Plug :size="16" aria-hidden="true" />
+                          {{ t('lensAdmin.assistantPresentation.plugins') }}
+                          {{ row.plugin_summary.enabled }}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td
@@ -456,14 +446,13 @@ const activeColumns = computed(() =>
   [
     'assistant',
     'type',
-    'dataAccess',
-    'tools',
+    'dataAndTools',
     'visibility',
     'status',
     'actions'
   ].map((column) =>
-    column === 'dataAccess'
-      ? t('lensAdmin.datasourceSelection.title')
+    column === 'dataAndTools'
+      ? t('lensAdmin.columns.dataAndTools')
       : t(`lensAdmin.columns.${column}`)
   )
 )
