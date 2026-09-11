@@ -15,6 +15,7 @@ from .datasource_services import (
     DataSourceDispatchError,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
+    resolve_datasource_lensnode,
     get_datasource_conversion_timeout_s,
     get_datasource_sync_timeout_s,
     get_datasource_upload_timeout_s,
@@ -638,23 +639,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                 record.save(update_fields=["enabled"])
             return 0
 
-        if datasource.lensnode is None:
-            record = _get_or_create_source_sync_record(datasource)
-            task_execution = register_datasource_sync_task(
-                datasource,
-                task_id,
-                trigger,
-            )
-            TaskTracker.update_task_status(
-                task_id,
-                TaskStatus.FAILURE,
-                error="LENSNODE_REQUIRED",
-            )
-            record.last_status = ScheduledTask.Status.FAILED
-            record.last_error = "LENSNODE_REQUIRED"
-            record.last_run_at = timezone.now()
-            record.save(update_fields=["last_status", "last_error", "last_run_at"])
-            return 0
+        execution_node = resolve_datasource_lensnode(datasource)
 
         task_execution = register_datasource_sync_task(
             datasource,
@@ -693,7 +678,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     token=task_id,
                     ttl_s=get_datasource_sync_timeout_s(),
                 )
-            if not _datasource_capacity_available(datasource.lensnode, task_id):
+            if not _datasource_capacity_available(execution_node, task_id):
                 _queue_datasource_task(
                     task_id,
                     "Waiting for LensNode datasource sync capacity.",

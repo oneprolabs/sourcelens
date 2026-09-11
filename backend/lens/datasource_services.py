@@ -99,6 +99,21 @@ def validate_datasource_lensnode(lensnode):
         raise DataSourceDispatchError("LENSNODE_TOKEN_REVOKED")
 
 
+def resolve_datasource_lensnode(datasource):
+    """Resolve an approved online node for datasource execution."""
+
+    if datasource.lensnode_id:
+        validate_datasource_lensnode(datasource.lensnode)
+        return datasource.lensnode
+    node = LensNode.objects.filter(
+        status=LensNode.Status.ONLINE,
+        enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+        token_revoked=False,
+    ).order_by("updated_at").first()
+    validate_datasource_lensnode(node)
+    return node
+
+
 def _send_lensnode_command(lensnode, payload):
     """Send a datasource command to a connected LensNode."""
 
@@ -342,12 +357,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
     )
     if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
         raise DataSourceDispatchError("DATASOURCE_SYNC_NOT_SUPPORTED")
-    validate_datasource_lensnode(datasource.lensnode)
+    lensnode = resolve_datasource_lensnode(datasource)
     if datasource.connection_id and datasource.plugin_key:
         snapshot = create_datasource_sync_snapshot(datasource)
         request_id = uuid.uuid4().hex
         _send_lensnode_command(
-            datasource.lensnode,
+            lensnode,
             {
                 "type": "plugin_datasource_sync",
                 "request_id": request_id,
@@ -369,9 +384,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
     config = datasource_runtime_config(datasource)
     sync_policy = datasource.sync_policy or {}
     conversion = datasource_conversion_policy(sync_policy)
+    target_path = datasource.target_path or (
+        f"{lensnode.workspace_path}/datasources/{datasource.uuid}"
+    )
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
-        datasource.lensnode,
+        lensnode,
         {
             "type": "datasource_sync",
             "request_id": request_id,
@@ -383,11 +401,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
             "conversion": conversion,
             **_lensnode_gateway_config(),
             "sync_policy": sync_policy,
-            "target_path": datasource.target_path,
+            "target_path": target_path,
             "trigger": trigger,
             "max_workers": get_datasource_sync_max_workers(),
             "excluded_datasource_roots": excluded_datasource_roots(
-                datasource
+                datasource,
+                lensnode,
             ),
         },
     )
@@ -530,14 +549,17 @@ def datasource_conversion_defaults():
     }
 
 
-def excluded_datasource_roots(datasource):
+def excluded_datasource_roots(datasource, lensnode=None):
     """Return other datasource roots under this datasource root."""
 
+    lensnode = lensnode or datasource.lensnode
+    if lensnode is None or not datasource.target_path:
+        return []
     root = normalize_workspace_target_path(
         datasource.target_path,
-        datasource.lensnode.workspace_path,
+        lensnode.workspace_path,
     )
-    rows = DataSource.objects.filter(lensnode=datasource.lensnode).exclude(
+    rows = DataSource.objects.filter(lensnode=lensnode).exclude(
         pk=datasource.pk
     )
     roots = []
