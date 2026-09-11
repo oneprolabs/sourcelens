@@ -236,16 +236,6 @@
                       <BaseButton
                         v-if="row.status === 'active'"
                         size="sm"
-                        variant="ghost"
-                        :aria-label="t('lens.share.copyLink')"
-                        :title="t('lens.share.copyLink')"
-                        @click="copyShareUrl(row)"
-                      >
-                        <Copy :size="16" aria-hidden="true" />
-                      </BaseButton>
-                      <BaseButton
-                        v-if="row.status === 'active'"
-                        size="sm"
                         variant="danger-outline"
                         @click="requestArchive(row)"
                       >
@@ -355,7 +345,6 @@ import {
   BookOpen,
   Database,
   Plug,
-  Copy,
   Globe as GlobeIcon,
   Lock as LockIcon,
   Server
