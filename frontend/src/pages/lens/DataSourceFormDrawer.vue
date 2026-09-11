@@ -1311,7 +1311,6 @@
             :loading="saving"
             :disabled="
               !canProceedWizard ||
-              pathResult?.status === 'blocked' ||
               (!isManagedWorkspace && connectionResult?.status !== 'success')
             "
             @click="$emit('save')"
@@ -1627,8 +1626,7 @@ const isManagedWorkspace = computed(
 const wizardStepsMeta = computed(() => {
   return [
     { key: 'basic', title: t('lensAdmin.datasourceWizard.step1Title') },
-    { key: 'connection', title: t('lensAdmin.datasourceWizard.step2Title') },
-    { key: 'sync', title: t('lensAdmin.datasourceWizard.step3Title') }
+    { key: 'connection', title: t('lensAdmin.datasourceWizard.step2Title') }
   ]
 })
 
@@ -1785,22 +1783,6 @@ const canProceedWizard = computed(() => {
       )
     }
     return true
-  }
-  if (!props.form.workspace_relative_path?.trim()) {
-    return false
-  }
-  if (props.pathResult?.status === 'blocked' || !props.pathResult) {
-    return false
-  }
-  if (isManagedWorkspace.value) {
-    return props.pathResult?.status === 'available'
-  }
-  if (syncPolicyMode.value === 'crontab') {
-    return (
-      String(syncCron.value || '')
-        .trim()
-        .split(/\s+/).length === 5
-    )
   }
   return true
 })
