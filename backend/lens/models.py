@@ -1219,6 +1219,10 @@ class SessionDataSource(TimestampedUUIDModel):
     item = models.ForeignKey(
         DataSourceItem, null=True, blank=True, on_delete=models.PROTECT
     )
+    version = models.ForeignKey(
+        "DataSourceVersion", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="session_snapshots",
+    )
     datasource_version = models.CharField(max_length=64, blank=True, default="")
     mount_name = models.CharField(max_length=120)
     storage_key = models.CharField(max_length=500)

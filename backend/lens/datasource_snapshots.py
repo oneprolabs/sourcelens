@@ -1,6 +1,10 @@
 """Immutable datasource selections captured for assistant sessions."""
 
-from .models import AssistantDataSourceBinding, DataSourceItem, SessionDataSource
+from .models import (
+    AssistantDataSourceBinding,
+    DataSourceItem,
+    SessionDataSource,
+)
 
 
 def capture_session_datasources(session, assistant):
@@ -20,8 +24,13 @@ def capture_session_datasources(session, assistant):
         if not items:
             items = [None]
         for item in items:
+            version = (
+                item.versions.filter(status="ready").order_by("-created_at").first()
+                if item is not None
+                else None
+            )
             storage_key = (
-                item.storage_key
+                version.storage_key if version is not None else item.storage_key
                 if item is not None
                 else f"datasources/{binding.datasource.uuid}"
             )
@@ -34,8 +43,9 @@ def capture_session_datasources(session, assistant):
                     datasource=binding.datasource,
                     item=item,
                     datasource_version=(
-                        item.current_version if item is not None else ""
+                        version.version if version is not None else ""
                     ),
+                    version=version,
                     mount_name=mount_name,
                     storage_key=storage_key,
                 )
