@@ -358,11 +358,16 @@
             class="form-input h-9"
             :placeholder="t('common.search')"
           />
-          <input
-            v-model="gitBulkBranch"
-            class="form-input h-9"
-            :placeholder="t('lensAdmin.fields.branch')"
-          />
+          <BaseSelect v-model="gitBulkBranch" size="sm">
+            <option value="">{{ t('lensAdmin.fields.branch') }}</option>
+            <option
+              v-for="branch in organizationBranchOptions"
+              :key="branch"
+              :value="branch"
+            >
+              {{ branch }}
+            </option>
+          </BaseSelect>
           <BaseButton
             size="sm"
             variant="outline"
@@ -420,7 +425,7 @@
         </p>
       </section>
       <div
-        v-if="connectionResult && !testingConnection"
+        v-if="connectionResult && connectionResult.status !== 'success' && !testingConnection"
         class="rounded-md border p-3 text-sm"
         :class="
           connectionResult.status === 'success'
@@ -1692,6 +1697,10 @@ const gitBranchOptions = computed(() => {
   const branches = props.connectionResult?.details?.branches
   return Array.isArray(branches) ? branches : []
 })
+
+const organizationBranchOptions = computed(() =>
+  [...new Set(gitOrganizationRepositories.value.flatMap((repo) => repo.branches || []))].sort()
+)
 
 const pluginConnections = computed(() =>
   props.connections.filter(
