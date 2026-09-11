@@ -69,6 +69,8 @@ export function sanitizeHtml(dirty) {
       'data-mindmap-has-children',
       'data-mindmap-collapsed',
       'data-mindmap-link',
+      'data-mindmap-width',
+      'data-mindmap-height',
       'viewBox',
       'preserveAspectRatio',
       'aria-hidden',

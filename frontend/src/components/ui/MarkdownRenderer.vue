@@ -3,6 +3,10 @@
     class="markdown-content prose max-w-none"
     v-html="renderedContent"
     @click="handleMarkdownClick"
+    @pointerdown="handleMindmapPointerDown"
+    @pointermove="handleMindmapPointerMove"
+    @pointerup="handleMindmapPointerUp"
+    @pointercancel="handleMindmapPointerUp"
     @keydown="handleMarkdownKeydown"
   ></div>
 </template>
@@ -43,6 +47,9 @@ const props = defineProps({
 
 const { t } = useI18n()
 const copyResetTimers = new WeakMap()
+const MINDMAP_MAX_ZOOM = 2
+const MINDMAP_MIN_ZOOM = 0.5
+const MINDMAP_ZOOM_STEP = 0.15
 
 const languageLabels = {
   bash: 'Bash',
@@ -288,7 +295,24 @@ async function handleMarkdownClick(event) {
   if (action) {
     const mindmap = action.closest('[data-mindmap-root]')
     if (!mindmap) return
-    const shouldCollapse = action.dataset.mindmapAction === 'collapse'
+    const mindmapAction = action.dataset.mindmapAction
+    if (mindmapAction === 'fullscreen') {
+      await toggleMindmapFullscreen(mindmap)
+      return
+    }
+    if (mindmapAction === 'code') {
+      toggleMindmapCodePanel(mindmap, action)
+      return
+    }
+    if (mindmapAction === 'zoom-in' || mindmapAction === 'zoom-out') {
+      zoomMindmap(mindmap, mindmapAction === 'zoom-in' ? 1 : -1)
+      return
+    }
+    if (mindmapAction === 'fit') {
+      fitMindmap(mindmap)
+      return
+    }
+    const shouldCollapse = mindmapAction === 'collapse'
     mindmap
       .querySelectorAll(
         '[data-mindmap-toggle][data-mindmap-has-children="true"]'
@@ -333,6 +357,35 @@ async function handleMarkdownClick(event) {
       copyResetTimers.delete(button)
     }, 1800)
   )
+}
+
+function handleMindmapPointerDown(event) {
+  const canvas = event.target.closest('.mindmap-canvas')
+  if (!canvas || event.target.closest('button, [data-mindmap-toggle]')) return
+  canvas.dataset.dragging = 'true'
+  canvas.dataset.dragX = String(event.clientX)
+  canvas.dataset.dragY = String(event.clientY)
+  canvas.dataset.scrollLeft = String(canvas.scrollLeft)
+  canvas.dataset.scrollTop = String(canvas.scrollTop)
+  canvas.setPointerCapture?.(event.pointerId)
+}
+
+function handleMindmapPointerMove(event) {
+  const canvas = event.target.closest('.mindmap-canvas')
+  if (!canvas || canvas.dataset.dragging !== 'true') return
+  canvas.scrollLeft =
+    Number(canvas.dataset.scrollLeft) -
+    (event.clientX - Number(canvas.dataset.dragX))
+  canvas.scrollTop =
+    Number(canvas.dataset.scrollTop) -
+    (event.clientY - Number(canvas.dataset.dragY))
+}
+
+function handleMindmapPointerUp(event) {
+  const canvas = event.target.closest('.mindmap-canvas')
+  if (!canvas) return
+  canvas.dataset.dragging = 'false'
+  canvas.releasePointerCapture?.(event.pointerId)
 }
 
 function handleMarkdownKeydown(event) {
@@ -382,6 +435,67 @@ function updateMindmapVisibility(mindmap) {
       isHidden(link.dataset.mindmapLink)
     )
   })
+}
+
+async function toggleMindmapFullscreen(mindmap) {
+  try {
+    if (document.fullscreenElement === mindmap) {
+      await document.exitFullscreen()
+      return
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+    }
+    await mindmap.requestFullscreen()
+  } catch (error) {
+    console.warn('Mindmap fullscreen request failed:', error)
+  }
+}
+
+function toggleMindmapCodePanel(mindmap, button) {
+  const panel = mindmap.querySelector('.mindmap-code-panel')
+  if (!panel) return
+  const isVisible = panel.getAttribute('aria-hidden') !== 'true'
+  panel.setAttribute('aria-hidden', String(isVisible))
+  const label = isVisible ? '查看代码' : '隐藏代码'
+  const labelElement = button.querySelector('.mindmap-tool-code-label')
+  if (labelElement) labelElement.textContent = label
+  button.setAttribute('aria-label', label)
+  button.setAttribute('title', label)
+}
+
+function zoomMindmap(mindmap, direction) {
+  const currentZoom = Number(mindmap.dataset.mindmapZoom || 1)
+  const nextZoom = clampMindmapZoom(currentZoom + direction * MINDMAP_ZOOM_STEP)
+  setMindmapZoom(mindmap, nextZoom)
+}
+
+function fitMindmap(mindmap) {
+  const svg = mindmap.querySelector('.mindmap-svg')
+  const canvas = mindmap.querySelector('.mindmap-canvas')
+  if (!svg || !canvas) return
+  const baseWidth = Number(svg.dataset.mindmapWidth) || 560
+  const viewportWidth = canvas.clientWidth || baseWidth
+  setMindmapZoom(mindmap, Math.min(1, viewportWidth / baseWidth))
+}
+
+function clampMindmapZoom(value) {
+  if (!Number.isFinite(value)) return 1
+  return Math.min(MINDMAP_MAX_ZOOM, Math.max(MINDMAP_MIN_ZOOM, value))
+}
+
+function setMindmapZoom(mindmap, zoom) {
+  const svg = mindmap.querySelector('.mindmap-svg')
+  const canvas = mindmap.querySelector('.mindmap-canvas')
+  if (!svg || !canvas) return
+  const normalizedZoom = clampMindmapZoom(zoom)
+  const baseWidth = Number(svg.dataset.mindmapWidth) || 560
+  const baseHeight = Number(svg.dataset.mindmapHeight) || 180
+  const viewportWidth = canvas.clientWidth || baseWidth
+
+  mindmap.dataset.mindmapZoom = String(normalizedZoom)
+  svg.style.width = `${Math.max(viewportWidth, baseWidth * normalizedZoom)}px`
+  svg.style.height = `${Math.max(180, baseHeight * normalizedZoom)}px`
 }
 </script>
 
@@ -459,37 +573,150 @@ function updateMindmapVisibility(mindmap) {
 }
 
 .markdown-content :deep(.markdown-mindmap) {
+  position: relative;
   @apply my-4 w-full overflow-hidden rounded-lg border;
   border-color: var(--sl-border, #e4e4e7);
   background: var(--sl-bg-surface, #fff);
 }
 
 .markdown-content :deep(.mindmap-toolbar) {
-  @apply flex min-h-10 items-center gap-2 border-b px-3 py-2;
-  border-color: var(--sl-border, #e4e4e7);
-  background: var(--sl-bg-hover, #f8fafc);
-}
-
-.markdown-content :deep(.mindmap-toolbar-title) {
-  @apply mr-auto text-sm font-medium;
-  color: var(--sl-text-primary, #18181b);
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 3;
+  @apply inline-flex items-center gap-0.5 p-1;
+  border: 1px solid var(--sl-border, #e4e4e7);
+  border-radius: 0.625rem;
+  background: var(--sl-bg-surface, #fff);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .markdown-content :deep(.mindmap-toolbar button) {
-  @apply rounded-md border px-2 py-1 text-xs transition-colors;
-  border-color: var(--sl-border, #d4d4d8);
+  @apply inline-flex h-8 w-8 items-center justify-center border-0 transition-colors;
+  border-radius: 0.375rem;
+  font-size: 0.95rem;
   color: var(--sl-text-secondary, #52525b);
   background: transparent;
 }
 
 .markdown-content :deep(.mindmap-toolbar button:hover) {
-  background: var(--sl-bg-surface, #fff);
+  background: var(--sl-bg-hover, #f1f5f9);
   color: var(--sl-text-primary, #18181b);
 }
 
+.markdown-content :deep(.mindmap-toolbar button:focus-visible) {
+  @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  --tw-ring-offset-color: var(--sl-bg-surface, #fff);
+}
+
+.markdown-content :deep(.mindmap-tool-button::before) {
+  content: '';
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.markdown-content :deep(.mindmap-tool-zoom-out::before),
+.markdown-content :deep(.mindmap-tool-zoom-in::before) {
+  border: 1.6px solid currentColor;
+  border-radius: 9999px;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0.45rem 1.6px;
+}
+
+.markdown-content :deep(.mindmap-tool-zoom-in::before) {
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-size:
+    0.45rem 1.6px,
+    1.6px 0.45rem;
+  background-position:
+    center center,
+    center center;
+}
+
+.markdown-content :deep(.mindmap-tool-fit::before) {
+  border: 1.6px solid currentColor;
+  border-radius: 0.2rem;
+}
+
+.markdown-content :deep(.mindmap-tool-fullscreen::before) {
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-size:
+    0.35rem 1.6px,
+    1.6px 0.35rem,
+    0.35rem 1.6px,
+    1.6px 0.35rem,
+    0.35rem 1.6px,
+    1.6px 0.35rem,
+    0.35rem 1.6px,
+    1.6px 0.35rem;
+  background-position:
+    left top,
+    left top,
+    right top,
+    right top,
+    left bottom,
+    left bottom,
+    right bottom,
+    right bottom;
+}
+
+.markdown-content :deep(.mindmap-tool-code) {
+  width: auto;
+  min-width: 6.5rem;
+  gap: 0.35rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.markdown-content :deep(.mindmap-tool-code span[aria-hidden='true']) {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.markdown-content :deep(.mindmap-tool-code-label) {
+  white-space: nowrap;
+}
+
+.markdown-content :deep(.mindmap-toolbar-divider) {
+  display: block;
+  width: 1px;
+  height: 1.1rem;
+  margin: 0 0.15rem;
+  background: var(--sl-border, #e4e4e7);
+}
+
 .markdown-content :deep(.mindmap-canvas) {
+  position: relative;
   @apply max-w-full overflow-auto;
+  height: 360px;
+  max-height: 60vh;
   min-height: 180px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.markdown-content :deep(.mindmap-canvas[data-dragging='true']) {
+  cursor: grabbing;
 }
 
 .markdown-content :deep(.mindmap-svg) {
@@ -529,6 +756,56 @@ function updateMindmapVisibility(mindmap) {
 
 .markdown-content :deep(.mindmap-node-hidden) {
   display: none;
+}
+
+.markdown-content :deep(.mindmap-code-panel) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  @apply m-0 overflow-auto p-3 text-xs leading-relaxed;
+  background: var(--sl-bg-hover, #f8fafc);
+  color: var(--sl-text-primary, #18181b);
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.markdown-content :deep(.mindmap-code-panel[aria-hidden='true']) {
+  display: none;
+}
+
+.markdown-content :deep(.mindmap-code-panel code) {
+  font:
+    400 12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+}
+
+.markdown-content :deep(.markdown-mindmap:fullscreen) {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  background: var(--sl-bg-surface, #fff);
+}
+
+.markdown-content :deep(.markdown-mindmap:fullscreen .mindmap-canvas) {
+  flex: 1 1 auto;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+}
+
+.markdown-content :deep(.markdown-mindmap:fullscreen .mindmap-svg) {
+  width: 100%;
+  height: 100%;
 }
 
 :global(:root[data-theme='dark'] .markdown-content .markdown-mindmap) {
