@@ -147,46 +147,41 @@
                     class="table-cell text-ink-600"
                     :data-label="t('lensAdmin.columns.dataAndTools')"
                   >
-                    <div class="space-y-2">
-                      <div>
-                        <div class="text-xs font-medium text-ink-500">
-                          {{ t('lensAdmin.datasourceSelection.title') }}
-                        </div>
-                        <div>
-                          {{ t(`lensAdmin.datasourceSelection.${assistantDataMode(row)}`) }}
-                        </div>
-                        <div class="mt-1 break-words text-xs text-ink-500">
-                          {{ dataScopeLabel(row) }}
-                        </div>
-                      </div>
-                      <div data-testid="assistant-tool-counts" class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <span class="text-xs font-medium text-ink-500">
-                          {{ t('lensAdmin.columns.tools') }}
-                        </span>
-                        <span
-                          class="tool-count"
-                          :class="{ 'tool-count-empty': !row.skill_summary?.enabled }"
-                          :title="skillCountLabel(row)"
-                          :aria-label="skillCountLabel(row)"
-                        >
-                          <BookOpen :size="16" aria-hidden="true" />
-                          Skills {{ row.skill_summary?.enabled || 0 }}
-                        </span>
-                        <span
-                          class="tool-count"
-                          :class="{ 'tool-count-empty': !row.mcp_summary?.enabled }"
-                          :title="mcpCountLabel(row)"
-                          :aria-label="mcpCountLabel(row)"
-                        >
-                          <Server :size="16" aria-hidden="true" />
-                          MCP {{ row.mcp_summary?.enabled || 0 }}
-                        </span>
-                        <span v-if="row.plugin_summary?.enabled" class="tool-count">
-                          <Plug :size="16" aria-hidden="true" />
-                          {{ t('lensAdmin.assistantPresentation.plugins') }}
-                          {{ row.plugin_summary.enabled }}
-                        </span>
-                      </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span
+                        class="data-tool-count"
+                        :title="dataScopeLabel(row)"
+                        :aria-label="`${dataScopeLabel(row)} (${(row.datasource_bindings || []).length})`"
+                      >
+                        <Database :size="16" aria-hidden="true" />
+                        <span>{{ (row.datasource_bindings || []).length }}</span>
+                      </span>
+                      <span
+                        class="data-tool-count"
+                        :class="{ 'tool-count-empty': !row.skill_summary?.enabled }"
+                        :title="skillCountLabel(row)"
+                        :aria-label="skillCountLabel(row)"
+                      >
+                        <BookOpen :size="16" aria-hidden="true" />
+                        <span>{{ row.skill_summary?.enabled || 0 }}</span>
+                      </span>
+                      <span
+                        class="data-tool-count"
+                        :class="{ 'tool-count-empty': !row.mcp_summary?.enabled }"
+                        :title="mcpCountLabel(row)"
+                        :aria-label="mcpCountLabel(row)"
+                      >
+                        <Server :size="16" aria-hidden="true" />
+                        <span>{{ row.mcp_summary?.enabled || 0 }}</span>
+                      </span>
+                      <span
+                        v-if="row.plugin_summary?.enabled"
+                        class="data-tool-count"
+                        :title="`${t('lensAdmin.assistantPresentation.plugins')} ${row.plugin_summary.enabled}`"
+                      >
+                        <Plug :size="16" aria-hidden="true" />
+                        <span>{{ row.plugin_summary.enabled }}</span>
+                      </span>
                     </div>
                   </td>
                   <td
@@ -355,6 +350,7 @@
 <script setup>
 import {
   BookOpen,
+  Database,
   Plug,
   Copy,
   Globe as GlobeIcon,
@@ -1064,6 +1060,18 @@ onBeforeUnmount(revokePluginIconUrls)
 </script>
 
 <style scoped>
+.data-tool-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(var(--ink-600));
+  background: rgb(var(--surface-sunken));
+}
+
 .assistants-table-wrap {
   max-width: 100%;
 }
