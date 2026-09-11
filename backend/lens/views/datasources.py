@@ -93,6 +93,27 @@ class DataSourceViewSet(BaseAdminViewSet):
             DataSourceItemSerializer(item).data, status=status.HTTP_201_CREATED
         )
 
+    @action(detail=True, methods=["delete"], url_path="items/(?P<item_uuid>[^/.]+)")
+    def delete_item(self, request, pk=None, item_uuid=None):
+        """Delete a child resource and its isolated local storage."""
+        datasource = self.get_object()
+        try:
+            item = datasource.items.get(uuid=item_uuid)
+        except DataSourceItem.DoesNotExist:
+            return Response({"detail": "Item not found"}, status=404)
+        from pathlib import Path
+        from django.conf import settings
+
+        storage = (Path(settings.MEDIA_ROOT) / item.storage_key).resolve()
+        root = Path(settings.MEDIA_ROOT).resolve()
+        if root not in storage.parents:
+            return Response({"detail": "Invalid storage key"}, status=400)
+        item.delete()
+        if storage.exists() and storage.is_dir():
+            import shutil
+            shutil.rmtree(storage)
+        return Response(status=204)
+
     @staticmethod
     def _sync_serializer_context(datasources):
         """Bulk-load task and schedule state for datasource serialization."""
