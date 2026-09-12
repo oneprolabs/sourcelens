@@ -1,9 +1,4 @@
 type: fix
-audience: admin
-en: >-
-  Bounded managed workspace document conversion so malformed spreadsheets and
-  embedded image recognition failures cannot cause unbounded work or discard
-  extracted document text.
-zh-CN: >-
-  限制托管工作区文档转换的资源使用，避免异常电子表格和嵌入图片识别失败导致
-  无界处理或丢失已提取的文档正文。
+audience: user
+en: Bounded Managed Workspace document conversion for sparse spreadsheets and resilient visual preprocessing, preserving extracted text when visual processing fails.
+zh-CN: 为稀疏电子表格和具备韧性的视觉预处理增加有界托管工作区文档转换，并在视觉处理失败时保留已提取文本。
