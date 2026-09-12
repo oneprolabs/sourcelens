@@ -1,5 +1,6 @@
 """Feishu LensNode datasource runtime entrypoint."""
 
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -12,6 +13,8 @@ FEISHU_API_URL = "https://open.feishu.cn"
 RESOURCE_KINDS = frozenset(
     {"bitable", "docx", "folder", "sheet", "slides", "wiki"}
 )
+TOOL_KEYS = frozenset({"feishu_get_document"})
+FEISHU_MAX_RESPONSE_BYTES = 900_000
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{4,255}$")
 DATASOURCE_CONFIG_KEYS = frozenset(
     {
@@ -33,17 +36,117 @@ def http_origins(endpoint):
 
 
 def build_tool(definition, executor):
-    """Reject model tools for the datasource-only Plugin."""
+    """Build a read-only Feishu document tool."""
+    key = definition.get("key") if isinstance(definition, dict) else None
+    if (
+        key not in TOOL_KEYS
+        or definition.get("side_effect") != "none"
+        or definition.get("capability") != "document.read"
+    ):
+        raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    from langchain.tools import ToolRuntime, tool
 
-    del definition, executor
-    raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    def invoke(runtime: ToolRuntime, **arguments):
+        return executor(key, arguments, runtime)
+
+    return tool(
+        key,
+        description=definition["description"],
+        args_schema=definition["input_schema"],
+    )(invoke)
 
 
 def execute_tool(key, client, arguments, secret, endpoint, config):
-    """Reject model tools for the datasource-only Plugin."""
+    """Read an authorized Feishu document through the Open Platform API."""
+    if key not in TOOL_KEYS or _endpoint(endpoint) != FEISHU_API_URL:
+        raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+    token = arguments.get("token") if isinstance(arguments, dict) else None
+    if not isinstance(token, str) or not TOKEN_PATTERN.fullmatch(token):
+        raise PluginRuntimeError("PLUGIN_CONFIG_INVALID")
+    app_id = config.get("app_id") if isinstance(config, dict) else None
+    if not isinstance(app_id, str) or not app_id:
+        raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
+    app_secret = secret.get("value") if isinstance(secret, dict) else secret
+    if not isinstance(app_secret, str) or not app_secret:
+        raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
+    tenant_token = _tenant_access_token(client, app_id, app_secret)
+    payload = _request_json(
+        client,
+        "GET",
+        "/open-apis/docx/v1/documents/" + token + "/raw_content",
+        {"Authorization": "Bearer " + tenant_token},
+    )
+    data = payload.get("data")
+    content = data.get("content") if isinstance(data, dict) else None
+    if not isinstance(content, str):
+        raise PluginRuntimeError("FEISHU_RESPONSE_INVALID")
+    return {"token": token, "content": content}
 
-    del key, client, arguments, secret, endpoint, config
-    raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
+
+def _tenant_access_token(client, app_id, app_secret):
+    """Exchange the saved app credentials for a short-lived tenant token."""
+
+    payload = _request_json(
+        client,
+        "POST",
+        FEISHU_API_URL + "/open-apis/auth/v3/tenant_access_token/internal",
+        {"Content-Type": "application/json"},
+        json_body={"app_id": app_id, "app_secret": app_secret},
+        error_code="FEISHU_ACCESS_DENIED",
+    )
+    token = payload.get("tenant_access_token")
+    if (
+        payload.get("code") not in (None, 0)
+        or not isinstance(token, str)
+        or not token
+    ):
+        raise PluginRuntimeError("FEISHU_ACCESS_DENIED")
+    return token
+
+
+def _request_json(
+    client,
+    method,
+    url,
+    headers,
+    *,
+    json_body=None,
+    error_code="FEISHU_DOCUMENT_READ_FAILED",
+):
+    """Return one bounded JSON response from the host-managed client."""
+
+    if client is None:
+        raise PluginRuntimeError("PLUGIN_HTTP_CLIENT_REQUIRED")
+    if not url.startswith("https://"):
+        url = FEISHU_API_URL + url
+    try:
+        with client.stream(
+            method,
+            url,
+            headers=headers,
+            json=json_body,
+            follow_redirects=False,
+        ) as response:
+            if response.is_redirect:
+                raise PluginRuntimeError("FEISHU_REDIRECT_REJECTED")
+            if response.status_code >= 400:
+                raise PluginRuntimeError(error_code)
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                if len(body) + len(chunk) > FEISHU_MAX_RESPONSE_BYTES:
+                    raise PluginRuntimeError("FEISHU_RESPONSE_TOO_LARGE")
+                body.extend(chunk)
+    except PluginRuntimeError:
+        raise
+    except Exception as exc:
+        raise PluginRuntimeError("FEISHU_REQUEST_FAILED") from exc
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PluginRuntimeError("FEISHU_RESPONSE_INVALID") from exc
+    if not isinstance(payload, dict):
+        raise PluginRuntimeError("FEISHU_RESPONSE_INVALID")
+    return payload
 
 
 def build_datasource_command(snapshot, material, trigger):

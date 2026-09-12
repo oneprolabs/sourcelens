@@ -387,6 +387,39 @@
           <FeishuConnectionGuide
             v-if="form.plugin_key === 'feishu'"
           />
+          <section
+            v-if="form.plugin_key === 'feishu'"
+            class="rounded-xl border border-brand-200 bg-brand-50 p-4"
+          >
+            <h3 class="text-sm font-semibold text-ink-900">
+              {{ t('lensAdmin.connections.feishuSelfRegisterTitle') }}
+            </h3>
+            <p class="mt-1 text-xs text-ink-600">
+              {{ t('lensAdmin.connections.feishuSelfRegisterHint') }}
+            </p>
+            <BaseButton
+              class="mt-3"
+              size="sm"
+              variant="outline"
+              :loading="feishuRegistering"
+              :disabled="feishuRegistering"
+              @click="startFeishuScan"
+            >
+              {{ t('lensAdmin.connections.feishuSelfRegisterAction') }}
+            </BaseButton>
+            <img
+              v-if="feishuQr"
+              :src="feishuQr"
+              :alt="t('lensAdmin.connections.feishuSelfRegisterQrAlt')"
+              class="mt-3 h-48 w-48 rounded border bg-white p-2"
+            />
+            <p
+              v-if="feishuRegisterStatus"
+              class="mt-2 text-xs text-ink-600"
+            >
+              {{ feishuRegisterStatus }}
+            </p>
+          </section>
           <GitHubConnectionGuide
             v-if="form.plugin_key === 'github'"
           />
@@ -442,6 +475,10 @@ import {
   updateConnection,
   validateConnection
 } from '@/api/lens'
+import {
+  pollFeishuSelfRegister,
+  startFeishuSelfRegister
+} from '@/api/plugins'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
 import {
@@ -469,6 +506,11 @@ const connectionSearch = ref('')
 const connectionPluginFilter = ref('all')
 const connectionStatusFilter = ref('all')
 const pluginIconUrls = ref({})
+const feishuRegistering = ref(false)
+const feishuQr = ref('')
+const feishuRegisterStatus = ref('')
+let feishuPollTimer = null
+let feishuExpiryTimer = null
 const connectionDetailOpen = ref(false)
 const detailConnection = ref(null)
 const connectionResourceOptions = computed(() => ({
@@ -725,6 +767,76 @@ function closeDrawer() {
   drawerOpen.value = false
   formError.value = ''
   connectionResourceCandidates.value = []
+  stopFeishuPolling()
+  feishuQr.value = ''
+  feishuRegisterStatus.value = ''
+}
+
+async function startFeishuScan() {
+  stopFeishuPolling()
+  feishuRegistering.value = true
+  feishuQr.value = ''
+  feishuRegisterStatus.value = t(
+    'lensAdmin.connections.feishuSelfRegisterWaiting'
+  )
+  try {
+    const result = await startFeishuSelfRegister()
+    if (!result?.device_code || !result?.qr_code_base64) {
+      throw new Error(t('lensAdmin.connections.feishuSelfRegisterInvalid'))
+    }
+    feishuQr.value = result.qr_code_base64
+    const deviceCode = result.device_code
+    const interval = Math.max(5, Number(result.interval || 5)) * 1000
+    const expiresIn = Math.max(1, Number(result.expires_in || 600)) * 1000
+    let pollInFlight = false
+    const poll = async () => {
+      if (pollInFlight) return
+      pollInFlight = true
+      try {
+        const status = await pollFeishuSelfRegister(deviceCode)
+        feishuRegisterStatus.value = status.status || 'pending'
+        if (status.status === 'success') {
+          form.value.app_id = status.app_id
+          form.value.app_secret = status.app_secret
+          stopFeishuPolling()
+          showSuccess(t('lensAdmin.connections.feishuSelfRegisterSuccess'))
+          return
+        }
+        if (['denied', 'expired', 'error'].includes(status.status)) {
+          stopFeishuPolling()
+        }
+      } catch (error) {
+        stopFeishuPolling()
+        feishuRegisterStatus.value = extractErrorMessage(
+          error,
+          t('lensAdmin.connections.feishuSelfRegisterFailed')
+        )
+      } finally {
+        pollInFlight = false
+      }
+    }
+    feishuPollTimer = window.setInterval(poll, interval)
+    feishuExpiryTimer = window.setTimeout(() => {
+      feishuRegisterStatus.value = t(
+        'lensAdmin.connections.feishuSelfRegisterExpired'
+      )
+      stopFeishuPolling()
+    }, expiresIn)
+  } catch (error) {
+    stopFeishuPolling()
+    feishuRegisterStatus.value = extractErrorMessage(
+      error,
+      t('lensAdmin.connections.feishuSelfRegisterFailed')
+    )
+  }
+}
+
+function stopFeishuPolling() {
+  if (feishuPollTimer) window.clearInterval(feishuPollTimer)
+  if (feishuExpiryTimer) window.clearTimeout(feishuExpiryTimer)
+  feishuPollTimer = null
+  feishuExpiryTimer = null
+  feishuRegistering.value = false
 }
 
 function updateConnectionForm(nextForm) {
@@ -843,6 +955,11 @@ async function validateRow(row) {
 }
 
 function handlePluginChange(pluginKey) {
+  if (form.value.plugin_key === 'feishu' && pluginKey !== 'feishu') {
+    stopFeishuPolling()
+    feishuQr.value = ''
+    feishuRegisterStatus.value = ''
+  }
   form.value = {
     uuid: form.value.uuid,
     name: form.value.name,
@@ -922,7 +1039,10 @@ async function removeRow(row) {
 }
 
 onMounted(load)
-onBeforeUnmount(revokePluginIconUrls)
+onBeforeUnmount(() => {
+  stopFeishuPolling()
+  revokePluginIconUrls()
+})
 </script>
 
 <style>

@@ -17,6 +17,8 @@ class PluginControlContract:
 
     datasource_provider: object
     tool_provider: object
+    rpc_handler: object
+    rpc_http_origins: object
 
 
 def load_control_contract(plugin):
@@ -37,11 +39,17 @@ def load_control_contract(plugin):
         raise PluginPackageLoadError("plugin control identity is invalid")
     datasource_provider = getattr(module, "DATASOURCE_PROVIDER", None)
     tool_provider = getattr(module, "TOOL_PROVIDER", None)
+    rpc_handler = getattr(module, "execute_rpc", None)
+    rpc_http_origins = getattr(module, "rpc_http_origins", None)
+    if rpc_http_origins is not None and not callable(rpc_http_origins):
+        raise PluginPackageLoadError("plugin RPC origins contract is invalid")
     _validate_datasource_provider(datasource_provider)
     _validate_tool_provider(tool_provider)
     return PluginControlContract(
         datasource_provider=datasource_provider,
         tool_provider=tool_provider,
+        rpc_handler=rpc_handler,
+        rpc_http_origins=rpc_http_origins,
     )
 
 

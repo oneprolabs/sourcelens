@@ -34,6 +34,7 @@ from .views import (
     PluginExecutionSnapshotView,
     PluginInvocationViewSet,
     PluginToolExecutionSnapshotView,
+    PluginRPCView,
     PublicAssistantView,
     PublicSharedQAFileView,
     PublicSharedQAListView,
@@ -105,6 +106,7 @@ router.register(
 )
 
 urlpatterns = [
+    path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),
     path(
         "plugin-runtime/tool-snapshots/",
         PluginToolExecutionSnapshotView.as_view(),

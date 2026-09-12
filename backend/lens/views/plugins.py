@@ -18,6 +18,10 @@ from lens.plugins.datasource_access import (
     validate_connection_datasource_access,
 )
 from lens.plugins.http import PluginHttpClientError, plugin_http_pool
+from lens.plugins.package_loader import (
+    PluginPackageLoadError,
+    load_control_contract,
+)
 from lens.plugins.providers import (
     DatasourceProviderError,
     get_datasource_provider,
@@ -38,6 +42,7 @@ from lens.serializers import (
 )
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -56,6 +61,55 @@ SENSITIVE_KEYS = frozenset(
         "token",
     }
 )
+
+
+class PluginRPCView(APIView):
+    """Dispatch a declared Plugin-owned control RPC method."""
+
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, plugin_key):
+        """Run one bounded control RPC for an administrator."""
+
+        def error_response(code, response_status):
+            response = Response(
+                {"ok": False, "error": {"code": code}},
+                status=response_status,
+            )
+            response["Cache-Control"] = "no-store"
+            return response
+
+        method = request.data.get("method")
+        params = request.data.get("params") or {}
+        if not isinstance(method, str) or not isinstance(params, dict):
+            return error_response(
+                "RPC_INVALID",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            plugin = installed_plugin(plugin_key)
+            contract = load_control_contract(plugin)
+            handler = contract.rpc_handler
+            if not callable(handler):
+                raise DatasourceProviderError("PLUGIN_RPC_UNSUPPORTED")
+            origins = contract.rpc_http_origins
+            if not callable(origins):
+                raise DatasourceProviderError("PLUGIN_RPC_UNSUPPORTED")
+            with plugin_http_pool.temporary(plugin_key, origins()) as client:
+                result = handler(method, params, client=client)
+        except (
+            PluginNotFoundError,
+            PluginPackageLoadError,
+            DatasourceProviderError,
+            PluginHttpClientError,
+        ) as exc:
+            return error_response(
+                str(exc),
+                status.HTTP_400_BAD_REQUEST,
+            )
+        response = Response({"ok": True, "result": result})
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 def _active_connection_secret(connection):

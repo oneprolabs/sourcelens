@@ -23,7 +23,12 @@ ALLOWED_HANDLERS = frozenset(
     }
 )
 READ_ONLY_TOOL_CAPABILITIES = frozenset(
-    {"issue.read", "jira.issue.search", "repository.read"}
+    {
+        "issue.read",
+        "jira.issue.search",
+        "repository.read",
+        "document.read",
+    }
 )
 DATASOURCE_SOURCE_TYPES = frozenset({"feishu", "git", "jira"})
 SCHEMA_TYPES = frozenset({"array", "boolean", "integer", "string"})

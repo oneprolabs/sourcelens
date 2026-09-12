@@ -13,10 +13,12 @@ from lens.models import (
     SecretMaterial,
     SecretVersion,
 )
+from lens.plugins.contracts import ToolProviderError
 from lens.plugins.providers import get_datasource_provider
 from lens.plugins.providers.base import DatasourceProviderError
 from lens.plugins.registry import installed_plugin
 from lens.plugins.snapshots import create_datasource_sync_snapshot
+from lens.plugins.tool_providers import get_tool_provider
 from lens.serializers import DataSourceSerializer
 
 
@@ -29,7 +31,10 @@ class FeishuPluginManifestTests(TestCase):
         self.assertEqual(plugin.version, "1.0.0")
         self.assertEqual(plugin.display_name, "Feishu")
         self.assertEqual(plugin.datasource_source_type, "feishu")
-        self.assertEqual(plugin.tools, ())
+        self.assertEqual(
+            [tool.key for tool in plugin.tools],
+            ["feishu_get_document"],
+        )
         self.assertEqual(
             plugin.connection_schema["required"],
             ["app_id", "app_secret"],
@@ -147,6 +152,24 @@ class FeishuDatasourceProviderTests(TestCase):
             {"app_id": "cli_example123", "app_secret": "app-secret"},
         )
         self.assertEqual(result, {"authenticated": True, "expires_in": 7200})
+
+    def test_document_tool_validates_endpoint_and_token(self):
+        tool_provider = get_tool_provider("feishu", "1.0.0")
+        endpoint, arguments = tool_provider.validate_request(
+            "https://open.feishu.cn/",
+            {},
+            "feishu_get_document",
+            {"token": "doc_one"},
+        )
+        self.assertEqual(endpoint, "https://open.feishu.cn")
+        self.assertEqual(arguments, {"token": "doc_one"})
+        with self.assertRaises(ToolProviderError):
+            tool_provider.validate_request(
+                "https://open.feishu.cn",
+                {},
+                "feishu_get_document",
+                {"token": "../secret"},
+            )
 
     def test_datasource_access_checks_each_url_without_connection_scope(self):
         requests = []

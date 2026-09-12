@@ -31,6 +31,7 @@ dependencies = [
     "cryptography>=42.0.0",
     "django-cors-headers>=4.3.0",
     "pillow>=10.0.0",
+    "qrcode>=7.4.2",
     "pypdf==6.14.2",
     "bleach==6.2.0",
     "markdown==3.9",

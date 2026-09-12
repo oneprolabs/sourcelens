@@ -40,7 +40,10 @@
         "write_to": "secret_value"
       }
     },
-    "required": ["app_id", "app_secret"],
+    "required": [
+      "app_id",
+      "app_secret"
+    ],
     "additionalProperties": false
   },
   "datasource_schema": {
@@ -52,7 +55,10 @@
         "maxItems": 100,
         "title": "Feishu resource URLs",
         "description": "One HTTPS folder, document, sheet, slide, Bitable, or wiki URL per field.",
-        "items": {"type": "string", "format": "uri"}
+        "items": {
+          "type": "string",
+          "format": "uri"
+        }
       },
       "recursive": {
         "type": "boolean",
@@ -79,8 +85,31 @@
         "default": false
       }
     },
-    "required": ["resource_urls"],
+    "required": [
+      "resource_urls"
+    ],
     "additionalProperties": false
   },
-  "tools": []
+  "tools": [
+    {
+      "key": "feishu_get_document",
+      "description": "Read the text content of an authorized Feishu document.",
+      "capability": "document.read",
+      "side_effect": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
 }
