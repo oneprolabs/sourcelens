@@ -337,6 +337,7 @@
       "errorVisionProviderQuotaExceeded": "视觉服务配额或速率限制已用尽，请稍后重试或联系管理员。",
       "errorVisionProviderUnavailable": "视觉服务暂时不可用，请稍后重试。",
       "retryAction": "重试",
+      "sessionHistoryLoadFailed": "会话记录加载失败。",
       "loadFailed": "加载 Lens chat 失败。",
       "assistantNotFound": "你访问的助手不存在，请联系管理员获取有效的助手链接。",
       "sessionAccessDenied": "你无权访问该会话，或该会话已不存在。请从自己的最近会话中选择，或新建会话。",
