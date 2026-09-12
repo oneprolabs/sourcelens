@@ -228,6 +228,7 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "agent_version",
             "tasks",
             "labels",
+            "last_metrics",
             "enrollment_status",
             "token_issued_at",
             "token_revoked",

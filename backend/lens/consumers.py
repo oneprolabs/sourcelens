@@ -284,6 +284,8 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             lensnode.tasks = content.get("tasks") or []
         if content.get("labels") is not None:
             lensnode.labels = content.get("labels") or {}
+        if content.get("metrics") is not None:
+            lensnode.last_metrics = content.get("metrics") or {}
         if require_versions or content.get("protocol_version") is not None:
             lensnode.protocol_version = content.get("protocol_version", "")
         if require_versions or content.get("agent_version") is not None:
