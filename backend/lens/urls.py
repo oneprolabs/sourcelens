@@ -50,8 +50,6 @@ from .views import (
     run_stream_view,
 )
 
-from .views.feishu_registration import FeishuSelfRegisterView
-
 router = DefaultRouter()
 router.register("assistants", AssistantViewSet, basename="lens-assistants")
 router.register("sessions", SessionViewSet, basename="lens-sessions")

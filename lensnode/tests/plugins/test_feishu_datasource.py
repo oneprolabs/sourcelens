@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from threading import Event, Lock
 
+import httpx
 import pytest
 
 from lensnode.datasource_sync import DataSourceSyncError
@@ -12,6 +13,46 @@ from lensnode.plugin_package_loader import load_runtime_contract
 from lensnode.plugin_runtime import PluginRuntimeError
 
 FEISHU_RUNTIME = load_runtime_contract("feishu", "1.0.0")
+
+
+def test_document_tool_exchanges_app_credentials_for_tenant_token():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("tenant_access_token/internal"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "tenant_access_token": "tenant-token",
+                },
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"content": "document body"},
+            },
+            request=request,
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = FEISHU_RUNTIME.execute_tool(
+            "feishu_get_document",
+            client,
+            {"token": "doc_one"},
+            "app-secret",
+            "https://open.feishu.cn",
+            {"app_id": "cli_example123"},
+        )
+
+    assert result == {"token": "doc_one", "content": "document body"}
+    assert requests[0].url.path.endswith("tenant_access_token/internal")
+    assert requests[1].url.path.endswith(
+        "/open-apis/docx/v1/documents/doc_one/raw_content"
+    )
 
 
 def test_runtime_builds_mixed_resource_sync_command():
