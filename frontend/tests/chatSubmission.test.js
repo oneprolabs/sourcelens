@@ -97,3 +97,50 @@ test('sends every explicitly mentioned assistant in one submission', () => {
     'assistant-2'
   ])
 })
+
+test('only sends a reasoning override when explicitly selected', () => {
+  const defaults = { sessionUuid: 'session-1', question: 'Check status' }
+  assert.equal('agent_rounds' in prepareRunSubmission(defaults).payload, false)
+  for (const agentRounds of ['flash', 'fast', 'balanced', 'deep', 'max']) {
+    const prepared = prepareRunSubmission({ ...defaults, agentRounds })
+    assert.equal(prepared.payload.agent_rounds, agentRounds)
+  }
+})
+
+test('replays the same depth but gives a changed depth a new key', () => {
+  const defaults = {
+    sessionUuid: 'session-1',
+    question: 'Check status',
+    agentRounds: 'flash'
+  }
+  const first = prepareRunSubmission({
+    ...defaults,
+    randomUUID: () => 'first'
+  })
+  const replay = prepareRunSubmission({
+    ...defaults,
+    pendingSubmission: first.submission,
+    randomUUID: () => 'replay'
+  })
+  assert.equal(replay.payload.idempotency_key, 'first')
+  for (const agentRounds of ['', 'max']) {
+    const changed = prepareRunSubmission({
+      ...defaults,
+      agentRounds,
+      pendingSubmission: first.submission,
+      randomUUID: () => 'changed'
+    })
+    assert.equal(changed.payload.idempotency_key, 'changed')
+  }
+})
+
+test('a Retry accepts the newly selected reasoning depth', () => {
+  const prepared = prepareRunSubmission({
+    sessionUuid: 'session-1',
+    question: 'Check status',
+    agentRounds: 'max',
+    retryDraft: { question: 'Check status', runUuid: 'run-1' }
+  })
+  assert.equal(prepared.payload.agent_rounds, 'max')
+  assert.equal(prepared.payload.retry_of_run_uuid, 'run-1')
+})
