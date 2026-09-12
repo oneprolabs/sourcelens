@@ -507,7 +507,10 @@
         "planningTasks": "正在规划任务...",
         "delegatingTask": "委派子任务...",
         "callingTool": "调用工具 {name}..."
-      }
+      },
+      "searchSessions": "搜索会话",
+      "searchSessionsPlaceholder": "搜索会话标题",
+      "noSearchResults": "没有找到匹配的会话"
     }
   },
   "auth": {

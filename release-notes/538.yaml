@@ -1,0 +1,5 @@
+type: feature
+audience: user
+en: Added searchable conversation history across recent and archived sessions.
+zh-CN: 新增会话历史搜索，支持同时搜索最近会话和已归档会话。
+es: Añadida la búsqueda del historial de conversaciones recientes y archivadas.

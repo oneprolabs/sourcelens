@@ -507,7 +507,10 @@
         "planningTasks": "Planning tasks...",
         "delegatingTask": "Delegating subtask...",
         "callingTool": "Calling {name}..."
-      }
+      },
+      "searchSessions": "Search conversations",
+      "searchSessionsPlaceholder": "Search conversation titles",
+      "noSearchResults": "No conversations match your search"
     }
   },
   "auth": {

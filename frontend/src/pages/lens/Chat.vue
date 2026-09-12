@@ -173,6 +173,15 @@
                   {{ t('lens.chat.archivedSessions') }}
                 </button>
                 <button
+                  type="button"
+                  class="sessions-search-toggle"
+                  :aria-label="t('lens.chat.searchSessions')"
+                  :title="t('lens.chat.searchSessions')"
+                  @click="openSessionSearch"
+                >
+                  <Search :size="15" :stroke-width="2" aria-hidden="true" />
+                </button>
+                <button
                   v-if="!isMobile"
                   type="button"
                   class="sessions-collapse-toggle"
@@ -283,6 +292,44 @@
         />
       </div>
     </aside>
+
+    <BaseModal
+      :show="sessionSearchOpen"
+      :title="t('lens.chat.searchSessions')"
+      @close="closeSessionSearch"
+    >
+      <input
+        ref="sessionSearchInput"
+        v-model="sessionSearchQuery"
+        type="search"
+        class="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-theme outline-none focus:border-primary-500"
+        :placeholder="t('lens.chat.searchSessionsPlaceholder')"
+        :aria-label="t('lens.chat.searchSessions')"
+      />
+      <div class="mt-3 max-h-[50vh] space-y-1 overflow-y-auto">
+        <button
+          v-for="session in searchedSessions"
+          :key="session.uuid"
+          type="button"
+          class="session-search-result"
+          @click="selectSearchedSession(session)"
+        >
+          <span class="truncate">
+            {{ session.title || t('lens.chat.untitledSession') }}
+          </span>
+          <span class="session-search-result-state">
+            {{
+              session.archived
+                ? t('lens.chat.archivedSessions')
+                : t('lens.chat.sessions')
+            }}
+          </span>
+        </button>
+        <p v-if="!searchedSessions.length" class="session-list-empty">
+          {{ t('lens.chat.noSearchResults') }}
+        </p>
+      </div>
+    </BaseModal>
 
     <main class="main-shell">
       <div v-if="isMobile" class="mobile-topbar">
@@ -1783,6 +1830,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Search,
   Share2,
   ThumbsDown,
   ThumbsUp,
@@ -1967,6 +2015,17 @@ const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
 const sessionHistoryCollapsed = ref(false)
 const showArchivedSessions = ref(false)
+const sessionSearchOpen = ref(false)
+const sessionSearchQuery = ref('')
+const sessionSearchInput = ref(null)
+const sessionSearchResults = ref([])
+const searchedSessions = computed(() => {
+  const query = sessionSearchQuery.value.trim().toLocaleLowerCase()
+  if (!query) return sessionSearchResults.value
+  return sessionSearchResults.value.filter((session) =>
+    (session.title || '').toLocaleLowerCase().includes(query)
+  )
+})
 const deleteSessionTarget = ref(null)
 const deletingSession = ref(false)
 const renamingSessionUuid = ref('')
@@ -3270,6 +3329,41 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
     clearSessionSelection()
   }
   await nextTick(() => composerRef.value?.focus())
+}
+
+async function openSessionSearch() {
+  sessionSearchOpen.value = true
+  sessionSearchQuery.value = ''
+  const slug = selectedAssistant.value?.slug || ''
+  try {
+    const routingMode = isSmartCollaborationConversation.value ? 'smart' : ''
+    const [recent, archived] = await Promise.all([
+      listSessions(slug, { routingMode }),
+      listSessions(slug, { archived: true, routingMode })
+    ])
+    sessionSearchResults.value = [
+      ...recent.map((session) => ({ ...session, archived: false })),
+      ...archived.map((session) => ({ ...session, archived: true }))
+    ]
+  } catch {
+    sessionSearchResults.value = []
+  }
+  await nextTick(() => sessionSearchInput.value?.focus())
+}
+
+function closeSessionSearch() {
+  sessionSearchOpen.value = false
+}
+
+async function selectSearchedSession(session) {
+  sessionSearchOpen.value = false
+  if (showArchivedSessions.value !== session.archived) {
+    showArchivedSessions.value = session.archived
+    sessions.value = sessionSearchResults.value.filter(
+      (item) => item.archived === session.archived
+    )
+  }
+  await selectSession(session)
 }
 
 async function createNewSession(notify = true, allowedAssistantUuids = []) {
@@ -4782,6 +4876,32 @@ onBeforeUnmount(() => {
 .session-filters button:hover,
 .session-filter-active {
   @apply bg-surface-hover text-theme;
+}
+
+.sessions-search-toggle {
+  @apply ml-auto flex h-7 w-7 items-center justify-center rounded-md
+    text-theme-muted transition-colors;
+}
+
+.sessions-search-toggle:hover,
+.sessions-search-toggle:focus-visible {
+  @apply bg-surface-hover text-theme;
+  outline: none;
+}
+
+.session-search-result {
+  @apply flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2
+    text-left text-sm text-theme transition-colors;
+}
+
+.session-search-result:hover,
+.session-search-result:focus-visible {
+  @apply bg-surface-hover;
+  outline: none;
+}
+
+.session-search-result-state {
+  @apply shrink-0 text-xs text-theme-subtle;
 }
 
 .sessions-collapse-toggle {
