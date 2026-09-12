@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Fixed LensNode control-channel errors that could occur while the event loop was shutting down.
+zh-CN: 修复 LensNode 事件循环关闭期间可能出现的控制通道错误。
