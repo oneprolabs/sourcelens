@@ -14,6 +14,27 @@
         <StatusBadge :status="node.status" />
       </div>
 
+      <section class="space-y-3" data-testid="lensnode-resources">
+        <h3 class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.detail.resources') }}</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <div v-for="item in resourceCards" :key="item.key" class="rounded-lg border border-line bg-surface-sunken px-2 py-3 text-center">
+            <component :is="item.icon" class="mx-auto h-4 w-4 text-brand-600" />
+            <div class="mt-1 truncate text-sm font-semibold text-ink-900">{{ item.value }}</div>
+            <div class="mt-0.5 text-[11px] text-ink-500">{{ item.label }}</div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="datasourceTasks.length" class="space-y-3" data-testid="lensnode-datasources">
+        <h3 class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.detail.datasourceTasks') }}</h3>
+        <ul class="detail-list">
+          <li v-for="task in datasourceTasks" :key="task.uuid || task.id" class="flex items-center justify-between gap-3 px-3 py-2.5">
+            <span class="min-w-0 truncate text-sm text-ink-700">{{ task.datasource_name || task.name || task.datasource_uuid }}</span>
+            <StatusBadge :status="task.status || 'running'" />
+          </li>
+        </ul>
+      </section>
+
       <section class="space-y-3">
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div
@@ -87,6 +108,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { Cpu, HardDrive, MemoryStick } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import { scanLensNodeDirs } from '@/api/lens'
@@ -116,6 +138,18 @@ const rootNodes = ref([])
 const formatDateTime = useShortDateTime()
 
 const isOffline = computed(() => props.node?.status !== 'online')
+const metricValue = (keys) => {
+  const metrics = props.node?.last_metrics || {}
+  const value = keys.map((key) => metrics[key]).find((item) => item !== undefined && item !== null)
+  if (value === undefined) return t('lensAdmin.detail.notReported')
+  return typeof value === 'number' ? `${Math.round(value)}%` : String(value)
+}
+const resourceCards = computed(() => [
+  { key: 'cpu', label: t('lensAdmin.detail.cpu'), value: metricValue(['cpu_percent', 'cpu_usage']), icon: Cpu },
+  { key: 'memory', label: t('lensAdmin.detail.memory'), value: metricValue(['memory_percent', 'memory_usage']), icon: MemoryStick },
+  { key: 'disk', label: t('lensAdmin.detail.disk'), value: metricValue(['disk_percent', 'disk_usage']), icon: HardDrive }
+])
+const datasourceTasks = computed(() => (props.node?.tasks || []).filter((task) => task.datasource_uuid || task.datasource_name))
 
 const nodeMetricCards = computed(() => {
   const node = props.node || {}
@@ -225,3 +259,7 @@ watch(
   }
 )
 </script>
+
+<style scoped>
+.detail-list { @apply divide-y divide-line overflow-hidden rounded-lg border border-line; }
+</style>

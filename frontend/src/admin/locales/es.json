@@ -2013,7 +2013,12 @@
       "treeEmpty": "No se informaron directorios.",
       "nodeEmpty": "Vacío",
       "offlineHint": "Nodo fuera de línea — solo se muestran los directorios reportados previamente; los niveles más profundos no se pueden obtener.",
-      "loadDirsFailed": "Error al listar subdirectorios"
+      "loadDirsFailed": "Error al listar subdirectorios",
+      "resources": "Uso de recursos",
+      "cpu": "CPU",
+      "memory": "Memoria",
+      "disk": "Disco",
+      "datasourceTasks": "Tareas de fuentes"
     },
     "timeline": {
       "title": "Progreso de inscripción",

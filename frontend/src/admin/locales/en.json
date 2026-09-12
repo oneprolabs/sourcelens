@@ -2031,7 +2031,12 @@
       "treeEmpty": "No directories reported.",
       "nodeEmpty": "Empty",
       "offlineHint": "Node is offline — only previously reported directories are shown; deeper levels cannot be fetched.",
-      "loadDirsFailed": "Failed to list subdirectories"
+      "loadDirsFailed": "Failed to list subdirectories",
+      "resources": "Resource usage",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk",
+      "datasourceTasks": "Datasource tasks"
     },
     "timeline": {
       "title": "Enrollment progress",

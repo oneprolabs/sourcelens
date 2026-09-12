@@ -2031,7 +2031,12 @@
       "treeEmpty": "节点未上报任何目录。",
       "nodeEmpty": "空",
       "offlineHint": "节点当前离线，仅显示此前上报的目录，无法实时拉取更深层级。",
-      "loadDirsFailed": "拉取子目录失败"
+      "loadDirsFailed": "拉取子目录失败",
+      "resources": "资源使用",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "硬盘",
+      "datasourceTasks": "数据源任务"
     },
     "timeline": {
       "title": "接入进度",
