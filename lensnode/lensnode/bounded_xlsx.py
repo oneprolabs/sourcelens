@@ -38,7 +38,14 @@ def inspect_xlsx(path, max_cells=100000, max_xml_bytes=50 * 1024 * 1024,
     try:
         with zipfile.ZipFile(path) as archive:
             shared_strings = []
-            if "xl/sharedStrings.xml" in archive.namelist():
+            shared_info = archive.getinfo("xl/sharedStrings.xml") if "xl/sharedStrings.xml" in archive.namelist() else None
+            if shared_info and shared_info.file_size > max_xml_bytes:
+                return "", {"xlsx_files": 1, "sheets": 0, "rows": 0,
+                              "columns": 0, "effective_cells": 0,
+                              "scanned_cells": 0, "xml_bytes": shared_info.file_size,
+                              "sheet_stats": [], "truncated": True,
+                              "truncation_reason": "SPREADSHEET_XML_BUDGET_EXCEEDED"}
+            if shared_info:
                 root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
                 shared_strings = ["".join(node.itertext()) for node in root
                                   if node.tag.rsplit("}", 1)[-1] == "si"]
