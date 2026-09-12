@@ -1,79 +1,143 @@
 <template>
   <AdminLayout>
-    <div class="flex max-w-full flex-col gap-4 py-4">
-      <section
-        class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
+    <div
+      class="assistants-page mx-auto flex max-w-[1440px] flex-col gap-6 py-4"
+    >
+      <header
+        class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"
       >
-        <div
-          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
-        >
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="text-xl font-semibold text-ink-900">
-                {{ t('lensAdmin.pages.assistants.title') }}
-              </h1>
-              <span
-                class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-500"
-              >
-                {{
-                  t('lensAdmin.total', {
-                    label: t('lensAdmin.pages.assistants.label'),
-                    count: assistants.length
-                  })
-                }}
-              </span>
-            </div>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <div
-              class="flex items-center gap-1 rounded-lg border border-line bg-surface-sunken p-1"
-              role="group"
-              :aria-label="t('lensAdmin.pages.assistants.viewSelector')"
-            >
-              <BaseButton
-                :variant="showArchived ? 'ghost' : 'secondary'"
-                size="sm"
-                :aria-pressed="!showArchived"
-                @click="switchArchiveView(false)"
-              >
-                {{ t('lensAdmin.pages.assistants.active') }}
-              </BaseButton>
-              <BaseButton
-                :variant="showArchived ? 'secondary' : 'ghost'"
-                size="sm"
-                :aria-pressed="showArchived"
-                @click="switchArchiveView(true)"
-              >
-                {{ t('lensAdmin.pages.assistants.archived') }}
-              </BaseButton>
-            </div>
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :loading="loading"
-              @click="load"
-            >
-              {{ t('common.refresh') }}
-            </BaseButton>
-            <BaseButton
-              v-if="!showArchived"
-              variant="primary"
-              size="sm"
-              @click="startCreate"
-            >
-              {{ t('lensAdmin.pages.assistants.action') }}
-            </BaseButton>
+        <div>
+          <div class="flex flex-wrap items-center gap-3">
+            <h1 class="text-2xl font-semibold tracking-tight text-ink-950">
+              {{ t('lensAdmin.pages.assistants.managementTitle') }}
+            </h1>
+            <span class="count-label">{{ assistants.length }}</span>
           </div>
         </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseButton
+            variant="outline"
+            size="sm"
+            :loading="loading"
+            @click="load"
+          >
+            <RefreshCw :size="16" aria-hidden="true" />
+            {{ t('common.refresh') }}
+          </BaseButton>
+          <BaseButton
+            v-if="!showArchived"
+            variant="primary"
+            size="sm"
+            @click="startCreate"
+          >
+            <Plus :size="16" aria-hidden="true" />
+            {{ t('lensAdmin.pages.assistants.action') }}
+          </BaseButton>
+        </div>
+      </header>
 
-        <div class="px-5 py-4">
+      <section
+        class="assistant-list-panel overflow-hidden rounded-xl border border-line bg-surface shadow-sm"
+      >
+        <div class="flex items-center gap-6 border-b border-line px-5">
+          <button
+            type="button"
+            class="segment-tab"
+            :class="{ 'segment-tab-active': !showArchived }"
+            :aria-pressed="!showArchived"
+            @click="switchArchiveView(false)"
+          >
+            {{ t('lensAdmin.pages.assistants.active') }}
+            <small>{{ activeCount }}</small>
+          </button>
+          <button
+            type="button"
+            class="segment-tab"
+            :class="{ 'segment-tab-active': showArchived }"
+            :aria-pressed="showArchived"
+            @click="switchArchiveView(true)"
+          >
+            {{ t('lensAdmin.pages.assistants.archived') }}
+            <small>{{ archivedCount }}</small>
+          </button>
+        </div>
+
+        <div
+          class="assistant-toolbar flex flex-wrap items-end gap-3 border-b border-line-soft px-5 py-4"
+        >
+          <label class="filter-control filter-search">
+            <span>{{ t('lensAdmin.pages.assistants.searchLabel') }}</span>
+            <span class="filter-input-wrap">
+              <Search :size="16" aria-hidden="true" />
+              <input
+                v-model="searchQuery"
+                type="search"
+                :placeholder="t('lensAdmin.pages.assistants.searchPlaceholder')"
+                autocomplete="off"
+                @input="resetPage"
+              />
+            </span>
+          </label>
+          <div class="filter-control">
+            <span>{{ t('lensAdmin.pages.assistants.typeLabel') }}</span>
+            <BaseSelect
+              v-model="typeFilter"
+              size="md"
+              :aria-label="t('lensAdmin.pages.assistants.typeLabel')"
+              @change="resetPage"
+            >
+              <option value="">
+                {{ t('lensAdmin.pages.assistants.allTypes') }}
+              </option>
+              <option value="general_chat">
+                {{ assistantTypeLabel('general_chat') }}
+              </option>
+              <option value="knowledge_qa">
+                {{ assistantTypeLabel('knowledge_qa') }}
+              </option>
+              <option value="code_analysis">
+                {{ assistantTypeLabel('code_analysis') }}
+              </option>
+              <option value="smart">
+                {{ t('lensAdmin.routingModes.smart') }}
+              </option>
+            </BaseSelect>
+          </div>
+          <div class="filter-control">
+            <span>{{ t('lensAdmin.pages.assistants.visibilityLabel') }}</span>
+            <BaseSelect
+              v-model="visibilityFilter"
+              size="md"
+              :aria-label="t('lensAdmin.pages.assistants.visibilityLabel')"
+              @change="resetPage"
+            >
+              <option value="">
+                {{ t('lensAdmin.pages.assistants.allVisibility') }}
+              </option>
+              <option value="private">
+                {{ t('lensAdmin.visibility.private') }}
+              </option>
+              <option value="public">
+                {{ t('lensAdmin.visibility.public') }}
+              </option>
+            </BaseSelect>
+          </div>
+          <BaseButton
+            v-if="hasFilters"
+            variant="ghost"
+            size="sm"
+            @click="clearFilters"
+          >
+            {{ t('lensAdmin.pages.assistants.resetFilters') }}
+          </BaseButton>
+        </div>
+
+        <div class="px-5 py-5">
           <BaseLoading v-if="loading && assistants.length === 0" />
 
-          <div
-            v-else-if="assistants.length === 0"
-            class="rounded-lg border border-line bg-surface-sunken py-16 text-center"
-          >
-            <p class="text-sm font-medium text-ink-500">
+          <div v-else-if="assistants.length === 0" class="empty-state">
+            <Bot :size="28" aria-hidden="true" />
+            <h2>
               {{
                 t(
                   showArchived
@@ -81,7 +145,17 @@
                     : 'lensAdmin.pages.assistants.emptyActive'
                 )
               }}
-            </p>
+            </h2>
+            <p>{{ t('lensAdmin.pages.assistants.emptyHint') }}</p>
+          </div>
+
+          <div v-else-if="filteredAssistants.length === 0" class="empty-state">
+            <Search :size="28" aria-hidden="true" />
+            <h2>{{ t('lensAdmin.pages.assistants.noFilterResults') }}</h2>
+            <p>{{ t('lensAdmin.pages.assistants.noFilterHint') }}</p>
+            <BaseButton variant="outline" size="sm" @click="clearFilters">{{
+              t('lensAdmin.pages.assistants.resetFilters')
+            }}</BaseButton>
           </div>
 
           <div
@@ -92,16 +166,17 @@
               class="assistants-table w-full table-fixed divide-y divide-line"
             >
               <colgroup>
-                <col style="width: 20%" />
-                <col style="width: 11%" />
-                <col style="width: 34%" />
+                <col style="width: 24%" />
+                <col style="width: 13%" />
+                <col style="width: 23%" />
+                <col style="width: 12%" />
                 <col style="width: 10%" />
-                <col style="width: 8%" />
-                <col style="width: 17%" />
+                <col style="width: 18%" />
               </colgroup>
               <thead class="bg-surface-sunken">
                 <tr>
                   <th
+                    scope="col"
                     v-for="column in activeColumns"
                     :key="column"
                     class="table-head"
@@ -117,25 +192,43 @@
                   class="transition-colors hover:bg-line-soft"
                 >
                   <td class="table-cell assistant-name-cell">
-                    <button
-                      type="button"
-                      class="assistant-name-action block max-w-full truncate text-left"
-                      @click="openDetails(row)"
-                    >
-                      {{ row.name }}
-                    </button>
-                    <div
-                      class="assistant-slug mt-1 font-mono text-xs text-ink-400"
-                      :title="row.slug"
-                    >
-                      {{ row.slug }}
+                    <div class="assistant-name-row">
+                      <span
+                        class="assistant-glyph"
+                        :class="{
+                          'assistant-glyph-smart':
+                            (row.mode || row.routing_mode) === 'smart'
+                        }"
+                      >
+                        <UsersRound
+                          v-if="(row.mode || row.routing_mode) === 'smart'"
+                          :size="18"
+                          aria-hidden="true"
+                        />
+                        <Bot v-else :size="18" aria-hidden="true" />
+                      </span>
+                      <div class="min-w-0">
+                        <button
+                          type="button"
+                          class="assistant-name-action block max-w-full truncate text-left"
+                          @click="openDetails(row)"
+                        >
+                          {{ row.name }}
+                        </button>
+                        <div
+                          class="assistant-slug mt-1 font-mono text-xs text-ink-400"
+                          :title="row.slug"
+                        >
+                          {{ row.slug }}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td
                     class="table-cell text-ink-600"
                     :data-label="t('lensAdmin.columns.type')"
                   >
-                    <div>
+                    <div class="font-medium text-ink-800">
                       {{
                         (row.mode || row.routing_mode) === 'smart'
                           ? t('lensAdmin.routingModes.smart')
@@ -152,16 +245,34 @@
                       class="flex flex-wrap items-center gap-2"
                     >
                       <span
-                        class="data-tool-count"
-                        :title="dataScopeLabel(row)"
+                        class="data-tool-count data-tool-hoverable"
                         :aria-label="`${dataScopeLabel(row)} (${(row.datasource_bindings || []).length})`"
+                        :aria-describedby="`assistant-data-tooltip-${row.uuid}`"
+                        tabindex="0"
                       >
                         <Database :size="16" aria-hidden="true" />
-                        <span>{{ (row.datasource_bindings || []).length }}</span>
+                        <span>{{
+                          (row.datasource_bindings || []).length
+                        }}</span>
+                        <span
+                          :id="`assistant-data-tooltip-${row.uuid}`"
+                          class="data-tool-tooltip"
+                          role="tooltip"
+                        >
+                          <strong>{{ dataScopeLabel(row) }}</strong>
+                          <span
+                            v-for="binding in row.datasource_bindings || []"
+                            :key="binding.uuid || binding.item_uuid"
+                          >
+                            {{ dataBindingLabel(binding) }}
+                          </span>
+                        </span>
                       </span>
                       <span
                         class="data-tool-count"
-                        :class="{ 'tool-count-empty': !row.skill_summary?.enabled }"
+                        :class="{
+                          'tool-count-empty': !row.skill_summary?.enabled
+                        }"
                         :title="skillCountLabel(row)"
                         :aria-label="skillCountLabel(row)"
                       >
@@ -170,7 +281,9 @@
                       </span>
                       <span
                         class="data-tool-count"
-                        :class="{ 'tool-count-empty': !row.mcp_summary?.enabled }"
+                        :class="{
+                          'tool-count-empty': !row.mcp_summary?.enabled
+                        }"
                         :title="mcpCountLabel(row)"
                         :aria-label="mcpCountLabel(row)"
                       >
@@ -192,7 +305,7 @@
                     :data-label="t('lensAdmin.columns.visibility')"
                   >
                     <span
-                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold"
+                      class="visibility-chip"
                       :class="
                         row.visibility === 'private'
                           ? 'border-amber-300 bg-amber-100 text-amber-800'
@@ -260,96 +373,101 @@
             v-if="!loading"
             v-model:page-size="pageSize"
             :current-page="currentPage"
-            :total="assistants.length"
+            :total="filteredAssistants.length"
             @page-size-change="handlePageSizeChange"
             @prev="goPrevPage"
             @next="goNextPage"
           />
         </div>
       </section>
-
-      <AssistantDetailDrawer
-        :show="Boolean(detailAssistant)"
-        :assistant="detailAssistant"
-        :lensnode-name="lensNodeName(detailAssistant)"
-        :assistant-type="
-          (detailAssistant?.mode || detailAssistant?.routing_mode) === 'smart'
-            ? t('lensAdmin.routingModes.smart')
-            : assistantTypeLabel(detailAssistant?.capability)
-        "
-        @close="closeDetails"
-        @copy-share="copyShareUrl"
-        @edit="startEditFromDetail"
-      />
-
-      <!-- Assistant Drawer (create wizard + edit) -->
-      <AssistantFormDrawer
-        :show="showDrawer"
-        :mode="mode"
-        :form="form"
-        :lensnodes="lensnodes"
-        :assistants="assistants"
-        :skills="skills"
-        :environment-variable-sets="environmentVariableSets"
-        :mcps="mcps"
-        :plugin-connections="pluginConnections"
-        :plugin-manifests="pluginManifests"
-        :plugin-icon-urls="pluginIconUrls"
-        :llm-config-options="llmConfigOptions"
-        :datasource-options="datasourceOptions"
-        :saving="saving"
-        :form-error="formError"
-        :refreshing-dirs="refreshingDirs"
-        @close="closeDrawer"
-        @save="save"
-        @refresh-dirs="refreshDirs"
-      />
-
-      <BaseModal
-        :show="Boolean(archiveConfirmRow)"
-        :title="t('lensAdmin.assistantDetail.archiveTitle')"
-        icon-type="warning"
-        @close="closeArchiveConfirmation"
-      >
-        <p class="text-sm text-ink-600">
-          {{
-            t('lensAdmin.assistantDetail.archiveMessage', {
-              name: archiveConfirmRow?.name || ''
-            })
-          }}
-        </p>
-        <template #footer>
-          <BaseButton
-            variant="danger"
-            :loading="actionUuid === archiveConfirmRow?.uuid"
-            @click="archive(archiveConfirmRow)"
-          >
-            {{ t('common.confirm') }}
-          </BaseButton>
-          <BaseButton
-            variant="outline"
-            class="mr-3"
-            :disabled="actionUuid === archiveConfirmRow?.uuid"
-            @click="closeArchiveConfirmation"
-          >
-            {{ t('common.cancel') }}
-          </BaseButton>
-        </template>
-      </BaseModal>
     </div>
+
+    <AssistantDetailDrawer
+      :show="Boolean(detailAssistant)"
+      :assistant="detailAssistant"
+      :lensnode-name="lensNodeName(detailAssistant)"
+      :assistant-type="
+        (detailAssistant?.mode || detailAssistant?.routing_mode) === 'smart'
+          ? t('lensAdmin.routingModes.smart')
+          : assistantTypeLabel(detailAssistant?.capability)
+      "
+      @close="closeDetails"
+      @copy-share="copyShareUrl"
+      @edit="startEditFromDetail"
+      @restore="restore"
+    />
+
+    <!-- Assistant Drawer (create wizard + edit) -->
+    <AssistantFormDrawer
+      :show="showDrawer"
+      :mode="mode"
+      :form="form"
+      :lensnodes="lensnodes"
+      :assistants="assistants"
+      :skills="skills"
+      :environment-variable-sets="environmentVariableSets"
+      :mcps="mcps"
+      :plugin-connections="pluginConnections"
+      :plugin-manifests="pluginManifests"
+      :plugin-icon-urls="pluginIconUrls"
+      :llm-config-options="llmConfigOptions"
+      :datasource-options="datasourceOptions"
+      :saving="saving"
+      :form-error="formError"
+      :refreshing-dirs="refreshingDirs"
+      @close="closeDrawer"
+      @save="save"
+      @refresh-dirs="refreshDirs"
+    />
+
+    <BaseModal
+      :show="Boolean(archiveConfirmRow)"
+      :title="t('lensAdmin.assistantDetail.archiveTitle')"
+      icon-type="warning"
+      @close="closeArchiveConfirmation"
+    >
+      <p class="text-sm text-ink-600">
+        {{
+          t('lensAdmin.assistantDetail.archiveMessage', {
+            name: archiveConfirmRow?.name || ''
+          })
+        }}
+      </p>
+      <template #footer>
+        <BaseButton
+          variant="danger"
+          :loading="actionUuid === archiveConfirmRow?.uuid"
+          @click="archive(archiveConfirmRow)"
+        >
+          {{ t('common.confirm') }}
+        </BaseButton>
+        <BaseButton
+          variant="outline"
+          class="mr-3"
+          :disabled="actionUuid === archiveConfirmRow?.uuid"
+          @click="closeArchiveConfirmation"
+        >
+          {{ t('common.cancel') }}
+        </BaseButton>
+      </template>
+    </BaseModal>
   </AdminLayout>
 </template>
 
 <script setup>
 import {
+  Bot,
   BookOpen,
   Database,
   Plug,
   Globe as GlobeIcon,
   Lock as LockIcon,
-  Server
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  UsersRound
 } from '@lucide/vue'
-import { assistantDataMode } from './assistantDetails'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -381,6 +499,7 @@ import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
@@ -417,6 +536,9 @@ const detailAssistant = ref(null)
 const assistants = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
+const searchQuery = ref('')
+const typeFilter = ref('')
+const visibilityFilter = ref('')
 const lensnodes = ref([])
 const skills = ref([])
 const environmentVariableSets = ref([])
@@ -431,27 +553,68 @@ let formResourcesPromise = null
 let globalSettingsPromise = null
 
 const activeColumns = computed(() =>
-  [
-    'assistant',
-    'type',
-    'dataAndTools',
-    'visibility',
-    'status',
-    'actions'
-  ].map((column) =>
-    column === 'dataAndTools'
-      ? t('lensAdmin.columns.dataAndTools')
-      : t(`lensAdmin.columns.${column}`)
+  ['assistant', 'type', 'dataAndTools', 'visibility', 'status', 'actions'].map(
+    (column) =>
+      column === 'dataAndTools'
+        ? t('lensAdmin.columns.dataAndTools')
+        : t(`lensAdmin.columns.${column}`)
   )
 )
 
+const activeRows = computed(() =>
+  assistants.value.filter(
+    (row) => row.status === 'active' || (!row.status && !showArchived.value)
+  )
+)
+const archivedRows = computed(() =>
+  assistants.value.filter(
+    (row) => row.status !== 'active' && (row.status || showArchived.value)
+  )
+)
+const activeCount = computed(() => activeRows.value.length)
+const archivedCount = computed(() => archivedRows.value.length)
+const hasFilters = computed(() =>
+  Boolean(searchQuery.value || typeFilter.value || visibilityFilter.value)
+)
+const filteredAssistants = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  return assistants.value.filter((row) => {
+    const modeValue = row.mode || row.routing_mode || 'direct'
+    const matchesQuery =
+      !query ||
+      [row.name, row.slug, row.description]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    const matchesType =
+      !typeFilter.value ||
+      (typeFilter.value === 'smart'
+        ? modeValue === 'smart'
+        : modeValue !== 'smart' && row.capability === typeFilter.value)
+    const matchesVisibility =
+      !visibilityFilter.value || row.visibility === visibilityFilter.value
+    return matchesQuery && matchesType && matchesVisibility
+  })
+})
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil(assistants.value.length / pageSize.value))
+  Math.max(1, Math.ceil(filteredAssistants.value.length / pageSize.value))
 )
 const pagedAssistants = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return assistants.value.slice(start, start + pageSize.value)
+  return filteredAssistants.value.slice(start, start + pageSize.value)
 })
+
+function resetPage() {
+  currentPage.value = 1
+}
+
+function clearFilters() {
+  searchQuery.value = ''
+  typeFilter.value = ''
+  visibilityFilter.value = ''
+  resetPage()
+}
 
 function handlePageSizeChange() {
   currentPage.value = 1
@@ -638,6 +801,7 @@ async function switchArchiveView(archived) {
   archiveConfirmRow.value = null
   detailAssistant.value = null
   currentPage.value = 1
+  clearFilters()
   assistants.value = []
   await load()
 }
@@ -679,9 +843,15 @@ function dataScopeLabel(row) {
     )
   ]
   if (names.length) return names.join(' · ')
-  return t(
-    `lensAdmin.assistantPresentation.${assistantDataMode(row) === 'selected' ? 'noSources' : 'allSources'}`
-  )
+  return t('lensAdmin.assistantPresentation.noSources')
+}
+
+function dataBindingLabel(binding) {
+  const datasourceName =
+    binding.datasource_name || t('lensAdmin.assistantDetail.unnamedDatasource')
+  const itemName =
+    binding.item_name || t('lensAdmin.assistantPresentation.allItems')
+  return `${datasourceName} · ${itemName}`
 }
 
 function closeDetails() {
@@ -762,7 +932,7 @@ function defaultForm() {
     access_group_ids: [],
     access_user_ids: [],
     access_grant_options: [],
-    settings: { datasource_routing: 'auto' },
+    settings: { datasource_routing: 'selected' },
     enable_codegraph: true,
     status: 'active',
     mode: 'direct',
@@ -853,7 +1023,7 @@ function formFromRow(row) {
       .filter((g) => g.type === 'user')
       .map((g) => g.id),
     access_grant_options: row.access_grants || [],
-    settings: { datasource_routing: 'selected', ...(row.settings || {}) },
+    settings: { ...(row.settings || {}), datasource_routing: 'selected' },
     enable_codegraph: row.settings?.features?.codegraph !== false,
     status: row.status || 'active'
   }
@@ -911,7 +1081,8 @@ function buildPayload() {
     ...(form.value.lensnode_uuid
       ? { lensnode_uuid: form.value.lensnode_uuid }
       : {}),
-    datasource_bindings: form.value.datasource_bindings || [],
+    datasource_bindings:
+      form.value.mode === 'smart' ? [] : form.value.datasource_bindings || [],
     selected_dirs:
       form.value.capability === 'general_chat' ? [] : buildSelectedDirs(),
     agent_model_ref: form.value.agent_model_ref || null,
@@ -977,6 +1148,7 @@ function buildAccessGrants() {
 
 function buildAssistantSettings() {
   const settings = { ...(form.value.settings || {}) }
+  settings.datasource_routing = 'selected'
   const retrievalPolicy = {}
   const excludeExtensions = splitList(form.value.exclude_extensions_text)
   const excludeDirs = splitList(form.value.exclude_dirs_text)
@@ -1040,6 +1212,9 @@ async function restore(row) {
     await restoreAssistant(row.uuid)
     showSuccess(t('lensAdmin.messages.restoreSuccess'))
     await load()
+    if (detailAssistant.value?.uuid === row.uuid) {
+      detailAssistant.value = await getAssistant(row.uuid)
+    }
   } catch (error) {
     showError(extractErrorMessage(error, t('lensAdmin.messages.restoreFailed')))
   } finally {
@@ -1052,7 +1227,167 @@ onBeforeUnmount(revokePluginIconUrls)
 </script>
 
 <style scoped>
+.assistants-page {
+  color: var(--sl-text-primary);
+}
+
+.count-label {
+  border: 1px solid var(--sl-border-default);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  color: var(--sl-text-muted);
+  background: var(--sl-bg-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.segment-tab {
+  min-height: 3.5rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--sl-text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.segment-tab small {
+  padding-left: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.segment-tab:hover,
+.segment-tab-active {
+  color: var(--sl-brand-strong);
+}
+
+.segment-tab-active {
+  border-bottom-color: var(--sl-brand-strong);
+  font-weight: 650;
+}
+
+.filter-control {
+  display: grid;
+  min-width: 9.5rem;
+  gap: 0.375rem;
+  color: var(--sl-text-muted);
+  font-size: 0.75rem;
+}
+
+.filter-search {
+  min-width: 15rem;
+  flex: 1 1 18rem;
+  max-width: 27rem;
+}
+
+.filter-control select,
+.filter-input-wrap {
+  min-height: 2.75rem;
+  border: 1px solid var(--sl-border-default);
+  border-radius: 0.5rem;
+  background: var(--sl-bg-surface);
+}
+
+.filter-control :deep(button[role='combobox']) {
+  min-height: 2.75rem;
+}
+
+.filter-control select {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  color: var(--sl-text-secondary);
+  font-size: 0.875rem;
+}
+
+.filter-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+}
+
+.filter-input-wrap:focus-within {
+  border-color: var(--sl-accent);
+  box-shadow: 0 0 0 3px rgb(var(--sl-accent-rgb) / 0.15);
+}
+
+.filter-input-wrap svg {
+  flex: none;
+  color: var(--sl-text-subtle);
+}
+
+.filter-input-wrap input {
+  min-width: 0;
+  flex: 1;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  padding: 3.5rem 1.5rem;
+  text-align: center;
+}
+
+.empty-state > svg {
+  margin-bottom: 0.5rem;
+  color: var(--sl-text-subtle);
+}
+
+.empty-state h2 {
+  color: var(--sl-text-secondary);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.empty-state p {
+  color: var(--sl-text-muted);
+  font-size: 0.875rem;
+}
+
+.assistant-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.assistant-glyph {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--sl-border-default);
+  border-radius: 0.5rem;
+  background: var(--sl-bg-surface);
+  color: var(--sl-text-secondary);
+}
+
+.assistant-glyph-smart {
+  border-color: transparent;
+  background: var(--sl-brand-soft);
+  color: var(--sl-brand-strong);
+}
+
+.visibility-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .data-tool-count {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -1060,8 +1395,58 @@ onBeforeUnmount(revokePluginIconUrls)
   padding: 0.25rem 0.4rem;
   font-size: 0.75rem;
   font-weight: 600;
-  color: rgb(var(--ink-600));
-  background: rgb(var(--surface-sunken));
+  color: var(--sl-text-secondary);
+  background: var(--sl-bg-canvas);
+}
+
+.data-tool-hoverable {
+  cursor: help;
+  outline: none;
+}
+
+.data-tool-tooltip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  display: grid;
+  min-width: 14rem;
+  max-width: 24rem;
+  gap: 0.25rem;
+  border: 1px solid var(--sl-border-default);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  color: var(--sl-text-secondary);
+  background: var(--sl-bg-surface);
+  box-shadow: 0 0.5rem 1.25rem rgb(15 23 42 / 0.14);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.25rem);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.data-tool-tooltip strong {
+  color: var(--sl-text-primary);
+  font-weight: 600;
+}
+
+.data-tool-hoverable:hover .data-tool-tooltip,
+.data-tool-hoverable:focus-visible .data-tool-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.data-tool-hoverable:focus-visible {
+  box-shadow: 0 0 0 3px rgb(var(--sl-accent-rgb) / 0.18);
 }
 
 .assistants-table-wrap {
@@ -1073,7 +1458,7 @@ onBeforeUnmount(revokePluginIconUrls)
 }
 
 .table-cell {
-  @apply px-3 py-4 text-sm text-ink-700 align-top;
+  @apply px-4 py-3 align-top text-sm text-ink-700;
 }
 
 .assistant-name-cell {
@@ -1111,6 +1496,17 @@ onBeforeUnmount(revokePluginIconUrls)
 }
 
 @media (max-width: 767px) {
+  .assistant-toolbar {
+    align-items: stretch;
+  }
+
+  .filter-control,
+  .filter-search {
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
   .assistants-table {
     display: block;
     min-width: 0;
@@ -1138,7 +1534,7 @@ onBeforeUnmount(revokePluginIconUrls)
     display: block;
     margin-bottom: 6px;
     font-size: 12px;
-    color: rgb(var(--ink-500));
+    color: var(--sl-text-muted);
   }
   .assistant-name-cell,
   .assistant-actions-cell {

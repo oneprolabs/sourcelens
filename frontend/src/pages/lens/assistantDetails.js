@@ -1,14 +1,12 @@
-function bindingItem(binding, name, fallback) {
+function bindingItem(binding, name) {
   if (!binding || typeof binding !== 'object') return null
-  const resolvedName = name || fallback
-  if (!resolvedName) return null
   return {
-    name: resolvedName,
+    name: name || '',
     enabled: binding.enabled !== false
   }
 }
 
-/** Normalize assistant list data for the read-only detail drawer. */
+/** Normalize assistant data for read-only detail views. */
 export function buildAssistantDetail(assistant = {}) {
   const workspaceDirectories = (assistant.selected_dirs || [])
     .map((directory) =>
@@ -18,11 +16,7 @@ export function buildAssistantDetail(assistant = {}) {
 
   const skills = (assistant.skill_bindings || [])
     .map((binding) =>
-      bindingItem(
-        binding,
-        binding?.skill_name || binding?.skill?.name,
-        binding?.skill_uuid
-      )
+      bindingItem(binding, binding?.skill_name || binding?.skill?.name)
     )
     .filter(Boolean)
 
@@ -30,16 +24,13 @@ export function buildAssistantDetail(assistant = {}) {
     .map((binding) =>
       bindingItem(
         binding,
-        binding?.mcp_name || binding?.mcp_server?.name || binding?.mcp?.name,
-        binding?.mcp_uuid
+        binding?.mcp_name || binding?.mcp_server?.name || binding?.mcp?.name
       )
     )
     .filter(Boolean)
 
   const plugins = (assistant.plugin_bindings || [])
-    .map((binding) =>
-      bindingItem(binding, binding?.connection_name, binding?.plugin_key)
-    )
+    .map((binding) => bindingItem(binding, binding?.connection_name))
     .filter(Boolean)
 
   const grants = assistant.access_grants || []
@@ -67,11 +58,7 @@ export function buildAssistantDetail(assistant = {}) {
   }
 }
 
-/** Keep list and detail labels aligned with the runtime routing default. */
-export function assistantDataMode(assistant = {}) {
-  return (
-    assistant.datasource_routing ||
-    assistant.settings?.datasource_routing ||
-    'auto'
-  )
+/** Keep list and detail labels aligned with explicit datasource bindings. */
+export function assistantDataMode() {
+  return 'selected'
 }

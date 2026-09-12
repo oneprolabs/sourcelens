@@ -1,6 +1,5 @@
 """Select session data and wait asynchronously for ready versions."""
 
-import re
 import uuid
 from types import SimpleNamespace
 
@@ -15,44 +14,12 @@ class DatasourceRoutingError(RuntimeError):
 
 
 def selected_bindings(assistant, question):
-    """Match catalog identities inside the administrator-defined scope."""
+    """Return every data source explicitly bound to the assistant."""
 
-    mode = (assistant.settings or {}).get("datasource_routing", "auto")
-    bindings = list(assistant.datasource_bindings.select_related(
+    del question
+    return list(assistant.datasource_bindings.select_related(
         "datasource", "item"
     ))
-    if mode == "selected":
-        return bindings
-    if not bindings:
-        bindings = [SimpleNamespace(
-            datasource=source, item=None, item_id=None, required=True,
-            mount_name=f"ds_{source.uuid.hex}",
-        ) for source in DataSource.objects.filter(status="active")]
-    bindings = [b for b in bindings if b.datasource.status == "active"]
-    if mode == "all":
-        return bindings
-    query = question.casefold()
-    matches = []
-    for binding in bindings:
-        source = binding.datasource
-        config = source.datasource_config or {}
-        names = [source.name, config.get("repository", "")]
-        names.extend(config.get("repositories") or [])
-        names.extend(config.get("projects") or [])
-        identities = {
-            name.casefold().strip().split("/")[-1]
-            for name in names if isinstance(name, str) and name.strip()
-        }
-        if any(re.search(
-            r"(?<![a-z0-9_])" + re.escape(name) + r"(?![a-z0-9_])",
-            query,
-        ) for name in identities):
-            matches.append(binding)
-    if matches:
-        return matches
-    if assistant.datasource_bindings.exists():
-        return bindings
-    raise DatasourceRoutingError("DATASOURCE_NO_MATCH")
 
 
 def _sync_task(source, run):

@@ -347,7 +347,7 @@ onMounted(load)
 
 <style scoped>
 .table-cell {
-  @apply px-4 py-4 text-sm text-ink-700;
+  @apply px-4 py-3 align-top text-sm text-ink-700;
 }
 
 @media (max-width: 767px) {

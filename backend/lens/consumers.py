@@ -286,6 +286,10 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             lensnode.labels = content.get("labels") or {}
         if content.get("metrics") is not None:
             lensnode.last_metrics = content.get("metrics") or {}
+        if content.get("active_datasource_operations") is not None:
+            lensnode.active_datasource_operations = (
+                content.get("active_datasource_operations") or []
+            )
         if require_versions or content.get("protocol_version") is not None:
             lensnode.protocol_version = content.get("protocol_version", "")
         if require_versions or content.get("agent_version") is not None:
@@ -889,6 +893,10 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             request_id,
             content,
         )
+        await database_sync_to_async(self._clear_active_datasource_operation)(
+            self.lensnode.uuid,
+            resolved_task_id or task_id,
+        )
         await self.send_json(
             {
                 "type": "datasource_terminal_ack",
@@ -948,6 +956,10 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         )(
             request_id, content, self.channel_name
         )
+        await database_sync_to_async(self._clear_active_datasource_operation)(
+            self.lensnode.uuid,
+            resolved_task_id or task_id,
+        )
         await self.send_json(
             {
                 "type": "datasource_terminal_ack",
@@ -969,12 +981,38 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             content,
             self.channel_name,
         )
+        await database_sync_to_async(self._clear_active_datasource_operation)(
+            self.lensnode.uuid,
+            resolved_task_id or task_id,
+        )
         await self.send_json(
             {
                 "type": "datasource_terminal_ack",
                 "task_id": resolved_task_id or task_id,
             }
         )
+
+    @staticmethod
+    def _clear_active_datasource_operation(lensnode_uuid, task_id):
+        """Remove one completed datasource operation from the node report."""
+
+        if not task_id:
+            return
+        lensnode = LensNode.objects.filter(pk=lensnode_uuid).first()
+        if lensnode is None:
+            return
+        operations = lensnode.active_datasource_operations or []
+        remaining = [
+            operation
+            for operation in operations
+            if not isinstance(operation, dict)
+            or str(operation.get("task_id") or "") != str(task_id)
+        ]
+        if len(remaining) != len(operations):
+            lensnode.active_datasource_operations = remaining
+            lensnode.save(
+                update_fields=["active_datasource_operations", "updated_at"]
+            )
 
     @staticmethod
     def _complete_datasource_upload_done(request_id, content, connection_id):

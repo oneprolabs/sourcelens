@@ -47,6 +47,8 @@ class LensNode(TimestampedUUIDModel):
     agent_version = models.CharField(max_length=64, blank=True, default="")
     tasks = models.JSONField(default=list, blank=True)
     labels = models.JSONField(default=dict, blank=True)
+    last_metrics = models.JSONField(default=dict, blank=True)
+    active_datasource_operations = models.JSONField(default=list, blank=True)
     enrollment_status = models.CharField(
         max_length=16,
         choices=EnrollmentStatus.choices,

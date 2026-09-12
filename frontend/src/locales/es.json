@@ -1455,10 +1455,8 @@
   "lensAdmin": {
     "datasourceSelection": {
       "title": "Acceso a datos",
-      "auto": "Coincidencia automática",
       "selected": "Fuentes seleccionadas",
-      "all": "Todas las fuentes",
-      "scope": "Seleccione fuentes para limitar el acceso. Sin selección se permiten todas las fuentes activas.",
+      "selectedHint": "Solo se usarán las fuentes y recursos seleccionados abajo.",
       "empty": "Sin fuentes de datos"
     }
   },

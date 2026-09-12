@@ -904,7 +904,6 @@
       "plugins": "Plugins",
       "automaticNode": "Asignación automática",
       "nodeUnavailable": "Nodo no disponible",
-      "allSources": "Todas las fuentes activas",
       "noSources": "Sin fuentes seleccionadas",
       "allItems": "Todos los recursos",
       "noTools": "Sin herramientas habilitadas",
@@ -943,7 +942,8 @@
     "pages": {
       "assistants": {
         "title": "Asistentes",
-        "description": "Configurar capacidades públicas, nodos de ejecución, tareas y directorios de trabajo.",
+        "managementTitle": "Gestión de asistentes",
+        "description": "Configura recursos, herramientas y permisos como asistentes reutilizables.",
         "label": "Asistente",
         "action": "Crear Asistente",
         "viewSelector": "Vista del ciclo de vida del asistente",
@@ -951,8 +951,23 @@
         "archived": "Archivado",
         "archive": "Archivar",
         "restore": "Restaurar",
+        "workspace": "Espacio de trabajo",
+        "enabledSummary": "Activos",
+        "standardSummary": "Estándar",
+        "smartSummary": "Inteligente",
+        "publicSummary": "Públicos",
+        "searchLabel": "Buscar asistentes",
+        "searchPlaceholder": "Buscar nombre, slug o descripción",
+        "typeLabel": "Tipo de asistente",
+        "allTypes": "Todos los tipos",
+        "visibilityLabel": "Visibilidad",
+        "allVisibility": "Toda visibilidad",
+        "resetFilters": "Restablecer filtros",
         "emptyActive": "No hay asistentes activos",
-        "emptyArchived": "No hay asistentes archivados"
+        "emptyArchived": "No hay asistentes archivados",
+        "emptyHint": "Crea un asistente para configurar su ejecución y límites de acceso.",
+        "noFilterResults": "No hay asistentes coincidentes",
+        "noFilterHint": "Prueba a ajustar los filtros o restablécelos."
       },
       "lensnodes": {
         "title": "Nodos",
@@ -1806,7 +1821,10 @@
     },
     "assistantDetail": {
       "title": "Detalles del asistente",
+      "identifier": "Identificador",
       "overview": "Visión general",
+      "skills": "Skills",
+      "mcpServers": "Servidores MCP",
       "workspaceDirectories": "Directorios del espacio de trabajo",
       "capabilities": "Capacidades",
       "access": "Acceso",
@@ -1821,7 +1839,19 @@
       "skillCount": "{count} Skills",
       "mcpCount": "{count} Servidores MCP",
       "collaborationMembers": "Miembros de colaboración",
-      "noCollaborationMembers": "No hay miembros de colaboración configurados"
+      "noCollaborationMembers": "No hay miembros de colaboración configurados",
+      "back": "Volver a la lista",
+      "summary": "Resumen de configuración",
+      "dataAccess": "Acceso a datos",
+      "workspaceContext": "Contexto del espacio de trabajo",
+      "collaborationContext": "Contexto de colaboración",
+      "notConfigured": "Sin configurar",
+      "modelConfigured": "Modelo configurado",
+      "unnamedDatasource": "Fuente de datos sin nombre",
+      "unnamedAssistant": "Asistente sin nombre",
+      "unnamedSkill": "Skill sin nombre",
+      "unnamedMcp": "Servidor MCP sin nombre",
+      "unnamedPlugin": "Plugin sin nombre"
     },
     "datasourceWizard": {
       "createTitle": "Crear Fuente de Datos",
@@ -2018,7 +2048,8 @@
       "cpu": "CPU",
       "memory": "Memoria",
       "disk": "Disco",
-      "datasourceTasks": "Tareas de fuentes"
+      "datasourceTasks": "Tareas de fuentes",
+      "datasourceOperation": "Operación"
     },
     "timeline": {
       "title": "Progreso de inscripción",
@@ -2082,6 +2113,9 @@
       "step3SmartDesc": "Agrega una guía del espacio de trabajo para la colaboración inteligente",
       "step4Title": "Acceso",
       "step4Desc": "Establecer visibilidad y elegir qué grupos o usuarios pueden acceder a ella",
+      "stepNavigation": "Pasos de configuración",
+      "createProgressHint": "La información se conserva entre pasos. Puedes volver para revisarla.",
+      "editProgressHint": "La información se conserva entre pasos. Los cambios se aplican al guardar.",
       "contextLabel": "Guía del espacio de trabajo (opcional)",
       "contextHint": "Cuéntale al Asistente sobre la estructura del espacio de trabajo, el contexto del negocio, las convenciones del equipo, las prioridades de búsqueda y los directorios que se deben evitar. Se inyecta como el contexto privado de este Asistente después de guardarlo.",
       "smartContextHint": "Agrega contexto del proyecto, principios de reparto del trabajo y prioridades de recuperación para la colaboración inteligente.",
@@ -2203,10 +2237,8 @@
     },
     "datasourceSelection": {
       "title": "Acceso a datos",
-      "scope": "Elige las fuentes de datos disponibles.",
-      "auto": "Coincidencia automática",
       "selected": "Fuentes seleccionadas",
-      "all": "Todas las fuentes",
+      "selectedHint": "Solo se usarán las fuentes y recursos seleccionados abajo.",
       "empty": "No hay fuentes disponibles",
       "selectedLabel": "seleccionados",
       "resources": "recursos",

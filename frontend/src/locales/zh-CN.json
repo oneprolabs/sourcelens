@@ -1456,10 +1456,8 @@
   "lensAdmin": {
     "datasourceSelection": {
       "title": "数据访问",
-      "auto": "自动匹配",
       "selected": "指定数据源",
-      "all": "全部数据源",
-      "scope": "可限定数据范围；自动匹配和全部模式下，不勾选表示允许使用全部启用的数据源。",
+      "selectedHint": "仅使用下方明确选择的数据源和资源。",
       "empty": "暂无数据源"
     }
   },

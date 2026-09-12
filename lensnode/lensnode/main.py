@@ -919,6 +919,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "sync",
             "starting",
+            message.get("name"),
         )
         message = {**message, "cancel_event": cancel_event}
         task = asyncio.create_task(self._execute_datasource_sync(message, plugin))
@@ -1266,6 +1267,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "conversion",
             "starting",
+            message.get("name"),
         )
         task = asyncio.create_task(
             self._execute_datasource_conversion(
@@ -1422,6 +1424,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "upload",
             "starting",
+            message.get("name"),
         )
         task = asyncio.create_task(
             self._execute_datasource_upload(
@@ -1639,17 +1642,21 @@ class LensNodeClient:
         datasource_uuid,
         operation,
         phase,
+        datasource_name=None,
     ):
         """Record one datasource operation for reconnect reconciliation."""
 
         with self._datasource_operations_lock:
-            self.active_datasource_operations[str(task_id)] = {
+            operation_report = {
                 "task_id": str(task_id),
                 "datasource_uuid": str(datasource_uuid or ""),
                 "operation": operation,
                 "phase": phase,
                 "last_progress": {},
             }
+            if datasource_name:
+                operation_report["datasource_name"] = str(datasource_name)
+            self.active_datasource_operations[str(task_id)] = operation_report
 
     def _update_datasource_operation(self, task_id, event):
         """Keep the reconnect report aligned with durable progress events."""
@@ -1754,6 +1761,7 @@ class LensNodeClient:
                     "tasks": TASKS,
                     "active_runs": active_runs,
                     "active_datasource_operations": active_datasource_operations,
+                    "metrics": self._resource_metrics(),
                     "labels": {
                         "mode": "local",
                         "datasource_sync_capacity": max(
@@ -1869,6 +1877,9 @@ class LensNodeClient:
                     "type": "heartbeat",
                     "available_dirs": dirs,
                     "tasks": TASKS,
+                    "active_datasource_operations": (
+                        self._reported_active_datasource_operations()
+                    ),
                     "metrics": self._resource_metrics(),
                 }
             )

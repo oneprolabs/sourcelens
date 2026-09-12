@@ -229,6 +229,7 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "tasks",
             "labels",
             "last_metrics",
+            "active_datasource_operations",
             "enrollment_status",
             "token_issued_at",
             "token_revoked",
@@ -286,6 +287,8 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "token_issued_at",
             "last_authenticated_at",
             "last_heartbeat_at",
+            "last_metrics",
+            "active_datasource_operations",
             "registered_at",
             "created_at",
             "updated_at",
@@ -697,7 +700,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
     def get_datasource_routing(self, assistant):
         """Expose the data selection mode without other runtime settings."""
 
-        return (assistant.settings or {}).get("datasource_routing", "auto")
+        return "selected"
 
     def get_collaboration_members(self, assistant):
         """Return prefetched Smart Assistant members for list views."""
@@ -1160,8 +1163,12 @@ class AssistantSerializer(serializers.ModelSerializer):
             "settings",
             getattr(self.instance, "settings", {}),
         )
-        if isinstance(settings, dict) and "retrieval_policy" in settings:
-            validate_retrieval_policy(settings.get("retrieval_policy"))
+        if isinstance(settings, dict):
+            settings = dict(settings)
+            settings["datasource_routing"] = "selected"
+            attrs["settings"] = settings
+            if "retrieval_policy" in settings:
+                validate_retrieval_policy(settings.get("retrieval_policy"))
         if "multimodal_model_ref" in attrs:
             reason = validate_vision_model_ref(attrs["multimodal_model_ref"])
             if reason:

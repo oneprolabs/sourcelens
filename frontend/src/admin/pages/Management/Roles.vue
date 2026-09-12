@@ -59,10 +59,10 @@
 
           <div
             v-else
-            class="relative overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm"
+            class="relative overflow-x-auto rounded-lg border border-line bg-surface"
           >
-            <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gradient-to-r from-gray-50 to-gray-100">
+            <table class="min-w-full divide-y divide-line">
+              <thead class="bg-surface-sunken">
                 <tr>
                   <th class="table-head w-12">
                     <input
@@ -569,11 +569,11 @@ onMounted(() => {
 
 <style scoped>
 .table-head {
-  @apply border-b border-gray-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-700;
+  @apply border-b border-line px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-ink-500;
 }
 
 .table-cell {
-  @apply px-4 py-4 text-sm;
+  @apply px-4 py-3 align-top text-sm text-ink-700;
 }
 
 .form-input {

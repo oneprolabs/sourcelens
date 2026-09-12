@@ -904,7 +904,6 @@
       "plugins": "Plugins",
       "automaticNode": "Automatic scheduling",
       "nodeUnavailable": "Node unavailable",
-      "allSources": "All active data sources",
       "noSources": "No sources selected",
       "allItems": "All resources",
       "noTools": "No enabled tools",
@@ -943,7 +942,8 @@
     "pages": {
       "assistants": {
         "title": "Assistants",
-        "description": "Configure public capabilities, execution nodes, tasks, and workspace directories.",
+        "managementTitle": "Assistant Management",
+        "description": "Configure resources, tools, and access grants as reusable assistants.",
         "label": "Assistant",
         "action": "Create Assistant",
         "viewSelector": "Assistant lifecycle view",
@@ -951,8 +951,23 @@
         "archived": "Archived",
         "archive": "Archive",
         "restore": "Restore",
+        "workspace": "Workspace",
+        "enabledSummary": "Active",
+        "standardSummary": "Standard",
+        "smartSummary": "Smart",
+        "publicSummary": "Public",
+        "searchLabel": "Search assistants",
+        "searchPlaceholder": "Search name, slug, or description",
+        "typeLabel": "Assistant type",
+        "allTypes": "All types",
+        "visibilityLabel": "Visibility",
+        "allVisibility": "All visibility",
+        "resetFilters": "Reset filters",
         "emptyActive": "No active assistants",
-        "emptyArchived": "No archived assistants"
+        "emptyArchived": "No archived assistants",
+        "emptyHint": "Create an assistant to configure its execution and access boundaries.",
+        "noFilterResults": "No assistants match",
+        "noFilterHint": "Try adjusting the filters or reset them."
       },
       "lensnodes": {
         "title": "Nodes",
@@ -1824,7 +1839,10 @@
     },
     "assistantDetail": {
       "title": "Assistant details",
+      "identifier": "Identifier",
       "overview": "Overview",
+      "skills": "Skills",
+      "mcpServers": "MCP servers",
       "workspaceDirectories": "Workspace directories",
       "capabilities": "Capabilities",
       "access": "Access",
@@ -1839,7 +1857,19 @@
       "skillCount": "{count} Skills",
       "mcpCount": "{count} MCP Servers",
       "collaborationMembers": "Collaboration members",
-      "noCollaborationMembers": "No collaboration members configured"
+      "noCollaborationMembers": "No collaboration members configured",
+      "back": "Back to list",
+      "summary": "Configuration summary",
+      "dataAccess": "Data access",
+      "workspaceContext": "Workspace context",
+      "collaborationContext": "Collaboration context",
+      "notConfigured": "Not configured",
+      "modelConfigured": "Model configured",
+      "unnamedDatasource": "Unnamed data source",
+      "unnamedAssistant": "Unnamed assistant",
+      "unnamedSkill": "Unnamed Skill",
+      "unnamedMcp": "Unnamed MCP server",
+      "unnamedPlugin": "Unnamed plugin"
     },
     "datasourceWizard": {
       "createTitle": "Create Data Source",
@@ -2036,7 +2066,8 @@
       "cpu": "CPU",
       "memory": "Memory",
       "disk": "Disk",
-      "datasourceTasks": "Datasource tasks"
+      "datasourceTasks": "Datasource tasks",
+      "datasourceOperation": "Operation"
     },
     "timeline": {
       "title": "Enrollment progress",
@@ -2100,6 +2131,9 @@
       "step3SmartDesc": "Add workspace guidance for Smart collaboration",
       "step4Title": "Access",
       "step4Desc": "Set visibility and choose which groups or users can access it",
+      "stepNavigation": "Configuration steps",
+      "createProgressHint": "Your input is preserved between steps. Go back anytime to review it.",
+      "editProgressHint": "Your input is preserved between steps. Changes are applied when you save.",
       "contextLabel": "Workspace Guide (optional)",
       "contextHint": "Tell the Assistant about workspace structure, business context, team conventions, search priorities, and directories to avoid. It is injected as this Assistant's private context after saving.",
       "smartContextHint": "Add project context, division-of-work principles, and retrieval priorities for Smart collaboration.",
@@ -2221,10 +2255,8 @@
     },
     "datasourceSelection": {
       "title": "Data access",
-      "scope": "Choose the data sources this assistant can access.",
-      "auto": "Auto match",
       "selected": "Selected sources",
-      "all": "All sources",
+      "selectedHint": "Only the data sources and resources selected below will be used.",
       "empty": "No data sources available",
       "selectedLabel": "selected",
       "resources": "resources",

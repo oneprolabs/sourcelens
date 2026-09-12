@@ -1456,10 +1456,8 @@
   "lensAdmin": {
     "datasourceSelection": {
       "title": "Data access",
-      "auto": "Automatic matching",
       "selected": "Selected sources",
-      "all": "All sources",
-      "scope": "Select sources to limit access. In automatic or all mode, no selection allows all active sources.",
+      "selectedHint": "Only the data sources and resources selected below will be used.",
       "empty": "No data sources"
     }
   },

@@ -15,22 +15,75 @@
       </div>
 
       <section class="space-y-3" data-testid="lensnode-resources">
-        <h3 class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.detail.resources') }}</h3>
+        <h3 class="text-sm font-semibold text-ink-900">
+          {{ t('lensAdmin.detail.resources') }}
+        </h3>
         <div class="grid grid-cols-3 gap-2">
-          <div v-for="item in resourceCards" :key="item.key" class="rounded-lg border border-line bg-surface-sunken px-2 py-3 text-center">
+          <div
+            v-for="item in resourceCards"
+            :key="item.key"
+            class="rounded-lg border border-line bg-surface-sunken px-2 py-3 text-center"
+          >
             <component :is="item.icon" class="mx-auto h-4 w-4 text-brand-600" />
-            <div class="mt-1 truncate text-sm font-semibold text-ink-900">{{ item.value }}</div>
+            <div class="mt-1 truncate text-sm font-semibold text-ink-900">
+              {{ item.value }}
+            </div>
             <div class="mt-0.5 text-[11px] text-ink-500">{{ item.label }}</div>
           </div>
         </div>
       </section>
 
-      <section v-if="datasourceTasks.length" class="space-y-3" data-testid="lensnode-datasources">
-        <h3 class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.detail.datasourceTasks') }}</h3>
+      <section
+        v-if="supportedTasks.length"
+        class="space-y-3"
+        data-testid="lensnode-capabilities"
+      >
+        <h3 class="text-sm font-semibold text-ink-900">
+          {{ t('lensAdmin.detail.supportedTasks') }}
+        </h3>
+        <div class="flex flex-wrap gap-1.5">
+          <span
+            v-for="task in supportedTasks"
+            :key="task"
+            class="rounded border border-primary-200 bg-primary-50 px-2 py-1 text-xs text-primary-700"
+          >
+            {{ task }}
+          </span>
+        </div>
+      </section>
+
+      <section
+        v-if="activeDatasourceOperations.length"
+        class="space-y-3"
+        data-testid="lensnode-datasources"
+      >
+        <h3 class="text-sm font-semibold text-ink-900">
+          {{ t('lensAdmin.detail.datasourceTasks') }}
+        </h3>
         <ul class="detail-list">
-          <li v-for="task in datasourceTasks" :key="task.uuid || task.id" class="flex items-center justify-between gap-3 px-3 py-2.5">
-            <span class="min-w-0 truncate text-sm text-ink-700">{{ task.datasource_name || task.name || task.datasource_uuid }}</span>
-            <StatusBadge :status="task.status || 'running'" />
+          <li
+            v-for="operation in activeDatasourceOperations"
+            :key="operation.task_id"
+            class="space-y-1.5 px-3 py-2.5"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <span class="min-w-0 truncate text-sm text-ink-700">
+                {{
+                  operation.datasource_name ||
+                  operation.datasource_uuid ||
+                  t('lensAdmin.detail.nodeEmpty')
+                }}
+              </span>
+              <StatusBadge status="running" />
+            </div>
+            <div
+              class="flex items-center justify-between gap-3 text-[11px] text-ink-500"
+            >
+              <span>{{
+                operation.operation || t('lensAdmin.detail.datasourceOperation')
+              }}</span>
+              <span>{{ operationProgress(operation) }}</span>
+            </div>
           </li>
         </ul>
       </section>
@@ -140,16 +193,61 @@ const formatDateTime = useShortDateTime()
 const isOffline = computed(() => props.node?.status !== 'online')
 const metricValue = (keys) => {
   const metrics = props.node?.last_metrics || {}
-  const value = keys.map((key) => metrics[key]).find((item) => item !== undefined && item !== null)
+  const value = keys
+    .map((key) => metrics[key])
+    .find((item) => item !== undefined && item !== null)
   if (value === undefined) return t('lensAdmin.detail.notReported')
   return typeof value === 'number' ? `${Math.round(value)}%` : String(value)
 }
 const resourceCards = computed(() => [
-  { key: 'cpu', label: t('lensAdmin.detail.cpu'), value: metricValue(['cpu_percent', 'cpu_usage']), icon: Cpu },
-  { key: 'memory', label: t('lensAdmin.detail.memory'), value: metricValue(['memory_percent', 'memory_usage']), icon: MemoryStick },
-  { key: 'disk', label: t('lensAdmin.detail.disk'), value: metricValue(['disk_percent', 'disk_usage']), icon: HardDrive }
+  {
+    key: 'cpu',
+    label: t('lensAdmin.detail.cpu'),
+    value: metricValue(['cpu_percent', 'cpu_usage']),
+    icon: Cpu
+  },
+  {
+    key: 'memory',
+    label: t('lensAdmin.detail.memory'),
+    value: metricValue(['memory_percent', 'memory_usage']),
+    icon: MemoryStick
+  },
+  {
+    key: 'disk',
+    label: t('lensAdmin.detail.disk'),
+    value: metricValue(['disk_percent', 'disk_usage']),
+    icon: HardDrive
+  }
 ])
-const datasourceTasks = computed(() => (props.node?.tasks || []).filter((task) => task.datasource_uuid || task.datasource_name))
+const supportedTasks = computed(() => {
+  const tasks = Array.isArray(props.node?.tasks) ? props.node.tasks : []
+  return tasks
+    .map((task) => (typeof task === 'string' ? task : task.name || task.title))
+    .filter(Boolean)
+})
+const activeDatasourceOperations = computed(() => {
+  const operations = props.node?.active_datasource_operations
+  return Array.isArray(operations)
+    ? operations.filter(
+        (operation) => operation && typeof operation === 'object'
+      )
+    : []
+})
+
+function operationProgress(operation) {
+  const progress = operation.last_progress || {}
+  if (typeof progress.progress_percent === 'number') {
+    return `${Math.round(progress.progress_percent)}%`
+  }
+  if (
+    typeof progress.progress_current === 'number' &&
+    typeof progress.progress_total === 'number' &&
+    progress.progress_total > 0
+  ) {
+    return `${progress.progress_current}/${progress.progress_total}`
+  }
+  return operation.phase || t('lensAdmin.detail.notReported')
+}
 
 const nodeMetricCards = computed(() => {
   const node = props.node || {}
@@ -261,5 +359,7 @@ watch(
 </script>
 
 <style scoped>
-.detail-list { @apply divide-y divide-line overflow-hidden rounded-lg border border-line; }
+.detail-list {
+  @apply divide-y divide-line overflow-hidden rounded-lg border border-line;
+}
 </style>

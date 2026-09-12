@@ -904,7 +904,6 @@
       "plugins": "插件",
       "automaticNode": "自动调度",
       "nodeUnavailable": "节点不可用",
-      "allSources": "全部启用的数据源",
       "noSources": "未指定数据源",
       "allItems": "全部资源",
       "noTools": "未启用工具",
@@ -943,7 +942,8 @@
     "pages": {
       "assistants": {
         "title": "助手",
-        "description": "配置对外能力、执行节点、任务和工作区目录。",
+        "managementTitle": "助手管理",
+        "description": "把资源、工具与访问授权，配置成可复用的助手。",
         "label": "Assistant",
         "action": "新建 Assistant",
         "viewSelector": "助手生命周期视图",
@@ -951,8 +951,23 @@
         "archived": "已归档",
         "archive": "归档",
         "restore": "恢复",
+        "workspace": "工作区",
+        "enabledSummary": "已启用",
+        "standardSummary": "普通助手",
+        "smartSummary": "智能协作",
+        "publicSummary": "公开助手",
+        "searchLabel": "搜索助手",
+        "searchPlaceholder": "搜索名称、标识或描述",
+        "typeLabel": "助手类型",
+        "allTypes": "全部类型",
+        "visibilityLabel": "可见范围",
+        "allVisibility": "全部范围",
+        "resetFilters": "重置筛选",
         "emptyActive": "暂无启用中的助手",
-        "emptyArchived": "暂无已归档助手"
+        "emptyArchived": "暂无已归档助手",
+        "emptyHint": "可以新建一个助手，配置它的执行方式和访问边界。",
+        "noFilterResults": "没有匹配的助手",
+        "noFilterHint": "尝试调整筛选条件，或重置筛选。"
       },
       "lensnodes": {
         "title": "节点",
@@ -1824,7 +1839,10 @@
     },
     "assistantDetail": {
       "title": "助手详情",
+      "identifier": "访问标识",
       "overview": "基本信息",
+      "skills": "技能",
+      "mcpServers": "MCP 服务",
       "workspaceDirectories": "工作区目录",
       "capabilities": "绑定能力",
       "access": "访问授权",
@@ -1839,7 +1857,19 @@
       "skillCount": "{count} 个 Skill",
       "mcpCount": "{count} 个 MCP Server",
       "collaborationMembers": "协作成员",
-      "noCollaborationMembers": "尚未配置协作成员"
+      "noCollaborationMembers": "尚未配置协作成员",
+      "back": "返回列表",
+      "summary": "配置摘要",
+      "dataAccess": "数据访问",
+      "workspaceContext": "工作上下文",
+      "collaborationContext": "协作上下文",
+      "notConfigured": "尚未配置",
+      "modelConfigured": "已配置模型",
+      "unnamedDatasource": "未命名数据源",
+      "unnamedAssistant": "未命名助手",
+      "unnamedSkill": "未命名技能",
+      "unnamedMcp": "未命名 MCP 服务",
+      "unnamedPlugin": "未命名插件"
     },
     "datasourceWizard": {
       "createTitle": "新建数据源",
@@ -2036,7 +2066,8 @@
       "cpu": "CPU",
       "memory": "内存",
       "disk": "硬盘",
-      "datasourceTasks": "数据源任务"
+      "datasourceTasks": "数据源任务",
+      "datasourceOperation": "操作"
     },
     "timeline": {
       "title": "接入进度",
@@ -2100,6 +2131,9 @@
       "step3SmartDesc": "补充智能协作的工作区指引",
       "step4Title": "授权",
       "step4Desc": "设置可见性，并指定可访问该助手的组或用户",
+      "stepNavigation": "配置步骤",
+      "createProgressHint": "每一步的输入会保留，返回上一步可继续修改。",
+      "editProgressHint": "分组切换会保留当前输入。点击保存后统一更新配置。",
       "contextLabel": "工作区指引（可选）",
       "contextHint": "用于告诉 Assistant 工作区目录结构、业务背景、团队约定、检索优先级和需要避开的目录。保存后会作为该 Assistant 的专属上下文注入。",
       "smartContextHint": "用于补充智能协作的项目背景、分工原则和检索优先级。",
@@ -2221,10 +2255,8 @@
     },
     "datasourceSelection": {
       "title": "数据访问",
-      "scope": "选择助手可访问的数据源。",
-      "auto": "自动匹配",
       "selected": "指定数据源",
-      "all": "全部数据源",
+      "selectedHint": "仅使用下方明确选择的数据源和资源。",
       "empty": "暂无可用数据源",
       "selectedLabel": "已选",
       "resources": "个资源",

@@ -1479,10 +1479,10 @@ onMounted(load)
 }
 
 .table-head {
-  @apply border-b border-line px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-ink-500;
+  @apply border-b border-line px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-ink-500;
 }
 
 .table-cell {
-  @apply px-4 py-4 text-sm text-ink-700;
+  @apply px-4 py-3 align-top text-sm text-ink-700;
 }
 </style>
