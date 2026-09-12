@@ -37,6 +37,11 @@ def inspect_xlsx(path, max_cells=100000, max_xml_bytes=50 * 1024 * 1024,
     truncated = False
     try:
         with zipfile.ZipFile(path) as archive:
+            shared_strings = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+                shared_strings = ["".join(node.itertext()) for node in root
+                                  if node.tag.rsplit("}", 1)[-1] == "si"]
             names = sorted(n for n in archive.namelist()
                            if n.startswith("xl/worksheets/") and n.endswith(".xml"))
             for name in names:
@@ -57,8 +62,17 @@ def inspect_xlsx(path, max_cells=100000, max_xml_bytes=50 * 1024 * 1024,
                         if scanned > max_cells:
                             truncated = True
                             break
-                        value = "".join(child.text or "" for child in element
-                                        if child.tag.rsplit("}", 1)[-1] in {"v", "is", "f"})
+                        kind = element.attrib.get("t")
+                        value_node = next((child for child in element
+                                           if child.tag.rsplit("}", 1)[-1] == "v"), None)
+                        if kind == "s" and value_node is not None:
+                            index = int(value_node.text or -1)
+                            value = (shared_strings[index]
+                                     if 0 <= index < len(shared_strings) else "")
+                        elif kind == "inlineStr":
+                            value = "".join(element.itertext())
+                        else:
+                            value = value_node.text if value_node is not None else ""
                         if value:
                             row, column = _coordinate(element.attrib.get("r", ""))
                             if row and column:
