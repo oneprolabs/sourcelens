@@ -630,6 +630,51 @@ class DataSource(TimestampedUUIDModel):
         return self.name
 
 
+class DataSourceDeployment(TimestampedUUIDModel):
+    """Runtime copy of a datasource deployed on one LensNode."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        DISABLED = "disabled", "Disabled"
+
+    datasource = models.ForeignKey(
+        DataSource,
+        on_delete=models.CASCADE,
+        related_name="deployments",
+    )
+    lensnode = models.ForeignKey(
+        LensNode,
+        on_delete=models.PROTECT,
+        related_name="datasource_deployments",
+    )
+    target_path = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["datasource", "lensnode"],
+                name="lens_datasource_deploy_unique_node",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["datasource"],
+                name="lens_ds_deploy_datasource_idx",
+            ),
+            models.Index(
+                fields=["lensnode"],
+                name="lens_ds_deploy_lensnode_idx",
+            ),
+        ]
+
+
 class DataSourceItem(TimestampedUUIDModel):
     """Independently stored child resource belonging to a data source."""
 

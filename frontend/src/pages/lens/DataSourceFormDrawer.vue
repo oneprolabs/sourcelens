@@ -60,14 +60,14 @@
           </p>
         </FormRow>
         <div
-          v-if="testingConnection"
+          v-if="testingConnection && form.plugin_key !== 'feishu'"
           class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
         >
           <LoaderCircleIcon class="h-4 w-4 animate-spin" />
           <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
         </div>
         <ManifestSchemaForm
-          v-else-if="datasourceSchema"
+          v-if="datasourceSchema"
           :model-value="config"
           :resources="pluginResources"
           :loading-resource="loadingResourceOptions"
@@ -88,7 +88,35 @@
           :loading-options-label="t('lensAdmin.pluginForm.loadingOptions')"
           @resource-options-request="$emit('request-resource-options', $event)"
           @update:model-value="updatePluginConfig"
-        />
+        >
+          <template #field-suffix="{ field, index }">
+            <span
+              v-if="form.plugin_key === 'feishu' && field.key === 'resource_urls' && index !== undefined"
+              class="flex h-9 w-9 shrink-0 items-center justify-center"
+              :class="{
+                'text-primary-600': feishuResourceStatus(index) === 'checking',
+                'text-success-600': feishuResourceStatus(index) === 'success',
+                'text-danger-600': feishuResourceStatus(index) === 'failed'
+              }"
+              :title="feishuResourceResult(index)?.message"
+              role="status"
+              :aria-label="feishuResourceResult(index)?.message"
+            >
+              <LoaderCircleIcon
+                v-if="feishuResourceStatus(index) === 'checking'"
+                class="h-3.5 w-3.5 animate-spin"
+              />
+              <CheckCircleIcon
+                v-else-if="feishuResourceStatus(index) === 'success'"
+                class="h-3.5 w-3.5"
+              />
+              <XCircleIcon
+                v-else-if="feishuResourceStatus(index) === 'failed'"
+                class="h-3.5 w-3.5"
+              />
+            </span>
+          </template>
+        </ManifestSchemaForm>
       </template>
       <template v-else-if="isGitSourceType(form.source_type)">
         <FormRow :label="t('lensAdmin.fields.credential')" required>
@@ -124,17 +152,6 @@
                 <span class="sr-only">{{ t('common.refresh') }}</span>
               </BaseButton>
             </div>
-            <p class="text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.createCredentialHint') }}
-              <a
-                class="font-medium text-brand-600 hover:text-brand-700"
-                href="/management/lens/resources/credentials"
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                {{ t('lensAdmin.datasourceWizard.createCredentialLink') }}
-              </a>
-            </p>
           </div>
         </FormRow>
         <div
@@ -219,17 +236,6 @@
                 <span class="sr-only">{{ t('common.refresh') }}</span>
               </BaseButton>
             </div>
-            <p class="text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.createCredentialHint') }}
-              <a
-                class="font-medium text-brand-600 hover:text-brand-700"
-                href="/management/lens/resources/credentials"
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                {{ t('lensAdmin.datasourceWizard.createCredentialLink') }}
-              </a>
-            </p>
           </div>
         </FormRow>
         <div
@@ -428,7 +434,8 @@
         v-if="
           connectionResult &&
           connectionResult.status !== 'success' &&
-          !testingConnection
+          !testingConnection &&
+          form.plugin_key !== 'feishu'
         "
         class="rounded-md border p-3 text-sm"
         :class="
@@ -1262,7 +1269,6 @@ import {
   defineComponent,
   h,
   nextTick,
-  onBeforeUnmount,
   ref,
   watch
 } from 'vue'
@@ -1329,7 +1335,6 @@ const gitRepositorySearch = ref('')
 const gitBulkBranch = ref('')
 const acceptedCredentialUuid = ref('')
 const conversionOpen = ref(false)
-let pluginValidationTimer = null
 
 const syncIntervalSeconds = computed({
   get() {
@@ -1847,26 +1852,19 @@ function updatePluginConfig(value) {
   })
   Object.assign(props.config, value)
   emit('connection-change')
-  schedulePluginConnectionValidation()
 }
 
-function schedulePluginConnectionValidation() {
-  if (pluginValidationTimer) {
-    clearTimeout(pluginValidationTimer)
-    pluginValidationTimer = null
-  }
-  if (
-    !isPluginSourceType(props.form.source_type) ||
-    props.form.plugin_key !== 'feishu' ||
-    activeStepKey.value !== 'connection' ||
-    !schemaRequiredFieldsHaveValues(datasourceSchema.value, props.config)
-  ) {
-    return
-  }
-  pluginValidationTimer = setTimeout(() => {
-    pluginValidationTimer = null
-    testConnectionIfVisible()
-  }, 350)
+function feishuResourceResult(index) {
+  const url = String(props.config.resource_urls?.[index] || '').trim()
+  if (!url) return null
+  const resources = props.connectionResult?.details?.resources
+  return Array.isArray(resources)
+    ? resources.find((resource) => resource.url === url)
+    : null
+}
+
+function feishuResourceStatus(index) {
+  return feishuResourceResult(index)?.status || ''
 }
 
 function credentialOptionLabel(credential) {
@@ -2257,11 +2255,6 @@ watch(
   { flush: 'post' }
 )
 
-onBeforeUnmount(() => {
-  if (pluginValidationTimer) {
-    clearTimeout(pluginValidationTimer)
-  }
-})
 
 function datasourceConnectionConfigSignature() {
   if (isPluginSourceType(props.form.source_type)) {

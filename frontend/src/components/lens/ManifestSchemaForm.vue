@@ -173,13 +173,18 @@
           <input
             :id="arrayItemId(field, index)"
             :value="item"
-        :class="[controlClass, 'min-w-0 flex-1 font-mono']"
+            :class="[
+              controlClass,
+              'min-w-0 flex-1 font-mono',
+            ]"
             :type="arrayInputType(field)"
             :aria-label="`${field.title || field.key} ${index + 1}`"
             :placeholder="field.description || ''"
             :readonly="readOnly"
-            @input="updateArrayItem(field, index, $event.target.value)"
+            @input="handleArrayInput(field, index, $event)"
+            @focus="scrollInputToEnd"
           />
+          <slot name="field-suffix" :field="field" :index="index" />
           <button
             type="button"
             class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-ink-500 transition hover:border-danger-200 hover:bg-danger-50 hover:text-danger-700 disabled:cursor-not-allowed disabled:opacity-40"
@@ -291,7 +296,10 @@ const props = defineProps({
   readOnly: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['resource-options-request', 'update:modelValue'])
+const emit = defineEmits([
+  'resource-options-request',
+  'update:modelValue'
+])
 const treeSearch = ref({})
 const collapsedTreeGroups = ref({})
 
@@ -360,6 +368,15 @@ function arrayInputType(field) {
 function canAddArrayItem(field) {
   const maximum = Number(field.maxItems)
   return !Number.isFinite(maximum) || arrayRows(field).length < maximum
+}
+
+function scrollInputToEnd(event) {
+  event.target.scrollLeft = event.target.scrollWidth
+}
+
+function handleArrayInput(field, index, event) {
+  updateArrayItem(field, index, event.target.value)
+  scrollInputToEnd(event)
 }
 
 function updateArrayItem(field, index, value) {

@@ -2033,7 +2033,9 @@
       "feishuIncrementalTitle": "Sincronización incremental",
       "feishuIncrementalHint": "Omitir archivos y documentos de Feishu que no hayan cambiado desde la última sincronización.",
       "feishuDeleteMissingTitle": "Eliminar archivos locales faltantes",
-      "feishuDeleteMissingHint": "Cuando un elemento de Feishu ya no exista de forma remota, elimina el archivo local correspondiente. Mantén deshabilitado para evitar eliminaciones accidentales."
+      "feishuDeleteMissingHint": "Cuando un elemento de Feishu ya no exista de forma remota, elimina el archivo local correspondiente. Mantén deshabilitado para evitar eliminaciones accidentales.",
+      "requiredField": "Campo obligatorio",
+      "duplicateResourceUrl": "Las direcciones de recursos de Feishu deben ser únicas."
     },
     "detail": {
       "runtimeLocation": "Ubicación de ejecución",

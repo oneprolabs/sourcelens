@@ -46,6 +46,7 @@ from .models import (
     AssistantSkill,
     Connection,
     DataSource,
+    DataSourceDeployment,
     DataSourceItem,
     DataSourceVersion,
     AssistantDataSourceBinding,
@@ -1980,6 +1981,12 @@ class DataSourceSerializer(serializers.ModelSerializer):
     credential_configured = serializers.SerializerMethodField()
     current_sync = serializers.SerializerMethodField()
     sync_state = serializers.SerializerMethodField()
+    deployments = serializers.SerializerMethodField()
+
+    def get_deployments(self, obj):
+        """Serialize every runtime copy of the datasource."""
+        rows = obj.deployments.select_related("lensnode").order_by("created_at")
+        return DataSourceDeploymentSerializer(rows, many=True).data
 
     def validate(self, attrs):
         """Validate datasource config by source type."""
@@ -2415,9 +2422,12 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "last_conversion_status",
             "last_conversion_at",
             "status",
+            "deployments",
             "created_at",
             "updated_at",
         ]
+
+
         read_only_fields = [
             "uuid",
             "credential",
@@ -2439,6 +2449,28 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 "required": False,
             },
         }
+
+
+class DataSourceDeploymentSerializer(serializers.ModelSerializer):
+    """Serialize a datasource's node-specific runtime copy."""
+
+    lensnode_uuid = serializers.UUIDField(source="lensnode.uuid", read_only=True)
+    lensnode_name = serializers.CharField(source="lensnode.name", read_only=True)
+
+    class Meta:
+        model = DataSourceDeployment
+        fields = [
+            "uuid",
+            "lensnode_uuid",
+            "lensnode_name",
+            "target_path",
+            "status",
+            "last_synced_at",
+            "last_error",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
 
 
 class DataSourceConversionRequestSerializer(serializers.Serializer):

@@ -16,12 +16,15 @@ from lens.datasource.services import (
     DataSourcePathError,
     check_datasource_path,
     list_datasource_files,
+    normalize_workspace_target_path,
 )
 from lens.models import (
     CredentialLease,
     DataSource,
+    DataSourceDeployment,
     DataSourceItem,
     DataSourceVersion,
+    LensNode,
     ExecutionSnapshot,
     PluginInvocation,
     ScheduledTask,
@@ -94,6 +97,39 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
         return Response(
             DataSourceItemSerializer(item).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["post"], url_path="deployments")
+    def deployments(self, request, uuid=None):
+        """Add a datasource runtime copy on another LensNode."""
+        datasource = self.get_object()
+        lensnode_uuid = request.data.get("lensnode_uuid")
+        target_path = request.data.get("target_path", datasource.target_path)
+        if not lensnode_uuid:
+            raise ValidationError({"lensnode_uuid": "This field is required."})
+        try:
+            lensnode = LensNode.objects.get(uuid=lensnode_uuid)
+        except LensNode.DoesNotExist as exc:
+            raise ValidationError({"lensnode_uuid": "LensNode does not exist"}) from exc
+        try:
+            normalized_path = normalize_workspace_target_path(
+                target_path, lensnode.workspace_path
+            )
+        except DataSourcePathError as exc:
+            raise ValidationError({"target_path": str(exc)}) from exc
+        deployment, created = DataSourceDeployment.objects.get_or_create(
+            datasource=datasource,
+            lensnode=lensnode,
+            defaults={"target_path": normalized_path},
+        )
+        if not created and deployment.target_path != normalized_path:
+            deployment.target_path = normalized_path
+            deployment.save(update_fields=["target_path", "updated_at"])
+        from lens.serializers import DataSourceDeploymentSerializer
+
+        return Response(
+            DataSourceDeploymentSerializer(deployment).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
     @action(detail=True, methods=["delete"], url_path="items/(?P<item_uuid>[^/.]+)")
@@ -226,6 +262,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "lensnode",
                 "credential",
             )
+            .prefetch_related("deployments__lensnode")
         )
         filters = self._datasource_search_filters(
             self.request.query_params.get("filters")

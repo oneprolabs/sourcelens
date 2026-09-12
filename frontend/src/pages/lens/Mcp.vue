@@ -12,16 +12,6 @@
               <h1 class="text-xl font-semibold text-ink-900">
                 {{ t('lensAdmin.pages.mcp.title') }}
               </h1>
-              <span
-                class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-500"
-              >
-                {{
-                  t('lensAdmin.total', {
-                    label: t('lensAdmin.pages.mcp.label'),
-                    count: mcps.length
-                  })
-                }}
-              </span>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -271,7 +261,11 @@ const form = ref({})
 const formError = ref('')
 
 const pluginConnections = computed(() =>
-  connections.value.filter((connection) => connection.status === 'active')
+  connections.value.filter((connection) => {
+    const tools = pluginManifests.value[connection.plugin_key]?.tools
+    return connection.status === 'active' &&
+      Array.isArray(tools) && tools.length > 0
+  })
 )
 const selectedConnection = computed(() =>
   connections.value.find(

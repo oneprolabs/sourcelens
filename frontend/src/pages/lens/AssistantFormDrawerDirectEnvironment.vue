@@ -319,14 +319,14 @@
                 >
               </div>
               <div
-                class="rounded-lg border border-brand-200 bg-brand-50/60 px-3 py-2 text-xs text-brand-800"
+                v-if="datasourceOptions.length"
+                ref="datasourceSelectRef"
+                class="datasource-select"
               >
-                {{ t('lensAdmin.datasourceSelection.selectedHint') }}
-              </div>
-              <div v-if="datasourceOptions.length" class="datasource-select">
                 <div
-                  v-if="selectedDatasourceLabels.length"
-                  class="mb-2 flex flex-wrap gap-2"
+                  class="datasource-select-trigger flex-wrap gap-2"
+                  :aria-expanded="datasourceMenuOpen"
+                  @click.stop="datasourceMenuOpen = !datasourceMenuOpen"
                 >
                   <span
                     v-for="binding in selectedDatasourceLabels"
@@ -346,24 +346,27 @@
                       class="datasource-selection-remove"
                       :aria-label="`${t('common.delete')} ${binding.label}`"
                       :disabled="saving"
-                      @click="removeDatasourceBinding(binding)"
+                      @click.stop="removeDatasourceBinding(binding)"
                     >
                       ×
                     </button>
                   </span>
+                  <span
+                    v-if="!selectedDatasourceLabels.length"
+                    class="min-w-0 flex-1 truncate"
+                  >
+                    {{ selectedDatasourceSummary }}
+                  </span>
+                  <button
+                    type="button"
+                    class="ml-auto rounded px-2 py-1 text-xs text-ink-400"
+                    :aria-expanded="datasourceMenuOpen"
+                    :aria-controls="'assistant-datasource-menu'"
+                    @click.stop="datasourceMenuOpen = !datasourceMenuOpen"
+                  >
+                    ⌄
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="datasource-select-trigger"
-                  :aria-expanded="datasourceMenuOpen"
-                  :aria-controls="'assistant-datasource-menu'"
-                  @click="datasourceMenuOpen = !datasourceMenuOpen"
-                >
-                  <span class="min-w-0 flex-1 truncate">{{
-                    selectedDatasourceSummary
-                  }}</span>
-                  <span class="text-xs text-ink-400">⌄</span>
-                </button>
                 <div
                   v-if="datasourceMenuOpen"
                   id="assistant-datasource-menu"
@@ -386,16 +389,17 @@
                       {{ t('lensAdmin.datasourceSelection.clear') }}
                     </button>
                   </div>
-                  <label
+                  <div
                     v-for="source in filteredDatasourceOptions"
                     :key="source.uuid"
-                    class="datasource-option"
                   >
-                    <input
+                    <label class="datasource-option">
+                      <input
                       type="checkbox"
-                      :checked="hasSource(source)"
+                      :checked="isSourceFullySelected(source)"
                       :indeterminate="
-                        hasAnySourceBinding(source) && !hasSource(source)
+                        hasAnySourceBinding(source) &&
+                        !isSourceFullySelected(source)
                       "
                       :disabled="
                         saving ||
@@ -411,20 +415,20 @@
                       @change="
                         selectSource(source, null, $event.target.checked)
                       "
-                    />
-                    <span class="min-w-0 flex-1 truncate">{{
-                      source.name
-                    }}</span>
-                    <span class="text-xs text-ink-400">{{
-                      source.items?.length || 0
-                    }}</span>
-                  </label>
-                  <div
-                    v-for="source in filteredDatasourceOptions"
-                    :key="`${source.uuid}-items`"
-                  >
+                      />
+                      <span class="min-w-0 flex-1 truncate">{{
+                        source.name
+                      }}</span>
+                      <span
+                        v-if="supportsSourceItemSelection(source)"
+                        class="text-xs text-ink-400"
+                      >
+                        {{ source.items?.length || 0 }}
+                      </span>
+                    </label>
                     <div
                       v-if="
+                        supportsSourceItemSelection(source) &&
                         hasAnySourceBinding(source) && source.items?.length > 1
                       "
                       class="ml-6 border-l border-line pl-2"
@@ -583,14 +587,14 @@
         </div>
 
         <!-- Wizard Step 3 — Workspace, Skills, Environment & MCP -->
-        <div v-else-if="wizardStep === 3" class="space-y-5">
+        <div v-else-if="wizardStep === 3" class="flex flex-col space-y-5">
           <div
             v-if="isSmartMode"
             class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
           >
             {{ t('lensAdmin.wizard.smartResourcesHint') }}
           </div>
-          <div>
+          <div class="order-1">
             <span class="text-sm font-medium text-ink-700">{{
               t('lensAdmin.wizard.contextLabel')
             }}</span>
@@ -610,7 +614,7 @@
             />
           </div>
           <template v-if="!isSmartMode">
-            <div>
+            <div class="order-3">
               <div class="mb-2 text-sm font-medium text-ink-700">
                 {{ t('lensAdmin.wizard.skillsSection') }}
               </div>
@@ -830,7 +834,7 @@
                 {{ t('lensAdmin.wizard.noSkills') }}
               </div>
             </div>
-            <div>
+            <div class="order-4">
               <div class="mb-2 text-sm font-medium text-ink-700">
                 {{ t('lensAdmin.wizard.mcpSection') }}
               </div>
@@ -1022,7 +1026,7 @@
                 {{ t('lensAdmin.wizard.noMcp') }}
               </div>
             </div>
-            <div>
+            <div class="order-2">
               <div class="mb-2 text-sm font-medium text-ink-700">
                 {{ t('lensAdmin.wizard.pluginSection') }}
               </div>
@@ -1614,6 +1618,24 @@ watch(
 
 onBeforeUnmount(resetPendingAccessRequests)
 
+function closeDatasourceMenuOnOutsideClick(event) {
+  if (!datasourceSelectRef.value?.contains(event.target)) {
+    datasourceMenuOpen.value = false
+  }
+}
+
+document.addEventListener('pointerdown', closeDatasourceMenuOnOutsideClick)
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeDatasourceMenuOnOutsideClick)
+})
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (!visible) datasourceMenuOpen.value = false
+  }
+)
+
 const FormRow = defineComponent({
   props: {
     label: {
@@ -1767,6 +1789,7 @@ const assistantTypeOptions = computed(() => [
 ])
 
 const datasourceMenuOpen = ref(false)
+const datasourceSelectRef = ref(null)
 const datasourceSearch = ref('')
 const selectedDatasourceCount = computed(
   () =>
@@ -1789,12 +1812,37 @@ const selectedDatasourceSummary = computed(() => {
 })
 const selectedDatasourceLabels = computed(() => {
   const labels = []
+  const collapsedSources = new Set()
   for (const binding of props.form.datasource_bindings || []) {
     const source = props.datasourceOptions.find(
       (item) => item.uuid === binding.datasource_uuid
     )
     if (!source) continue
-    const item = source.items?.find((child) => child.uuid === binding.item_uuid)
+    if (
+      supportsSourceItemSelection(source) &&
+      source.items?.length > 0 &&
+      source.items.every((item) =>
+        (props.form.datasource_bindings || []).some(
+          (row) =>
+            row.datasource_uuid === source.uuid &&
+            row.item_uuid === item.uuid
+        )
+      )
+    ) {
+      if (collapsedSources.has(source.uuid)) continue
+      collapsedSources.add(source.uuid)
+      labels.push({
+        key: `${source.uuid}:source`,
+        label: source.name,
+        source,
+        item: null
+      })
+      continue
+    }
+    const item =
+      !supportsSourceItemSelection(source)
+        ? null
+        : source.items?.find((child) => child.uuid === binding.item_uuid)
     labels.push({
       key: `${source.uuid}:${binding.item_uuid || 'source'}`,
       label: item ? `${source.name} / ${item.name}` : source.name,
@@ -1807,7 +1855,9 @@ const selectedDatasourceLabels = computed(() => {
 const filteredDatasourceOptions = computed(() => {
   const query = datasourceSearch.value.trim().toLowerCase()
   return props.datasourceOptions.filter(
-    (source) => !query || source.name.toLowerCase().includes(query)
+    (source) =>
+      source.status === 'active' &&
+      (!query || source.name.toLowerCase().includes(query))
   )
 })
 
@@ -2264,11 +2314,18 @@ function selectedMcpEnvironmentsConfigured() {
   })
 }
 
+function supportsSourceItemSelection(source) {
+  const datasource = props.pluginManifests[source.plugin_key]?.datasource
+  return datasource?.supports_item_selection !== false
+}
+
 function hasSource(source, item = null) {
   return (props.form.datasource_bindings || []).some(
     (binding) =>
       binding.datasource_uuid === source.uuid &&
-      (binding.item_uuid || null) === (item?.uuid || null)
+      (!supportsSourceItemSelection(source)
+        ? !item
+        : (binding.item_uuid || null) === (item?.uuid || null))
   )
 }
 
@@ -2278,7 +2335,26 @@ function hasAnySourceBinding(source) {
   )
 }
 
+function isSourceFullySelected(source) {
+  if (!supportsSourceItemSelection(source) || !source.items?.length) {
+    return hasSource(source)
+  }
+  return source.items.every((item) => hasSource(source, item))
+}
+
 function selectSource(source, item, checked) {
+  if (!item && supportsSourceItemSelection(source) && source.items?.length) {
+    props.form.datasource_bindings = (props.form.datasource_bindings || []).filter(
+      (binding) => binding.datasource_uuid !== source.uuid
+    )
+    if (checked) {
+      props.form.datasource_bindings = source.items.reduce(
+        (bindings, child) => toggleBinding(bindings, source, child, true),
+        props.form.datasource_bindings
+      )
+    }
+    return
+  }
   props.form.datasource_bindings = toggleBinding(
     props.form.datasource_bindings || [],
     source,

@@ -2031,7 +2031,9 @@
       "feishuIncrementalTitle": "增量同步",
       "feishuIncrementalHint": "跳过自上次同步后未变化的飞书文件和文档。",
       "feishuDeleteMissingTitle": "删除本地缺失项",
-      "feishuDeleteMissingHint": "当飞书远端条目不存在时，删除对应本地文件。建议默认关闭，避免误删。"
+      "feishuDeleteMissingHint": "当飞书远端条目不存在时，删除对应本地文件。建议默认关闭，避免误删。",
+      "requiredField": "必填项",
+      "duplicateResourceUrl": "飞书资源地址不能重复。"
     },
     "detail": {
       "runtimeLocation": "运行位置",
