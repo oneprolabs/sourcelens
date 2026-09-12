@@ -1999,6 +1999,7 @@ let citationRequestId = 0
 
 const RUN_POLL_INTERVAL_MS = 3000
 const RUN_POLL_MAX_ATTEMPTS = 160
+const COMPOSER_MAX_HEIGHT = 200
 const TITLE_POLL_INTERVAL_MS = 2000
 const TITLE_POLL_MAX_ATTEMPTS = 15
 const streamError = ref('')
@@ -3794,7 +3795,8 @@ function autoResizeTextarea(el) {
   const target = el?.target ?? el
   if (!target) return
   target.style.height = 'auto'
-  target.style.height = Math.min(target.scrollHeight, 200) + 'px'
+  target.style.height =
+    Math.min(target.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px'
 }
 
 async function handlePrimaryAction() {
@@ -5693,6 +5695,7 @@ onBeforeUnmount(() => {
 
 .composer {
   @apply flex items-center gap-3 rounded-xl border bg-surface px-4 py-2.5;
+  --composer-max-height: 200px;
   border-color: var(--sl-border-default);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
@@ -5729,8 +5732,9 @@ onBeforeUnmount(() => {
     leading-6 outline-none;
   color: var(--sl-text-primary);
   min-height: 2.5rem;
-  max-height: 200px;
+  max-height: var(--composer-max-height);
   resize: none;
+  overflow-x: hidden;
   overflow-y: auto;
   align-self: flex-end;
 }
