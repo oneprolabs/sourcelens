@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Bound Managed Workspace document conversion for sparse spreadsheets and resilient visual preprocessing, preserving extracted text when visual processing fails.
+zh-CN: 为稀疏电子表格和具备韧性的视觉预处理增加有界托管工作区文档转换，并在视觉处理失败时保留已提取文本。
