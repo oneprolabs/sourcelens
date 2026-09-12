@@ -3,8 +3,59 @@
     :show="show"
     :title="drawerTitle"
     :subtitle="drawerSubtitle"
+    width="6xl"
     @close="$emit('close')"
   >
+    <div class="datasource-wizard-layout">
+      <aside class="datasource-wizard-sidebar">
+        <nav
+          class="datasource-wizard-steps"
+          :aria-label="t('lensAdmin.wizard.stepNavigation')"
+        >
+          <template v-for="(step, i) in wizardStepsMeta" :key="step.key">
+            <button
+              type="button"
+              class="datasource-wizard-step"
+              :class="{
+                'datasource-wizard-step-active': i + 1 === wizardStep,
+                'datasource-wizard-step-complete': i + 1 < wizardStep
+              }"
+              :aria-current="i + 1 === wizardStep ? 'step' : undefined"
+              :disabled="i + 1 > wizardStep"
+              @click="goToWizardStep(i + 1)"
+            >
+              <span class="datasource-wizard-number">
+                <CheckIcon v-if="i + 1 < wizardStep" class="h-4 w-4" />
+                <span v-else>{{ String(i + 1).padStart(2, '0') }}</span>
+              </span>
+              <span class="datasource-wizard-step-copy">
+                <strong>{{ step.title }}</strong>
+                <small>{{ step.description }}</small>
+              </span>
+            </button>
+          </template>
+        </nav>
+        <p class="datasource-wizard-sidebar-note">
+          {{
+            mode === 'edit'
+              ? t('lensAdmin.wizard.editProgressHint')
+              : t('lensAdmin.wizard.createProgressHint')
+          }}
+        </p>
+      </aside>
+
+      <section class="datasource-wizard-panel">
+        <header class="datasource-wizard-heading">
+          <div>
+            <h3>{{ wizardStepsMeta[wizardStep - 1]?.title }}</h3>
+            <p>{{ wizardStepsMeta[wizardStep - 1]?.description }}</p>
+          </div>
+          <span>
+            {{ String(wizardStep).padStart(2, '0') }} /
+            {{ String(wizardStepCount).padStart(2, '0') }}
+          </span>
+        </header>
+
     <div v-if="activeStepKey === 'basic'" class="space-y-5">
       <FormRow :label="t('lensAdmin.fields.name')" required>
         <input v-model="form.name" class="form-input" required />
@@ -28,22 +79,44 @@
     <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
       <template v-if="isPluginSourceType(form.source_type)">
         <FormRow :label="t('lensAdmin.pages.connections.label')" required>
-          <BaseSelect
-            :model-value="form.connection_uuid"
-            :class="{ 'border-danger-500 ring-2 ring-danger-500/20': connectionFieldInvalid }"
-            @update:model-value="handlePluginConnectionChange"
+          <div
+            class="grid gap-3 sm:grid-cols-2"
+            role="group"
+            :aria-label="t('lensAdmin.pages.connections.label')"
+            :aria-invalid="connectionFieldInvalid"
           >
-            <option value="">
-              {{ t('lensAdmin.datasourceWizard.selectConnection') }}
-            </option>
-            <option
+            <label
               v-for="connection in pluginConnections"
               :key="connection.uuid"
-              :value="connection.uuid"
+              class="connection-card"
+              :class="{
+                'connection-card-selected':
+                  form.connection_uuid === connection.uuid,
+                'border-danger-500': connectionFieldInvalid
+              }"
             >
-              {{ connection.name }}
-            </option>
-          </BaseSelect>
+              <input
+                type="radio"
+                name="datasource-connection"
+                class="h-4 w-4 shrink-0 border-line text-brand-600 focus:ring-brand-500"
+                :value="connection.uuid"
+                :checked="form.connection_uuid === connection.uuid"
+                @change="handlePluginConnectionChange(connection.uuid)"
+              />
+              <PluginIcon
+                :plugin-key="connection.plugin_key"
+                :label="selectedSourceTypeLabel"
+              />
+              <span class="min-w-0">
+                <span class="block break-words text-sm font-medium text-ink-900">
+                  {{ connection.name }}
+                </span>
+                <span class="mt-0.5 block text-xs text-ink-500">
+                  {{ selectedSourceTypeLabel }}
+                </span>
+              </span>
+            </label>
+          </div>
           <p v-if="connectionFieldInvalid" class="mt-1 text-xs text-danger-600">
             {{ t('lensAdmin.datasourceWizard.requiredField') }}
           </p>
@@ -1203,6 +1276,9 @@
       {{ formError }}
     </p>
 
+      </section>
+    </div>
+
     <template #footer>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
@@ -1217,7 +1293,7 @@
         </div>
         <div class="flex items-center gap-3">
           <span class="text-xs text-ink-400">
-            {{ wizardStepsMeta[wizardStep - 1]?.title }}
+            {{ wizardStep }} / {{ wizardStepCount }}
           </span>
           <BaseButton
             v-if="wizardStep < wizardStepCount"
@@ -1277,6 +1353,7 @@ import { useI18n } from 'vue-i18n'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import PluginIcon from '@/components/ui/PluginIcon.vue'
 import ManifestSchemaForm from '@/components/lens/ManifestSchemaForm.vue'
 import { localizePluginManifest } from '@/utils/pluginI18n'
 
@@ -1547,8 +1624,16 @@ const isManagedWorkspace = computed(
 
 const wizardStepsMeta = computed(() => {
   return [
-    { key: 'basic', title: t('lensAdmin.datasourceWizard.step1Title') },
-    { key: 'connection', title: t('lensAdmin.datasourceWizard.step2Title') }
+    {
+      key: 'basic',
+      title: t('lensAdmin.datasourceWizard.step1Title'),
+      description: t('lensAdmin.datasourceWizard.step1Desc')
+    },
+    {
+      key: 'connection',
+      title: t('lensAdmin.datasourceWizard.step2Title'),
+      description: t('lensAdmin.datasourceWizard.step2Desc')
+    }
   ]
 })
 
@@ -2268,6 +2353,177 @@ function datasourceConnectionConfigSignature() {
 </script>
 
 <style scoped>
+.datasource-wizard-layout {
+  display: grid;
+  grid-template-columns: minmax(10.5rem, 13rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 1.5rem;
+}
+
+.datasource-wizard-sidebar {
+  min-width: 0;
+}
+
+.datasource-wizard-steps {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.datasource-wizard-step {
+  display: flex;
+  width: 100%;
+  min-height: 3.75rem;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: transparent;
+  color: var(--sl-text-muted);
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.datasource-wizard-step:hover:not(:disabled) {
+  border-color: var(--sl-border-default);
+  background: var(--sl-bg-surface);
+  color: var(--sl-text-secondary);
+}
+
+.datasource-wizard-step-active {
+  border-color: var(--sl-border-default);
+  background: var(--sl-bg-surface);
+  color: var(--sl-text-primary);
+}
+
+.datasource-wizard-step-complete {
+  color: var(--sl-text-secondary);
+}
+
+.datasource-wizard-number {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--sl-border-default);
+  border-radius: 9999px;
+  color: var(--sl-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.datasource-wizard-step-active .datasource-wizard-number,
+.datasource-wizard-step-complete .datasource-wizard-number {
+  border-color: var(--sl-brand-strong);
+  background: var(--sl-brand-strong);
+  color: var(--sl-on-accent);
+}
+
+.datasource-wizard-step-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+}
+
+.datasource-wizard-step-copy strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.datasource-wizard-step-copy small {
+  color: var(--sl-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.datasource-wizard-sidebar-note {
+  margin: 1.25rem 0.75rem 0;
+  border-top: 1px solid var(--sl-border-soft);
+  padding-top: 1.25rem;
+  color: var(--sl-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.datasource-wizard-panel {
+  min-width: 0;
+  border: 1px solid var(--sl-border-default);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  background: var(--sl-bg-surface);
+}
+
+.datasource-wizard-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--sl-border-soft);
+  padding-bottom: 1.25rem;
+}
+
+.datasource-wizard-heading h3 {
+  color: var(--sl-text-primary);
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.datasource-wizard-heading p {
+  margin-top: 0.375rem;
+  color: var(--sl-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.datasource-wizard-heading > span {
+  flex: none;
+  color: var(--sl-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 767px) {
+  .datasource-wizard-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .datasource-wizard-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .datasource-wizard-sidebar-note {
+    display: none;
+  }
+
+  .datasource-wizard-panel {
+    padding: 1rem;
+  }
+}
+
+.datasource-wizard-step:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.datasource-wizard-step:focus-visible {
+  outline: 2px solid var(--sl-brand-strong);
+  outline-offset: 2px;
+}
+
+.connection-card {
+  @apply flex min-w-0 cursor-pointer items-center gap-3 rounded-lg border border-line bg-surface p-3 transition-colors hover:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20;
+}
+
+.connection-card-selected {
+  @apply border-brand-600 bg-brand-50;
+}
+
 .form-input {
   @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
 }
