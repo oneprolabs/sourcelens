@@ -22,7 +22,7 @@ from core.asgi import application
 from core.management.commands.register_periodic_tasks import discover_and_register
 from core.periodic_registry import TASK_REGISTRY
 from lens.consumers import LensNodeConsumer
-from lens.datasource_services import (
+from lens.datasource.services import (
     DataSourceDispatchError,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
@@ -3395,7 +3395,7 @@ class LensServiceTests(TransactionTestCase):
             target_path="/workspace/restores/finance",
         )
 
-        with patch("lens.datasource_services._send_lensnode_command") as send:
+        with patch("lens.datasource.services._send_lensnode_command") as send:
             request_id = dispatch_datasource_conversion_async(
                 datasource,
                 task_id="managed-conversion",
@@ -3435,7 +3435,7 @@ class LensServiceTests(TransactionTestCase):
                     "LENSNODE_TOKEN": "lensnode-token",
                 },
             ),
-            patch("lens.datasource_services._send_lensnode_command") as send,
+            patch("lens.datasource.services._send_lensnode_command") as send,
         ):
             request_id = dispatch_datasource_upload_async(
                 datasource,
@@ -3463,10 +3463,10 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(payload["target_path"], "/workspace/restores/finance")
 
     def test_datasource_command_targets_current_lensnode_connection(self):
-        from lens.datasource_services import _send_lensnode_command
+        from lens.datasource.services import _send_lensnode_command
 
         self.lensnode.connection_id = "specific.connection!channel"
-        with patch("lens.datasource_services.get_channel_layer") as get_layer:
+        with patch("lens.datasource.services.get_channel_layer") as get_layer:
             channel_layer = get_layer.return_value
             channel_layer.send = AsyncMock()
             _send_lensnode_command(
@@ -4167,7 +4167,7 @@ class LensServiceTests(TransactionTestCase):
             description="",
         )
 
-        with patch("lens.datasource_services._send_lensnode_command") as send:
+        with patch("lens.datasource.services._send_lensnode_command") as send:
             dispatch_datasource_sync_async(
                 self.datasource,
                 task_id="task-1",

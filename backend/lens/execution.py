@@ -160,7 +160,7 @@ def _lensnode_dispatch(state):
                 run.retry_of_run,
             ),
         )
-        from .session_workspace import (
+        from .datasource.workspace import (
             build_session_workspace, session_source_dirs,
         )
 

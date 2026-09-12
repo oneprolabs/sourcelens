@@ -53,7 +53,7 @@ from lens.models import (
     Session,
     SharedQA,
 )
-from lens.session_workspace import cleanup_session_workspace
+from lens.datasource.workspace import cleanup_session_workspace
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.session_lifecycle import (
     SessionStateError,

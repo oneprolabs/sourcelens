@@ -2,7 +2,7 @@
 
 from django.test import TestCase
 
-from lens.datasource_routing import selected_bindings
+from lens.datasource.routing import selected_bindings
 from lens.models import (
     Assistant,
     AssistantDataSourceBinding,

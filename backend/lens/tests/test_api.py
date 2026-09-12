@@ -26,10 +26,10 @@ from django.test import (
 )
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
-from lens.datasource_services import (
+from lens.datasource.services import (
     DataSourceDispatchError,
 )
-from lens.datasource_services import (
+from lens.datasource.services import (
     test_datasource_connection as run_datasource_connection_test,
 )
 from lens.lensnode_auth import hash_lensnode_token
@@ -6252,7 +6252,7 @@ class LensApiTests(TestCase):
             target_path="/workspace/restores/finance",
         )
 
-        with patch("lens.datasource_services._send_lensnode_command") as send:
+        with patch("lens.datasource.services._send_lensnode_command") as send:
             response = self.client.delete(
                 f"/api/lens/admin/datasources/{datasource.uuid}/"
             )
@@ -6713,11 +6713,11 @@ class LensApiTests(TestCase):
 
         with (
             patch(
-                "lens.datasource_services._send_lensnode_command",
+                "lens.datasource.services._send_lensnode_command",
                 side_effect=capture_command,
             ),
             patch(
-                "lens.datasource_services._wait_cache_result",
+                "lens.datasource.services._wait_cache_result",
                 return_value={"status": "success"},
             ),
         ):

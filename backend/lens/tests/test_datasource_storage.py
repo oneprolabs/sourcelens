@@ -9,9 +9,9 @@ from unittest.mock import Mock
 
 from django.test import TestCase
 
-from lens.datasource_versions import record_datasource_versions
+from lens.datasource.versions import record_datasource_versions
 from lens.models import DataSource
-from lens.session_workspace import (
+from lens.datasource.workspace import (
     build_session_workspace, cleanup_session_workspace, session_source_dirs,
 )
 

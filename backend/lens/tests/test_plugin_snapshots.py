@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch
 
 from django.test import TestCase
-from lens.datasource_services import dispatch_datasource_sync_async
+from lens.datasource.services import dispatch_datasource_sync_async
 from lens.models import (
     Connection,
     DataSource,
@@ -109,7 +109,7 @@ class PluginSnapshotTests(TestCase):
             create_datasource_sync_snapshot(self.datasource)
 
     def test_plugin_datasource_dispatch_sends_snapshot_metadata_only(self):
-        with patch("lens.datasource_services._send_lensnode_command") as send:
+        with patch("lens.datasource.services._send_lensnode_command") as send:
             dispatch_datasource_sync_async(
                 self.datasource,
                 task_id="sync-task",

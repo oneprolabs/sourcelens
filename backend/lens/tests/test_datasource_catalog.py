@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 from django.test import SimpleTestCase
 
-from lens.datasource_services import (
+from lens.datasource.services import (
     DataSourcePathError,
     list_datasource_files,
 )
