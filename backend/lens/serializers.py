@@ -206,6 +206,7 @@ class LensNodeSerializer(serializers.ModelSerializer):
     """LensNode serializer."""
 
     has_token = serializers.SerializerMethodField()
+    datasources = serializers.SerializerMethodField()
     active_run_count = serializers.IntegerField(read_only=True, default=0)
     queued_run_count = serializers.IntegerField(read_only=True, default=0)
     awaiting_resume_count = serializers.IntegerField(read_only=True, default=0)
@@ -234,6 +235,7 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "token_issued_at",
             "token_revoked",
             "has_token",
+            "datasources",
             "last_authenticated_at",
             "last_heartbeat_at",
             "active_run_count",
@@ -248,6 +250,14 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_datasources(self, obj):
+        """Return the active datasources already assigned to this node."""
+        return list(
+            obj.datasources.filter(status="active").values(
+                "uuid", "name", "source_type", "status"
+            )
+        )
         read_only_fields = [
             "uuid",
             "assistant",

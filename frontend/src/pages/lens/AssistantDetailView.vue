@@ -145,7 +145,9 @@
               <div>
                 <dt>{{ t('lensAdmin.columns.updatedAt') }}</dt>
                 <dd>
-                  {{ assistant.updated_at || assistant.updated || emptyValue }}
+                  {{
+                    formatDateTime(assistant.updated_at || assistant.updated)
+                  }}
                 </dd>
               </div>
               <div class="detail-definition-wide">
@@ -205,10 +207,15 @@
                       t('lensAdmin.assistantDetail.unnamedDatasource')
                     }}
                   </strong>
-                  <small>{{
-                    binding.item_name ||
-                    t('lensAdmin.assistantPresentation.allItems')
-                  }}</small>
+                  <small>
+                    <span v-if="binding.source_type">
+                      {{ datasourceTypeLabel(binding.source_type) }} ·
+                    </span>
+                    {{
+                      binding.item_name ||
+                      t('lensAdmin.assistantPresentation.allItems')
+                    }}
+                  </small>
                 </div>
               </li>
             </ul>
@@ -241,24 +248,6 @@
             <p v-else class="detail-empty">
               {{ t('lensAdmin.assistantDetail.noCollaborationMembers') }}
             </p>
-          </section>
-          <section
-            v-if="detail.workspaceDirectories.length"
-            class="detail-panel"
-          >
-            <div class="detail-panel-heading">
-              <h2>{{ t('lensAdmin.assistantDetail.workspaceDirectories') }}</h2>
-            </div>
-            <ul class="detail-record-list">
-              <li
-                v-for="directory in detail.workspaceDirectories"
-                :key="directory"
-              >
-                <Folder :size="17" aria-hidden="true" /><code>{{
-                  directory
-                }}</code>
-              </li>
-            </ul>
           </section>
         </template>
 
@@ -428,7 +417,6 @@ import {
   Bot,
   Copy,
   Database,
-  Folder,
   Globe,
   Lock,
   Pencil,
@@ -442,6 +430,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { EMPTY_VALUE, formatAssistantType } from './adminHelpers'
 import { buildAssistantDetail } from './assistantDetails'
+import { useShortDateTime } from './useShortDateTime'
 
 const props = defineProps({
   assistant: { type: Object, required: true },
@@ -454,7 +443,24 @@ const props = defineProps({
 defineEmits(['back', 'copy-share', 'edit', 'restore'])
 
 const { t } = useI18n()
+
+function datasourceTypeLabel(sourceType) {
+  const translationKey = {
+    feishu: 'feishu',
+    managed_workspace: 'managedWorkspace'
+  }[sourceType]
+  if (translationKey) {
+    return t(`lensAdmin.datasourceWizard.${translationKey}`)
+  }
+  return (
+    { git: 'Git', github: 'GitHub', gitlab: 'GitLab', jira: 'Jira' }[
+      sourceType
+    ] || sourceType
+  )
+}
+
 const emptyValue = EMPTY_VALUE
+const formatDateTime = useShortDateTime()
 const activeTab = ref('overview')
 const detail = computed(() => buildAssistantDetail(props.assistant))
 const isSmart = computed(
@@ -778,6 +784,19 @@ function capabilityFallback(groupId) {
   }
   .detail-summary-card {
     position: static;
+  }
+}
+@media (max-width: 640px) {
+  .detail-tabs {
+    flex-wrap: wrap;
+    gap: 0;
+    overflow-x: visible;
+    white-space: normal;
+  }
+  .detail-tab {
+    flex: 1 1 50%;
+    min-width: 0;
+    min-height: 2.75rem;
   }
 }
 @media (min-width: 768px) and (max-width: 1023px) {

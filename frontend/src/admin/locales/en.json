@@ -1222,6 +1222,7 @@
       "validation": "Validation status",
       "datasources": "Bound data sources",
       "lastUsedAt": "Last Used",
+      "updatedAt": "Updated",
       "skill": "Skill",
       "slug": "Slug",
       "mcpServer": "MCP Server",
@@ -1854,8 +1855,8 @@
       "noAuthorizedGroups": "No authorized groups",
       "archiveTitle": "Archive assistant",
       "archiveMessage": "Archive {name}? Links stop working until restored.",
-      "skillCount": "{count} Skills",
-      "mcpCount": "{count} MCP Servers",
+      "skillCount": "{count} Skill | {count} Skills",
+      "mcpCount": "{count} MCP Server | {count} MCP Servers",
       "collaborationMembers": "Collaboration members",
       "noCollaborationMembers": "No collaboration members configured",
       "back": "Back to list",
@@ -2067,7 +2068,9 @@
       "memory": "Memory",
       "disk": "Disk",
       "datasourceTasks": "Datasource tasks",
-      "datasourceOperation": "Operation"
+      "datasourceOperation": "Operation",
+      "existingDatasources": "Existing data sources",
+      "noDatasources": "No data sources"
     },
     "timeline": {
       "title": "Enrollment progress",

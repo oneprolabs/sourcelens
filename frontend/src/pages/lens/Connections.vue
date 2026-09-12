@@ -1,7 +1,9 @@
 <template>
   <AdminLayout>
     <div class="flex max-w-full flex-col gap-4 py-4">
-      <section class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <section
+        class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
+      >
         <header
           class="flex flex-col gap-4 border-b border-line px-5 py-4 md:flex-row md:items-start md:justify-between"
         >
@@ -30,23 +32,45 @@
           </div>
         </header>
 
-        <div class="grid gap-3 border-b border-line bg-surface-sunken px-5 py-3 sm:grid-cols-3">
-          <div class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3">
-            <span class="text-sm text-ink-500">{{ t('lensAdmin.connections.total') }}</span>
-            <strong class="text-xl font-semibold text-ink-900">{{ connections.length }}</strong>
+        <div
+          class="grid gap-3 border-b border-line bg-surface-sunken px-5 py-3 sm:grid-cols-3"
+        >
+          <div
+            class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3"
+          >
+            <span class="text-sm text-ink-500">{{
+              t('lensAdmin.connections.total')
+            }}</span>
+            <strong class="text-xl font-semibold text-ink-900">{{
+              connections.length
+            }}</strong>
           </div>
-          <div class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3">
-            <span class="text-sm text-ink-500">{{ t('lensAdmin.connections.activeCount') }}</span>
-            <strong class="text-xl font-semibold text-success-700">{{ activeConnectionCount }}</strong>
+          <div
+            class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3"
+          >
+            <span class="text-sm text-ink-500">{{
+              t('lensAdmin.connections.activeCount')
+            }}</span>
+            <strong class="text-xl font-semibold text-success-700">{{
+              activeConnectionCount
+            }}</strong>
           </div>
-          <div class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3">
-            <span class="text-sm text-ink-500">{{ t('lensAdmin.connections.pluginCount') }}</span>
-            <strong class="text-xl font-semibold text-brand-700">{{ pluginCount }}</strong>
+          <div
+            class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3"
+          >
+            <span class="text-sm text-ink-500">{{
+              t('lensAdmin.connections.pluginCount')
+            }}</span>
+            <strong class="text-xl font-semibold text-brand-700">{{
+              pluginCount
+            }}</strong>
           </div>
         </div>
 
         <div class="px-5 py-4">
-          <div class="connections-toolbar mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div
+            class="connections-toolbar mb-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+          >
             <input
               v-model="connectionSearch"
               class="connection-toolbar-input min-w-0 flex-1"
@@ -54,15 +78,25 @@
               :placeholder="t('lensAdmin.connections.searchPlaceholder')"
             />
             <BaseSelect v-model="connectionPluginFilter" class="sm:w-48">
-              <option value="all">{{ t('lensAdmin.connections.allPlugins') }}</option>
-              <option v-for="plugin in plugins" :key="plugin.key" :value="plugin.key">
+              <option value="all">
+                {{ t('lensAdmin.connections.allPlugins') }}
+              </option>
+              <option
+                v-for="plugin in plugins"
+                :key="plugin.key"
+                :value="plugin.key"
+              >
                 {{ pluginDisplayName(plugin.key) }}
               </option>
             </BaseSelect>
             <BaseSelect v-model="connectionStatusFilter" class="sm:w-36">
-              <option value="all">{{ t('lensAdmin.connections.allStatuses') }}</option>
+              <option value="all">
+                {{ t('lensAdmin.connections.allStatuses') }}
+              </option>
               <option value="active">{{ t('common.status.active') }}</option>
-              <option value="disabled">{{ t('common.status.disabled') }}</option>
+              <option value="disabled">
+                {{ t('common.status.disabled') }}
+              </option>
             </BaseSelect>
           </div>
           <BaseLoading v-if="loading && !connections.length" />
@@ -89,19 +123,47 @@
                 :aria-label="`${t('common.viewDetails')}: ${row.name}`"
                 @click="openConnectionDetail(row)"
               />
-              <div class="pointer-events-none relative z-10 flex items-start gap-3">
-                <div class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-sunken">
-                  <img v-if="pluginIconUrl(row.plugin_key)" :src="pluginIconUrl(row.plugin_key)" :alt="pluginDisplayName(row.plugin_key)" class="h-full w-full object-cover" />
-                  <span v-else class="text-xs font-semibold uppercase text-brand-700">{{ row.plugin_key.slice(0, 2) }}</span>
+              <div
+                class="pointer-events-none relative z-10 flex items-start gap-3"
+              >
+                <div
+                  class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-sunken"
+                >
+                  <img
+                    v-if="pluginIconUrl(row.plugin_key)"
+                    :src="pluginIconUrl(row.plugin_key)"
+                    :alt="pluginDisplayName(row.plugin_key)"
+                    class="h-full w-full object-cover"
+                  />
+                  <span
+                    v-else
+                    class="text-xs font-semibold uppercase text-brand-700"
+                    >{{ row.plugin_key.slice(0, 2) }}</span
+                  >
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-start justify-between gap-2">
                     <div class="min-w-0">
-                      <h2 class="truncate text-sm font-semibold text-ink-900">{{ row.name }}</h2>
-                      <p class="mt-0.5 truncate text-xs text-ink-500">{{ pluginDisplayName(row.plugin_key) }}</p>
+                      <h2 class="truncate text-sm font-semibold text-ink-900">
+                        {{ row.name }}
+                      </h2>
+                      <p class="mt-0.5 truncate text-xs text-ink-500">
+                        {{ pluginDisplayName(row.plugin_key) }}
+                      </p>
                     </div>
-                    <span class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium" :class="row.status === 'active' ? 'border-success-200 bg-success-50 text-success-700' : 'border-line bg-surface-sunken text-ink-500'">
-                      {{ row.status === 'active' ? t('common.status.active') : t('common.status.disabled') }}
+                    <span
+                      class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium"
+                      :class="
+                        row.status === 'active'
+                          ? 'border-success-200 bg-success-50 text-success-700'
+                          : 'border-line bg-surface-sunken text-ink-500'
+                      "
+                    >
+                      {{
+                        row.status === 'active'
+                          ? t('common.status.active')
+                          : t('common.status.disabled')
+                      }}
                     </span>
                   </div>
                   <div class="mt-2 flex flex-wrap gap-1.5">
@@ -121,22 +183,30 @@
                 v-if="!row.has_secret"
                 class="pointer-events-none relative z-10 mt-3"
               >
-                <p class="inline-flex items-center gap-2 rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-800">
+                <p
+                  class="inline-flex items-center gap-2 rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-800"
+                >
                   <span class="h-2 w-2 rounded-full bg-warning-500" />
                   {{ t('lensAdmin.connections.secretMissing') }}
                 </p>
               </div>
 
-              <div class="connection-usage-summary pointer-events-none relative z-10 mt-4 flex items-center justify-between border-t border-line pt-3">
+              <div
+                class="connection-usage-summary pointer-events-none relative z-10 mt-4 flex items-center justify-between border-t border-line pt-3"
+              >
                 <p class="text-xs text-ink-500">
-                  {{ row.datasource_count || 0 }} {{ t('lensAdmin.connections.datasources') }} ·
-                  {{ row.assistant_count || 0 }} {{ t('lensAdmin.connections.assistants') }}
+                  {{ row.datasource_count || 0 }}
+                  {{ t('lensAdmin.connections.datasources') }} ·
+                  {{ row.assistant_count || 0 }}
+                  {{ t('lensAdmin.connections.assistants') }}
                 </p>
                 <div class="pointer-events-auto flex gap-2">
                   <BaseButton
                     size="sm"
                     variant="danger"
-                    :disabled="row.datasource_count > 0 || row.assistant_count > 0"
+                    :disabled="
+                      row.datasource_count > 0 || row.assistant_count > 0
+                    "
                     @click.stop="removeRow(row)"
                   >
                     {{ t('common.delete') }}
@@ -160,48 +230,103 @@
       :show="connectionDetailOpen"
       width="2xl"
       :title="detailConnection?.name || ''"
-      :subtitle="detailConnection ? pluginDisplayName(detailConnection.plugin_key) : ''"
+      :subtitle="
+        detailConnection ? pluginDisplayName(detailConnection.plugin_key) : ''
+      "
       @close="closeConnectionDetail"
     >
       <div v-if="detailConnection" class="space-y-4">
-        <section class="overflow-hidden rounded-xl border border-line bg-surface">
-          <div class="flex items-center gap-3 border-b border-line bg-surface-sunken p-4">
-            <div class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface">
-              <img v-if="pluginIconUrl(detailConnection.plugin_key)" :src="pluginIconUrl(detailConnection.plugin_key)" :alt="pluginDisplayName(detailConnection.plugin_key)" class="h-full w-full object-cover" />
-              <span v-else class="text-xs font-semibold uppercase text-brand-700">{{ detailConnection.plugin_key.slice(0, 2) }}</span>
+        <section
+          class="overflow-hidden rounded-xl border border-line bg-surface"
+        >
+          <div
+            class="flex items-center gap-3 border-b border-line bg-surface-sunken p-4"
+          >
+            <div
+              class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface"
+            >
+              <img
+                v-if="pluginIconUrl(detailConnection.plugin_key)"
+                :src="pluginIconUrl(detailConnection.plugin_key)"
+                :alt="pluginDisplayName(detailConnection.plugin_key)"
+                class="h-full w-full object-cover"
+              />
+              <span
+                v-else
+                class="text-xs font-semibold uppercase text-brand-700"
+                >{{ detailConnection.plugin_key.slice(0, 2) }}</span
+              >
             </div>
             <div class="min-w-0 flex-1">
-              <p class="font-medium text-ink-900">{{ pluginDisplayName(detailConnection.plugin_key) }}</p>
-              <p class="mt-1 text-xs text-ink-500">{{ t('lensAdmin.connections.connectionOverview') }}</p>
+              <p class="font-medium text-ink-900">
+                {{ pluginDisplayName(detailConnection.plugin_key) }}
+              </p>
+              <p class="mt-1 text-xs text-ink-500">
+                {{ t('lensAdmin.connections.connectionOverview') }}
+              </p>
             </div>
-            <span class="rounded-full border px-2 py-1 text-xs font-medium" :class="detailConnection.status === 'active' ? 'border-success-200 bg-success-50 text-success-700' : 'border-line bg-surface text-ink-500'">
-              {{ detailConnection.status === 'active' ? t('common.status.active') : t('common.status.disabled') }}
+            <span
+              class="rounded-full border px-2 py-1 text-xs font-medium"
+              :class="
+                detailConnection.status === 'active'
+                  ? 'border-success-200 bg-success-50 text-success-700'
+                  : 'border-line bg-surface text-ink-500'
+              "
+            >
+              {{
+                detailConnection.status === 'active'
+                  ? t('common.status.active')
+                  : t('common.status.disabled')
+              }}
             </span>
           </div>
           <dl class="grid gap-px bg-line sm:grid-cols-2">
             <div class="bg-surface px-4 py-3">
-              <dt class="text-xs text-ink-500">{{ t('lensAdmin.connections.endpoint') }}</dt>
-              <dd class="mt-1 truncate font-mono text-sm text-ink-800">{{ detailConnection.endpoint || emptyValue }}</dd>
+              <dt class="text-xs text-ink-500">
+                {{ t('lensAdmin.connections.endpoint') }}
+              </dt>
+              <dd class="mt-1 truncate font-mono text-sm text-ink-800">
+                {{ detailConnection.endpoint || emptyValue }}
+              </dd>
             </div>
             <div class="bg-surface px-4 py-3">
-              <dt class="text-xs text-ink-500">{{ t('lensAdmin.connections.token') }}</dt>
+              <dt class="text-xs text-ink-500">
+                {{ t('lensAdmin.connections.token') }}
+              </dt>
               <dd class="mt-1 font-mono text-sm text-ink-800">
-                {{ detailConnection.secret_hint || t('lensAdmin.connections.secretMissing') }}
+                {{
+                  detailConnection.secret_hint ||
+                  t('lensAdmin.connections.secretMissing')
+                }}
               </dd>
             </div>
           </dl>
         </section>
 
         <section>
-          <h3 class="text-sm font-semibold text-ink-900">{{ t('lensAdmin.connections.usage') }}</h3>
+          <h3 class="text-sm font-semibold text-ink-900">
+            {{ t('lensAdmin.connections.usage') }}
+          </h3>
           <dl class="mt-2 grid gap-3 sm:grid-cols-2">
-            <div class="rounded-xl border border-line bg-surface-sunken px-4 py-3">
-              <dt class="text-xs text-ink-500">{{ t('lensAdmin.connections.datasources') }}</dt>
-              <dd class="mt-1 text-xl font-semibold text-ink-900">{{ detailConnection.datasource_count || 0 }}</dd>
+            <div
+              class="rounded-xl border border-line bg-surface-sunken px-4 py-3"
+            >
+              <dt class="text-xs text-ink-500">
+                {{ t('lensAdmin.connections.datasources') }}
+              </dt>
+              <dd class="mt-1 text-xl font-semibold text-ink-900">
+                {{ detailConnection.datasource_count || 0 }}
+              </dd>
             </div>
-            <div class="rounded-xl border border-line bg-surface-sunken px-4 py-3">
-              <dt class="text-xs text-ink-500">{{ t('lensAdmin.connections.assistants') }}</dt>
-              <dd class="mt-1 text-xl font-semibold text-ink-900">{{ detailConnection.assistant_count || 0 }}</dd>
+            <div
+              class="rounded-xl border border-line bg-surface-sunken px-4 py-3"
+            >
+              <dt class="text-xs text-ink-500">
+                {{ t('lensAdmin.connections.assistants') }}
+              </dt>
+              <dd class="mt-1 text-xl font-semibold text-ink-900">
+                {{ detailConnection.assistant_count || 0 }}
+              </dd>
             </div>
           </dl>
         </section>
@@ -213,28 +338,77 @@
             :resources="detailScopeResourceOptions"
             :read-only="true"
             :empty-resource-text="emptyValue"
-            :tree-search-placeholder="t('lensAdmin.connections.resourceSearchPlaceholder')"
-            :resource-search-empty-text="t('lensAdmin.connections.resourceSearchEmpty')"
-            :resource-count-label="t('lensAdmin.connections.resourceCountLabel')"
-            :selected-count-label="t('lensAdmin.connections.selectedCountLabel')"
+            :tree-search-placeholder="
+              t('lensAdmin.connections.resourceSearchPlaceholder')
+            "
+            :resource-search-empty-text="
+              t('lensAdmin.connections.resourceSearchEmpty')
+            "
+            :resource-count-label="
+              t('lensAdmin.connections.resourceCountLabel')
+            "
+            :selected-count-label="
+              t('lensAdmin.connections.selectedCountLabel')
+            "
           />
         </section>
-        <p v-if="!detailConnection.has_secret" class="rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800">
+        <p
+          v-if="!detailConnection.has_secret"
+          class="rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
+        >
           {{ t('lensAdmin.connections.secretMissing') }}
         </p>
-        <p v-if="validationResults[detailConnection.uuid]" class="rounded-lg border px-3 py-2 text-sm" :class="validationResults[detailConnection.uuid].ok ? 'border-success-200 bg-success-50 text-success-700' : 'border-danger-200 bg-danger-50 text-danger-700'">
+        <p
+          v-if="validationResults[detailConnection.uuid]"
+          class="rounded-lg border px-3 py-2 text-sm"
+          :class="
+            validationResults[detailConnection.uuid].ok
+              ? 'border-success-200 bg-success-50 text-success-700'
+              : 'border-danger-200 bg-danger-50 text-danger-700'
+          "
+        >
           {{ validationResults[detailConnection.uuid].message }}
         </p>
       </div>
       <template #footer>
         <div class="flex flex-wrap justify-between gap-2">
-          <BaseButton variant="danger" :disabled="!detailConnection || detailConnection.datasource_count > 0 || detailConnection.assistant_count > 0" @click="removeDetailConnection">{{ t('common.delete') }}</BaseButton>
+          <BaseButton
+            variant="danger"
+            :disabled="
+              !detailConnection ||
+              detailConnection.datasource_count > 0 ||
+              detailConnection.assistant_count > 0
+            "
+            @click="removeDetailConnection"
+            >{{ t('common.delete') }}</BaseButton
+          >
           <div class="flex gap-2">
-            <BaseButton variant="outline" :loading="validatingUuid === detailConnection?.uuid" :disabled="detailConnection?.status !== 'active'" @click="validateRow(detailConnection)">{{ t('lensAdmin.connections.validate') }}</BaseButton>
-            <BaseButton variant="outline" :class="detailConnection?.status === 'active' ? 'text-danger-700' : 'text-success-700'" :loading="saving" @click="toggleDetailConnectionStatus">
-              {{ detailConnection?.status === 'active' ? t('lensAdmin.connections.pause') : t('lensAdmin.connections.resume') }}
+            <BaseButton
+              variant="outline"
+              :loading="validatingUuid === detailConnection?.uuid"
+              :disabled="detailConnection?.status !== 'active'"
+              @click="validateRow(detailConnection)"
+              >{{ t('lensAdmin.connections.validate') }}</BaseButton
+            >
+            <BaseButton
+              variant="outline"
+              :class="
+                detailConnection?.status === 'active'
+                  ? 'text-danger-700'
+                  : 'text-success-700'
+              "
+              :loading="saving"
+              @click="toggleDetailConnectionStatus"
+            >
+              {{
+                detailConnection?.status === 'active'
+                  ? t('lensAdmin.connections.pause')
+                  : t('lensAdmin.connections.resume')
+              }}
             </BaseButton>
-            <BaseButton variant="primary" @click="editDetailConnection">{{ t('common.edit') }}</BaseButton>
+            <BaseButton variant="primary" @click="editDetailConnection">{{
+              t('common.edit')
+            }}</BaseButton>
           </div>
         </div>
       </template>
@@ -284,145 +458,153 @@
         >
           <div class="space-y-5">
             <section class="rounded-xl border border-line bg-surface p-4">
-          <div class="mb-4">
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.connections.basicSection') }}
-            </h3>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.connections.basicSectionHint') }}
-            </p>
-          </div>
-          <div v-if="mode === 'create'" class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            <button
-              v-for="plugin in plugins"
-              :key="plugin.key"
-              type="button"
-              class="flex items-center gap-3 rounded-lg border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-              :class="form.plugin_key === plugin.key ? 'border-brand-300 bg-brand-50' : 'border-line hover:border-brand-200 hover:bg-surface-sunken'"
-              @click="handlePluginChange(plugin.key)"
-            >
-              <span class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-surface">
-                <img v-if="pluginIconUrl(plugin.key)" :src="pluginIconUrl(plugin.key)" :alt="pluginDisplayName(plugin.key)" class="h-full w-full object-cover" />
-                <span v-else class="text-xs font-semibold uppercase text-brand-700">{{ plugin.key.slice(0, 2) }}</span>
-              </span>
-              <span class="min-w-0">
-                <span class="block truncate text-sm font-medium text-ink-900">{{ pluginDisplayName(plugin.key) }}</span>
-                <span class="mt-0.5 block truncate text-xs text-ink-500">{{ plugin.version }}</span>
-              </span>
-            </button>
-          </div>
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-ink-700">
-                {{ t('lensAdmin.connections.name') }}
-              </span>
-              <input
-                v-model="form.name"
-                class="connection-form-input"
-                required
-              />
-            </label>
-            <div v-if="mode === 'edit'" class="block">
-              <span class="mb-1.5 block text-sm font-medium text-ink-700">
-                {{ t('lensAdmin.connections.pluginLabel') }}
-              </span>
-              <div class="flex h-10 items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 text-sm text-ink-700">
-                <img v-if="pluginIconUrl(form.plugin_key)" :src="pluginIconUrl(form.plugin_key)" :alt="pluginDisplayName(form.plugin_key)" class="h-6 w-6 rounded-md" />
-                <span>{{ pluginDisplayName(form.plugin_key) }}</span>
+              <div class="mb-4">
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{ t('lensAdmin.connections.basicSection') }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.connections.basicSectionHint') }}
+                </p>
               </div>
-            </div>
-          </div>
+              <div
+                v-if="mode === 'create'"
+                class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                <button
+                  v-for="plugin in plugins"
+                  :key="plugin.key"
+                  type="button"
+                  class="flex items-center gap-3 rounded-lg border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  :class="
+                    form.plugin_key === plugin.key
+                      ? 'border-brand-300 bg-brand-50'
+                      : 'border-line hover:border-brand-200 hover:bg-surface-sunken'
+                  "
+                  @click="handlePluginChange(plugin.key)"
+                >
+                  <span
+                    class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-surface"
+                  >
+                    <img
+                      v-if="pluginIconUrl(plugin.key)"
+                      :src="pluginIconUrl(plugin.key)"
+                      :alt="pluginDisplayName(plugin.key)"
+                      class="h-full w-full object-cover"
+                    />
+                    <span
+                      v-else
+                      class="text-xs font-semibold uppercase text-brand-700"
+                      >{{ plugin.key.slice(0, 2) }}</span
+                    >
+                  </span>
+                  <span class="min-w-0">
+                    <span
+                      class="block truncate text-sm font-medium text-ink-900"
+                      >{{ pluginDisplayName(plugin.key) }}</span
+                    >
+                    <span class="mt-0.5 block truncate text-xs text-ink-500">{{
+                      plugin.version
+                    }}</span>
+                  </span>
+                </button>
+              </div>
+              <div class="grid gap-4 md:grid-cols-2">
+                <label class="block">
+                  <span class="mb-1.5 block text-sm font-medium text-ink-700">
+                    {{ t('lensAdmin.connections.name') }}
+                  </span>
+                  <input
+                    v-model="form.name"
+                    class="connection-form-input"
+                    required
+                  />
+                </label>
+                <div v-if="mode === 'edit'" class="block">
+                  <span class="mb-1.5 block text-sm font-medium text-ink-700">
+                    {{ t('lensAdmin.connections.pluginLabel') }}
+                  </span>
+                  <div
+                    class="flex h-10 items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 text-sm text-ink-700"
+                  >
+                    <img
+                      v-if="pluginIconUrl(form.plugin_key)"
+                      :src="pluginIconUrl(form.plugin_key)"
+                      :alt="pluginDisplayName(form.plugin_key)"
+                      class="h-6 w-6 rounded-md"
+                    />
+                    <span>{{ pluginDisplayName(form.plugin_key) }}</span>
+                  </div>
+                </div>
+              </div>
             </section>
 
             <section class="rounded-xl border border-line bg-surface p-4">
-          <div class="mb-4">
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.connections.accessSection') }}
-            </h3>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.connections.accessSectionHint') }}
-            </p>
-          </div>
-          <ManifestSchemaForm
-            v-if="manifest?.connection_schema"
-            :model-value="form"
-            :schema="
-              localizedManifest.connection_schema || manifest.connection_schema
-            "
-            :resources="connectionResourceOptions"
-            control-class="connection-form-input"
-            :password-placeholder="storedSecretPlaceholder"
-            :empty-resource-text="t('lensAdmin.connections.resourceTreeEmpty')"
-            :tree-search-placeholder="t('lensAdmin.connections.resourceSearchPlaceholder')"
-            :resource-search-empty-text="t('lensAdmin.connections.resourceSearchEmpty')"
-            :resource-count-label="t('lensAdmin.connections.resourceCountLabel')"
-            :selected-count-label="t('lensAdmin.connections.selectedCountLabel')"
-            :private-resource-label="t('lensAdmin.connections.privateResource')"
-            :select-option-label="t('lensAdmin.pluginForm.selectOption')"
-            :loading-options-label="t('lensAdmin.pluginForm.loadingOptions')"
-            @update:model-value="updateConnectionForm"
-          >
-            <template #field-actions="{ field }">
-              <BaseButton
-                v-if="field.key === connectionResourceField?.[0]"
-                size="sm"
-                variant="outline"
-                :loading="discoveringResources"
-                :disabled="!canDiscoverConnectionResources"
-                @click.prevent="discoverConnectionResources"
+              <div class="mb-4">
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{ t('lensAdmin.connections.accessSection') }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.connections.accessSectionHint') }}
+                </p>
+              </div>
+              <ManifestSchemaForm
+                v-if="manifest?.connection_schema"
+                :model-value="form"
+                :schema="
+                  localizedManifest.connection_schema ||
+                  manifest.connection_schema
+                "
+                :resources="connectionResourceOptions"
+                control-class="connection-form-input"
+                :password-placeholder="storedSecretPlaceholder"
+                :empty-resource-text="
+                  t('lensAdmin.connections.resourceTreeEmpty')
+                "
+                :tree-search-placeholder="
+                  t('lensAdmin.connections.resourceSearchPlaceholder')
+                "
+                :resource-search-empty-text="
+                  t('lensAdmin.connections.resourceSearchEmpty')
+                "
+                :resource-count-label="
+                  t('lensAdmin.connections.resourceCountLabel')
+                "
+                :selected-count-label="
+                  t('lensAdmin.connections.selectedCountLabel')
+                "
+                :private-resource-label="
+                  t('lensAdmin.connections.privateResource')
+                "
+                :select-option-label="t('lensAdmin.pluginForm.selectOption')"
+                :loading-options-label="
+                  t('lensAdmin.pluginForm.loadingOptions')
+                "
+                @update:model-value="updateConnectionForm"
               >
-                {{ t('lensAdmin.connections.discoverResourcesAction') }}
-              </BaseButton>
-            </template>
-          </ManifestSchemaForm>
-          <p
-            v-if="mode === 'edit'"
-            class="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-xs leading-5 text-ink-600"
-          >
-            {{ t('lensAdmin.connections.tokenEditHint') }}
-          </p>
+                <template #field-actions="{ field }">
+                  <BaseButton
+                    v-if="field.key === connectionResourceField?.[0]"
+                    size="sm"
+                    variant="outline"
+                    :loading="discoveringResources"
+                    :disabled="!canDiscoverConnectionResources"
+                    @click.prevent="discoverConnectionResources"
+                  >
+                    {{ t('lensAdmin.connections.discoverResourcesAction') }}
+                  </BaseButton>
+                </template>
+              </ManifestSchemaForm>
+              <p
+                v-if="mode === 'edit'"
+                class="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-xs leading-5 text-ink-600"
+              >
+                {{ t('lensAdmin.connections.tokenEditHint') }}
+              </p>
             </section>
           </div>
 
-          <FeishuConnectionGuide
-            v-if="form.plugin_key === 'feishu'"
-          />
-          <section
-            v-if="form.plugin_key === 'feishu'"
-            class="rounded-xl border border-brand-200 bg-brand-50 p-4"
-          >
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.connections.feishuSelfRegisterTitle') }}
-            </h3>
-            <p class="mt-1 text-xs text-ink-600">
-              {{ t('lensAdmin.connections.feishuSelfRegisterHint') }}
-            </p>
-            <BaseButton
-              class="mt-3"
-              size="sm"
-              variant="outline"
-              :loading="feishuRegistering"
-              :disabled="feishuRegistering"
-              @click="startFeishuScan"
-            >
-              {{ t('lensAdmin.connections.feishuSelfRegisterAction') }}
-            </BaseButton>
-            <img
-              v-if="feishuQr"
-              :src="feishuQr"
-              :alt="t('lensAdmin.connections.feishuSelfRegisterQrAlt')"
-              class="mt-3 h-48 w-48 rounded border bg-white p-2"
-            />
-            <p
-              v-if="feishuRegisterStatus"
-              class="mt-2 text-xs text-ink-600"
-            >
-              {{ feishuRegisterStatus }}
-            </p>
-          </section>
-          <GitHubConnectionGuide
-            v-if="form.plugin_key === 'github'"
-          />
+          <FeishuConnectionGuide v-if="form.plugin_key === 'feishu'" />
+          <GitHubConnectionGuide v-if="form.plugin_key === 'github'" />
           <GitLabConnectionGuide v-if="form.plugin_key === 'gitlab'" />
           <JiraConnectionGuide v-if="form.plugin_key === 'jira'" />
         </div>
@@ -475,10 +657,6 @@ import {
   updateConnection,
   validateConnection
 } from '@/api/lens'
-import {
-  pollFeishuSelfRegister,
-  startFeishuSelfRegister
-} from '@/api/plugins'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
 import {
@@ -506,11 +684,6 @@ const connectionSearch = ref('')
 const connectionPluginFilter = ref('all')
 const connectionStatusFilter = ref('all')
 const pluginIconUrls = ref({})
-const feishuRegistering = ref(false)
-const feishuQr = ref('')
-const feishuRegisterStatus = ref('')
-let feishuPollTimer = null
-let feishuExpiryTimer = null
 const connectionDetailOpen = ref(false)
 const detailConnection = ref(null)
 const connectionResourceOptions = computed(() => ({
@@ -529,7 +702,8 @@ const pluginCount = computed(
 const filteredConnections = computed(() => {
   const keyword = connectionSearch.value.trim().toLowerCase()
   return connections.value.filter((row) => {
-    const matchesKeyword = !keyword ||
+    const matchesKeyword =
+      !keyword ||
       [row.name, row.plugin_key, row.endpoint]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword))
@@ -767,76 +941,6 @@ function closeDrawer() {
   drawerOpen.value = false
   formError.value = ''
   connectionResourceCandidates.value = []
-  stopFeishuPolling()
-  feishuQr.value = ''
-  feishuRegisterStatus.value = ''
-}
-
-async function startFeishuScan() {
-  stopFeishuPolling()
-  feishuRegistering.value = true
-  feishuQr.value = ''
-  feishuRegisterStatus.value = t(
-    'lensAdmin.connections.feishuSelfRegisterWaiting'
-  )
-  try {
-    const result = await startFeishuSelfRegister()
-    if (!result?.device_code || !result?.qr_code_base64) {
-      throw new Error(t('lensAdmin.connections.feishuSelfRegisterInvalid'))
-    }
-    feishuQr.value = result.qr_code_base64
-    const deviceCode = result.device_code
-    const interval = Math.max(5, Number(result.interval || 5)) * 1000
-    const expiresIn = Math.max(1, Number(result.expires_in || 600)) * 1000
-    let pollInFlight = false
-    const poll = async () => {
-      if (pollInFlight) return
-      pollInFlight = true
-      try {
-        const status = await pollFeishuSelfRegister(deviceCode)
-        feishuRegisterStatus.value = status.status || 'pending'
-        if (status.status === 'success') {
-          form.value.app_id = status.app_id
-          form.value.app_secret = status.app_secret
-          stopFeishuPolling()
-          showSuccess(t('lensAdmin.connections.feishuSelfRegisterSuccess'))
-          return
-        }
-        if (['denied', 'expired', 'error'].includes(status.status)) {
-          stopFeishuPolling()
-        }
-      } catch (error) {
-        stopFeishuPolling()
-        feishuRegisterStatus.value = extractErrorMessage(
-          error,
-          t('lensAdmin.connections.feishuSelfRegisterFailed')
-        )
-      } finally {
-        pollInFlight = false
-      }
-    }
-    feishuPollTimer = window.setInterval(poll, interval)
-    feishuExpiryTimer = window.setTimeout(() => {
-      feishuRegisterStatus.value = t(
-        'lensAdmin.connections.feishuSelfRegisterExpired'
-      )
-      stopFeishuPolling()
-    }, expiresIn)
-  } catch (error) {
-    stopFeishuPolling()
-    feishuRegisterStatus.value = extractErrorMessage(
-      error,
-      t('lensAdmin.connections.feishuSelfRegisterFailed')
-    )
-  }
-}
-
-function stopFeishuPolling() {
-  if (feishuPollTimer) window.clearInterval(feishuPollTimer)
-  if (feishuExpiryTimer) window.clearTimeout(feishuExpiryTimer)
-  feishuPollTimer = null
-  feishuExpiryTimer = null
-  feishuRegistering.value = false
 }
 
 function updateConnectionForm(nextForm) {
@@ -917,14 +1021,11 @@ async function toggleDetailConnectionStatus() {
     )
     row.status = nextStatus
     await load()
-    detailConnection.value = connections.value.find(
-      (connection) => connection.uuid === row.uuid
-    ) || null
+    detailConnection.value =
+      connections.value.find((connection) => connection.uuid === row.uuid) ||
+      null
   } catch (error) {
-    showError(extractErrorMessage(
-      error,
-      t('lensAdmin.connections.saveFailed')
-    ))
+    showError(extractErrorMessage(error, t('lensAdmin.connections.saveFailed')))
   } finally {
     saving.value = false
   }
@@ -955,11 +1056,6 @@ async function validateRow(row) {
 }
 
 function handlePluginChange(pluginKey) {
-  if (form.value.plugin_key === 'feishu' && pluginKey !== 'feishu') {
-    stopFeishuPolling()
-    feishuQr.value = ''
-    feishuRegisterStatus.value = ''
-  }
   form.value = {
     uuid: form.value.uuid,
     name: form.value.name,
@@ -1039,10 +1135,7 @@ async function removeRow(row) {
 }
 
 onMounted(load)
-onBeforeUnmount(() => {
-  stopFeishuPolling()
-  revokePluginIconUrls()
-})
+onBeforeUnmount(revokePluginIconUrls)
 </script>
 
 <style>
@@ -1060,5 +1153,4 @@ onBeforeUnmount(() => {
     hover:border-ink-300 focus:border-brand-500 focus:outline-none
     focus:ring-2 focus:ring-brand-500/20;
 }
-
 </style>

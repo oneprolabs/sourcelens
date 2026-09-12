@@ -130,47 +130,34 @@
         </div>
       </section>
 
-      <!-- Directory preview (lazy tree) -->
-      <div>
-        <div class="mb-1.5 text-sm font-medium text-ink-700">
-          {{ t('lensAdmin.detail.directoryTree') }}
-        </div>
-        <p class="mb-2 text-xs text-ink-500">
-          {{ t('lensAdmin.detail.treeHint') }}
-        </p>
-        <div
-          v-if="isOffline"
-          class="mb-2 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700"
-        >
-          {{ t('lensAdmin.detail.offlineHint') }}
-        </div>
-        <div class="rounded-md border border-line bg-surface-sunken p-2">
-          <LensNodeDirTree
-            v-if="rootNodes.length"
-            :nodes="rootNodes"
-            :loader="loadChildren"
-          />
-          <p v-else class="px-1.5 py-3 text-center text-xs text-ink-400">
-            {{ t('lensAdmin.detail.treeEmpty') }}
-          </p>
-        </div>
-      </div>
+      <section class="space-y-3" data-testid="lensnode-existing-datasources">
+        <h3 class="text-sm font-semibold text-ink-900">
+          {{ t('lensAdmin.detail.existingDatasources') }}
+        </h3>
+        <ul v-if="node.datasources?.length" class="detail-list">
+          <li v-for="datasource in node.datasources" :key="datasource.uuid" class="px-3 py-2.5">
+            <div class="flex items-center justify-between gap-3">
+              <span class="min-w-0 truncate text-sm font-medium text-ink-800">{{ datasource.name }}</span>
+              <StatusBadge :status="datasource.status" />
+            </div>
+            <div class="mt-1 text-xs text-ink-500">{{ datasource.source_type }}</div>
+          </li>
+        </ul>
+        <p v-else class="detail-empty">{{ t('lensAdmin.detail.noDatasources') }}</p>
+      </section>
     </div>
   </BaseDrawer>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { Cpu, HardDrive, MemoryStick } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
-import { scanLensNodeDirs } from '@/api/lens'
 import { formatOperationMetric } from '@/admin/utils/operationsSummary'
-import { useToast } from '@/composables/useToast'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
-import LensNodeDirTree from './LensNodeDirTree.vue'
 import { compactUuid } from './adminHelpers'
 import { useShortDateTime } from './useShortDateTime'
 
@@ -185,12 +172,8 @@ const props = defineProps({
 defineEmits(['close'])
 
 const { t } = useI18n()
-const { showError } = useToast()
-
-const rootNodes = ref([])
 const formatDateTime = useShortDateTime()
 
-const isOffline = computed(() => props.node?.status !== 'online')
 const metricValue = (keys) => {
   const metrics = props.node?.last_metrics || {}
   const value = keys
@@ -305,57 +288,6 @@ const nodeInfoRows = computed(() => {
   ]
 })
 
-function toChildNode(child) {
-  const path = typeof child === 'string' ? child : child.path
-  const name =
-    typeof child === 'string'
-      ? child.split('/').filter(Boolean).pop() || child
-      : child.name || child.path
-  return { path, name, children: null, expanded: false, loading: false }
-}
-
-function toTopNode(dir) {
-  if (typeof dir === 'string') {
-    return toChildNode(dir)
-  }
-  const children = Array.isArray(dir.children)
-    ? dir.children.map(toChildNode)
-    : null
-  return {
-    path: dir.path,
-    name: dir.name || dir.path,
-    children,
-    expanded: false,
-    loading: false
-  }
-}
-
-function buildTree() {
-  const dirs = Array.isArray(props.node?.available_dirs)
-    ? props.node.available_dirs
-    : []
-  rootNodes.value = dirs.map(toTopNode)
-}
-
-async function loadChildren(path) {
-  try {
-    const result = await scanLensNodeDirs(props.node.uuid, [path])
-    const list = result?.dirs?.[path] || []
-    return list.map(toChildNode)
-  } catch (error) {
-    showError(t('lensAdmin.detail.loadDirsFailed'))
-    return null
-  }
-}
-
-watch(
-  () => props.show,
-  (show) => {
-    if (show) {
-      buildTree()
-    }
-  }
-)
 </script>
 
 <style scoped>

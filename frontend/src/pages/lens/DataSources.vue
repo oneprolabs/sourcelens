@@ -244,9 +244,7 @@
                   }}</span>
                   <p
                     class="min-w-0 flex-1 truncate font-mono text-xs font-medium text-ink-800"
-                    :title="
-                      dataSourceRepository(row)
-                    "
+                    :title="dataSourceRepository(row)"
                   >
                     {{ dataSourceRepository(row) }}
                   </p>
@@ -503,9 +501,7 @@ const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
 const uploadInput = ref(null)
 const uploadDataSource = ref(null)
-const uploadAccept = [
-  '.zip'
-].join(',')
+const uploadAccept = ['.zip'].join(',')
 
 const datasourceConfig = ref({})
 const datasourcePathResult = ref(null)

@@ -44,7 +44,9 @@
           spacing="none"
           class="datasource-overview-block rounded-xl border border-line bg-surface p-4"
         >
-          <template #actions><StatusBadge :status="datasource.status" /></template>
+          <template #actions
+            ><StatusBadge :status="datasource.status"
+          /></template>
           <dl
             class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line"
           >

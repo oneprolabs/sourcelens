@@ -1222,6 +1222,7 @@
       "validation": "校验状态",
       "datasources": "关联数据源",
       "lastUsedAt": "最后使用",
+      "updatedAt": "更新时间",
       "skill": "Skill",
       "slug": "Slug",
       "mcpServer": "MCP Server",
@@ -2067,7 +2068,9 @@
       "memory": "内存",
       "disk": "硬盘",
       "datasourceTasks": "数据源任务",
-      "datasourceOperation": "操作"
+      "datasourceOperation": "操作",
+      "existingDatasources": "已存在的数据源",
+      "noDatasources": "暂无数据源"
     },
     "timeline": {
       "title": "接入进度",

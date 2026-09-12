@@ -4036,7 +4036,8 @@ function handleEvent(event) {
   }
   if (event.type === 'queue_position') {
     queuePosition.value = event.position
-    if (currentRun.value) currentRun.value.datasource_waiting = !!event.datasource_waiting
+    if (currentRun.value)
+      currentRun.value.datasource_waiting = !!event.datasource_waiting
   }
   if (event.type === 'sync' && event.content) {
     streamTextBuffer.flush()

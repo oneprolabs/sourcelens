@@ -133,6 +133,46 @@ test('assistant detail drawer is rendered outside the list panel', async () => {
   assert.match(page, /<\/section>\s*<\/div>\s*<AssistantDetailDrawer/)
 })
 
+test('assistant detail localizes and formats updated timestamps', async () => {
+  const [detailView, zh, en, es] = await Promise.all([
+    source('pages/lens/AssistantDetailView.vue'),
+    source('admin/locales/zh-CN.json'),
+    source('admin/locales/en.json'),
+    source('admin/locales/es.json')
+  ])
+
+  assert.match(detailView, /useShortDateTime/)
+  assert.match(detailView, /formatDateTime\(assistant\.updated_at/)
+  assert.match(zh, /"columns"[\s\S]*?"updatedAt": "更新时间"/)
+  assert.match(en, /"columns"[\s\S]*?"updatedAt": "Updated"/)
+  assert.match(es, /"columns"[\s\S]*?"updatedAt": "Actualizado"/)
+})
+
+test('assistant detail tabs remain discoverable on narrow screens', async () => {
+  const detailView = await source('pages/lens/AssistantDetailView.vue')
+
+  assert.match(detailView, /@media \(max-width: 640px\)/)
+  assert.match(detailView, /\.detail-tabs[\s\S]*?flex-wrap: wrap/)
+})
+
+test('assistant tool counts use singular forms in English and Spanish', async () => {
+  const [en, es] = await Promise.all([
+    source('admin/locales/en.json'),
+    source('admin/locales/es.json')
+  ])
+
+  assert.match(en, /"skillCount": "\{count\} Skill \| \{count\} Skills"/)
+  assert.match(es, /"skillCount": "\{count\} Skill \| \{count\} Skills"/)
+  assert.match(
+    en,
+    /"mcpCount": "\{count\} MCP Server \| \{count\} MCP Servers"/
+  )
+  assert.match(
+    es,
+    /"mcpCount": "\{count\} Servidor MCP \| \{count\} Servidores MCP"/
+  )
+})
+
 test('assistant creation does not expose or submit concurrency tuning', async () => {
   const [drawer, page] = await Promise.all([
     source('pages/lens/AssistantFormDrawerDirectEnvironment.vue'),

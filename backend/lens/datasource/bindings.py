@@ -50,6 +50,7 @@ class DatasourceBindingsField(serializers.Field):
             "uuid": str(row.uuid),
             "datasource_uuid": str(row.datasource.uuid),
             "datasource_name": row.datasource.name,
+            "source_type": row.datasource.source_type,
             "item_uuid": str(row.item.uuid) if row.item else None,
             "item_name": row.item.name if row.item else None,
             "mount_name": row.mount_name,

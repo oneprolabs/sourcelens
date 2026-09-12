@@ -1,44 +1,39 @@
 <template>
   <AdminLayout>
-    <div
-      class="assistants-page mx-auto flex max-w-[1440px] flex-col gap-6 py-4"
-    >
-      <header
-        class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"
-      >
-        <div>
-          <div class="flex flex-wrap items-center gap-3">
-            <h1 class="text-2xl font-semibold tracking-tight text-ink-950">
-              {{ t('lensAdmin.pages.assistants.managementTitle') }}
-            </h1>
-            <span class="count-label">{{ assistants.length }}</span>
+    <div class="assistants-page flex max-w-full flex-col gap-4 py-4">
+      <section class="assistant-list-panel admin-data-panel">
+        <header
+          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
+        >
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <h1 class="admin-page-title">
+                {{ t('lensAdmin.pages.assistants.managementTitle') }}
+              </h1>
+            </div>
           </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <BaseButton
-            variant="outline"
-            size="sm"
-            :loading="loading"
-            @click="load"
-          >
-            <RefreshCw :size="16" aria-hidden="true" />
-            {{ t('common.refresh') }}
-          </BaseButton>
-          <BaseButton
-            v-if="!showArchived"
-            variant="primary"
-            size="sm"
-            @click="startCreate"
-          >
-            <Plus :size="16" aria-hidden="true" />
-            {{ t('lensAdmin.pages.assistants.action') }}
-          </BaseButton>
-        </div>
-      </header>
+          <div class="flex flex-wrap items-center gap-2">
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :loading="loading"
+              @click="load"
+            >
+              <RefreshCw :size="16" aria-hidden="true" />
+              {{ t('common.refresh') }}
+            </BaseButton>
+            <BaseButton
+              v-if="!showArchived"
+              variant="primary"
+              size="sm"
+              @click="startCreate"
+            >
+              <Plus :size="16" aria-hidden="true" />
+              {{ t('lensAdmin.pages.assistants.action') }}
+            </BaseButton>
+          </div>
+        </header>
 
-      <section
-        class="assistant-list-panel overflow-hidden rounded-xl border border-line bg-surface shadow-sm"
-      >
         <div class="flex items-center gap-6 border-b border-line px-5">
           <button
             type="button"
@@ -63,7 +58,7 @@
         </div>
 
         <div
-          class="assistant-toolbar flex flex-wrap items-end gap-3 border-b border-line-soft px-5 py-4"
+          class="assistant-toolbar flex flex-wrap items-end gap-3 border-b border-line px-5 py-4"
         >
           <label class="filter-control filter-search">
             <span>{{ t('lensAdmin.pages.assistants.searchLabel') }}</span>
@@ -132,7 +127,7 @@
           </BaseButton>
         </div>
 
-        <div class="px-5 py-5">
+        <div class="px-5 py-4">
           <BaseLoading v-if="loading && assistants.length === 0" />
 
           <div v-else-if="assistants.length === 0" class="empty-state">
@@ -245,28 +240,13 @@
                       class="flex flex-wrap items-center gap-2"
                     >
                       <span
-                        class="data-tool-count data-tool-hoverable"
-                        :aria-label="`${dataScopeLabel(row)} (${(row.datasource_bindings || []).length})`"
-                        :aria-describedby="`assistant-data-tooltip-${row.uuid}`"
-                        tabindex="0"
+                        class="data-tool-count"
+                        :aria-label="`${t('lensAdmin.columns.datasource')} ${(row.datasource_bindings || []).length}`"
                       >
                         <Database :size="16" aria-hidden="true" />
                         <span>{{
                           (row.datasource_bindings || []).length
                         }}</span>
-                        <span
-                          :id="`assistant-data-tooltip-${row.uuid}`"
-                          class="data-tool-tooltip"
-                          role="tooltip"
-                        >
-                          <strong>{{ dataScopeLabel(row) }}</strong>
-                          <span
-                            v-for="binding in row.datasource_bindings || []"
-                            :key="binding.uuid || binding.item_uuid"
-                          >
-                            {{ dataBindingLabel(binding) }}
-                          </span>
-                        </span>
                       </span>
                       <span
                         class="data-tool-count"
@@ -837,26 +817,6 @@ async function openDetails(row) {
   }
 }
 
-function dataScopeLabel(row) {
-  const names = [
-    ...new Set(
-      (row.datasource_bindings || [])
-        .map((binding) => binding.datasource_name)
-        .filter(Boolean)
-    )
-  ]
-  if (names.length) return names.join(' · ')
-  return t('lensAdmin.assistantPresentation.noSources')
-}
-
-function dataBindingLabel(binding) {
-  const datasourceName =
-    binding.datasource_name || t('lensAdmin.assistantDetail.unnamedDatasource')
-  const itemName =
-    binding.item_name || t('lensAdmin.assistantPresentation.allItems')
-  return `${datasourceName} · ${itemName}`
-}
-
 function closeDetails() {
   detailAssistant.value = null
 }
@@ -1257,16 +1217,6 @@ onBeforeUnmount(revokePluginIconUrls)
   color: var(--sl-text-primary);
 }
 
-.count-label {
-  border: 1px solid var(--sl-border-default);
-  border-radius: 0.375rem;
-  padding: 0.25rem 0.5rem;
-  color: var(--sl-text-muted);
-  background: var(--sl-bg-surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-}
-
 .segment-tab {
   min-height: 3.5rem;
   border: 0;
@@ -1423,56 +1373,6 @@ onBeforeUnmount(revokePluginIconUrls)
   font-weight: 600;
   color: var(--sl-text-secondary);
   background: var(--sl-bg-canvas);
-}
-
-.data-tool-hoverable {
-  cursor: help;
-  outline: none;
-}
-
-.data-tool-tooltip {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 0.5rem);
-  left: 0;
-  display: grid;
-  min-width: 14rem;
-  max-width: 24rem;
-  gap: 0.25rem;
-  border: 1px solid var(--sl-border-default);
-  border-radius: 0.5rem;
-  padding: 0.625rem 0.75rem;
-  color: var(--sl-text-secondary);
-  background: var(--sl-bg-surface);
-  box-shadow: 0 0.5rem 1.25rem rgb(15 23 42 / 0.14);
-  font-size: 0.75rem;
-  font-weight: 400;
-  line-height: 1.45;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-0.25rem);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease,
-    visibility 120ms ease;
-  visibility: hidden;
-  white-space: normal;
-}
-
-.data-tool-tooltip strong {
-  color: var(--sl-text-primary);
-  font-weight: 600;
-}
-
-.data-tool-hoverable:hover .data-tool-tooltip,
-.data-tool-hoverable:focus-visible .data-tool-tooltip {
-  opacity: 1;
-  transform: translateY(0);
-  visibility: visible;
-}
-
-.data-tool-hoverable:focus-visible {
-  box-shadow: 0 0 0 3px rgb(var(--sl-accent-rgb) / 0.18);
 }
 
 .assistants-table-wrap {

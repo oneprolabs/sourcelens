@@ -1,77 +1,85 @@
 <template>
   <AdminLayout>
-    <div
-      class="flex h-auto min-h-0 w-full max-w-full flex-col p-0 md:h-full md:p-4 lg:p-5"
-    >
-      <div class="mb-4 flex-shrink-0">
-        <h1 class="admin-page-title">
-          {{ t('lensRuns.title') }}
-        </h1>
-        <p class="admin-page-subtitle">
-          {{ t('lensRuns.subtitle') }}
-        </p>
-      </div>
-
-      <div
-        data-testid="run-status-summary"
-        class="mb-4 grid flex-shrink-0 grid-cols-2 gap-3 md:grid-cols-5"
-      >
-        <button
-          v-for="item in statusSummaryCards"
-          :key="item.status"
-          type="button"
-          class="admin-metric-card hover:border-primary-300"
-          :class="
-            filters.status === item.status
-              ? 'border-primary-400 ring-1 ring-primary-200'
-              : 'border-gray-200'
-          "
-          @click="setStatusFilter(item.status)"
+    <div class="flex max-w-full flex-col gap-4 py-4">
+      <section class="admin-data-panel overflow-hidden">
+        <div
+          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
         >
-          <p class="text-xs font-medium text-gray-500">{{ item.label }}</p>
-          <p class="admin-metric-value mt-1">
-            <span
-              v-if="loading && !hasLoaded"
-              class="metric-loading"
-              aria-hidden="true"
+          <div class="min-w-0">
+            <h1 class="admin-page-title">
+              {{ t('lensRuns.title') }}
+            </h1>
+            <p class="admin-page-subtitle">
+              {{ t('lensRuns.subtitle') }}
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :loading="loading"
+              :title="t('common.refresh')"
+              @click="fetchRuns"
             >
-              …
-            </span>
-            <span v-else>{{ formatOperationMetric(item.count) }}</span>
-          </p>
-        </button>
-      </div>
+              {{ t('common.refresh') }}
+            </BaseButton>
+          </div>
+        </div>
 
-      <div
-        class="flex min-h-0 flex-col overflow-visible rounded-lg border-0 border-gray-200 bg-transparent shadow-none md:overflow-hidden md:border md:bg-white md:shadow-sm"
-      >
-        <div class="flex min-h-0 flex-col p-0 md:p-6">
-          <div
-            class="admin-filter-toolbar mb-4 flex-shrink-0 flex-col md:items-stretch md:border-0 md:bg-transparent md:p-0 md:shadow-none"
+        <div
+          data-testid="run-status-summary"
+          class="grid grid-cols-2 gap-3 border-b border-line bg-surface-sunken/50 px-5 py-4 md:grid-cols-5"
+        >
+          <button
+            v-for="item in statusSummaryCards"
+            :key="item.status"
+            type="button"
+            class="rounded-lg border bg-surface px-4 py-3 text-left transition-colors hover:border-primary-300"
+            :class="
+              filters.status === item.status
+                ? 'border-primary-400 ring-1 ring-primary-200'
+                : 'border-line'
+            "
+            @click="setStatusFilter(item.status)"
           >
+            <p class="text-xs font-medium text-ink-500">{{ item.label }}</p>
+            <p class="admin-metric-value mt-1">
+              <span
+                v-if="loading && !hasLoaded"
+                class="metric-loading"
+                aria-hidden="true"
+              >
+                …
+              </span>
+              <span v-else>{{ formatOperationMetric(item.count) }}</span>
+            </p>
+          </button>
+        </div>
+
+        <div class="flex min-h-0 flex-col px-5 py-4">
+          <div class="mb-4 flex flex-col border-b border-line pb-4">
             <div
-              class="flex w-full min-w-0 flex-col items-stretch gap-3 md:flex-row md:items-center"
+              class="flex w-full min-w-0 flex-col items-stretch gap-3 xl:flex-row xl:items-center"
             >
               <div
-                class="flex min-w-0 flex-1 flex-col items-stretch gap-3 md:flex-row md:flex-nowrap md:items-center"
+                class="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
               >
                 <input
                   v-model="filters.q"
                   type="text"
                   :placeholder="t('lensRuns.filterKeyword')"
-                  class="min-h-11 w-full min-w-0 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-0 md:w-48"
+                  class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
                   @input="onFiltersChanged"
                 />
                 <input
                   v-model="filters.username"
                   type="text"
                   :placeholder="t('lensRuns.filterUsername')"
-                  class="min-h-11 w-full min-w-0 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-0 md:w-32"
+                  class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
                   @input="onUsernameChanged"
                 />
                 <BaseSelect
                   v-model="filters.assistant"
-                  class="md:w-48"
                   mobile-touch
                   @change="onFiltersChanged"
                 >
@@ -82,7 +90,6 @@
                 </BaseSelect>
                 <BaseSelect
                   v-model="filters.status"
-                  class="md:w-32"
                   mobile-touch
                   @change="onFiltersChanged"
                 >
@@ -120,16 +127,7 @@
                     {{ advancedFilterCount }}
                   </span>
                 </BaseButton>
-                <BaseButton
-                  variant="outline"
-                  size="sm"
-                  :loading="loading"
-                  :title="t('common.refresh')"
-                  class="flex-1 md:flex-none"
-                  @click="fetchRuns"
-                >
-                  {{ t('common.refresh') }}
-                </BaseButton>
+
                 <BaseButton
                   variant="outline"
                   size="sm"
@@ -145,20 +143,20 @@
               v-if="advancedFiltersOpen"
               id="run-advanced-filters"
               data-testid="run-advanced-filters"
-              class="mt-3 grid gap-3 border-t border-gray-200 pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center"
+              class="mt-3 grid gap-3 border-t border-line pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center"
             >
               <input
                 v-model="filters.lensnode"
                 type="text"
                 :placeholder="t('lensRuns.filterLensNode')"
-                class="min-h-11 w-full min-w-0 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-0"
+                class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
                 @input="onFiltersChanged"
               />
               <input
                 v-model="filters.model"
                 type="text"
                 :placeholder="t('lensRuns.filterModel')"
-                class="min-h-11 w-full min-w-0 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-0"
+                class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
                 @input="onFiltersChanged"
               />
               <div class="flex w-full shrink-0 items-center gap-2 md:w-auto">
@@ -168,7 +166,7 @@
                   :max="filters.end_date || undefined"
                   @change="onFiltersChanged"
                 />
-                <span class="text-gray-400">–</span>
+                <span class="text-ink-400">–</span>
                 <BaseDateInput
                   v-model="filters.end_date"
                   compact
@@ -233,14 +231,14 @@
             <div
               v-else-if="hasLoaded && !loadError && runs.length === 0"
               data-testid="run-empty-state"
-              class="rounded-lg border border-gray-200 bg-gray-50 py-16 text-center"
+              class="rounded-lg border border-line bg-surface-sunken py-16 text-center"
             >
-              <p class="text-sm font-medium text-gray-600">
+              <p class="text-sm font-medium text-ink-600">
                 {{ t('lensRuns.noRuns') }}
               </p>
             </div>
 
-            <div v-else class="flex flex-col md:min-h-0">
+            <div v-else class="flex flex-col md:min-h-9">
               <div
                 data-testid="mobile-run-observation-list"
                 class="space-y-3 md:hidden"
@@ -249,18 +247,18 @@
                   v-for="r in runs"
                   :key="`mobile-${r.uuid}`"
                   type="button"
-                  class="block w-full rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-primary-200 hover:bg-primary-50/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30"
+                  class="block w-full rounded-lg border border-line bg-surface p-4 text-left shadow-sm transition-colors hover:border-primary-200 hover:bg-primary-50/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30"
                   :aria-label="`${t('common.viewDetails')}: ${r.question || '-'}`"
                   @click="openDetail(r.uuid)"
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0 flex-1">
                       <h2
-                        class="line-clamp-3 text-sm font-semibold leading-5 text-gray-900"
+                        class="line-clamp-3 text-sm font-semibold leading-5 text-ink-900"
                       >
                         {{ r.question || '-' }}
                       </h2>
-                      <p class="mt-2 text-xs text-gray-500">
+                      <p class="mt-2 text-xs text-ink-500">
                         {{ formatDate(r.created_at) }}
                       </p>
                     </div>
@@ -271,34 +269,34 @@
 
                   <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                     <div>
-                      <dt class="text-xs text-gray-500">
+                      <dt class="text-xs text-ink-500">
                         {{ t('lensRuns.colUser') }}
                       </dt>
-                      <dd class="mt-0.5 truncate font-medium text-gray-800">
+                      <dd class="mt-0.5 truncate font-medium text-ink-800">
                         {{ r.username || '-' }}
                       </dd>
                     </div>
                     <div>
-                      <dt class="text-xs text-gray-500">
+                      <dt class="text-xs text-ink-500">
                         {{ t('lensRuns.colAssistant') }}
                       </dt>
-                      <dd class="mt-0.5 truncate font-medium text-gray-800">
+                      <dd class="mt-0.5 truncate font-medium text-ink-800">
                         {{ r.assistant_name || '-' }}
                       </dd>
                     </div>
                     <div>
-                      <dt class="text-xs text-gray-500">
+                      <dt class="text-xs text-ink-500">
                         {{ t('lensRuns.colDuration') }}
                       </dt>
-                      <dd class="mt-0.5 font-medium tabular-nums text-gray-800">
+                      <dd class="mt-0.5 font-medium tabular-nums text-ink-800">
                         {{ durationText(r.duration_seconds) }}
                       </dd>
                     </div>
                     <div>
-                      <dt class="text-xs text-gray-500">
+                      <dt class="text-xs text-ink-500">
                         {{ t('lensRuns.colSteps') }}
                       </dt>
-                      <dd class="mt-0.5 font-medium tabular-nums text-gray-800">
+                      <dd class="mt-0.5 font-medium tabular-nums text-ink-800">
                         {{ r.event_count }}
                         <span
                           v-if="r.subagent_count > 0"
@@ -328,7 +326,7 @@
                       <ThumbsDown :size="13" />
                       {{ t('lensRuns.feedbackUnhelpful') }}
                     </span>
-                    <span v-else class="text-xs text-gray-400">
+                    <span v-else class="text-xs text-ink-400">
                       {{ t('lensRuns.colFeedback') }}: —
                     </span>
                     <span
@@ -356,10 +354,10 @@
 
               <div
                 data-testid="desktop-run-observation-table"
-                class="relative hidden max-h-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-sm md:block"
+                class="relative hidden max-h-full overflow-auto rounded-lg border border-line bg-surface shadow-sm md:block"
               >
-                <table class="min-w-full divide-y divide-gray-200">
-                  <thead class="sticky top-0 z-10 bg-gray-50">
+                <table class="min-w-full divide-y divide-line">
+                  <thead class="sticky top-0 z-10 bg-surface-sunken">
                     <tr>
                       <th class="th">{{ t('lensRuns.colTime') }}</th>
                       <th class="th">{{ t('lensRuns.colUser') }}</th>
@@ -372,26 +370,26 @@
                       <th class="th">{{ t('common.actions') }}</th>
                     </tr>
                   </thead>
-                  <tbody class="bg-white divide-y divide-gray-100">
+                  <tbody class="bg-surface divide-y divide-gray-100">
                     <tr
                       v-for="r in runs"
                       :key="r.uuid"
-                      class="hover:bg-gray-50 cursor-pointer transition-colors"
+                      class="hover:bg-surface-sunken cursor-pointer transition-colors"
                       @click="openDetail(r.uuid)"
                     >
-                      <td class="td text-gray-600 whitespace-nowrap">
+                      <td class="td text-ink-600 whitespace-nowrap">
                         {{ formatDate(r.created_at) }}
                       </td>
-                      <td class="td text-gray-900 whitespace-nowrap">
+                      <td class="td text-ink-900 whitespace-nowrap">
                         {{ r.username || '-' }}
                       </td>
-                      <td class="td whitespace-nowrap text-gray-600">
+                      <td class="td whitespace-nowrap text-ink-600">
                         <div>{{ r.assistant_name || '-' }}</div>
-                        <div class="mt-1 text-xs text-gray-400">
+                        <div class="mt-1 text-xs text-ink-400">
                           {{ r.lensnode_name || '-' }}
                         </div>
                       </td>
-                      <td class="td text-gray-700 max-w-md truncate">
+                      <td class="td text-ink-700 max-w-md truncate">
                         {{ r.question || '-' }}
                       </td>
                       <td class="td whitespace-nowrap">
@@ -414,14 +412,14 @@
                           <ThumbsDown :size="13" />
                           {{ t('lensRuns.feedbackUnhelpful') }}
                         </span>
-                        <span v-else class="text-gray-400">—</span>
+                        <span v-else class="text-ink-400">—</span>
                       </td>
                       <td
-                        class="td text-gray-600 whitespace-nowrap tabular-nums"
+                        class="td text-ink-600 whitespace-nowrap tabular-nums"
                       >
                         {{ durationText(r.duration_seconds) }}
                       </td>
-                      <td class="td whitespace-nowrap text-gray-600">
+                      <td class="td whitespace-nowrap text-ink-600">
                         <div class="text-xs">
                           {{
                             t('lensRuns.toolCallsShort', {
@@ -431,7 +429,7 @@
                           ·
                           {{ t('lensRuns.retriesShort', { n: r.retry_count }) }}
                         </div>
-                        <div class="mt-1 text-xs text-gray-400">
+                        <div class="mt-1 text-xs text-ink-400">
                           {{ r.model_ref || '-' }} ·
                           {{ budgetPercent(r.budget_consumption) }}
                         </div>
@@ -479,7 +477,7 @@
             </div>
           </template>
         </div>
-      </div>
+      </section>
 
       <!-- Run detail right panel -->
       <Transition

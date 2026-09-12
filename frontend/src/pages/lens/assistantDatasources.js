@@ -9,8 +9,15 @@ export function toggleBinding(bindings, source, item, checked) {
     mount_name: `ds_${source.uuid.replaceAll('-', '')}${item ? `_${item.uuid.replaceAll('-', '')}` : ''}`,
     required: true
   }
-  const rows = bindings.filter((binding) => bindingKey(binding) !== bindingKey(candidate))
+  const rows = bindings.filter(
+    (binding) => bindingKey(binding) !== bindingKey(candidate)
+  )
   if (!checked) return rows
-  return [...rows.filter((binding) => binding.datasource_uuid !== source.uuid ||
-    (item && binding.item_uuid)), candidate]
+  return [
+    ...rows.filter(
+      (binding) =>
+        binding.datasource_uuid !== source.uuid || (item && binding.item_uuid)
+    ),
+    candidate
+  ]
 }

@@ -1,22 +1,33 @@
 <template>
   <AdminLayout>
-    <div class="w-full max-w-full p-6">
-      <div class="mb-4">
-        <h1 class="text-lg font-semibold text-gray-900">
-          {{ t('lens.qa.adminTitle') }}
-        </h1>
-        <p class="mt-1 text-sm text-gray-500">
-          {{ t('lens.qa.adminSubtitle') }}
-        </p>
-      </div>
-
-      <div
-        class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
-      >
+    <div class="flex max-w-full flex-col gap-4 py-4">
+      <section class="admin-data-panel overflow-hidden">
         <div
-          class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-6"
+          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
         >
-          <div class="flex items-center gap-6">
+          <div class="min-w-0">
+            <h1 class="admin-page-title">
+              {{ t('lens.qa.adminTitle') }}
+            </h1>
+            <p class="admin-page-subtitle">
+              {{ t('lens.qa.adminSubtitle') }}
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :loading="loading"
+              @click="load"
+            >
+              {{ t('common.refresh') }}
+            </BaseButton>
+          </div>
+        </div>
+        <div
+          class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5"
+        >
+          <div class="flex min-w-0 items-center gap-6 overflow-x-auto">
             <button
               v-for="tab in tabs"
               :key="tab.key"
@@ -28,24 +39,16 @@
               {{ tab.label }}
             </button>
           </div>
-          <BaseButton
-            variant="outline"
-            size="sm"
-            :loading="loading"
-            @click="load"
-          >
-            {{ t('common.refresh') }}
-          </BaseButton>
         </div>
 
-        <div class="p-6">
+        <div class="px-5 py-4">
           <BaseLoading v-if="loading && !rows.length" />
 
           <div
             v-else-if="!rows.length"
-            class="rounded-lg border border-gray-200 bg-gray-50 py-16 text-center"
+            class="rounded-lg border border-line bg-surface-sunken py-16 text-center"
           >
-            <p class="text-sm font-medium text-gray-600">
+            <p class="text-sm font-medium text-ink-600">
               {{ t('common.noData') }}
             </p>
           </div>
@@ -79,29 +82,29 @@
                   </th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-gray-200 bg-white">
+              <tbody class="divide-y divide-line bg-surface">
                 <tr
                   v-for="row in rows"
                   :key="row.uuid"
-                  class="cursor-pointer transition-colors hover:bg-gray-50"
+                  class="cursor-pointer transition-colors hover:bg-line-soft"
                   @click="openDetail(row)"
                 >
                   <td class="table-cell share-review-title-cell">
                     <div
-                      class="share-review-truncate font-medium text-gray-800"
+                      class="share-review-truncate font-medium text-ink-800"
                       :title="row.title"
                     >
                       {{ row.title }}
                     </div>
                     <div
-                      class="share-review-truncate text-xs text-gray-400"
+                      class="share-review-truncate text-xs text-ink-400"
                       :title="row.answer_snippet"
                     >
                       {{ row.answer_snippet }}
                     </div>
                   </td>
                   <td
-                    class="table-cell share-review-assistant-cell text-gray-600"
+                    class="table-cell share-review-assistant-cell text-ink-600"
                   >
                     <div class="flex min-w-0 items-center gap-2">
                       <span
@@ -140,7 +143,7 @@
                     </div>
                   </td>
                   <td
-                    class="table-cell share-review-publisher-cell text-gray-600"
+                    class="table-cell share-review-publisher-cell text-ink-600"
                   >
                     <span
                       class="share-review-truncate"
@@ -149,17 +152,17 @@
                       {{ row.published_by }}
                     </span>
                   </td>
-                  <td class="table-cell whitespace-nowrap text-gray-500">
+                  <td class="table-cell whitespace-nowrap text-ink-500">
                     {{ formatDate(row.published_at, 'yyyy-MM-dd HH:mm') }}
                   </td>
-                  <td class="table-cell text-gray-500">{{ row.view_count }}</td>
+                  <td class="table-cell text-ink-500">{{ row.view_count }}</td>
                   <td class="table-cell share-review-actions-cell" @click.stop>
                     <div
                       class="flex flex-nowrap items-center justify-end gap-2"
                     >
                       <button
                         type="button"
-                        class="text-xs text-gray-500 hover:text-primary-600"
+                        class="text-xs text-ink-500 hover:text-primary-600"
                         @click="openDetail(row)"
                       >
                         {{ t('lens.qa.viewDetail') }}
@@ -168,7 +171,7 @@
                         :href="qaShareUrl(row.token)"
                         target="_blank"
                         rel="noopener"
-                        class="text-xs text-gray-500 no-underline hover:text-primary-600"
+                        class="text-xs text-ink-500 no-underline hover:text-primary-600"
                       >
                         {{ t('lens.qa.preview') }}
                       </a>
@@ -220,7 +223,7 @@
             @next="goNextPage"
           />
         </div>
-      </div>
+      </section>
 
       <BaseDrawer
         :show="drawerOpen"
@@ -233,42 +236,42 @@
         <div v-else-if="detail" class="space-y-6 pt-1">
           <dl class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
             <div>
-              <dt class="text-gray-500">{{ t('lens.qa.assistant') }}</dt>
-              <dd class="mt-0.5 text-gray-900">
+              <dt class="text-ink-500">{{ t('lens.qa.assistant') }}</dt>
+              <dd class="mt-0.5 text-ink-900">
                 {{ detail.assistant_name || '-' }}
               </dd>
             </div>
             <div>
-              <dt class="text-gray-500">{{ t('lens.qa.publishedBy') }}</dt>
-              <dd class="mt-0.5 text-gray-900">
+              <dt class="text-ink-500">{{ t('lens.qa.publishedBy') }}</dt>
+              <dd class="mt-0.5 text-ink-900">
                 {{ detail.published_by || '-' }}
               </dd>
             </div>
             <div>
-              <dt class="text-gray-500">{{ t('lens.qa.publishedAt') }}</dt>
-              <dd class="mt-0.5 text-gray-900">
+              <dt class="text-ink-500">{{ t('lens.qa.publishedAt') }}</dt>
+              <dd class="mt-0.5 text-ink-900">
                 {{ formatDate(detail.published_at, 'yyyy-MM-dd HH:mm') }}
               </dd>
             </div>
             <div>
-              <dt class="text-gray-500">{{ t('lens.qa.views') }}</dt>
-              <dd class="mt-0.5 text-gray-900">{{ detail.view_count }}</dd>
+              <dt class="text-ink-500">{{ t('lens.qa.views') }}</dt>
+              <dd class="mt-0.5 text-ink-900">{{ detail.view_count }}</dd>
             </div>
           </dl>
 
           <section>
-            <h3 class="mb-2 text-sm font-semibold text-gray-900">
+            <h3 class="mb-2 text-sm font-semibold text-ink-900">
               {{ t('lens.qa.question') }}
             </h3>
             <div
-              class="whitespace-pre-wrap rounded-lg bg-gray-50 p-4 text-sm text-gray-800"
+              class="whitespace-pre-wrap rounded-lg bg-surface-sunken p-4 text-sm text-ink-800"
             >
               {{ detail.question || '-' }}
             </div>
           </section>
 
           <section>
-            <h3 class="mb-2 text-sm font-semibold text-gray-900">
+            <h3 class="mb-2 text-sm font-semibold text-ink-900">
               {{ t('lens.qa.answer') }}
             </h3>
             <MarkdownRenderer :content="detail.answer || ''" />
@@ -475,11 +478,11 @@ onMounted(load)
 }
 
 .qa-tab {
-  @apply border-b-2 border-transparent py-3 text-sm font-medium text-gray-500 transition-colors;
+  @apply shrink-0 whitespace-nowrap border-b-2 border-transparent py-3 text-sm font-medium text-ink-500 transition-colors;
 }
 
 .qa-tab:hover {
-  @apply text-gray-700;
+  @apply text-ink-700;
 }
 
 .qa-tab-active {

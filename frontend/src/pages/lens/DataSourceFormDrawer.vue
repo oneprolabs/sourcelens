@@ -425,7 +425,11 @@
         </p>
       </section>
       <div
-        v-if="connectionResult && connectionResult.status !== 'success' && !testingConnection"
+        v-if="
+          connectionResult &&
+          connectionResult.status !== 'success' &&
+          !testingConnection
+        "
         class="rounded-md border p-3 text-sm"
         :class="
           connectionResult.status === 'success'
@@ -441,7 +445,10 @@
       <p class="text-sm text-ink-500">
         {{ t('lensAdmin.datasourceWizard.step3Desc') }}
       </p>
-      <FormRow v-if="isManagedWorkspace" :label="t('lensAdmin.fields.lensnode')">
+      <FormRow
+        v-if="isManagedWorkspace"
+        :label="t('lensAdmin.fields.lensnode')"
+      >
         <BaseSelect v-model="form.lensnode_uuid">
           <option value="">
             {{ t('lensAdmin.placeholders.selectLensNode') }}
@@ -458,12 +465,17 @@
           {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
         </p>
       </FormRow>
-      <div v-if="isManagedWorkspace && !onlineLensNodes.length"
+      <div
+        v-if="isManagedWorkspace && !onlineLensNodes.length"
         class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
       >
         {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
       </div>
-      <FormRow v-if="isManagedWorkspace" :label="t('lensAdmin.fields.targetPath')" required>
+      <FormRow
+        v-if="isManagedWorkspace"
+        :label="t('lensAdmin.fields.targetPath')"
+        required
+      >
         <div class="space-y-3">
           <input
             v-if="isManagedWorkspace"
@@ -1468,7 +1480,7 @@ const sourceTypes = computed(() => {
         label: localized.display_name,
         description: localized.description || ''
       }
-    }),
+    })
   ]
   if (props.mode === 'edit' && props.form.source_type === 'managed_workspace') {
     types.push({
@@ -1701,7 +1713,11 @@ const gitBranchOptions = computed(() => {
 })
 
 const organizationBranchOptions = computed(() =>
-  [...new Set(gitOrganizationRepositories.value.flatMap((repo) => repo.branches || []))].sort()
+  [
+    ...new Set(
+      gitOrganizationRepositories.value.flatMap((repo) => repo.branches || [])
+    )
+  ].sort()
 )
 
 const pluginConnections = computed(() =>
@@ -1729,7 +1745,8 @@ const selectedConnectionScopeSummary = computed(() => {
       })
   if (!values.length) return ''
   const visible = values.slice(0, 2)
-  const suffix = values.length > visible.length ? ` +${values.length - visible.length}` : ''
+  const suffix =
+    values.length > visible.length ? ` +${values.length - visible.length}` : ''
   return `${visible.join(' · ')}${suffix}`
 })
 

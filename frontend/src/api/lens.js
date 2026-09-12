@@ -58,12 +58,18 @@ export async function listAssistantDataSourceBindings(uuid) {
 }
 
 export async function bindAssistantDataSource(uuid, payload) {
-  const response = await api.post(`/lens/assistants/${uuid}/datasources/`, payload)
+  const response = await api.post(
+    `/lens/assistants/${uuid}/datasources/`,
+    payload
+  )
   return unwrapResponse(response)
 }
 
 export async function updateAssistantDataSourceBinding(uuid, payload) {
-  const response = await api.patch(`/lens/assistants/${uuid}/datasources/`, payload)
+  const response = await api.patch(
+    `/lens/assistants/${uuid}/datasources/`,
+    payload
+  )
   return unwrapResponse(response)
 }
 
