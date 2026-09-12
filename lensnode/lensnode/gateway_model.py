@@ -20,6 +20,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field, PrivateAttr
 
 from .tls import create_ssl_context
+from .agent_runtime.limits import SharedTokenBudget
 
 LOGGER = logging.getLogger("lensnode")
 
@@ -226,6 +227,7 @@ class LensGatewayChatModel(BaseChatModel):
     on_runtime_state_change: Optional[Any] = None
     trajectory: Optional[Any] = None
     reasoning_effort: Optional[str] = None
+    shared_token_budget: Optional[SharedTokenBudget] = None
     loop_repeat_warn: int = 3
     loop_repeat_hard: int = 5
     loop_tool_warn: int = 30
@@ -1153,10 +1155,17 @@ class LensGatewayChatModel(BaseChatModel):
                 self._stop_reason = "safety_terminated"
             elif source_metadata.get("model_length_capped"):
                 self._stop_reason = "model_length_capped"
-            self._run_token_usage["prompt_tokens"] += prompt_tokens
-            self._run_token_usage["completion_tokens"] += completion_tokens
-            self._run_token_usage["total_tokens"] += total_tokens
-            cumulative = dict(self._run_token_usage)
+            if self.shared_token_budget is not None:
+                cumulative, shared_hard_stop = self.shared_token_budget.consume(
+                    prompt_tokens, completion_tokens, total_tokens
+                )
+                self._run_token_usage = dict(cumulative)
+            else:
+                self._run_token_usage["prompt_tokens"] += prompt_tokens
+                self._run_token_usage["completion_tokens"] += completion_tokens
+                self._run_token_usage["total_tokens"] += total_tokens
+                cumulative = dict(self._run_token_usage)
+                shared_hard_stop = False
             limit = (
                 max(int(self.token_budget_max_tokens or 0), 0)
                 if self.general_chat_execution_gates
@@ -1176,7 +1185,12 @@ class LensGatewayChatModel(BaseChatModel):
                 and reserve
                 and cumulative["total_tokens"] >= work_limit
             )
-            hard_stop = bool(limit and cumulative["total_tokens"] >= limit)
+            hard_stop = (
+                self.general_chat_execution_gates
+                and (shared_hard_stop or bool(
+                limit and cumulative["total_tokens"] >= limit
+                ))
+            )
             if wrapup_needed and self.token_budget_wrapup_event is not None:
                 self.token_budget_wrapup_event.set()
             if hard_stop:
