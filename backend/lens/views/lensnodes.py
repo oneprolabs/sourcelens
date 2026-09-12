@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from lens.datasource_services import (
+from lens.datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,

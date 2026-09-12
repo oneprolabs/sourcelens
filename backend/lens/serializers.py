@@ -17,12 +17,12 @@ from .assistant_lifecycle import (
     fixed_collaboration_assistants,
     smart_collaboration_assistants,
 )
-from .datasource_bindings import (
+from .datasource.bindings import (
     DatasourceBindingsField, replace_datasource_bindings,
 )
 from .attachments import ATTACHMENT_MAX_PER_MESSAGE, AttachmentError
 from .citations import public_run_citations, sanitize_planned_evidence
-from .datasource_services import (
+from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,

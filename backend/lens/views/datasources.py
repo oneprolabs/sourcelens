@@ -9,7 +9,7 @@ from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from lens.datasource_services import (
+from lens.datasource.services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
     get_datasource_upload_limits,
     DataSourceDispatchError,

@@ -1182,11 +1182,11 @@ def create_execution_run(
     input_message.run = run
     input_message.save(update_fields=["run"])
     if not session.datasource_snapshots.exists():
-        from .datasource_routing import (
+        from .datasource.routing import (
             DatasourceRoutingError,
             selected_bindings,
         )
-        from .datasource_snapshots import capture_session_datasources
+        from .datasource.snapshots import capture_session_datasources
 
         try:
             bindings = selected_bindings(assistant, question)

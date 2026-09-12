@@ -291,7 +291,7 @@ def execute_answer_run(
         assistant.slug,
     )
     try:
-        from .datasource_routing import prepare_run_datasources
+        from .datasource.routing import prepare_run_datasources
 
         if not prepare_run_datasources(run):
             from .tasks import enqueue_answer_run_task

@@ -14,7 +14,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from .datasource_services import (
+from .datasource.services import (
     DataSourceDispatchError,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
@@ -23,7 +23,7 @@ from .datasource_services import (
     get_datasource_sync_timeout_s,
     get_datasource_upload_timeout_s,
 )
-from .datasource_versions import record_datasource_versions
+from .datasource.versions import record_datasource_versions
 from .models import (
     CredentialLease,
     DataSource,
@@ -1002,7 +1002,7 @@ def datasource_upload_task(
     from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
-    from .datasource_services import dispatch_datasource_upload_async
+    from .datasource.services import dispatch_datasource_upload_async
 
     task_id = task_id or self.request.id
     datasource = DataSource.objects.select_related("lensnode").get(uuid=datasource_uuid)
