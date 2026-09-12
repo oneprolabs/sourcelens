@@ -92,6 +92,7 @@ def _tenant_access_token(client, app_id, app_secret):
         FEISHU_API_URL + "/open-apis/auth/v3/tenant_access_token/internal",
         {"Content-Type": "application/json"},
         json_body={"app_id": app_id, "app_secret": app_secret},
+        error_code="FEISHU_ACCESS_DENIED",
     )
     token = payload.get("tenant_access_token")
     if (
@@ -103,7 +104,15 @@ def _tenant_access_token(client, app_id, app_secret):
     return token
 
 
-def _request_json(client, method, url, headers, *, json_body=None):
+def _request_json(
+    client,
+    method,
+    url,
+    headers,
+    *,
+    json_body=None,
+    error_code="FEISHU_DOCUMENT_READ_FAILED",
+):
     """Return one bounded JSON response from the host-managed client."""
 
     if client is None:
@@ -121,7 +130,7 @@ def _request_json(client, method, url, headers, *, json_body=None):
             if response.is_redirect:
                 raise PluginRuntimeError("FEISHU_REDIRECT_REJECTED")
             if response.status_code >= 400:
-                raise PluginRuntimeError("FEISHU_DOCUMENT_READ_FAILED")
+                raise PluginRuntimeError(error_code)
             body = bytearray()
             for chunk in response.iter_bytes():
                 if len(body) + len(chunk) > FEISHU_MAX_RESPONSE_BYTES:
