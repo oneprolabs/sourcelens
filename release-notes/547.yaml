@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Preserve parent token budgets across model calls and resumed runs.
+zh-CN: 在多次模型调用和恢复运行之间保留父运行的令牌预算。
