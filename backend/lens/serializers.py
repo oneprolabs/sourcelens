@@ -1985,7 +1985,13 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
     def get_deployments(self, obj):
         """Serialize every runtime copy of the datasource."""
-        rows = obj.deployments.select_related("lensnode").order_by("created_at")
+        rows = getattr(obj, "_prefetched_objects_cache", {}).get(
+            "deployments"
+        )
+        if rows is None:
+            rows = obj.deployments.select_related("lensnode").order_by(
+                "created_at"
+            )
         return DataSourceDeploymentSerializer(rows, many=True).data
 
     def validate(self, attrs):

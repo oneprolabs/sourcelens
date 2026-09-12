@@ -24,6 +24,14 @@ class GitHubDatasourceProviderTests(SimpleTestCase):
         self.assertEqual(config["repository"], "HyperBDR/sourcelens")
         self.assertEqual(config["directory"], "docs")
 
+    def test_accepts_plural_repository_selection_within_connection_scope(self):
+        config = self.provider.validate_datasource_config(
+            self.scope,
+            {"repositories": ["HyperBDR/sourcelens"]},
+        )
+
+        self.assertEqual(config["repositories"], ["HyperBDR/sourcelens"])
+
     def test_rejects_a_repository_outside_connection_scope(self):
         with self.assertRaisesMessage(DatasourceProviderError, "scope"):
             self.provider.validate_datasource_config(

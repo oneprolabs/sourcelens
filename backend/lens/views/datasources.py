@@ -7,7 +7,7 @@ import uuid as uuid_mod
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from lens.datasource.services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
@@ -262,7 +262,14 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "lensnode",
                 "credential",
             )
-            .prefetch_related("deployments__lensnode")
+            .prefetch_related(
+                Prefetch(
+                    "deployments",
+                    queryset=DataSourceDeployment.objects.select_related(
+                        "lensnode"
+                    ).order_by("created_at"),
+                )
+            )
         )
         filters = self._datasource_search_filters(
             self.request.query_params.get("filters")
