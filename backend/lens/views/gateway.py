@@ -4,9 +4,13 @@ import hashlib
 import json
 import os
 import re
+import time
+import uuid
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db.models import Sum
 from django.http import FileResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -15,12 +19,13 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from lens.citations import sanitize_run_citations
+from agentcore_metering.adapters.django.models import LLMUsage
+from lens.citations import public_run_citations, sanitize_run_citations
 from lens.document_attachments import (
     document_attachment_storage,
     get_document_attachment,
 )
-from lens.models import Run, RunOutputFile, Skill
+from lens.models import Run, RunExecution, RunOutputFile, Skill
 from lens.services import (
     LensNodeDispatchError,
     create_delegated_run,
@@ -35,6 +40,8 @@ from .base import EventStreamRenderer, LensNodeAuthMixin
 # prove transport liveness to the LensNode watchdog so it only aborts
 # on a genuinely dead pipe, never on a quiet-but-alive model call.
 GATEWAY_STREAM_HEARTBEAT_S = 10
+RUN_BUDGET_LOCK_TIMEOUT_S = 120
+RUN_BUDGET_WAIT_TIMEOUT_S = 30
 OBSERVATION_ID_PATTERN = re.compile(r"^(?!0{16}$)[0-9a-f]{16}$")
 GENERATION_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 EMPTY_RESPONSE_FINISH_REASON_PATTERN = re.compile(
@@ -121,6 +128,30 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                     f"00-{run.uuid.hex}-"
                     f"{trace_context['parent_observation_id']}-01"
                 )
+        budget_lock = self._acquire_parent_budget_lock(run)
+        if run_uuid and budget_lock == "exhausted":
+            return Response(
+                {
+                    "code": "RUN_TOKEN_BUDGET_EXHAUSTED",
+                    "detail": "The parent Run token budget has been exhausted.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        if run_uuid and budget_lock is None:
+            return Response(
+                {
+                    "code": "RUN_TOKEN_BUDGET_BUSY",
+                    "detail": "Another model call is reserving this Run budget.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        effective_max_tokens = request.data.get("max_tokens")
+        if isinstance(budget_lock, tuple) and budget_lock[4] > 0:
+            remaining_tokens = budget_lock[4]
+            effective_max_tokens = min(
+                int(effective_max_tokens or remaining_tokens),
+                remaining_tokens,
+            )
         if request.data.get("stream"):
             return self._stream_response(
                 lensnode,
@@ -128,6 +159,8 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 messages,
                 tracker_state,
                 request.data,
+                budget_lock,
+                effective_max_tokens,
             )
 
         try:
@@ -139,7 +172,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 tools=request.data.get("tools"),
                 tool_choice=request.data.get("tool_choice"),
                 temperature=request.data.get("temperature"),
-                max_tokens=request.data.get("max_tokens"),
+                max_tokens=effective_max_tokens,
                 reasoning_effort=request.data.get("reasoning_effort"),
                 return_message=bool(request.data.get("return_message")),
             )
@@ -151,6 +184,8 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 empty_response,
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+        finally:
+            self._release_parent_budget_lock(budget_lock)
         data = {
             "usage": usage,
             "lensnode_uuid": str(lensnode.uuid),
@@ -161,6 +196,62 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         else:
             data["content"] = content
         return Response(data)
+
+    @staticmethod
+    def _acquire_parent_budget_lock(run):
+        """Serialize metered calls for one Run tree at its budget boundary."""
+
+        if run is None:
+            return None
+        root = run
+        while root.parent_run_id:
+            root = Run.objects.only("uuid", "parent_run_id").get(
+                pk=root.parent_run_id
+            )
+        limit = int(
+            RunExecution.objects.only("token_budget_max_tokens").get(
+                run_id=root.pk
+            ).token_budget_max_tokens
+            or 0
+        )
+        if not limit:
+            return "disabled"
+        token = uuid.uuid4().hex
+        key = f"lens:run-budget-lock:{root.uuid}"
+        deadline = time.monotonic() + RUN_BUDGET_WAIT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if cache.add(key, token, RUN_BUDGET_LOCK_TIMEOUT_S):
+                usage_ids = [str(root.uuid)]
+                frontier = [root.pk]
+                while frontier:
+                    children = list(
+                        Run.objects.filter(parent_run_id__in=frontier).values_list(
+                            "pk", "uuid"
+                        )
+                    )
+                    frontier = [pk for pk, _uuid in children]
+                    usage_ids.extend(
+                        str(run_uuid) for _pk, run_uuid in children
+                    )
+                used = LLMUsage.objects.filter(
+                    metadata__run_uuid__in=usage_ids,
+                ).aggregate(total=Sum("total_tokens"))["total"] or 0
+                if int(used) >= limit:
+                    cache.delete(key)
+                    return "exhausted"
+                return key, token, root.uuid, limit, limit - int(used)
+            time.sleep(0.05)
+        return None
+
+    @staticmethod
+    def _release_parent_budget_lock(lock):
+        """Release a budget lock only when it is still owned by this call."""
+
+        if lock is None or lock == "disabled":
+            return
+        key, token, _root_uuid, _limit, _remaining = lock
+        if cache.get(key) == token:
+            cache.delete(key)
 
     @staticmethod
     def _empty_response_error_payload(error):
@@ -205,6 +296,8 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         messages,
         tracker_state,
         payload,
+        budget_lock=None,
+        effective_max_tokens=None,
     ):
         """Stream a metered LLM call as SSE chunks.
 
@@ -235,7 +328,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                         tools=payload.get("tools"),
                         tool_choice=payload.get("tool_choice"),
                         temperature=payload.get("temperature"),
-                        max_tokens=payload.get("max_tokens"),
+                        max_tokens=effective_max_tokens,
                         reasoning_effort=payload.get("reasoning_effort"),
                     )
                     token_count = 0
@@ -337,6 +430,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                         raise item[1]
             finally:
                 await future
+                self._release_parent_budget_lock(budget_lock)
 
         response = StreamingHttpResponse(
             event_stream(),
@@ -481,6 +575,7 @@ class LensNodeDelegationView(LensNodeAuthMixin, APIView):
                 if run.output_message_id
                 else ""
             ),
+            "citations": public_run_citations(run.citations),
             "error": str(run.error or "")[:500],
         }
 

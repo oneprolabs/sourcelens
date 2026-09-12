@@ -103,9 +103,14 @@ class RemoteSubagentRunnable(Runnable):
 
         self._check_cancelled()
         if payload.get("status") == "done":
+            citations = payload.get("citations") or []
             return {
                 "messages": [
-                    AIMessage(content=str(payload.get("answer") or ""))
+                    AIMessage(
+                        content=str(payload.get("answer") or ""),
+                        additional_kwargs={"delegated_citations": citations},
+                        response_metadata={"delegated_citations": citations},
+                    )
                 ]
             }
         error = str(payload.get("error") or payload.get("status") or "")

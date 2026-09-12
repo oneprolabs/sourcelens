@@ -746,18 +746,19 @@ def resume_awaiting_runs_for_lensnode(
     return recovered
 
 
-def fail_running_steps_for_runs(run_ids):
+def fail_running_steps_for_runs(run_ids, status=RunStep.Status.FAILED):
     """Finalize in-flight steps for runs failed outside the step context.
 
     Out-of-band failure paths (lensnode disconnect, orphan reconcile, idle
     sweep) update the Run row directly, so their RUNNING RunStep rows would
     otherwise stay RUNNING forever and disagree with the terminal Run state.
+    The caller may use ``DONE`` when the out-of-band terminal result succeeded.
     """
 
     return RunStep.objects.filter(
         run_id__in=run_ids,
         status=RunStep.Status.RUNNING,
-    ).update(status=RunStep.Status.FAILED, updated_at=timezone.now())
+    ).update(status=status, updated_at=timezone.now())
 
 
 RECONCILE_GRACE_SECONDS = 60
@@ -1387,9 +1388,23 @@ def create_delegated_run(
     )
     if parent_run.session.routing_mode != Session.RoutingMode.SMART:
         raise LensNodeDispatchError("SUBAGENT_NOT_ALLOWED")
+    if parent_run.parent_run_id:
+        raise LensNodeDispatchError("SUBAGENT_NESTED_DISABLED")
     if parent_run.status not in {
         Run.Status.RUNNING,
         Run.Status.STREAMING,
+    }:
+        raise LensNodeDispatchError("PARENT_RUN_NOT_ACTIVE")
+    try:
+        parent_execution = parent_run.execution
+    except RunExecution.DoesNotExist:
+        parent_execution = RunExecution.objects.filter(run=parent_run).first()
+    if parent_execution is None:
+        raise LensNodeDispatchError("PARENT_RUN_EXECUTION_MISSING")
+    if parent_execution.status in {
+        RunExecution.Status.COMPLETED,
+        RunExecution.Status.FAILED,
+        RunExecution.Status.CANCELLED,
     }:
         raise LensNodeDispatchError("PARENT_RUN_NOT_ACTIVE")
     ancestry = set()
@@ -3562,6 +3577,29 @@ def finish_lensnode_run(
             "updated_at",
             *run_result_fields,
         ]
+    )
+
+    # A terminal parent must not leave delegated work running.  This also
+    # covers budget/deadline termination paths that bypass the UI cancel API.
+    descendants = cancel_descendant_runs(run)
+    for descendant in descendants:
+        transaction.on_commit(
+            lambda child=descendant: cancel_run_on_lensnode(child)
+        )
+
+    # A terminal frame can arrive after an individual step's final event (or
+    # after an out-of-band cancellation). Close any remaining in-flight steps
+    # so trajectory state cannot contradict the terminal Run status.
+    fail_running_steps_for_runs(
+        [run.pk],
+        status=(
+            RunStep.Status.DONE
+            if run.status in {
+                Run.Status.DONE,
+                Run.Status.AWAITING_USER_INPUT,
+            }
+            else RunStep.Status.FAILED
+        ),
     )
 
     if hasattr(run, "execution"):
