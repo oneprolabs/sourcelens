@@ -212,8 +212,18 @@ def _duration_ms(started_at, finished_at):
 def _admin_run_model_usage(run):
     """Return metered model calls correlated to one Run UUID."""
 
+    run_uuids = [str(run.uuid)]
+    frontier = [run.pk]
+    while frontier:
+        children = list(
+            Run.objects.filter(parent_run_id__in=frontier).values_list(
+                "pk", "uuid"
+            )
+        )
+        frontier = [pk for pk, _uuid in children]
+        run_uuids.extend(str(run_uuid) for _pk, run_uuid in children)
     usages = LLMUsage.objects.filter(
-        metadata__run_uuid=str(run.uuid),
+        metadata__run_uuid__in=run_uuids,
     ).order_by("created_at")
     calls = []
     total_cost = 0.0
@@ -236,7 +246,8 @@ def _admin_run_model_usage(run):
                 "cost_currency": usage.cost_currency,
                 "success": usage.success,
                 "is_streaming": usage.is_streaming,
-                "is_subagent": bool(metadata.get("is_subagent")),
+                "is_subagent": bool(metadata.get("is_subagent"))
+                or str(metadata.get("run_uuid") or "") != str(run.uuid),
                 "source_type": metadata.get("source_type"),
                 "started_at": (
                     usage.started_at.isoformat() if usage.started_at else None
@@ -354,6 +365,19 @@ def _admin_run_row(run):
     assistant = session.assistant if session else None
     question = (run.input_message.content if run.input_message else "") or ""
     counts = _admin_run_step_counts(run)
+    metered_usage = getattr(run, "_admin_metered_usage", None)
+    if metered_usage:
+        # LLMUsage is the authoritative source once a metering record exists.
+        # Step events are intentionally retained as a fallback for active runs
+        # and older runs created before metering was enabled.
+        for key in (
+            "llm_calls",
+            "total_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+        ):
+            counts[key] = metered_usage[key]
+        counts["total_cost"] = metered_usage["total_cost"]
     execution = run.execution if hasattr(run, "execution") else None
     runtime_snapshot = execution.runtime_snapshot if execution else {}
     admitted_at = execution.admitted_at if execution else None
@@ -439,6 +463,15 @@ def _admin_run_row(run):
         "total_tokens": counts["total_tokens"],
         "prompt_tokens": counts["prompt_tokens"],
         "completion_tokens": counts["completion_tokens"],
+        "cached_tokens": (
+            metered_usage["cached_tokens"] if metered_usage else 0
+        ),
+        "reasoning_tokens": (
+            metered_usage["reasoning_tokens"] if metered_usage else 0
+        ),
+        "subagent_model_calls": (
+            metered_usage["subagent_model_calls"] if metered_usage else 0
+        ),
         "total_cost": counts["total_cost"],
         "token_budget_profile": (execution.token_budget_profile if execution else None),
         "token_budget_max_tokens": max_tokens,
@@ -802,6 +835,10 @@ def _admin_run_resource_usage(run, execution):
 def _admin_run_detail(run):
     """Serialize a run with full Q&A, timeline and execution snapshot."""
 
+    # Attach metered usage before serializing the summary fields so the detail
+    # row and the dedicated usage payload use the same authoritative totals.
+    model_usage = _admin_run_model_usage(run)
+    run._admin_metered_usage = model_usage
     row = _admin_run_row(run)
     out = run.output_message
     assistant = run.session.assistant if run.session else None
@@ -810,7 +847,6 @@ def _admin_run_detail(run):
     agent_rounds = execution.agent_rounds if execution else None
     if agent_rounds is None and assistant:
         agent_rounds = assistant.agent_rounds
-    model_usage = _admin_run_model_usage(run)
     steps = []
     for step in run.steps.all():
         detail, events = _admin_step_detail(step)
@@ -1020,7 +1056,78 @@ class AdminRunListView(APIView):
 
         total = qs.count()
         start = (page - 1) * page_size
-        rows = [_admin_run_row(run) for run in qs[start : start + page_size]]
+        page_runs = list(qs[start : start + page_size])
+        run_ids = [str(run.uuid) for run in page_runs]
+        child_pairs = []
+        frontier = run_ids
+        while frontier:
+            rows = list(
+                Run.objects.filter(parent_run__uuid__in=frontier).values_list(
+                    "uuid", "parent_run__uuid"
+                )
+            )
+            child_pairs.extend(rows)
+            frontier = [str(child) for child, _parent in rows]
+        usage_ids = run_ids + [str(child) for child, _parent in child_pairs]
+        usages = LLMUsage.objects.filter(metadata__run_uuid__in=usage_ids)
+        parent_by_child = {
+            str(child): str(parent) for child, parent in child_pairs
+        }
+        usage_owner = {}
+        for child, parent in child_pairs:
+            owner = str(parent)
+            while owner in parent_by_child:
+                owner = parent_by_child[owner]
+            usage_owner[str(child)] = owner
+        usage_by_run = {}
+        for usage in usages:
+            usage_run_id = str((usage.metadata or {}).get("run_uuid") or "")
+            run_id = usage_owner.get(usage_run_id, usage_run_id)
+            if not run_id:
+                continue
+            usage_by_run.setdefault(run_id, []).append(usage)
+            if run_id != usage_run_id:
+                usage_by_run.setdefault(usage_run_id, []).append(usage)
+        for run in page_runs:
+            calls = usage_by_run.get(str(run.uuid), [])
+            if calls:
+                run._admin_metered_usage = {
+                    "llm_calls": len(calls),
+                    "subagent_model_calls": sum(
+                        bool((item.metadata or {}).get("is_subagent"))
+                        or str((item.metadata or {}).get("run_uuid") or "")
+                        in usage_owner
+                        for item in calls
+                    ),
+                    "total_tokens": sum(
+                        item.total_tokens or 0 for item in calls
+                    ),
+                    "prompt_tokens": sum(
+                        item.prompt_tokens or 0 for item in calls
+                    ),
+                    "completion_tokens": sum(
+                        item.completion_tokens or 0 for item in calls
+                    ),
+                    "cached_tokens": sum(
+                        item.cached_tokens or 0 for item in calls
+                    ),
+                    "reasoning_tokens": sum(
+                        item.reasoning_tokens or 0 for item in calls
+                    ),
+                    "total_cost": (
+                        round(
+                            sum(
+                                float(item.cost or 0)
+                                for item in calls
+                                if item.cost is not None
+                            ),
+                            6,
+                        )
+                        if any(item.cost is not None for item in calls)
+                        else None
+                    ),
+                }
+        rows = [_admin_run_row(run) for run in page_runs]
         return Response(
             {
                 "results": rows,
@@ -1405,15 +1512,26 @@ def _run_trace_summary(
             filter=Q(event_type__endswith=".failed"),
         ),
     )
+    metered = list(
+        LLMUsage.objects.filter(
+            metadata__run_uuid__in=[str(item.uuid) for item in progress_runs]
+        )
+    )
     if not aggregate["event_count"]:
         summary = {
             "event_count": 0,
             "first_timestamp": None,
             "last_timestamp": None,
             "duration_ms": None,
-            "model_calls": 0,
+            "model_calls": len(metered),
             "tool_calls": 0,
-            "total_tokens": 0,
+            "total_tokens": sum(item.total_tokens or 0 for item in metered),
+            "subagent_model_calls": sum(
+                bool((item.metadata or {}).get("is_subagent"))
+                or str((item.metadata or {}).get("run_uuid") or "")
+                != str(run.uuid)
+                for item in metered
+            ),
             "error_count": 0,
             "categories": {},
         }
@@ -1437,6 +1555,9 @@ def _run_trace_summary(
             total_tokens += max(int(value or 0), 0)
         except (TypeError, ValueError):
             pass
+    if metered:
+        total_tokens = sum(item.total_tokens or 0 for item in metered)
+        aggregate["model_calls"] = len(metered)
     first_timestamp = aggregate["first_timestamp"]
     last_timestamp = aggregate["last_timestamp"]
     summary = {
@@ -1450,6 +1571,12 @@ def _run_trace_summary(
         "model_calls": aggregate["model_calls"],
         "tool_calls": aggregate["tool_calls"],
         "total_tokens": total_tokens,
+        "subagent_model_calls": sum(
+            bool((item.metadata or {}).get("is_subagent"))
+            or str((item.metadata or {}).get("run_uuid") or "")
+            != str(run.uuid)
+            for item in metered
+        ),
         "error_count": aggregate["error_count"],
         "categories": categories,
     }
@@ -1476,25 +1603,33 @@ def _trajectory_context(run_uuid):
     except Run.DoesNotExist:
         return None
     trace_runs = [run]
-    trace_runs.extend(
-        run.delegated_runs.select_related(
-            "execution",
-            "session__assistant",
-            "input_message",
-        ).all()
-    )
+    frontier = [run.pk]
+    while frontier:
+        children = list(
+            Run.objects.filter(parent_run_id__in=frontier).select_related(
+                "execution",
+                "session__assistant",
+                "input_message",
+            )
+        )
+        trace_runs.extend(children)
+        frontier = [child.pk for child in children]
     progress_root = run.parent_run or run
     if progress_root.id == run.id:
         progress_runs = trace_runs
     else:
         progress_runs = [progress_root]
-        progress_runs.extend(
-            progress_root.delegated_runs.select_related(
-                "execution",
-                "session__assistant",
-                "input_message",
-            ).all()
-        )
+        frontier = [progress_root.pk]
+        while frontier:
+            children = list(
+                Run.objects.filter(parent_run_id__in=frontier).select_related(
+                    "execution",
+                    "session__assistant",
+                    "input_message",
+                )
+            )
+            progress_runs.extend(children)
+            frontier = [child.pk for child in children]
     return run, trace_runs, progress_root, progress_runs
 
 
