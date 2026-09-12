@@ -197,6 +197,8 @@ services:
       LENSNODE_CONTROL_WS_URL: ws://nginx:80/ws/lens/lensnodes/
       LENSNODE_AI_GATEWAY_URL: http://nginx:80/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_RUNTIME_PATH: /runtime
+      LENSNODE_CHECKPOINT_DIR: /runtime/checkpoints
       LENSNODE_EXECUTION_BACKEND: ${LENSNODE_EXECUTION_BACKEND:-trusted_container}
       LENSNODE_HEARTBEAT_INTERVAL_S: 15
       LENSNODE_REQUEST_TIMEOUT_S: ${LENSNODE_REQUEST_TIMEOUT_S:-240}
@@ -216,6 +218,7 @@ services:
       LENSNODE_NODE_OPTIONS: ${LENSNODE_NODE_OPTIONS:-}
     volumes:
       - ./data/workspace:/workspace
+      - ./data/runtime:/runtime
     networks:
       - backend_network
 

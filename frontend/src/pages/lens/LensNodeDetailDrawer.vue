@@ -6,11 +6,7 @@
     @close="$emit('close')"
   >
     <div v-if="node" class="space-y-6">
-      <!-- Header: id + runtime status -->
-      <div class="flex items-center justify-between">
-        <span class="font-mono text-xs text-ink-400">
-          {{ compactUuid(node.uuid) }}
-        </span>
+      <div class="flex items-center justify-end">
         <StatusBadge :status="node.status" />
       </div>
 
@@ -47,7 +43,7 @@
             :key="task"
             class="rounded border border-primary-200 bg-primary-50 px-2 py-1 text-xs text-primary-700"
           >
-            {{ task }}
+            {{ taskLabel(task) }}
           </span>
         </div>
       </section>
@@ -88,77 +84,169 @@
         </ul>
       </section>
 
-      <section class="space-y-3">
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div
-            v-for="item in nodeMetricCards"
-            :key="item.label"
-            class="rounded-lg border border-line bg-surface-sunken px-3 py-2.5"
+      <details open class="group rounded-lg border border-line bg-surface">
+        <summary
+          class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-ink-900"
+        >
+          {{ t('lensAdmin.detail.runtimeStats') }}
+          <span class="float-right text-xs text-ink-400 group-open:rotate-180"
+            >⌄</span
           >
-            <div class="text-xs text-ink-500">{{ item.label }}</div>
-            <div class="mt-1 text-lg font-semibold tabular-nums text-ink-900">
-              {{ item.value }}
-            </div>
-          </div>
-        </div>
-        <div class="space-y-3">
-          <div class="rounded-lg border border-line bg-surface px-4 py-3">
-            <div class="flex items-center justify-between gap-3">
-              <span class="text-xs font-medium text-ink-500">
-                {{ nodeInfoRows[0].label }}
-              </span>
-              <span class="text-[11px] text-ink-400">
-                {{ t('lensAdmin.detail.runtimeLocation') }}
-              </span>
-            </div>
-            <div class="mt-2 break-all font-mono text-sm text-ink-900">
-              {{ nodeInfoRows[0].value }}
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
+        </summary>
+        <section class="space-y-3 border-t border-line px-4 py-3">
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div
-              v-for="item in nodeInfoRows.slice(1)"
+              v-for="item in nodeMetricCards"
               :key="item.label"
-              class="rounded-lg border border-line bg-surface px-3 py-3"
+              class="rounded-lg border border-line bg-surface-sunken px-3 py-2.5"
             >
               <div class="text-xs text-ink-500">{{ item.label }}</div>
-              <div class="mt-1.5 break-words text-sm font-medium text-ink-800">
+              <div class="mt-1 text-lg font-semibold tabular-nums text-ink-900">
                 {{ item.value }}
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="space-y-3" data-testid="lensnode-existing-datasources">
-        <h3 class="text-sm font-semibold text-ink-900">
-          {{ t('lensAdmin.detail.existingDatasources') }}
-        </h3>
-        <ul v-if="node.datasources?.length" class="detail-list">
-          <li v-for="datasource in node.datasources" :key="datasource.uuid" class="px-3 py-2.5">
-            <div class="flex items-center justify-between gap-3">
-              <span class="min-w-0 truncate text-sm font-medium text-ink-800">{{ datasource.name }}</span>
-              <StatusBadge :status="datasource.status" />
+          <div class="space-y-3">
+            <div class="rounded-lg border border-line bg-surface px-4 py-3">
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-xs font-medium text-ink-500">
+                  {{ nodeInfoRows[0].label }}
+                </span>
+                <span class="text-[11px] text-ink-400">
+                  {{ t('lensAdmin.detail.runtimeLocation') }}
+                </span>
+              </div>
+              <div class="mt-2 break-all font-mono text-sm text-ink-900">
+                {{ nodeInfoRows[0].value }}
+              </div>
             </div>
-            <div class="mt-1 text-xs text-ink-500">{{ datasource.source_type }}</div>
-          </li>
-        </ul>
-        <p v-else class="detail-empty">{{ t('lensAdmin.detail.noDatasources') }}</p>
-      </section>
+            <div class="grid grid-cols-2 gap-3">
+              <div
+                v-for="item in nodeInfoRows.slice(1)"
+                :key="item.label"
+                class="rounded-lg border border-line bg-surface px-3 py-3"
+              >
+                <div class="text-xs text-ink-500">{{ item.label }}</div>
+                <div
+                  class="mt-1.5 break-words text-sm font-medium text-ink-800"
+                >
+                  {{ item.value }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </details>
+
+      <details
+        class="group rounded-lg border border-line bg-surface"
+        data-testid="lensnode-existing-datasources"
+      >
+        <summary
+          class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-ink-900"
+        >
+          {{ t('lensAdmin.detail.existingDatasources') }}
+          <span
+            class="float-right text-xs text-ink-400 transition-transform group-open:rotate-180"
+            >⌄</span
+          >
+        </summary>
+        <section class="space-y-3 border-t border-line px-4 py-3">
+          <div
+            v-if="node.datasources?.length"
+            class="grid gap-2 sm:grid-cols-2"
+          >
+            <input
+              v-model="datasourceSearch"
+              type="search"
+              :placeholder="t('lensAdmin.detail.searchDatasources')"
+              :aria-label="t('lensAdmin.detail.searchDatasources')"
+              class="min-w-0 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-900"
+            />
+            <BaseSelect
+              v-model="datasourceType"
+              :aria-label="t('lensAdmin.detail.datasourceType')"
+            >
+              <option value="">
+                {{ t('lensAdmin.detail.allDatasourceTypes') }}
+              </option>
+              <option v-for="type in datasourceTypes" :key="type" :value="type">
+                {{ datasourceTypeLabel(type) }}
+              </option>
+            </BaseSelect>
+          </div>
+          <ul v-if="visibleDatasources.length" class="detail-list">
+            <li
+              v-for="datasource in visibleDatasources"
+              :key="datasource.uuid"
+              class="px-3 py-2.5"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span
+                  class="min-w-0 truncate text-sm font-medium text-ink-800"
+                  >{{ datasource.name }}</span
+                >
+                <StatusBadge :status="datasource.status" />
+              </div>
+              <div class="mt-1 text-xs text-ink-500">
+                {{ datasourceTypeLabel(datasource.source_type) }}
+              </div>
+              <div
+                v-if="datasource.storage_usage?.status === 'complete'"
+                class="mt-1 text-xs text-ink-500"
+              >
+                {{ t('lensAdmin.detail.rawStorage') }}
+                {{ formatBytes(datasource.storage_usage.raw_bytes) }} ·
+                {{ t('lensAdmin.detail.derivedStorage') }}
+                {{ formatBytes(datasource.storage_usage.derived_bytes) }} ·
+                {{ t('lensAdmin.detail.totalStorage') }}
+                {{ formatBytes(datasource.storage_usage.total_bytes) }}
+              </div>
+              <p v-else class="mt-1 text-xs text-ink-500">
+                {{ t('lensAdmin.detail.storageNotMeasured') }}
+              </p>
+            </li>
+          </ul>
+          <p v-else class="detail-empty">
+            {{
+              t(
+                node.datasources?.length
+                  ? 'lensAdmin.detail.noMatchingDatasources'
+                  : 'lensAdmin.detail.noDatasources'
+              )
+            }}
+          </p>
+          <button
+            v-if="filteredDatasources.length > 5"
+            type="button"
+            class="text-sm font-medium text-primary-700 hover:underline"
+            :aria-expanded="showAllDatasources"
+            @click="showAllDatasources = !showAllDatasources"
+          >
+            {{
+              showAllDatasources
+                ? t('lensAdmin.detail.showFewerDatasources')
+                : t('lensAdmin.detail.showAllDatasources', {
+                    count: filteredDatasources.length
+                  })
+            }}
+          </button>
+        </section>
+      </details>
     </div>
   </BaseDrawer>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Cpu, HardDrive, MemoryStick } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import { formatOperationMetric } from '@/admin/utils/operationsSummary'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
-import { compactUuid } from './adminHelpers'
 import { useShortDateTime } from './useShortDateTime'
 
 const props = defineProps({
@@ -173,6 +261,43 @@ defineEmits(['close'])
 
 const { t } = useI18n()
 const formatDateTime = useShortDateTime()
+
+const datasourceSearch = ref('')
+const datasourceType = ref('')
+const showAllDatasources = ref(false)
+const datasourceTypes = computed(() =>
+  [
+    ...new Set(
+      (props.node?.datasources || []).map((source) => source.source_type)
+    )
+  ].filter(Boolean)
+)
+const filteredDatasources = computed(() => {
+  const query = datasourceSearch.value.trim().toLocaleLowerCase()
+  return (props.node?.datasources || []).filter(
+    (source) =>
+      (!datasourceType.value || source.source_type === datasourceType.value) &&
+      source.name.toLocaleLowerCase().includes(query)
+  )
+})
+const visibleDatasources = computed(() =>
+  showAllDatasources.value
+    ? filteredDatasources.value
+    : filteredDatasources.value.slice(0, 5)
+)
+
+watch([() => props.show, () => props.node?.uuid], () => {
+  datasourceSearch.value = ''
+  datasourceType.value = ''
+  showAllDatasources.value = false
+})
+watch([datasourceSearch, datasourceType], () => {
+  showAllDatasources.value = false
+})
+
+function datasourceTypeLabel(type) {
+  return t(`lensAdmin.detail.datasourceTypes.${type}`, type)
+}
 
 const metricValue = (keys) => {
   const metrics = props.node?.last_metrics || {}
@@ -208,6 +333,34 @@ const supportedTasks = computed(() => {
     .map((task) => (typeof task === 'string' ? task : task.name || task.title))
     .filter(Boolean)
 })
+
+function taskLabel(task) {
+  const labels = {
+    knowledge_qa: 'knowledgeQa',
+    code_analysis: 'codeAnalysis',
+    general_chat: 'generalChat'
+  }
+  return labels[task] ? t(`lensAdmin.assistantTypes.${labels[task]}`) : task
+}
+
+function formatBytes(value) {
+  if (value === null || value === undefined) {
+    return t('lensAdmin.detail.storageNotMeasured')
+  }
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes < 0)
+    return t('lensAdmin.detail.notReported')
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let size = bytes
+  let unit = 'B'
+  for (const candidate of units) {
+    size /= 1024
+    unit = candidate
+    if (size < 1024 || candidate === 'TB') break
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${unit}`
+}
 const activeDatasourceOperations = computed(() => {
   const operations = props.node?.active_datasource_operations
   return Array.isArray(operations)
@@ -287,7 +440,6 @@ const nodeInfoRows = computed(() => {
     }
   ]
 })
-
 </script>
 
 <style scoped>

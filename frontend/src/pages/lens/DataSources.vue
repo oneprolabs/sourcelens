@@ -202,7 +202,7 @@
                   <img
                     v-if="pluginIconUrl(row.plugin_key)"
                     :src="pluginIconUrl(row.plugin_key)"
-                    :alt="formatSourceType(row.source_type)"
+                    :alt="formatSourceType(row)"
                     class="h-full w-full object-cover"
                   />
                   <span
@@ -218,7 +218,7 @@
                         {{ row.name }}
                       </h2>
                       <p class="mt-0.5 truncate text-xs text-ink-500">
-                        {{ formatSourceType(row.source_type) }}
+                        {{ formatSourceType(row) }}
                         <template v-if="connectionName(row)">
                           · {{ connectionName(row) }}</template
                         >
@@ -383,6 +383,7 @@
       <DataSourceDetailDrawer
         :show="showDatasourceDetailDrawer"
         :datasource="selectedDataSource"
+        :plugin-icon-urls="pluginIconUrls"
         :lensnodes="lensnodes"
         @cancel-sync="cancelSync"
         @close="closeDataSourceDetail"
@@ -784,7 +785,11 @@ function closeDataSourceDetail() {
   showDatasourceDetailDrawer.value = false
 }
 
-function formatSourceType(sourceType) {
+function formatSourceType(rowOrType) {
+  const sourceType = typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
+  const pluginKey = typeof rowOrType === 'string' ? '' : rowOrType?.plugin_key
+  if (pluginKey === 'github') return 'GitHub'
+  if (pluginKey === 'gitlab') return 'GitLab'
   if (isPluginSourceType(sourceType)) {
     const plugin = plugins.value.find(
       (item) => item.key === pluginKeyFromSourceType(sourceType)

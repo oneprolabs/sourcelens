@@ -6,10 +6,16 @@ const LANGUAGE_FLAGS = {
   es: '🇪🇸'
 }
 
-export function getUiLanguageOptions(t) {
+const NATIVE_LANGUAGE_NAMES = {
+  en: 'English',
+  'zh-CN': '简体中文',
+  es: 'Español'
+}
+
+export function getUiLanguageOptions() {
   return SUPPORTED_UI_LANGUAGES.map((language) => ({
     value: language,
-    label: t(`settings.preferences.languages.${language}`),
+    label: NATIVE_LANGUAGE_NAMES[language] || language,
     flag: LANGUAGE_FLAGS[language] || language.toUpperCase()
   }))
 }

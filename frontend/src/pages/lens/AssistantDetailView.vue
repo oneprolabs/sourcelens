@@ -21,8 +21,7 @@
           class="assistant-detail-glyph"
           :class="{ 'assistant-detail-glyph-smart': isSmart }"
         >
-          <UsersRound v-if="isSmart" :size="20" aria-hidden="true" />
-          <Bot v-else :size="20" aria-hidden="true" />
+          <component :is="assistantIcon" :size="20" aria-hidden="true" />
         </span>
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
@@ -199,7 +198,14 @@
                   binding.datasource_name
                 "
               >
-                <Database :size="17" aria-hidden="true" />
+                <PluginIcon
+                  :plugin-key="binding.plugin_key"
+                  :label="
+                    datasourceTypeLabel(
+                      binding.plugin_key || binding.source_type
+                    )
+                  "
+                />
                 <div>
                   <strong>
                     {{
@@ -209,12 +215,19 @@
                   </strong>
                   <small>
                     <span v-if="binding.source_type">
-                      {{ datasourceTypeLabel(binding.source_type) }} ·
+                      {{
+                        datasourceTypeLabel(
+                          binding.plugin_key || binding.source_type
+                        )
+                      }}
+                      <template v-if="binding.item_name"> · </template>
                     </span>
-                    {{
-                      binding.item_name ||
-                      t('lensAdmin.assistantPresentation.allItems')
-                    }}
+                    <template v-if="binding.item_name">{{
+                      binding.item_name
+                    }}</template>
+                    <template v-else-if="binding.item_names?.length">
+                      {{ binding.item_names.join('、') }}
+                    </template>
                   </small>
                 </div>
               </li>
@@ -414,6 +427,8 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   BookOpen,
+  Code2,
+  MessageCircle,
   Bot,
   Copy,
   Database,
@@ -427,6 +442,7 @@ import {
 } from '@lucide/vue'
 
 import BaseButton from '@/components/ui/BaseButton.vue'
+import PluginIcon from '@/components/ui/PluginIcon.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { EMPTY_VALUE, formatAssistantType } from './adminHelpers'
 import { buildAssistantDetail } from './assistantDetails'
@@ -458,6 +474,17 @@ function datasourceTypeLabel(sourceType) {
     ] || sourceType
   )
 }
+
+const assistantIcon = computed(() => {
+  if (isSmart.value) return UsersRound
+  return (
+    {
+      general_chat: MessageCircle,
+      knowledge_qa: BookOpen,
+      code_analysis: Code2
+    }[props.assistant.capability] || Bot
+  )
+})
 
 const emptyValue = EMPTY_VALUE
 const formatDateTime = useShortDateTime()

@@ -253,4 +253,4 @@ tag 重复运行安装器即可原地升级，已有 `.env` 配置和应用数�
 
 ## 设计原则
 
-每个 Django app 自包含（models、views、serializers、services、migrations、tests），app 之间通过 API 解耦。详见 [docs/DESIGN_PRINCIPLES.zh-CN.md](docs/DESIGN_PRINCIPLES.zh-CN.md)。
+每个 Django app 自包含（models、views、serializers、services、migrations、tests），app 之间通过 API 解耦。

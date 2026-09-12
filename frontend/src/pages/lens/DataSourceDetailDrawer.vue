@@ -111,9 +111,14 @@
               v-for="repo in organizationRepositories"
               :key="repo.repo_url || repo.name || repo.path"
               class="rounded-lg border border-line bg-surface-sunken px-3 py-2"
-            >
-              <div class="flex min-w-0 items-center gap-2">
-                <span
+              >
+                <div class="flex min-w-0 items-center gap-2">
+                  <PluginIcon
+                    :plugin-key="datasource.plugin_key"
+                    :src="pluginIconUrls[datasource.plugin_key]"
+                    :label="datasource.plugin_key || datasource.source_type"
+                  />
+                  <span
                   class="min-w-0 flex-1 truncate text-xs font-medium text-ink-800"
                   :title="repo.name || repo.path || repo.repo_url"
                 >
@@ -603,6 +608,7 @@ import { extractErrorMessage, extractResponseData } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import PluginIcon from '@/components/ui/PluginIcon.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import DrawerSection from '@/components/ui/DrawerSection.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
@@ -627,6 +633,7 @@ import { useShortDateTime } from './useShortDateTime'
 const props = defineProps({
   show: { type: Boolean, default: false },
   datasource: { type: Object, default: null },
+  pluginIconUrls: { type: Object, default: () => ({}) },
   lensnodes: { type: Array, default: () => [] }
 })
 
@@ -1241,7 +1248,6 @@ const datasourceResourceDetails = computed(() => {
 const organizationRepositories = computed(() =>
   dataSourceRepositories(props.datasource)
 )
-
 const datasourceSyncDetails = computed(() => {
   const row = props.datasource
   if (!row) return []
@@ -1411,4 +1417,5 @@ function isHttpUrl(value) {
 .detail-tab-active {
   @apply border-primary-500 text-primary-600;
 }
+
 </style>

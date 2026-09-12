@@ -64,7 +64,7 @@ def prepare_run_datasources(run):
     execution = RunExecution.objects.select_for_update().get(run=run)
     state = dict(execution.runtime_snapshot or {})
     pending = dict(state.get("datasource_sync_tasks") or {})
-    rows = list(SessionDataSource.objects.select_for_update().filter(
+    rows = list(SessionDataSource.objects.select_for_update(of=("self",)).filter(
         session=run.session
     ).select_related("datasource", "item", "version"))
     missing = []

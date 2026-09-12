@@ -324,6 +324,34 @@
                 {{ t('lensAdmin.datasourceSelection.selectedHint') }}
               </div>
               <div v-if="datasourceOptions.length" class="datasource-select">
+                <div
+                  v-if="selectedDatasourceLabels.length"
+                  class="mb-2 flex flex-wrap gap-2"
+                >
+                  <span
+                    v-for="binding in selectedDatasourceLabels"
+                    :key="binding.key"
+                    class="datasource-selection-label"
+                  >
+                    <PluginIcon
+                      :plugin-key="binding.source.plugin_key"
+                      :src="pluginIconUrl(binding.source.plugin_key)"
+                      :label="binding.source.plugin_key || binding.source.source_type"
+                    />
+                    <span class="min-w-0 truncate" :title="binding.label">
+                      {{ binding.label }}
+                    </span>
+                    <button
+                      type="button"
+                      class="datasource-selection-remove"
+                      :aria-label="`${t('common.delete')} ${binding.label}`"
+                      :disabled="saving"
+                      @click="removeDatasourceBinding(binding)"
+                    >
+                      ×
+                    </button>
+                  </span>
+                </div>
                 <button
                   type="button"
                   class="datasource-select-trigger"
@@ -1373,6 +1401,7 @@ import { useI18n } from 'vue-i18n'
 
 import { managementApi } from '@/admin/api/management'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import PluginIcon from '@/components/ui/PluginIcon.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
@@ -1757,6 +1786,23 @@ const selectedDatasourceSummary = computed(() => {
     .map((source) => source.name)
     .join(', ')
   return selected.length > 2 ? `${names} +${selected.length - 2}` : names
+})
+const selectedDatasourceLabels = computed(() => {
+  const labels = []
+  for (const binding of props.form.datasource_bindings || []) {
+    const source = props.datasourceOptions.find(
+      (item) => item.uuid === binding.datasource_uuid
+    )
+    if (!source) continue
+    const item = source.items?.find((child) => child.uuid === binding.item_uuid)
+    labels.push({
+      key: `${source.uuid}:${binding.item_uuid || 'source'}`,
+      label: item ? `${source.name} / ${item.name}` : source.name,
+      source,
+      item: item || null
+    })
+  }
+  return labels
 })
 const filteredDatasourceOptions = computed(() => {
   const query = datasourceSearch.value.trim().toLowerCase()
@@ -2246,6 +2292,11 @@ function clearDatasourceBindings() {
   props.form.datasource_bindings = []
 }
 
+function removeDatasourceBinding(binding) {
+  if (props.saving) return
+  selectSource(binding.source, binding.item, false)
+}
+
 function selectedDirs() {
   return Array.isArray(props.form.selected_dirs) ? props.form.selected_dirs : []
 }
@@ -2440,6 +2491,12 @@ function updateDirScope(path, value) {
 }
 .datasource-select {
   position: relative;
+}
+.datasource-selection-label {
+  @apply inline-flex max-w-full items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-800;
+}
+.datasource-selection-remove {
+  @apply inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-sm leading-none text-brand-500 hover:bg-brand-100 hover:text-brand-800 disabled:cursor-not-allowed disabled:opacity-50;
 }
 .datasource-select-trigger {
   @apply flex w-full items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2.5 text-left text-sm text-ink-700;

@@ -642,6 +642,7 @@ class DataSourceItem(TimestampedUUIDModel):
     storage_key = models.CharField(max_length=500)
     status = models.CharField(max_length=16, default="active")
     current_version = models.CharField(max_length=64, blank=True, default="")
+    storage_usage = models.JSONField(default=dict, blank=True)
 
     class Meta:
         constraints = [

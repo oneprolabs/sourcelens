@@ -88,7 +88,7 @@ const userStore = useUserStore()
 const showDropdown = ref(false)
 const dropdownRef = ref(null)
 
-const languages = computed(() => getUiLanguageOptions(t))
+const languages = computed(() => getUiLanguageOptions())
 
 const currentLanguageDisplay = computed(() => {
   const lang = languages.value.find((l) => l.value === locale.value)

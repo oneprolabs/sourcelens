@@ -1405,6 +1405,7 @@ def complete_datasource_sync_task(task_id, result):
         "repository_summaries": result.get("repository_summaries") or [],
         "failed_repositories": result.get("failed_repositories") or [],
         "partial_success": bool(result.get("partial_success")),
+        "storage_usage": result.get("storage_usage") or {},
         "target_path": result.get("target_path")
         or (datasource.target_path if datasource else ""),
     }
@@ -1454,6 +1455,12 @@ def complete_datasource_sync_task(task_id, result):
 
     if datasource is not None:
         if success:
+            usage = metrics.get("storage_usage") or {}
+            if usage:
+                item = datasource.items.filter(status="active").order_by("uuid").first()
+                if item is not None:
+                    item.storage_usage = usage
+                    item.save(update_fields=["storage_usage", "updated_at"])
             datasource.last_error = ""
             datasource.last_synced_at = timezone.now()
             if metrics["target_path"] and datasource.lensnode_id is not None:

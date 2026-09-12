@@ -145,9 +145,6 @@
                       >
                         {{ row.name }}
                       </div>
-                      <div class="mt-1 font-mono text-xs text-ink-400">
-                        {{ compactUuid(row.uuid) }}
-                      </div>
                     </button>
                   </td>
                   <td class="table-cell">
@@ -363,7 +360,6 @@ import LensNodeFormDrawer from './LensNodeFormDrawer.vue'
 import {
   EMPTY_VALUE,
   buildLensNodeCompose,
-  compactUuid,
   lensNodeComposeSettings,
   normalizeList
 } from './adminHelpers'

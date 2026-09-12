@@ -125,6 +125,7 @@ async def _cleanup_after_cancelled_worker(
     answer_task,
     run_uuid,
     workspace_path,
+    runtime_path=None,
 ):
     """Clean durable Run state after its synchronous worker has stopped."""
 
@@ -139,7 +140,7 @@ async def _cleanup_after_cancelled_worker(
         except Exception:
             break
     cleanup_run_checkpoint(run_uuid, workspace_path)
-    cleanup_run_runtime_resources(workspace_path, run_uuid)
+    cleanup_run_runtime_resources(runtime_path or workspace_path, run_uuid)
 
 
 TASKS = [
@@ -239,7 +240,9 @@ class LensNodeExecutor:
 
         worker_task.add_done_callback(discard_finished_worker)
 
-    def defer_cleanup_until_worker_stops(self, run_uuid, workspace_path):
+    def defer_cleanup_until_worker_stops(
+        self, run_uuid, workspace_path, runtime_path=None
+    ):
         """Defer acknowledged terminal cleanup for an active worker."""
 
         worker_task = getattr(self, "_pending_workers", {}).get(run_uuid)
@@ -259,6 +262,7 @@ class LensNodeExecutor:
                     worker_task,
                     run_uuid,
                     workspace_path,
+                    runtime_path,
                 )
             finally:
                 cleanup_runs.discard(run_uuid)
@@ -543,11 +547,17 @@ class LensNodeExecutor:
                         "workspace_path",
                         None,
                     )
+                    runtime_path = getattr(
+                        self.agent.config,
+                        "runtime_path",
+                        None,
+                    )
                     asyncio.create_task(
                         _cleanup_after_cancelled_worker(
                             answer_task,
                             run_uuid,
                             workspace_path,
+                            runtime_path,
                         )
                     )
                 raise
@@ -734,11 +744,16 @@ class LensNodeExecutor:
                     "workspace_path",
                     None,
                 )
+                runtime_path = getattr(
+                    self.agent.config,
+                    "runtime_path",
+                    None,
+                )
                 cleanup_run_checkpoint(
                     run_uuid,
                     workspace_path,
                 )
-                cleanup_run_runtime_resources(workspace_path, run_uuid)
+                cleanup_run_runtime_resources(runtime_path, run_uuid)
 
 
 def _trajectory_runtime_event_type(agent_event):

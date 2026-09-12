@@ -194,7 +194,6 @@
       "statusListedHint": "An admin added it to the assistant's shared Q&A list. Only users who can access the assistant can view it.",
       "statusHiddenHint": "Taken down by an admin. The shared link no longer works.",
       "adminTitle": "Q&A review",
-      "adminSubtitle": "Review user-shared Q&A and choose what appears in the public list.",
       "tabPending": "Pending review",
       "tabListed": "Listed",
       "tabHidden": "Hidden",
