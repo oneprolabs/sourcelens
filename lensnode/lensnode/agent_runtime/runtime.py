@@ -819,6 +819,9 @@ class LensDeepAgentRuntime:
                 state.resume_state.messages,
                 state.resume_state.guardrail_state,
             )
+            state.shared_token_budget.restore(
+                state.model.token_usage
+            )
         if state.runtime_mode.general_chat:
             state.tools = build_general_chat_tools(
                 state.command,

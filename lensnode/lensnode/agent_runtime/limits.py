@@ -40,6 +40,12 @@ class SharedTokenBudget:
         with self._lock:
             return dict(self._usage)
 
+    def restore(self, usage):
+        """Restore cumulative usage from a durable checkpoint."""
+        with self._lock:
+            for key in self._usage:
+                self._usage[key] = max(int((usage or {}).get(key) or 0), 0)
+
 
 def resolve_token_budget(config, command):
     """Return the token budget for one run.

@@ -1185,8 +1185,11 @@ class LensGatewayChatModel(BaseChatModel):
                 and reserve
                 and cumulative["total_tokens"] >= work_limit
             )
-            hard_stop = shared_hard_stop or bool(
+            hard_stop = (
+                self.general_chat_execution_gates
+                and (shared_hard_stop or bool(
                 limit and cumulative["total_tokens"] >= limit
+                ))
             )
             if wrapup_needed and self.token_budget_wrapup_event is not None:
                 self.token_budget_wrapup_event.set()
