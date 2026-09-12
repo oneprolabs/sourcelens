@@ -39,15 +39,12 @@
 
     <div v-if="datasource">
       <div v-show="activeTab === 'basic'" class="space-y-4">
-        <section
+        <DrawerSection
+          :title="t('lensAdmin.datasourceDetail.basicInfo')"
+          spacing="none"
           class="datasource-overview-block rounded-xl border border-line bg-surface p-4"
         >
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceDetail.basicInfo') }}
-            </h3>
-            <StatusBadge :status="datasource.status" />
-          </div>
+          <template #actions><StatusBadge :status="datasource.status" /></template>
           <dl
             class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line"
           >
@@ -69,7 +66,7 @@
               </dd>
             </div>
           </dl>
-        </section>
+        </DrawerSection>
 
         <section
           class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
@@ -609,6 +606,7 @@ import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
+import DrawerSection from '@/components/ui/DrawerSection.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import TaskSummaryCard from '@/components/task-management/TaskSummaryCard.vue'
 
