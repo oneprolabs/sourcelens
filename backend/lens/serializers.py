@@ -1068,6 +1068,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             attrs["lensnode"] = None
             attrs["selected_dirs"] = []
             attrs["multimodal_model_ref"] = None
+            attrs["datasource_bindings"] = []
             attrs["skill_bindings"] = []
             attrs["mcp_bindings"] = []
             attrs["plugin_bindings"] = []

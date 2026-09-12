@@ -36,6 +36,7 @@ from lens.lensnode_auth import hash_lensnode_token
 from lens.models import (
     Assistant,
     AssistantAccess,
+    AssistantDataSourceBinding,
     AssistantMCP,
     AssistantSkill,
     Connection,
@@ -590,6 +591,11 @@ class LensApiTests(TestCase):
         AssistantMCP.objects.create(
             assistant=self.assistant,
             mcp=self.mcp,
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=self.assistant,
+            datasource=self.datasource,
+            mount_name="repo-cache",
         )
         session = Session.objects.create(
             assistant=self.assistant,
@@ -2276,6 +2282,7 @@ class LensApiTests(TestCase):
         self.assertEqual(assistant.selected_dirs, [])
         self.assertFalse(assistant.skill_bindings.exists())
         self.assertFalse(assistant.mcp_bindings.exists())
+        self.assertFalse(assistant.datasource_bindings.exists())
         self.assertIsNone(assistant.multimodal_model_ref)
 
     def test_fixed_smart_assistant_persists_direct_members(self):
