@@ -955,6 +955,11 @@ async function validateRow(row) {
 }
 
 function handlePluginChange(pluginKey) {
+  if (form.value.plugin_key === 'feishu' && pluginKey !== 'feishu') {
+    stopFeishuPolling()
+    feishuQr.value = ''
+    feishuRegisterStatus.value = ''
+  }
   form.value = {
     uuid: form.value.uuid,
     name: form.value.name,
