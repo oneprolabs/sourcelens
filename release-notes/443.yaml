@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Keep the chat composer compact for long multiline messages by scrolling excess text inside the input area.
+zh-CN: 优化长文本输入体验：聊天输入框保持紧凑，超出内容在输入区域内滚动。
