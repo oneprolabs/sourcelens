@@ -259,7 +259,15 @@ class GitHubDatasourceProvider(DatasourceProvider):
             self.validate_connection(endpoint, connection_config)
         if not isinstance(selected_values, dict):
             raise DatasourceProviderError("resource dependency is invalid")
-        repository = _repository_name(selected_values.get("repository"))
+        repository_value = selected_values.get("repository")
+        if repository_value is None:
+            repositories = selected_values.get("repositories")
+            repository_value = (
+                repositories[0]
+                if isinstance(repositories, list) and repositories
+                else None
+            )
+        repository = _repository_name(repository_value)
         if repository.casefold() not in _allowed_repositories(connection_scope):
             raise DatasourceProviderError("repository is outside connection scope")
         token = _secret_value(secret)
