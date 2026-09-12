@@ -139,13 +139,11 @@
           </div>
         </section>
 
-        <section
+        <DrawerSection
           v-if="datasource.source_type !== 'managed_workspace'"
+          :title="t('lensAdmin.datasourceDetail.sync')"
           class="datasource-sync-block rounded-xl border border-line bg-surface p-4"
         >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.sync') }}
-          </h3>
           <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             <div
               v-for="item in datasourceSyncDetails"
@@ -176,15 +174,13 @@
               {{ datasourceSyncError }}
             </p>
           </div>
-        </section>
+        </DrawerSection>
 
-        <section
+        <DrawerSection
           v-if="datasource.source_type !== 'managed_workspace'"
+          :title="t('lensAdmin.datasourceDetail.retrieval')"
           class="datasource-retrieval-block rounded-xl border border-line bg-surface p-4"
         >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.retrieval') }}
-          </h3>
           <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <article
               v-for="group in datasourceRetrievalGroups"
@@ -222,7 +218,7 @@
               </dl>
             </article>
           </div>
-        </section>
+        </DrawerSection>
       </div>
       <div v-show="activeTab === 'details'" class="space-y-6">
         <div
