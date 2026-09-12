@@ -22,6 +22,19 @@ test('submits with Enter and preserves multiline input with Shift+Enter', async 
   assert.doesNotMatch(source, /@keydown\.ctrl\.enter/)
 })
 
+test('keeps long composer input scrollable within a bounded height', async () => {
+  const source = await readFile(
+    new URL('../src/pages/lens/Chat.vue', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /const COMPOSER_MAX_HEIGHT = 200/)
+  assert.match(source, /Math\.min\(target\.scrollHeight, COMPOSER_MAX_HEIGHT\)/)
+  assert.match(source, /max-height: var\(--composer-max-height\)/)
+  assert.match(source, /overflow-y: auto/)
+  assert.match(source, /overflow-x: hidden/)
+})
+
 test('resolves only explicit non-composing Enter presses as actions', () => {
   assert.equal(resolveComposerEnterAction({ key: 'Enter' }), 'primary')
   assert.equal(
