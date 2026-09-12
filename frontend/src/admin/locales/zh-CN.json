@@ -2198,6 +2198,7 @@
     },
     "messages": {
       "loadFailed": "加载 Lens 管理数据失败",
+      "unsavedChanges": "当前有未保存的修改，仍要关闭抽屉吗？",
       "saveSuccess": "保存成功",
       "saveFailed": "保存失败",
       "uploadStarted": "上传任务已开始",
@@ -2261,7 +2262,9 @@
       "selectedLabel": "已选",
       "resources": "个资源",
       "placeholder": "请选择数据源",
-      "search": "搜索数据源"
+      "search": "搜索数据源",
+      "clear": "清空选择",
+      "disabled": "已禁用"
     }
   }
 }

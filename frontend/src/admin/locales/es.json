@@ -1601,7 +1601,25 @@
       "basicInfo": "Información básica",
       "tabs": {
         "basic": "Información básica",
-        "details": "Historial de sincronización"
+        "details": "Historial de sincronización",
+        "files": "Archivos"
+      },
+      "files": {
+        "searchPlaceholder": "Buscar rutas",
+        "allSync": "Todos los estados de sincronización",
+        "allConversion": "Todos los estados de conversión",
+        "path": "Ruta",
+        "type": "Tipo",
+        "syncStatus": "Estado de sincronización",
+        "conversionStatus": "Estado de conversión",
+        "syncSynced": "Sincronizado",
+        "syncMissing": "Pendiente de eliminación",
+        "syncFailed": "Sincronización fallida",
+        "conversionSuccess": "Convertido",
+        "conversionFailed": "Conversión fallida",
+        "conversionSkipped": "Omitido",
+        "notConverted": "No convertido",
+        "empty": "No hay archivos disponibles para esta fuente de datos."
       },
       "connection": "Conexión",
       "resourceAndTarget": "Recurso y destino",
@@ -2180,6 +2198,7 @@
     },
     "messages": {
       "loadFailed": "Error al cargar datos de administrador de Lens",
+      "unsavedChanges": "Hay cambios sin guardar. ¿Cerrar el panel de todos modos?",
       "saveSuccess": "Guardado con éxito",
       "saveFailed": "Error al guardar",
       "uploadStarted": "Inicio de subida",
@@ -2243,7 +2262,9 @@
       "selectedLabel": "seleccionados",
       "resources": "recursos",
       "placeholder": "Selecciona fuentes",
-      "search": "Buscar fuentes"
+      "search": "Buscar fuentes",
+      "clear": "Borrar selección",
+      "disabled": "Deshabilitada"
     }
   }
 }

@@ -528,6 +528,7 @@ const showDrawer = ref(false)
 const mode = ref('create')
 const form = ref({})
 const formError = ref('')
+const formBaseline = ref('')
 const showArchived = ref(false)
 const archiveConfirmRow = ref(null)
 const actionUuid = ref('')
@@ -812,6 +813,7 @@ async function startCreate() {
   mode.value = 'create'
   formError.value = ''
   form.value = defaultForm()
+  formBaseline.value = serializeForm(form.value)
   showDrawer.value = true
 }
 
@@ -823,6 +825,7 @@ async function startEdit(row) {
   mode.value = 'edit'
   formError.value = ''
   form.value = formFromRow(assistant)
+  formBaseline.value = serializeForm(form.value)
   showDrawer.value = true
 }
 
@@ -886,9 +889,32 @@ function closeArchiveConfirmation() {
 }
 
 function closeDrawer() {
+  if (
+    !saving.value &&
+    showDrawer.value &&
+    serializeForm(form.value) !== formBaseline.value &&
+    !window.confirm(t('lensAdmin.messages.unsavedChanges'))
+  ) {
+    return
+  }
   showDrawer.value = false
   form.value = {}
   formError.value = ''
+  formBaseline.value = ''
+}
+
+function serializeForm(value) {
+  return JSON.stringify(value, (_, item) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      return Object.keys(item)
+        .sort()
+        .reduce((result, key) => {
+          result[key] = item[key]
+          return result
+        }, {})
+    }
+    return item
+  })
 }
 
 async function refreshDirs() {

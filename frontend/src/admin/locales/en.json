@@ -2198,6 +2198,7 @@
     },
     "messages": {
       "loadFailed": "Failed to load Lens admin data",
+      "unsavedChanges": "You have unsaved changes. Close this drawer anyway?",
       "saveSuccess": "Saved successfully",
       "saveFailed": "Save failed",
       "uploadStarted": "Upload started",
@@ -2261,7 +2262,9 @@
       "selectedLabel": "selected",
       "resources": "resources",
       "placeholder": "Select data sources",
-      "search": "Search data sources"
+      "search": "Search data sources",
+      "clear": "Clear selection",
+      "disabled": "Disabled"
     }
   }
 }

@@ -328,6 +328,7 @@
                   type="button"
                   class="datasource-select-trigger"
                   :aria-expanded="datasourceMenuOpen"
+                  :aria-controls="'assistant-datasource-menu'"
                   @click="datasourceMenuOpen = !datasourceMenuOpen"
                 >
                   <span class="min-w-0 flex-1 truncate">{{
@@ -335,13 +336,28 @@
                   }}</span>
                   <span class="text-xs text-ink-400">⌄</span>
                 </button>
-                <div v-if="datasourceMenuOpen" class="datasource-select-menu">
-                  <input
-                    v-model="datasourceSearch"
-                    class="form-input mb-2"
-                    type="search"
-                    :placeholder="t('lensAdmin.datasourceSelection.search')"
-                  />
+                <div
+                  v-if="datasourceMenuOpen"
+                  id="assistant-datasource-menu"
+                  class="datasource-select-menu"
+                >
+                  <div class="mb-2 flex items-center gap-2">
+                    <input
+                      v-model="datasourceSearch"
+                      class="form-input"
+                      type="search"
+                      :placeholder="t('lensAdmin.datasourceSelection.search')"
+                      :aria-label="t('lensAdmin.datasourceSelection.search')"
+                    />
+                    <button
+                      v-if="selectedDatasourceCount"
+                      type="button"
+                      class="shrink-0 rounded-md px-2 py-2 text-xs text-ink-500 hover:bg-surface-sunken hover:text-ink-800"
+                      @click="clearDatasourceBindings"
+                    >
+                      {{ t('lensAdmin.datasourceSelection.clear') }}
+                    </button>
+                  </div>
                   <label
                     v-for="source in filteredDatasourceOptions"
                     :key="source.uuid"
@@ -353,7 +369,16 @@
                       :indeterminate="
                         hasAnySourceBinding(source) && !hasSource(source)
                       "
-                      :disabled="saving || source.status !== 'active'"
+                      :disabled="
+                        saving ||
+                        (source.status !== 'active' &&
+                          !hasAnySourceBinding(source))
+                      "
+                      :aria-label="
+                        source.status === 'active'
+                          ? source.name
+                          : `${source.name} · ${t('lensAdmin.datasourceSelection.disabled')}`
+                      "
                       class="h-4 w-4 rounded border-line text-brand-600"
                       @change="
                         selectSource(source, null, $event.target.checked)
@@ -386,8 +411,10 @@
                           :checked="hasSource(source, item)"
                           :disabled="
                             saving ||
-                            source.status !== 'active' ||
-                            item.status !== 'active'
+                            (source.status !== 'active' &&
+                              !hasSource(source, item)) ||
+                            (item.status !== 'active' &&
+                              !hasSource(source, item))
                           "
                           class="h-3.5 w-3.5 rounded border-line text-brand-600"
                           @change="
@@ -2212,6 +2239,11 @@ function selectSource(source, item, checked) {
     item,
     checked
   )
+}
+
+function clearDatasourceBindings() {
+  if (props.saving) return
+  props.form.datasource_bindings = []
 }
 
 function selectedDirs() {
