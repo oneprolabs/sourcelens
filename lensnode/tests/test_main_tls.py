@@ -142,3 +142,15 @@ def test_run_forever_starts_runtime_cleanup(monkeypatch):
     asyncio.run(exercise())
 
     assert cleanup_started is True
+
+
+def test_thread_enqueue_ignores_closed_event_loop():
+    """Background workers cannot crash when the client loop has closed."""
+
+    client = _make_client()
+    loop = asyncio.new_event_loop()
+    loop.close()
+
+    client._enqueue_from_thread(loop, {"type": "run_output"})
+
+    assert not client._outbox
