@@ -111,9 +111,10 @@ test('run resources use one ledger with configured and call counts', async () =>
 test('run resources label plugin tools with their owning plugin', async () => {
   const [contents, english, chinese] = await Promise.all([
     source(),
-    readFile(new URL('../src/admin/locales/en.json', import.meta.url), 'utf8').then(
-      JSON.parse
-    ),
+    readFile(
+      new URL('../src/admin/locales/en.json', import.meta.url),
+      'utf8'
+    ).then(JSON.parse),
     readFile(
       new URL('../src/admin/locales/zh-CN.json', import.meta.url),
       'utf8'

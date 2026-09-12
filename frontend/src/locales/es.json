@@ -107,7 +107,12 @@
     "documentUnsupported": "El nodo de ejecución seleccionado no admite adjuntos de documentos.",
     "documentStateUnavailable": "El estado del archivo adjunto del documento no está disponible. Por favor, inténtelo nuevamente.",
     "documentUnavailable": "El archivo adjunto del documento no está disponible. Por favor, cárguelo de nuevo.",
-    "attachmentUnreadable": "No se pudo leer el archivo adjunto. Por favor, cárguelo nuevamente."
+    "attachmentUnreadable": "No se pudo leer el archivo adjunto. Por favor, cárguelo nuevamente.",
+    "datasourceNoMatch": "No se encontró una fuente de datos coincidente.",
+    "datasourceSyncFailed": "La sincronización falló. Compruebe la fuente e inténtelo de nuevo.",
+    "datasourceSyncTimeout": "Tiempo de espera agotado al sincronizar.",
+    "datasourceUploadRequired": "Suba archivos a esta fuente antes de preguntar.",
+    "datasourceDisabled": "La fuente seleccionada está desactivada."
   },
   "lens": {
     "share": {
@@ -1446,5 +1451,14 @@
       "valueLabel": "Configuración (JSON)",
       "invalidJson": "Por favor ingrese JSON válido"
     }
-  }
+  },
+  "lensAdmin": {
+    "datasourceSelection": {
+      "title": "Acceso a datos",
+      "selected": "Fuentes seleccionadas",
+      "selectedHint": "Solo se usarán las fuentes y recursos seleccionados abajo.",
+      "empty": "Sin fuentes de datos"
+    }
+  },
+  "datasourceWaiting": "Preparando las fuentes de datos."
 }

@@ -9,9 +9,9 @@ from channels.layers import get_channel_layer
 from django.core.cache import cache
 from django.utils import timezone
 
-from .models import DataSource, DataSourceCredential, GlobalSetting, LensNode
-from .plugins.snapshots import create_datasource_sync_snapshot
-from .services import lensnode_group_name
+from ..models import DataSource, DataSourceCredential, GlobalSetting, LensNode
+from ..plugins.snapshots import create_datasource_sync_snapshot
+from ..services import lensnode_group_name
 
 WORKSPACE_ROOT = "/workspace"
 DATASOURCE_SYNC_TIMEOUT_SETTING = "lens.datasource_sync.timeout_s"
@@ -99,6 +99,21 @@ def validate_datasource_lensnode(lensnode):
         raise DataSourceDispatchError("LENSNODE_TOKEN_REVOKED")
 
 
+def resolve_datasource_lensnode(datasource):
+    """Resolve an approved online node for datasource execution."""
+
+    if datasource.lensnode_id:
+        validate_datasource_lensnode(datasource.lensnode)
+        return datasource.lensnode
+    node = LensNode.objects.filter(
+        status=LensNode.Status.ONLINE,
+        enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+        token_revoked=False,
+    ).order_by("updated_at").first()
+    validate_datasource_lensnode(node)
+    return node
+
+
 def _send_lensnode_command(lensnode, payload):
     """Send a datasource command to a connected LensNode."""
 
@@ -145,7 +160,7 @@ def _wait_cache_result(cache_key, timeout_s):
 def get_datasource_sync_timeout_s():
     """Return the configured datasource sync result timeout in seconds."""
 
-    from .models import GlobalSetting
+    from ..models import GlobalSetting
 
     setting = GlobalSetting.objects.filter(
         key=DATASOURCE_SYNC_TIMEOUT_SETTING
@@ -160,7 +175,7 @@ def get_datasource_sync_timeout_s():
 def get_datasource_sync_max_workers():
     """Return the configured datasource sync worker count."""
 
-    from .models import GlobalSetting
+    from ..models import GlobalSetting
 
     setting = GlobalSetting.objects.filter(
         key=DATASOURCE_SYNC_WORKERS_SETTING
@@ -198,32 +213,6 @@ def get_datasource_upload_timeout_s():
     return value if value > 0 else DEFAULT_DATASOURCE_UPLOAD_TIMEOUT_S
 
 
-def get_datasource_upload_limits():
-    """Return positive upload limits from global settings."""
-
-    defaults = {
-        "max_bytes": 50 * 1024 * 1024,
-        "max_extracted_bytes": 100 * 1024 * 1024,
-        "max_extracted_files": 300,
-    }
-    prefix = "lens.datasource_upload."
-    rows = {
-        row.key: row.value
-        for row in GlobalSetting.objects.filter(
-            key__in=[prefix + key for key in defaults]
-        )
-    }
-    result = {}
-    for key, default in defaults.items():
-        value = rows.get(prefix + key, default)
-        result[key] = (
-            value
-            if type(value) is int and value > 0
-            else default
-        )
-    return result
-
-
 def check_datasource_path(lensnode, target_path, source_type, config=None):
     """Ask a LensNode to inspect a datasource target path."""
 
@@ -249,7 +238,14 @@ def check_datasource_path(lensnode, target_path, source_type, config=None):
 
 
 def list_datasource_files(datasource, page=1, page_size=20, **filters):
-    """Return a paginated, safe datasource file catalog from its LensNode."""
+    """Return a paginated catalog from the datasource's storage."""
+
+    if datasource.lensnode_id is None:
+        from .catalog import list_stored_datasource_files
+
+        return list_stored_datasource_files(
+            datasource, page=page, page_size=page_size, **filters
+        )
 
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
@@ -324,7 +320,9 @@ def dispatch_datasource_sync(datasource, task_id, trigger="scheduled"):
     )
 
 
-def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
+def dispatch_datasource_sync_async(
+    datasource, task_id, trigger="scheduled", *, lensnode=None
+):
     """Dispatch one datasource synchronization without waiting for result."""
 
     datasource = DataSource.objects.select_related(
@@ -335,12 +333,15 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
     )
     if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
         raise DataSourceDispatchError("DATASOURCE_SYNC_NOT_SUPPORTED")
-    validate_datasource_lensnode(datasource.lensnode)
+    lensnode = lensnode or resolve_datasource_lensnode(datasource)
+    validate_datasource_lensnode(lensnode)
     if datasource.connection_id and datasource.plugin_key:
-        snapshot = create_datasource_sync_snapshot(datasource)
+        snapshot = create_datasource_sync_snapshot(
+            datasource, lensnode=lensnode
+        )
         request_id = uuid.uuid4().hex
         _send_lensnode_command(
-            datasource.lensnode,
+            lensnode,
             {
                 "type": "plugin_datasource_sync",
                 "request_id": request_id,
@@ -362,9 +363,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
     config = datasource_runtime_config(datasource)
     sync_policy = datasource.sync_policy or {}
     conversion = datasource_conversion_policy(sync_policy)
+    target_path = datasource.target_path or (
+        f"{lensnode.workspace_path}/datasources/{datasource.uuid}"
+    )
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
-        datasource.lensnode,
+        lensnode,
         {
             "type": "datasource_sync",
             "request_id": request_id,
@@ -376,11 +380,12 @@ def dispatch_datasource_sync_async(datasource, task_id, trigger="scheduled"):
             "conversion": conversion,
             **_lensnode_gateway_config(),
             "sync_policy": sync_policy,
-            "target_path": datasource.target_path,
+            "target_path": target_path,
             "trigger": trigger,
             "max_workers": get_datasource_sync_max_workers(),
             "excluded_datasource_roots": excluded_datasource_roots(
-                datasource
+                datasource,
+                lensnode,
             ),
         },
     )
@@ -453,8 +458,7 @@ def dispatch_datasource_upload_async(
     if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
     validate_datasource_lensnode(datasource.lensnode)
-    upload_limits = get_datasource_upload_limits()
-    if len(content) > upload_limits["max_bytes"]:
+    if len(content) > DATASOURCE_UPLOAD_MAX_BYTES:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_TOO_LARGE")
     upload_conversion = {"document": True, "image": True}
     upload_conversion.update(
@@ -473,7 +477,6 @@ def dispatch_datasource_upload_async(
             "target_path": datasource.target_path,
             "filename": filename,
             "content_base64": base64.b64encode(content).decode("ascii"),
-            "upload_limits": upload_limits,
             "conversion": upload_conversion,
             **_lensnode_gateway_config(),
             "excluded_datasource_roots": excluded_datasource_roots(
@@ -523,14 +526,17 @@ def datasource_conversion_defaults():
     }
 
 
-def excluded_datasource_roots(datasource):
+def excluded_datasource_roots(datasource, lensnode=None):
     """Return other datasource roots under this datasource root."""
 
+    lensnode = lensnode or datasource.lensnode
+    if lensnode is None or not datasource.target_path:
+        return []
     root = normalize_workspace_target_path(
         datasource.target_path,
-        datasource.lensnode.workspace_path,
+        lensnode.workspace_path,
     )
-    rows = DataSource.objects.filter(lensnode=datasource.lensnode).exclude(
+    rows = DataSource.objects.filter(lensnode=lensnode).exclude(
         pk=datasource.pk
     )
     roots = []

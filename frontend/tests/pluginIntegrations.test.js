@@ -473,12 +473,8 @@ test('managed workspace setup does not request a credential', async () => {
 
   assert.match(drawer, /v-else-if="isManagedWorkspace"/)
   assert.match(drawer, /managedWorkspaceDesc/)
-  assert.match(
-    drawer,
-    /if \(isManagedWorkspace\.value\) \{\s*return true/)
-  assert.match(
-    drawer,
-    /if \(isManagedWorkspace\.value\) \{\s*return false/)
+  assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return true/)
+  assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return false/)
 })
 
 test('managed workspace cards expose a direct upload action', async () => {

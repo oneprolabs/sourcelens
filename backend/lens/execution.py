@@ -160,6 +160,13 @@ def _lensnode_dispatch(state):
                 run.retry_of_run,
             ),
         )
+        from .datasource.workspace import (
+            build_session_workspace, session_source_dirs,
+        )
+
+        build_session_workspace(run.session)
+        execution.target_dirs = session_source_dirs(run.session)
+        execution.save(update_fields=["target_dirs"])
         execution.loaded_plugins = build_loaded_plugins(assistant)
         execution.loaded_skills = build_loaded_skills(assistant)
         execution.loaded_skills.extend(
@@ -284,6 +291,17 @@ def execute_answer_run(
         assistant.slug,
     )
     try:
+        from .datasource.routing import prepare_run_datasources
+
+        if not prepare_run_datasources(run):
+            from .tasks import enqueue_answer_run_task
+
+            run.refresh_from_db(fields=["status"])
+            if run.status == Run.Status.QUEUED:
+                enqueue_answer_run_task(
+                    run.uuid, expected_document_count, countdown=3,
+                )
+            return run
         run.status = Run.Status.RUNNING
         run.started_at = run.started_at or timezone.now()
         run.last_activity_at = timezone.now()

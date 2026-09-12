@@ -17,9 +17,12 @@ from .assistant_lifecycle import (
     fixed_collaboration_assistants,
     smart_collaboration_assistants,
 )
+from .datasource.bindings import (
+    DatasourceBindingsField, replace_datasource_bindings,
+)
 from .attachments import ATTACHMENT_MAX_PER_MESSAGE, AttachmentError
 from .citations import public_run_citations, sanitize_planned_evidence
-from .datasource_services import (
+from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
@@ -43,6 +46,9 @@ from .models import (
     AssistantSkill,
     Connection,
     DataSource,
+    DataSourceItem,
+    DataSourceVersion,
+    AssistantDataSourceBinding,
     DataSourceCredential,
     EnvironmentVariableSet,
     GlobalSetting,
@@ -200,6 +206,7 @@ class LensNodeSerializer(serializers.ModelSerializer):
     """LensNode serializer."""
 
     has_token = serializers.SerializerMethodField()
+    datasources = serializers.SerializerMethodField()
     active_run_count = serializers.IntegerField(read_only=True, default=0)
     queued_run_count = serializers.IntegerField(read_only=True, default=0)
     awaiting_resume_count = serializers.IntegerField(read_only=True, default=0)
@@ -222,10 +229,13 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "agent_version",
             "tasks",
             "labels",
+            "last_metrics",
+            "active_datasource_operations",
             "enrollment_status",
             "token_issued_at",
             "token_revoked",
             "has_token",
+            "datasources",
             "last_authenticated_at",
             "last_heartbeat_at",
             "active_run_count",
@@ -240,6 +250,14 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_datasources(self, obj):
+        """Return the active datasources already assigned to this node."""
+        return list(
+            obj.datasources.filter(status="active").values(
+                "uuid", "name", "source_type", "status"
+            )
+        )
         read_only_fields = [
             "uuid",
             "assistant",
@@ -279,6 +297,8 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "token_issued_at",
             "last_authenticated_at",
             "last_heartbeat_at",
+            "last_metrics",
+            "active_datasource_operations",
             "registered_at",
             "created_at",
             "updated_at",
@@ -650,6 +670,8 @@ class AccessGrantsField(serializers.Field):
 class AssistantListSerializer(serializers.ModelSerializer):
     """Compact assistant representation for collection responses."""
 
+    datasource_routing = serializers.SerializerMethodField()
+    datasource_bindings = DatasourceBindingsField(read_only=True)
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
     lensnode_name = serializers.CharField(source="lensnode.name", read_only=True)
     mode = serializers.CharField(read_only=True)
@@ -665,6 +687,8 @@ class AssistantListSerializer(serializers.ModelSerializer):
         model = Assistant
         fields = [
             "uuid",
+            "datasource_routing",
+            "datasource_bindings",
             "name",
             "capability",
             "slug",
@@ -682,6 +706,11 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "vision_model_capability",
             "can_process_images",
         ]
+
+    def get_datasource_routing(self, assistant):
+        """Expose the data selection mode without other runtime settings."""
+
+        return "selected"
 
     def get_collaboration_members(self, assistant):
         """Return prefetched Smart Assistant members for list views."""
@@ -786,6 +815,7 @@ class AssistantSerializer(serializers.ModelSerializer):
     skill_bindings = SkillBindingsField(required=False)
     mcp_bindings = McpBindingsField(required=False)
     plugin_bindings = PluginBindingsField(required=False)
+    datasource_bindings = DatasourceBindingsField(required=False)
     access_grants = AccessGrantsField(required=False)
     workspace_guide = serializers.JSONField(required=False)
     skill_summary = serializers.SerializerMethodField()
@@ -806,6 +836,7 @@ class AssistantSerializer(serializers.ModelSerializer):
         model = Assistant
         fields = [
             "uuid",
+            "datasource_bindings",
             "name",
             "description",
             "mode",
@@ -842,6 +873,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
         read_only_fields = [
             "uuid",
             "lensnode",
@@ -1046,6 +1078,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             attrs["lensnode"] = None
             attrs["selected_dirs"] = []
             attrs["multimodal_model_ref"] = None
+            attrs["datasource_bindings"] = []
             attrs["skill_bindings"] = []
             attrs["mcp_bindings"] = []
             attrs["plugin_bindings"] = []
@@ -1066,10 +1099,6 @@ class AssistantSerializer(serializers.ModelSerializer):
                 Assistant.Capability.KNOWLEDGE_QA,
             }
         )
-        if requires_workspace and lensnode is None:
-            raise serializers.ValidationError(
-                {"lensnode_uuid": "A LensNode is required."}
-            )
         if lensnode is not None and capability not in _task_names(lensnode):
             raise serializers.ValidationError(
                 {"capability": "capability is not available on LensNode"}
@@ -1145,8 +1174,12 @@ class AssistantSerializer(serializers.ModelSerializer):
             "settings",
             getattr(self.instance, "settings", {}),
         )
-        if isinstance(settings, dict) and "retrieval_policy" in settings:
-            validate_retrieval_policy(settings.get("retrieval_policy"))
+        if isinstance(settings, dict):
+            settings = dict(settings)
+            settings["datasource_routing"] = "selected"
+            attrs["settings"] = settings
+            if "retrieval_policy" in settings:
+                validate_retrieval_policy(settings.get("retrieval_policy"))
         if "multimodal_model_ref" in attrs:
             reason = validate_vision_model_ref(attrs["multimodal_model_ref"])
             if reason:
@@ -1539,7 +1572,9 @@ class AssistantSerializer(serializers.ModelSerializer):
         plugin_bindings = validated_data.pop("plugin_bindings", None)
         access_grants = validated_data.pop("access_grants", None)
         workspace_guide = validated_data.pop("workspace_guide", None)
+        datasource_bindings = validated_data.pop("datasource_bindings", None)
         assistant = Assistant.objects.create(**validated_data)
+        replace_datasource_bindings(assistant, datasource_bindings)
         self._sync_bindings(
             assistant,
             {
@@ -1563,6 +1598,9 @@ class AssistantSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Update assistant and optional bindings."""
 
+        instance = Assistant.objects.select_for_update().get(pk=instance.pk)
+        datasource_bindings = validated_data.pop("datasource_bindings", None)
+        replace_datasource_bindings(instance, datasource_bindings)
         was_smart = instance.mode_handler.supports_members
         collaboration_member_uuids = validated_data.pop(
             "collaboration_member_uuids", None
@@ -1858,6 +1896,33 @@ def _validate_plugin_json(value, field_name):
             _validate_plugin_json(nested, field_name)
 
 
+class DataSourceItemSerializer(serializers.ModelSerializer):
+    """Serialize an independently managed datasource child."""
+
+    class Meta:
+        model = DataSourceItem
+        fields = (
+            "uuid", "name", "source_type", "config", "storage_key",
+            "status", "current_version", "created_at", "updated_at",
+        )
+        read_only_fields = ("uuid", "created_at", "updated_at")
+        extra_kwargs = {
+            "storage_key": {"read_only": True},
+        }
+
+
+class DataSourceVersionSerializer(serializers.ModelSerializer):
+    """Serialize immutable processed datasource versions."""
+
+    class Meta:
+        model = DataSourceVersion
+        fields = (
+            "uuid", "version", "storage_key", "status", "checksum",
+            "created_at", "updated_at",
+        )
+        read_only_fields = fields
+
+
 class DataSourceSerializer(serializers.ModelSerializer):
     """Datasource serializer."""
 
@@ -1954,20 +2019,21 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
-        try:
-            validate_datasource_lensnode(lensnode)
-            attrs["target_path"] = normalize_workspace_target_path(
-                target_path,
-                lensnode.workspace_path,
-            )
-            _validate_unique_datasource_target_path(
-                attrs["target_path"],
-                lensnode,
-                self.instance,
-                source_type,
-            )
-        except (DataSourcePathError, DataSourceDispatchError) as exc:
-            raise serializers.ValidationError({"target_path": str(exc)})
+        if lensnode is not None:
+            try:
+                validate_datasource_lensnode(lensnode)
+                attrs["target_path"] = normalize_workspace_target_path(
+                    target_path,
+                    lensnode.workspace_path,
+                )
+                _validate_unique_datasource_target_path(
+                    attrs["target_path"],
+                    lensnode,
+                    self.instance,
+                    source_type,
+                )
+            except (DataSourcePathError, DataSourceDispatchError) as exc:
+                raise serializers.ValidationError({"target_path": str(exc)})
 
         credential = (
             attrs["credential"]

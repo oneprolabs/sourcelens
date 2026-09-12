@@ -900,6 +900,16 @@
     }
   },
   "lensAdmin": {
+    "assistantPresentation": {
+      "plugins": "Plugins",
+      "automaticNode": "Automatic scheduling",
+      "nodeUnavailable": "Node unavailable",
+      "noSources": "No sources selected",
+      "allItems": "All resources",
+      "noTools": "No enabled tools",
+      "adminOnly": "Administrators only",
+      "dataScope": "Data scope"
+    },
     "menuTitle": "Assistants",
     "total": "{label} · {count}",
     "tabs": {
@@ -932,7 +942,8 @@
     "pages": {
       "assistants": {
         "title": "Assistants",
-        "description": "Configure public capabilities, execution nodes, tasks, and workspace directories.",
+        "managementTitle": "Assistant Management",
+        "description": "Configure resources, tools, and access grants as reusable assistants.",
         "label": "Assistant",
         "action": "Create Assistant",
         "viewSelector": "Assistant lifecycle view",
@@ -940,8 +951,23 @@
         "archived": "Archived",
         "archive": "Archive",
         "restore": "Restore",
+        "workspace": "Workspace",
+        "enabledSummary": "Active",
+        "standardSummary": "Standard",
+        "smartSummary": "Smart",
+        "publicSummary": "Public",
+        "searchLabel": "Search assistants",
+        "searchPlaceholder": "Search name, slug, or description",
+        "typeLabel": "Assistant type",
+        "allTypes": "All types",
+        "visibilityLabel": "Visibility",
+        "allVisibility": "All visibility",
+        "resetFilters": "Reset filters",
         "emptyActive": "No active assistants",
-        "emptyArchived": "No archived assistants"
+        "emptyArchived": "No archived assistants",
+        "emptyHint": "Create an assistant to configure its execution and access boundaries.",
+        "noFilterResults": "No assistants match",
+        "noFilterHint": "Try adjusting the filters or reset them."
       },
       "lensnodes": {
         "title": "Nodes",
@@ -1196,6 +1222,7 @@
       "validation": "Validation status",
       "datasources": "Bound data sources",
       "lastUsedAt": "Last Used",
+      "updatedAt": "Updated",
       "skill": "Skill",
       "slug": "Slug",
       "mcpServer": "MCP Server",
@@ -1206,7 +1233,8 @@
       "workspaceGuideTag": "Workspace Guide",
       "workspaceGuideHint": "Auto-generated from the assistant's Workspace Context; edit it in that assistant",
       "shareUrl": "Share Link",
-      "visibility": "Visibility"
+      "visibility": "Visibility",
+      "dataAndTools": "Data & tools"
     },
     "tasks": {
       "title": "Default Scheduled Tasks",
@@ -1812,7 +1840,10 @@
     },
     "assistantDetail": {
       "title": "Assistant details",
+      "identifier": "Identifier",
       "overview": "Overview",
+      "skills": "Skills",
+      "mcpServers": "MCP servers",
       "workspaceDirectories": "Workspace directories",
       "capabilities": "Capabilities",
       "access": "Access",
@@ -1824,10 +1855,22 @@
       "noAuthorizedGroups": "No authorized groups",
       "archiveTitle": "Archive assistant",
       "archiveMessage": "Archive {name}? Links stop working until restored.",
-      "skillCount": "{count} Skills",
-      "mcpCount": "{count} MCP Servers",
+      "skillCount": "{count} Skill | {count} Skills",
+      "mcpCount": "{count} MCP Server | {count} MCP Servers",
       "collaborationMembers": "Collaboration members",
-      "noCollaborationMembers": "No collaboration members configured"
+      "noCollaborationMembers": "No collaboration members configured",
+      "back": "Back to list",
+      "summary": "Configuration summary",
+      "dataAccess": "Data access",
+      "workspaceContext": "Workspace context",
+      "collaborationContext": "Collaboration context",
+      "notConfigured": "Not configured",
+      "modelConfigured": "Model configured",
+      "unnamedDatasource": "Unnamed data source",
+      "unnamedAssistant": "Unnamed assistant",
+      "unnamedSkill": "Unnamed Skill",
+      "unnamedMcp": "Unnamed MCP server",
+      "unnamedPlugin": "Unnamed plugin"
     },
     "datasourceWizard": {
       "createTitle": "Create Data Source",
@@ -2019,7 +2062,15 @@
       "treeEmpty": "No directories reported.",
       "nodeEmpty": "Empty",
       "offlineHint": "Node is offline — only previously reported directories are shown; deeper levels cannot be fetched.",
-      "loadDirsFailed": "Failed to list subdirectories"
+      "loadDirsFailed": "Failed to list subdirectories",
+      "resources": "Resource usage",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk",
+      "datasourceTasks": "Datasource tasks",
+      "datasourceOperation": "Operation",
+      "existingDatasources": "Existing data sources",
+      "noDatasources": "No data sources"
     },
     "timeline": {
       "title": "Enrollment progress",
@@ -2083,6 +2134,9 @@
       "step3SmartDesc": "Add workspace guidance for Smart collaboration",
       "step4Title": "Access",
       "step4Desc": "Set visibility and choose which groups or users can access it",
+      "stepNavigation": "Configuration steps",
+      "createProgressHint": "Your input is preserved between steps. Go back anytime to review it.",
+      "editProgressHint": "Your input is preserved between steps. Changes are applied when you save.",
       "contextLabel": "Workspace Guide (optional)",
       "contextHint": "Tell the Assistant about workspace structure, business context, team conventions, search priorities, and directories to avoid. It is injected as this Assistant's private context after saving.",
       "smartContextHint": "Add project context, division-of-work principles, and retrieval priorities for Smart collaboration.",
@@ -2147,6 +2201,7 @@
     },
     "messages": {
       "loadFailed": "Failed to load Lens admin data",
+      "unsavedChanges": "You have unsaved changes. Close this drawer anyway?",
       "saveSuccess": "Saved successfully",
       "saveFailed": "Save failed",
       "uploadStarted": "Upload started",
@@ -2201,6 +2256,18 @@
       "groupsFailed": "Failed to load groups.",
       "usersFailed": "Failed to load users.",
       "retry": "Retry"
+    },
+    "datasourceSelection": {
+      "title": "Data access",
+      "selected": "Selected sources",
+      "selectedHint": "Only the data sources and resources selected below will be used.",
+      "empty": "No data sources available",
+      "selectedLabel": "selected",
+      "resources": "resources",
+      "placeholder": "Select data sources",
+      "search": "Search data sources",
+      "clear": "Clear selection",
+      "disabled": "Disabled"
     }
   }
 }

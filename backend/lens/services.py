@@ -64,6 +64,7 @@ from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
+from .datasource.workspace import build_session_workspace, session_source_dirs
 from .session_titles import fallback_session_title
 from .trace_context import root_observation_id_for_run, trace_id_for_run
 
@@ -1180,6 +1181,18 @@ def create_execution_run(
     )
     input_message.run = run
     input_message.save(update_fields=["run"])
+    if not session.datasource_snapshots.exists():
+        from .datasource.routing import (
+            DatasourceRoutingError,
+            selected_bindings,
+        )
+        from .datasource.snapshots import capture_session_datasources
+
+        try:
+            bindings = selected_bindings(assistant, question)
+        except DatasourceRoutingError as exc:
+            raise LensNodeDispatchError(str(exc)) from exc
+        capture_session_datasources(session, assistant, bindings=bindings)
     create_run_execution_snapshot(
         run,
         answer_language=answer_language,
@@ -2105,8 +2118,12 @@ def validate_run_dispatch(run):
             raise LensNodeDispatchError("GENERAL_CHAT_SKILL_REQUIRED")
     else:
         available = available_dir_paths(lensnode)
+        session_paths = {
+            item["path"] for item in session_source_dirs(run.session)
+        }
         for item in execution.target_dirs or []:
-            if item.get("path") not in available:
+            path = item.get("path")
+            if path not in available and path not in session_paths:
                 raise LensNodeDispatchError("LENSNODE_DIR_UNAVAILABLE")
 
     for skill in runtime_skills:
@@ -2280,11 +2297,7 @@ def create_run_execution_snapshot(
             "loaded_plugins": loaded_plugins,
             "agent_rounds": assistant.agent_rounds,
             "run_timeout_s": run_timeout_for_rounds(assistant.agent_rounds),
-            "target_dirs": (
-                []
-                if assistant.capability == Assistant.Capability.GENERAL_CHAT
-                else assistant.selected_dirs
-            ),
+            "target_dirs": session_source_dirs(run.session),
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],
             "token_budget_max_tokens": token_budget["max_tokens"],
@@ -3671,11 +3684,13 @@ def stream_run_events(run):
 
         if run.status == Run.Status.QUEUED:
             position = _queue_position(run)
-            if position != last_queue_position:
-                last_queue_position = position
+            waiting = _datasource_waiting(run)
+            if (position, waiting) != last_queue_position:
+                last_queue_position = (position, waiting)
                 yield {
                     "type": "queue_position",
                     "position": position,
+                    "datasource_waiting": waiting,
                     "ts": timezone.now().isoformat(),
                 }
         else:
@@ -3763,11 +3778,13 @@ async def stream_run_events_async(run):
 
         if run.status == Run.Status.QUEUED:
             position = await sync_to_async(_queue_position)(run)
-            if position != last_queue_position:
-                last_queue_position = position
+            waiting = await sync_to_async(_datasource_waiting)(run)
+            if (position, waiting) != last_queue_position:
+                last_queue_position = (position, waiting)
                 yield {
                     "type": "queue_position",
                     "position": position,
+                    "datasource_waiting": waiting,
                     "ts": timezone.now().isoformat(),
                 }
         else:
@@ -3956,3 +3973,12 @@ def _terminal_stream_event(run):
         "termination_detail": sanitize_termination_detail(run.termination_detail),
         "ts": timezone.now().isoformat(),
     }
+
+
+def _datasource_waiting(run):
+    """Return whether queued execution is waiting for datasource sync."""
+
+    state = RunExecution.objects.filter(run=run).values_list(
+        "runtime_snapshot", flat=True
+    ).first() or {}
+    return bool(state.get("datasource_waiting"))

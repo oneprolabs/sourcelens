@@ -107,7 +107,12 @@
     "documentUnsupported": "当前执行节点不支持文档附件。",
     "documentStateUnavailable": "文档附件状态不可用，请重试。",
     "documentUnavailable": "文档附件不可用，请重新上传。",
-    "attachmentUnreadable": "附件无法读取，请重新上传。"
+    "attachmentUnreadable": "附件无法读取，请重新上传。",
+    "datasourceNoMatch": "未匹配到数据源，请在问题中注明项目或仓库名称。",
+    "datasourceSyncFailed": "数据源同步失败，请检查数据源状态后重试。",
+    "datasourceSyncTimeout": "等待数据源同步超时，请稍后重试。",
+    "datasourceUploadRequired": "数据源没有可用文件，请先上传文件。",
+    "datasourceDisabled": "所选数据源已停用，请联系管理员。"
   },
   "lens": {
     "share": {
@@ -1447,5 +1452,14 @@
       "valueLabel": "配置内容 (JSON)",
       "invalidJson": "请输入有效的 JSON"
     }
-  }
+  },
+  "lensAdmin": {
+    "datasourceSelection": {
+      "title": "数据访问",
+      "selected": "指定数据源",
+      "selectedHint": "仅使用下方明确选择的数据源和资源。",
+      "empty": "暂无数据源"
+    }
+  },
+  "datasourceWaiting": "正在准备数据源，同步完成后将自动回答。"
 }

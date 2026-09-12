@@ -10,16 +10,6 @@
               <h1 class="admin-page-title">
                 {{ t('lensAdmin.pages.lensnodes.title') }}
               </h1>
-              <span
-                class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-500"
-              >
-                {{
-                  t('lensAdmin.total', {
-                    label: t('lensAdmin.pages.lensnodes.label'),
-                    count: totalLensNodes
-                  })
-                }}
-              </span>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -157,76 +147,6 @@
                       </div>
                       <div class="mt-1 font-mono text-xs text-ink-400">
                         {{ compactUuid(row.uuid) }}
-                      </div>
-                    </button>
-                  </td>
-                  <td class="table-cell">
-                    <StatusBadge :status="row.status" />
-                  </td>
-                  <td class="table-cell">
-                    <div class="flex flex-nowrap items-center gap-2">
-                      <StatusBadge :status="row.enrollment_status" />
-                      <template v-if="row.enrollment_status === 'pending'">
-                        <BaseButton
-                          size="sm"
-                          variant="outline"
-                          @click="approve(row)"
-                        >
-                          {{ t('lensAdmin.actions.approve') }}
-                        </BaseButton>
-                        <BaseButton
-                          size="sm"
-                          variant="ghost"
-                          @click="reject(row)"
-                        >
-                          {{ t('lensAdmin.actions.reject') }}
-                        </BaseButton>
-                      </template>
-                    </div>
-                  </td>
-                  <td class="table-cell">
-                    <button
-                      type="button"
-                      class="text-left text-ink-600 transition-colors hover:text-primary-600 hover:underline"
-                      :title="t('lensAdmin.detail.title')"
-                      @click="openDetail(row)"
-                    >
-                      {{ row.workspace_path || EMPTY_VALUE }}
-                    </button>
-                  </td>
-                  <td class="table-cell">
-                    <button
-                      type="button"
-                      data-testid="lensnode-capabilities"
-                      class="max-w-72 text-left"
-                      :title="t('lensAdmin.detail.title')"
-                      @click="openDetail(row)"
-                    >
-                      <div class="flex flex-wrap gap-1.5">
-                        <span
-                          v-for="directory in directoryCapabilityLabels(row)"
-                          :key="directory"
-                          class="max-w-32 truncate rounded border border-line bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-ink-600"
-                        >
-                          {{ directory }}
-                        </span>
-                      </div>
-                      <div class="mt-2 flex flex-wrap gap-1.5">
-                        <span
-                          v-for="task in taskCapabilityLabels(row)"
-                          :key="task"
-                          class="rounded border border-primary-200 bg-primary-50 px-1.5 py-0.5 text-xs text-primary-700"
-                        >
-                          {{ task }}
-                        </span>
-                      </div>
-                      <div class="mt-2 text-xs text-ink-400">
-                        {{
-                          t('lensAdmin.table.dirTaskSummary', {
-                            dirs: row.available_dirs?.length || 0,
-                            tasks: row.tasks?.length || 0
-                          })
-                        }}
                       </div>
                     </button>
                   </td>
@@ -437,8 +357,6 @@ import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
-import StatusBadge from '@/components/ui/StatusBadge.vue'
-
 import LensNodeComposePanel from './LensNodeComposePanel.vue'
 import LensNodeDetailDrawer from './LensNodeDetailDrawer.vue'
 import LensNodeFormDrawer from './LensNodeFormDrawer.vue'
@@ -476,17 +394,9 @@ const reissueNode = ref(null)
 const reissueToken = ref('')
 
 const columns = computed(() =>
-  [
-    'lensnode',
-    'runtimeStatus',
-    'enrollment',
-    'workspace',
-    'dirsAndTasks',
-    'workload',
-    'version',
-    'heartbeat',
-    'actions'
-  ].map((column) => t(`lensAdmin.columns.${column}`))
+  ['lensnode', 'workload', 'version', 'heartbeat', 'actions'].map((column) =>
+    t(`lensAdmin.columns.${column}`)
+  )
 )
 
 const healthSummary = computed(() => [
@@ -550,25 +460,6 @@ const onlineRate = computed(() =>
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(totalLensNodes.value / pageSize.value))
 )
-
-function directoryCapabilityLabels(row) {
-  const directories = Array.isArray(row.available_dirs)
-    ? row.available_dirs
-    : []
-  const labels = directories.map((directory) => {
-    const path = typeof directory === 'string' ? directory : directory.path
-    return path?.split('/').filter(Boolean).pop() || path
-  })
-  return labels.filter(Boolean).slice(0, 2)
-}
-
-function taskCapabilityLabels(row) {
-  const tasks = Array.isArray(row.tasks) ? row.tasks : []
-  return tasks
-    .map((task) => (typeof task === 'string' ? task : task.title || task.name))
-    .filter(Boolean)
-    .slice(0, 3)
-}
 
 function handlePageSizeChange() {
   currentPage.value = 1
@@ -770,7 +661,7 @@ onUnmounted(closeMenu)
 }
 
 .table-cell {
-  @apply px-4 py-4 text-sm text-ink-700;
+  @apply px-4 py-3 align-top text-sm text-ink-700;
 }
 
 .fleet-stat {

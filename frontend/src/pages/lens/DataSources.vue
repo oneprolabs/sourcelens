@@ -244,11 +244,9 @@
                   }}</span>
                   <p
                     class="min-w-0 flex-1 truncate font-mono text-xs font-medium text-ink-800"
-                    :title="
-                      dataSourceRepositoryUrl(row, connectionEndpoint(row))
-                    "
+                    :title="dataSourceRepository(row)"
                   >
-                    {{ dataSourceRepositoryUrl(row, connectionEndpoint(row)) }}
+                    {{ dataSourceRepository(row) }}
                   </p>
                   <span
                     v-if="
@@ -264,24 +262,6 @@
                     class="shrink-0 text-xs text-ink-500"
                     >{{ dataSourceRepositories(row).length }}
                     {{ t('lensAdmin.pluginForm.resources') }}</span
-                  >
-                </div>
-                <div
-                  class="datasource-target-summary flex min-w-0 items-center gap-2 border-t border-line py-2"
-                >
-                  <span class="w-14 shrink-0 text-xs text-ink-500">{{
-                    t('lensAdmin.datasourceCard.target')
-                  }}</span>
-                  <p
-                    class="min-w-0 flex-1 truncate font-mono text-xs text-ink-700"
-                    :title="row.target_path || emptyValue"
-                  >
-                    {{ row.target_path || emptyValue }}
-                  </p>
-                  <span
-                    class="max-w-28 shrink-0 truncate text-xs text-ink-500"
-                    :title="row.lensnode_name || lensNodeName(row.lensnode)"
-                    >{{ row.lensnode_name || lensNodeName(row.lensnode) }}</span
                   >
                 </div>
               </div>
@@ -470,7 +450,7 @@ import { EMPTY_VALUE as emptyValue, normalizeList } from './adminHelpers'
 import {
   dataSourceBranch,
   dataSourceRepositories,
-  dataSourceRepositoryUrl,
+  dataSourceRepository,
   isDataSourceEnabled,
   isOrganizationDataSource,
   isDataSourceSyncing,
@@ -521,9 +501,7 @@ const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
 const uploadInput = ref(null)
 const uploadDataSource = ref(null)
-const uploadAccept = [
-  '.zip'
-].join(',')
+const uploadAccept = ['.zip'].join(',')
 
 const datasourceConfig = ref({})
 const datasourcePathResult = ref(null)
@@ -1405,8 +1383,6 @@ function buildPayload() {
   const payload = {
     name: form.value.name,
     source_type: normalizedSourceType(form.value.source_type),
-    lensnode_uuid: form.value.lensnode_uuid,
-    target_path: datasourceTargetPath(),
     config: managedWorkspace ? {} : buildDatasourceConfig(),
     sync_policy: managedWorkspace ? {} : buildDatasourceSyncPolicy(),
     status: form.value.status || 'active',
@@ -1798,7 +1774,13 @@ function feishuDatasourceAccessError(error) {
 async function loadPluginResourceOptions({ resource, selectedValues }) {
   const connectionUuid = form.value.connection_uuid
   const selection = selectedValues || {}
-  if (!connectionUuid || !resource || !Object.keys(selection).length) return
+  if (
+    !connectionUuid ||
+    !resource ||
+    !Object.values(selection).some((value) => String(value || '').trim())
+  ) {
+    return
+  }
   const requestId = ++pluginResourceRequestId
   loadingPluginResourceOptions.value = resource
   try {

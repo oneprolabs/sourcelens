@@ -900,6 +900,16 @@
     }
   },
   "lensAdmin": {
+    "assistantPresentation": {
+      "plugins": "插件",
+      "automaticNode": "自动调度",
+      "nodeUnavailable": "节点不可用",
+      "noSources": "未指定数据源",
+      "allItems": "全部资源",
+      "noTools": "未启用工具",
+      "adminOnly": "仅管理员可访问",
+      "dataScope": "数据范围"
+    },
     "menuTitle": "Assistant 管理",
     "total": "{label} · {count}",
     "tabs": {
@@ -932,7 +942,8 @@
     "pages": {
       "assistants": {
         "title": "助手",
-        "description": "配置对外能力、执行节点、任务和工作区目录。",
+        "managementTitle": "助手管理",
+        "description": "把资源、工具与访问授权，配置成可复用的助手。",
         "label": "Assistant",
         "action": "新建 Assistant",
         "viewSelector": "助手生命周期视图",
@@ -940,8 +951,23 @@
         "archived": "已归档",
         "archive": "归档",
         "restore": "恢复",
+        "workspace": "工作区",
+        "enabledSummary": "已启用",
+        "standardSummary": "普通助手",
+        "smartSummary": "智能协作",
+        "publicSummary": "公开助手",
+        "searchLabel": "搜索助手",
+        "searchPlaceholder": "搜索名称、标识或描述",
+        "typeLabel": "助手类型",
+        "allTypes": "全部类型",
+        "visibilityLabel": "可见范围",
+        "allVisibility": "全部范围",
+        "resetFilters": "重置筛选",
         "emptyActive": "暂无启用中的助手",
-        "emptyArchived": "暂无已归档助手"
+        "emptyArchived": "暂无已归档助手",
+        "emptyHint": "可以新建一个助手，配置它的执行方式和访问边界。",
+        "noFilterResults": "没有匹配的助手",
+        "noFilterHint": "尝试调整筛选条件，或重置筛选。"
       },
       "lensnodes": {
         "title": "节点",
@@ -1196,6 +1222,7 @@
       "validation": "校验状态",
       "datasources": "关联数据源",
       "lastUsedAt": "最后使用",
+      "updatedAt": "更新时间",
       "skill": "Skill",
       "slug": "Slug",
       "mcpServer": "MCP Server",
@@ -1206,7 +1233,8 @@
       "workspaceGuideTag": "工作区指引",
       "workspaceGuideHint": "由所属助手的「工作区背景」自动生成，请在对应助手中编辑",
       "shareUrl": "对外链接",
-      "visibility": "可见性"
+      "visibility": "可见性",
+      "dataAndTools": "数据与工具"
     },
     "tasks": {
       "title": "默认定时任务",
@@ -1504,7 +1532,7 @@
       "validationSuccess": "连接验证成功，可用资源 {count} 个",
       "validationFailed": "连接验证失败",
       "deleteConfirm": "确定删除这个连接？",
-        "deleteSuccess": "连接已删除",
+      "deleteSuccess": "连接已删除",
       "deleteFailed": "连接删除失败",
       "pause": "暂停连接",
       "resume": "恢复连接",
@@ -1812,7 +1840,10 @@
     },
     "assistantDetail": {
       "title": "助手详情",
+      "identifier": "访问标识",
       "overview": "基本信息",
+      "skills": "技能",
+      "mcpServers": "MCP 服务",
       "workspaceDirectories": "工作区目录",
       "capabilities": "绑定能力",
       "access": "访问授权",
@@ -1827,7 +1858,19 @@
       "skillCount": "{count} 个 Skill",
       "mcpCount": "{count} 个 MCP Server",
       "collaborationMembers": "协作成员",
-      "noCollaborationMembers": "尚未配置协作成员"
+      "noCollaborationMembers": "尚未配置协作成员",
+      "back": "返回列表",
+      "summary": "配置摘要",
+      "dataAccess": "数据访问",
+      "workspaceContext": "工作上下文",
+      "collaborationContext": "协作上下文",
+      "notConfigured": "尚未配置",
+      "modelConfigured": "已配置模型",
+      "unnamedDatasource": "未命名数据源",
+      "unnamedAssistant": "未命名助手",
+      "unnamedSkill": "未命名技能",
+      "unnamedMcp": "未命名 MCP 服务",
+      "unnamedPlugin": "未命名插件"
     },
     "datasourceWizard": {
       "createTitle": "新建数据源",
@@ -2019,7 +2062,15 @@
       "treeEmpty": "节点未上报任何目录。",
       "nodeEmpty": "空",
       "offlineHint": "节点当前离线，仅显示此前上报的目录，无法实时拉取更深层级。",
-      "loadDirsFailed": "拉取子目录失败"
+      "loadDirsFailed": "拉取子目录失败",
+      "resources": "资源使用",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "硬盘",
+      "datasourceTasks": "数据源任务",
+      "datasourceOperation": "操作",
+      "existingDatasources": "已存在的数据源",
+      "noDatasources": "暂无数据源"
     },
     "timeline": {
       "title": "接入进度",
@@ -2083,6 +2134,9 @@
       "step3SmartDesc": "补充智能协作的工作区指引",
       "step4Title": "授权",
       "step4Desc": "设置可见性，并指定可访问该助手的组或用户",
+      "stepNavigation": "配置步骤",
+      "createProgressHint": "每一步的输入会保留，返回上一步可继续修改。",
+      "editProgressHint": "分组切换会保留当前输入。点击保存后统一更新配置。",
       "contextLabel": "工作区指引（可选）",
       "contextHint": "用于告诉 Assistant 工作区目录结构、业务背景、团队约定、检索优先级和需要避开的目录。保存后会作为该 Assistant 的专属上下文注入。",
       "smartContextHint": "用于补充智能协作的项目背景、分工原则和检索优先级。",
@@ -2147,6 +2201,7 @@
     },
     "messages": {
       "loadFailed": "加载 Lens 管理数据失败",
+      "unsavedChanges": "当前有未保存的修改，仍要关闭抽屉吗？",
       "saveSuccess": "保存成功",
       "saveFailed": "保存失败",
       "uploadStarted": "上传任务已开始",
@@ -2201,6 +2256,18 @@
       "groupsFailed": "组加载失败。",
       "usersFailed": "用户加载失败。",
       "retry": "重试"
+    },
+    "datasourceSelection": {
+      "title": "数据访问",
+      "selected": "指定数据源",
+      "selectedHint": "仅使用下方明确选择的数据源和资源。",
+      "empty": "暂无可用数据源",
+      "selectedLabel": "已选",
+      "resources": "个资源",
+      "placeholder": "请选择数据源",
+      "search": "搜索数据源",
+      "clear": "清空选择",
+      "disabled": "已禁用"
     }
   }
 }

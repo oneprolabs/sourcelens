@@ -53,6 +53,7 @@ from lens.models import (
     Session,
     SharedQA,
 )
+from lens.datasource.workspace import cleanup_session_workspace
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.session_lifecycle import (
     SessionStateError,
@@ -272,6 +273,12 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             logger.exception(
                 "Unable to delete temporary documents for Session %s.",
                 session_uuid,
+            )
+        try:
+            cleanup_session_workspace(session_uuid)
+        except Exception:
+            logger.exception(
+                "Unable to delete workspace for Session %s.", session_uuid
             )
 
     @action(detail=True, methods=["post"])

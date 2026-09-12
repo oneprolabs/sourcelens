@@ -411,6 +411,9 @@ STATIC_URL = 'static/'
 # uploads (API) and vision preprocessing (worker) share the same path.
 MEDIA_URL = 'media/'
 MEDIA_ROOT = os.environ.get("LENS_MEDIA_ROOT", "/opt/storage/media")
+LENS_SESSION_WORKSPACE_ROOT = os.environ.get(
+    "LENS_SESSION_WORKSPACE_ROOT", "/workspace/sessions"
+)
 DOCUMENT_ATTACHMENT_TTL_SECONDS = int(
     os.getenv("DOCUMENT_ATTACHMENT_TTL_SECONDS", "86400")
 )

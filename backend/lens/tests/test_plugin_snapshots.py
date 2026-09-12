@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch
 
 from django.test import TestCase
-from lens.datasource_services import dispatch_datasource_sync_async
+from lens.datasource.services import dispatch_datasource_sync_async
 from lens.models import (
     Connection,
     DataSource,
@@ -109,7 +109,7 @@ class PluginSnapshotTests(TestCase):
             create_datasource_sync_snapshot(self.datasource)
 
     def test_plugin_datasource_dispatch_sends_snapshot_metadata_only(self):
-        with patch("lens.datasource_services._send_lensnode_command") as send:
+        with patch("lens.datasource.services._send_lensnode_command") as send:
             dispatch_datasource_sync_async(
                 self.datasource,
                 task_id="sync-task",
@@ -122,3 +122,33 @@ class PluginSnapshotTests(TestCase):
         self.assertIn("snapshot_uuid", payload)
         self.assertNotIn("config", payload)
         self.assertNotIn("access_token", json.dumps(payload))
+
+    def test_independent_snapshot_uses_admitted_node_without_binding(self):
+        self.datasource.lensnode = None
+        self.datasource.target_path = ''
+        self.datasource.save(update_fields=['lensnode', 'target_path'])
+        first = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        second = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        self.assertEqual(
+            first.resolved_config['lensnode_uuid'], str(self.node.uuid)
+        )
+        self.assertEqual(
+            first.resolved_config['target_path'],
+            second.resolved_config['target_path'],
+        )
+        self.datasource.datasource_config['branch'] = 'develop'
+        self.datasource.save(update_fields=['datasource_config'])
+        changed = create_datasource_sync_snapshot(
+            self.datasource, lensnode=self.node
+        )
+        self.assertNotEqual(
+            first.resolved_config['target_path'],
+            changed.resolved_config['target_path'],
+        )
+        self.datasource.refresh_from_db()
+        self.assertIsNone(self.datasource.lensnode_id)
+        self.assertEqual(self.datasource.target_path, '')

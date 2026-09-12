@@ -2,7 +2,7 @@
 
 Keeps the upload-side image handling (validation, EXIF stripping,
 downscaling, message binding, data-URL encoding) self-contained, the way
-``skill_generation`` and ``datasource_services`` isolate their concerns.
+``skill_generation`` and ``datasource.services`` isolate their concerns.
 The run-flow vision preprocessing that consumes these images lives in
 ``services.analyze_multimodal_intent``.
 """

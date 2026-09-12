@@ -9,7 +9,7 @@ from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from lens.datasource_services import (
+from lens.datasource.services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
     get_datasource_upload_limits,
     DataSourceDispatchError,
@@ -20,9 +20,12 @@ from lens.datasource_services import (
 from lens.models import (
     CredentialLease,
     DataSource,
+    DataSourceItem,
+    DataSourceVersion,
     ExecutionSnapshot,
     PluginInvocation,
     ScheduledTask,
+    Session,
 )
 from lens.plugins.datasource_access import (
     datasource_access_failure_detail,
@@ -37,6 +40,8 @@ from lens.periodic_tasks import ensure_datasource_periodic_task
 from lens.serializers import (
     DataSourceConversionRequestSerializer,
     DataSourceSerializer,
+    DataSourceItemSerializer,
+    DataSourceVersionSerializer,
 )
 from lens.services import (
     cancel_datasource_conversion_on_lensnode,
@@ -67,6 +72,70 @@ class DataSourceViewSet(BaseAdminViewSet):
     queryset = DataSource.objects.all()
     serializer_class = DataSourceSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    @action(detail=True, methods=["get", "post"], url_path="items")
+    def items(self, request, uuid=None):
+        """List or create independently managed child resources."""
+        datasource = self.get_object()
+        if request.method == "GET":
+            return Response(
+                DataSourceItemSerializer(
+                    datasource.items.order_by("created_at"), many=True
+                ).data
+            )
+        serializer = DataSourceItemSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save(
+            datasource=datasource,
+            storage_key=(
+                f"datasources/{datasource.uuid}/items/"
+                f"{serializer.validated_data.get('uuid', uuid_mod.uuid4())}"
+            ),
+        )
+        return Response(
+            DataSourceItemSerializer(item).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["delete"], url_path="items/(?P<item_uuid>[^/.]+)")
+    def delete_item(self, request, uuid=None, item_uuid=None):
+        """Delete a child resource and its isolated local storage."""
+        datasource = self.get_object()
+        try:
+            item = datasource.items.get(uuid=item_uuid)
+        except DataSourceItem.DoesNotExist:
+            return Response({"detail": "Item not found"}, status=404)
+        in_use = Session.objects.filter(
+            status=Session.Status.ACTIVE,
+            datasource_snapshots__item=item,
+        ).exists()
+        if in_use:
+            return Response(
+                {"detail": "DATASOURCE_ITEM_IN_USE"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        from pathlib import Path
+        from django.conf import settings
+
+        storage = (Path(settings.MEDIA_ROOT) / item.storage_key).resolve()
+        root = Path(settings.MEDIA_ROOT).resolve()
+        if root not in storage.parents:
+            return Response({"detail": "Invalid storage key"}, status=400)
+        item.delete()
+        if storage.exists() and storage.is_dir():
+            import shutil
+            shutil.rmtree(storage)
+        return Response(status=204)
+
+    @action(detail=True, methods=["get"], url_path="items/(?P<item_uuid>[^/.]+)/versions")
+    def versions(self, request, uuid=None, item_uuid=None):
+        """List immutable processed versions for one child resource."""
+        datasource = self.get_object()
+        try:
+            item = datasource.items.get(uuid=item_uuid)
+        except DataSourceItem.DoesNotExist:
+            return Response({"detail": "Item not found"}, status=404)
+        rows = item.versions.order_by("-created_at")
+        return Response(DataSourceVersionSerializer(rows, many=True).data)
 
     @staticmethod
     def _sync_serializer_context(datasources):

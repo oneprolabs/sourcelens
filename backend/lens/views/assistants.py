@@ -10,7 +10,13 @@ from rest_framework.views import APIView
 from accounts.permissions import HasRequiredFeature
 
 from core.paginations import APIPagination
-from lens.models import Assistant, user_sees_all_assistants
+from lens.models import (
+    Assistant,
+    AssistantDataSourceBinding,
+    DataSource,
+    DataSourceItem,
+    user_sees_all_assistants,
+)
 from lens.serializers import AssistantListSerializer, AssistantSerializer
 from .base import BaseAuthenticatedViewSet
 
@@ -45,6 +51,58 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
     serializer_class = AssistantSerializer
     pagination_class = AssistantPagination
 
+    @action(
+        detail=True,
+        methods=["get", "post", "patch", "delete"],
+        url_path="datasources",
+    )
+    def datasources(self, request, uuid=None):
+        """List or bind datasource resources to an assistant."""
+        assistant = self.get_object()
+        if request.method == "GET":
+            return Response(AssistantSerializer(assistant).data["datasource_bindings"])
+        binding_uuid = request.data.get("binding_uuid")
+        if request.method in ("PATCH", "DELETE"):
+            try:
+                binding = assistant.datasource_bindings.get(uuid=binding_uuid)
+            except (TypeError, AssistantDataSourceBinding.DoesNotExist):
+                return Response({"binding_uuid": "Binding not found"}, status=404)
+            if request.method == "DELETE":
+                binding.delete()
+                return Response(status=204)
+            mount_name = request.data.get("mount_name")
+            if mount_name is not None:
+                if not mount_name.replace("_", "").isalnum():
+                    return Response({"mount_name": "Invalid mount name"}, status=400)
+                binding.mount_name = mount_name
+            if "required" in request.data:
+                binding.required = bool(request.data["required"])
+            binding.save(update_fields=["mount_name", "required", "updated_at"])
+            return Response(AssistantSerializer(assistant).data["datasource_bindings"])
+        try:
+            datasource = DataSource.objects.get(
+                uuid=request.data["datasource_uuid"]
+            )
+        except (KeyError, DataSource.DoesNotExist):
+            return Response({"datasource_uuid": "Datasource not found"}, status=404)
+        item_uuid = request.data.get("item_uuid")
+        item = None
+        if item_uuid:
+            try:
+                item = DataSourceItem.objects.get(
+                    uuid=item_uuid, datasource=datasource
+                )
+            except DataSourceItem.DoesNotExist:
+                return Response({"item_uuid": "Item not found"}, status=404)
+        mount_name = str(request.data.get("mount_name") or "source")
+        if not mount_name.replace("_", "").isalnum():
+            return Response({"mount_name": "Invalid mount name"}, status=400)
+        binding = AssistantDataSourceBinding.objects.create(
+            assistant=assistant, datasource=datasource, item=item,
+            mount_name=mount_name, required=bool(request.data.get("required", True)),
+        )
+        return Response(AssistantSerializer(assistant).data["datasource_bindings"], status=201)
+
     def get_serializer_class(self):
         """Use the compact contract for the collection endpoint."""
 
@@ -55,6 +113,8 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
     def get_permissions(self):
         """Require the admin console feature for write actions."""
 
+        if self.action == "datasources" and self.request.method != "GET":
+            return [permissions.IsAuthenticated(), HasRequiredFeature()]
         if self.action in (
             "create",
             "update",

@@ -39,15 +39,14 @@
 
     <div v-if="datasource">
       <div v-show="activeTab === 'basic'" class="space-y-4">
-        <section
+        <DrawerSection
+          :title="t('lensAdmin.datasourceDetail.basicInfo')"
+          spacing="none"
           class="datasource-overview-block rounded-xl border border-line bg-surface p-4"
         >
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceDetail.basicInfo') }}
-            </h3>
-            <StatusBadge :status="datasource.status" />
-          </div>
+          <template #actions
+            ><StatusBadge :status="datasource.status"
+          /></template>
           <dl
             class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line"
           >
@@ -69,7 +68,7 @@
               </dd>
             </div>
           </dl>
-        </section>
+        </DrawerSection>
 
         <section
           class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
@@ -142,13 +141,11 @@
           </div>
         </section>
 
-        <section
+        <DrawerSection
           v-if="datasource.source_type !== 'managed_workspace'"
+          :title="t('lensAdmin.datasourceDetail.sync')"
           class="datasource-sync-block rounded-xl border border-line bg-surface p-4"
         >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.sync') }}
-          </h3>
           <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             <div
               v-for="item in datasourceSyncDetails"
@@ -179,15 +176,13 @@
               {{ datasourceSyncError }}
             </p>
           </div>
-        </section>
+        </DrawerSection>
 
-        <section
+        <DrawerSection
           v-if="datasource.source_type !== 'managed_workspace'"
+          :title="t('lensAdmin.datasourceDetail.retrieval')"
           class="datasource-retrieval-block rounded-xl border border-line bg-surface p-4"
         >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.retrieval') }}
-          </h3>
           <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <article
               v-for="group in datasourceRetrievalGroups"
@@ -225,7 +220,7 @@
               </dl>
             </article>
           </div>
-        </section>
+        </DrawerSection>
       </div>
       <div v-show="activeTab === 'details'" class="space-y-6">
         <div
@@ -609,6 +604,7 @@ import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
+import DrawerSection from '@/components/ui/DrawerSection.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import TaskSummaryCard from '@/components/task-management/TaskSummaryCard.vue'
 

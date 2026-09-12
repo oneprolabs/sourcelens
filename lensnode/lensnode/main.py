@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+import shutil
 import threading
 from urllib.parse import urlencode
 
@@ -918,6 +919,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "sync",
             "starting",
+            message.get("name"),
         )
         message = {**message, "cancel_event": cancel_event}
         task = asyncio.create_task(self._execute_datasource_sync(message, plugin))
@@ -1265,6 +1267,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "conversion",
             "starting",
+            message.get("name"),
         )
         task = asyncio.create_task(
             self._execute_datasource_conversion(
@@ -1421,6 +1424,7 @@ class LensNodeClient:
             message.get("datasource_uuid"),
             "upload",
             "starting",
+            message.get("name"),
         )
         task = asyncio.create_task(
             self._execute_datasource_upload(
@@ -1638,17 +1642,21 @@ class LensNodeClient:
         datasource_uuid,
         operation,
         phase,
+        datasource_name=None,
     ):
         """Record one datasource operation for reconnect reconciliation."""
 
         with self._datasource_operations_lock:
-            self.active_datasource_operations[str(task_id)] = {
+            operation_report = {
                 "task_id": str(task_id),
                 "datasource_uuid": str(datasource_uuid or ""),
                 "operation": operation,
                 "phase": phase,
                 "last_progress": {},
             }
+            if datasource_name:
+                operation_report["datasource_name"] = str(datasource_name)
+            self.active_datasource_operations[str(task_id)] = operation_report
 
     def _update_datasource_operation(self, task_id, event):
         """Keep the reconnect report aligned with durable progress events."""
@@ -1753,6 +1761,7 @@ class LensNodeClient:
                     "tasks": TASKS,
                     "active_runs": active_runs,
                     "active_datasource_operations": active_datasource_operations,
+                    "metrics": self._resource_metrics(),
                     "labels": {
                         "mode": "local",
                         "datasource_sync_capacity": max(
@@ -1793,6 +1802,43 @@ class LensNodeClient:
         self._checkpoint_resume_ready = True
         return True
 
+    def _resource_metrics(self):
+        """Return lightweight host resource usage for the control plane."""
+        cpu_percent = None
+        try:
+            cpu_count = os.cpu_count() or 1
+            cpu_percent = min(100.0, max(0.0, os.getloadavg()[0] / cpu_count * 100))
+        except (AttributeError, OSError):
+            pass
+        memory_percent = None
+        try:
+            values = {}
+            with open("/proc/meminfo", encoding="utf-8") as stream:
+                for line in stream:
+                    key, value = line.split(":", 1)
+                    values[key] = int(value.strip().split()[0])
+            total = values.get("MemTotal", 0)
+            available = values.get("MemAvailable", values.get("MemFree", 0))
+            if total:
+                memory_percent = (total - available) / total * 100
+        except (OSError, ValueError):
+            pass
+        disk_percent = None
+        try:
+            usage = shutil.disk_usage(self.config.workspace_path)
+            disk_percent = usage.used / usage.total * 100 if usage.total else None
+        except OSError:
+            pass
+        return {
+            key: round(value, 1)
+            for key, value in {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "disk_percent": disk_percent,
+            }.items()
+            if value is not None
+        }
+
     async def _heartbeat_loop(self):
         """Periodically report workspace state while connected.
 
@@ -1831,6 +1877,10 @@ class LensNodeClient:
                     "type": "heartbeat",
                     "available_dirs": dirs,
                     "tasks": TASKS,
+                    "active_datasource_operations": (
+                        self._reported_active_datasource_operations()
+                    ),
+                    "metrics": self._resource_metrics(),
                 }
             )
 
