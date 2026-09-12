@@ -1090,6 +1090,7 @@ def create_execution_run(
     parent_run=None,
     routing_assistant_uuid=None,
     routing_assistant_uuids=None,
+    agent_rounds=None,
 ):
     """Create a queued run for LensNode execution."""
 
@@ -1196,6 +1197,7 @@ def create_execution_run(
     create_run_execution_snapshot(
         run,
         answer_language=answer_language,
+        agent_rounds=agent_rounds,
         routing_assistant_uuids=routing_assistant_uuids,
         routing_assistant_explicit=(explicit_routing_assistant_uuids is not None),
     )
@@ -2259,11 +2261,13 @@ def create_run_execution_snapshot(
     answer_language=None,
     routing_assistant_uuids=None,
     routing_assistant_explicit=False,
+    agent_rounds=None,
 ):
     """Create or return the per-run LensNode execution snapshot."""
 
     assistant = run.session.assistant
-    token_budget = token_budget_for_rounds(assistant.agent_rounds)
+    agent_rounds = agent_rounds or assistant.agent_rounds
+    token_budget = token_budget_for_rounds(agent_rounds)
     profile = getattr(run.session.user, "profile", None)
     answer_language = normalize_answer_language(
         answer_language or getattr(profile, "language", None)
@@ -2295,8 +2299,8 @@ def create_run_execution_snapshot(
             "loaded_skills": loaded_skills,
             "loaded_mcps": build_loaded_mcps(assistant),
             "loaded_plugins": loaded_plugins,
-            "agent_rounds": assistant.agent_rounds,
-            "run_timeout_s": run_timeout_for_rounds(assistant.agent_rounds),
+            "agent_rounds": agent_rounds,
+            "run_timeout_s": run_timeout_for_rounds(agent_rounds),
             "target_dirs": session_source_dirs(run.session),
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],

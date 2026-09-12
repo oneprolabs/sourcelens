@@ -222,6 +222,13 @@
       "visitorSubtitle": "目前还没有可对话的助手，请联系管理员。"
     },
     "chat": {
+      "reasoningDepth": "推理深度",
+      "reasoningDefault": "助手默认",
+      "reasoningFlash": "极速",
+      "reasoningFast": "快速",
+      "reasoningBalanced": "均衡",
+      "reasoningDeep": "深度",
+      "reasoningMax": "极限",
       "liveOutput": "实时输出",
       "newSession": "新建会话",
       "smartCollaboration": "智能协作",
