@@ -253,11 +253,33 @@ class LensNodeSerializer(serializers.ModelSerializer):
 
     def get_datasources(self, obj):
         """Return the active datasources already assigned to this node."""
-        return list(
-            obj.datasources.filter(status="active").values(
-                "uuid", "name", "source_type", "status"
-            )
-        )
+        result = []
+        for datasource in obj.datasources.filter(status="active"):
+            usage = {
+                "raw_bytes": 0,
+                "derived_bytes": 0,
+                "total_bytes": 0,
+                "status": "complete",
+            }
+            measured = False
+            for item in datasource.items.filter(status="active"):
+                item_usage = item.storage_usage or {}
+                if not item_usage:
+                    continue
+                measured = True
+                usage["raw_bytes"] += int(item_usage.get("raw_bytes") or 0)
+                usage["derived_bytes"] += int(
+                    item_usage.get("derived_bytes") or 0
+                )
+                usage["total_bytes"] += int(item_usage.get("total_bytes") or 0)
+            result.append({
+                "uuid": str(datasource.uuid),
+                "name": datasource.name,
+                "source_type": datasource.source_type,
+                "status": datasource.status,
+                "storage_usage": usage if measured else {},
+            })
+        return result
         read_only_fields = [
             "uuid",
             "assistant",

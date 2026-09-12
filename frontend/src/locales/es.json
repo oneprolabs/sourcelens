@@ -194,7 +194,6 @@
       "statusListedHint": "Un administrador lo añadió a la lista de preguntas y respuestas compartida del asistente. Solo los usuarios que pueden acceder al asistente pueden verlo.",
       "statusHiddenHint": "Retirado por un administrador. El enlace compartido ya no funciona.",
       "adminTitle": "Revisión de preguntas y respuestas",
-      "adminSubtitle": "Revisar preguntas y respuestas compartidas por los usuarios y elegir lo que aparece en la lista pública.",
       "tabPending": "Revisión pendiente",
       "tabListed": "Enumerado",
       "tabHidden": "Oculto",

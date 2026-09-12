@@ -2,7 +2,6 @@
   "lensRuns": {
     "menu": "Run 运维",
     "title": "Run 运维中心",
-    "subtitle": "跨用户与 LensNode 监控、检查并安全操作 Agent Run。",
     "filterKeyword": "搜索问题…",
     "filterUsername": "用户名",
     "filterLensNode": "LensNode 名称或 ID",
@@ -1020,7 +1019,6 @@
       "settings": {
         "title": "Lens 全局配置",
         "description": "配置节点默认超时、Run 保留天数、健康检查阈值，以及默认定时任务启用状态。",
-        "label": "配置项",
         "action": "新建配置"
       }
     },
@@ -2036,6 +2034,19 @@
       "feishuDeleteMissingHint": "当飞书远端条目不存在时，删除对应本地文件。建议默认关闭，避免误删。"
     },
     "detail": {
+      "runtimeLocation": "运行位置",
+      "storageNotMeasured": "空间占用：暂未统计",
+      "searchDatasources": "搜索数据源",
+      "datasourceType": "数据源类型",
+      "allDatasourceTypes": "全部类型",
+      "noMatchingDatasources": "未找到匹配的数据源",
+      "showFewerDatasources": "收起列表",
+      "showAllDatasources": "查看全部（{count}）",
+      "datasourceTypes": {"git": "Git", "feishu": "飞书", "jira": "Jira", "managed_workspace": "托管工作区"},
+      "runtimeStats": "运行环境与统计",
+      "rawStorage": "原始",
+      "derivedStorage": "处理后",
+      "totalStorage": "总计",
       "title": "节点详情",
       "availableDirs": "可用目录",
       "supportedTasks": "支持任务",

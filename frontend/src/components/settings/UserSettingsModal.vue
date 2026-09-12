@@ -357,7 +357,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const uiStore = useUiStore()
 const preferencesStore = usePreferencesStore()
-const languages = computed(() => getUiLanguageOptions(t))
+const languages = computed(() => getUiLanguageOptions())
 const activeSection = ref('profile')
 const closeButtonRef = ref(null)
 

@@ -18,11 +18,14 @@ services:
       LENSNODE_TLS_SKIP_VERIFY: ${LENSNODE_TLS_SKIP_VERIFY:-false}
       LENSNODE_TLS_CA_FILE: ${LENSNODE_TLS_CA_FILE:-}
       LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_RUNTIME_PATH: /runtime
+      LENSNODE_CHECKPOINT_DIR: /runtime/checkpoints
       LENSNODE_EXECUTION_BACKEND: ${LENSNODE_EXECUTION_BACKEND:-trusted_container}
       LENSNODE_HEARTBEAT_INTERVAL_S: ${LENSNODE_HEARTBEAT_INTERVAL_S:-15}
       PYTHONPATH: /opt/lensnode
     volumes:
       - ./workspace:/workspace
+      - ./runtime:/runtime
       # Mount a private CA when LENSNODE_TLS_CA_FILE points to this path.
       # - ./ca.crt:/etc/sourcelens/ca.crt:ro
     extra_hosts:

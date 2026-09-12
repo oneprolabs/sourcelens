@@ -50,6 +50,7 @@ class LensNodeConfig:
     stream_recovery_backoff_s: float = 1.0
     stream_recovery_backoff_max_s: float = 8.0
     max_concurrent_datasource_syncs: int = 1
+    runtime_path: str = "/workspace"
 
 
 def _optional_int(value):
@@ -145,6 +146,10 @@ def load_config():
             os.getenv("LENSNODE_DELIVERABLE_MAX_BYTES", str(50 * 1024 * 1024))
         ),
         workspace_path=os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
+        runtime_path=os.getenv(
+            "LENSNODE_RUNTIME_PATH",
+            os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
+        ),
         protocol_version=os.getenv("LENSNODE_PROTOCOL_VERSION", "v1"),
         agent_version=os.getenv("LENSNODE_AGENT_VERSION", "dev"),
         heartbeat_interval_s=int(

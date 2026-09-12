@@ -308,7 +308,33 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
     conversion_summary = post_process_documents(context, sync_result, emit)
     conversion_summary["deleted_sidecars"] = deleted_sidecars
     result["conversion_summary"] = conversion_summary
+    result["storage_usage"] = _storage_usage(target)
     return result
+
+
+def _storage_usage(root):
+    """Measure bytes stored locally, split into raw and generated data."""
+
+    raw_bytes = 0
+    derived_bytes = 0
+    for path in root.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if _is_generated_datasource_path(root, path):
+            derived_bytes += size
+        else:
+            raw_bytes += size
+    return {
+        "raw_bytes": raw_bytes,
+        "derived_bytes": derived_bytes,
+        "total_bytes": raw_bytes + derived_bytes,
+        "status": "complete",
+        "measured_at": utc_timestamp(),
+    }
 
 
 def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):

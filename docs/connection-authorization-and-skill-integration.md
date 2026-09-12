@@ -149,7 +149,6 @@ Environment variable -> Delivery mechanism
 相关文件：
 
 - [SVG 拓扑图](./connection-authorization-topology.svg)
-- [HTML 浏览页](./connection-authorization-topology.html)
 
 该图是讨论阶段的完整拓扑，包含未经收缩的通用
 `CredentialSet`、Provider Registry 和多种 Materialization。经过反方审查后，

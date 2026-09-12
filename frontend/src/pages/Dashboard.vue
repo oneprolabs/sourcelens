@@ -11,16 +11,20 @@ import { useRouter } from 'vue-router'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import { useLensStore } from '@/store/lens'
 
+import { useUserStore } from '@/store/user'
+import { readRecentChat, pickRecentAssistant } from '@/utils/recentChat'
+
+const userStore = useUserStore()
 const router = useRouter()
 const lensStore = useLensStore()
 
 async function redirectToChat() {
   try {
     const assistants = await lensStore.loadAssistants()
-    const nextAssistant =
-      assistants.find(
-        (assistant) => assistant?.slug && assistant.status === 'active'
-      ) || assistants.find((assistant) => assistant?.slug)
+    const nextAssistant = pickRecentAssistant(
+      assistants,
+      readRecentChat(userStore.user)
+    )
 
     if (nextAssistant?.slug) {
       await router.replace(`/lens/assistants/${nextAssistant.slug}/chat`)

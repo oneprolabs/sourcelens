@@ -1990,6 +1990,8 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
+import { readRecentChat, saveRecentChat, pickRecentSession } from '@/utils/recentChat'
+
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -2126,6 +2128,11 @@ const selectedSession = computed(
 const selectedSessionArchived = computed(
   () => selectedSession.value?.status === 'archived'
 )
+
+function rememberChat(sessionUuid = '') {
+  if (isSmartCollaborationRoute.value || isAnonymous.value) return
+  saveRecentChat(userStore.user, selectedAssistant.value?.slug, sessionUuid)
+}
 
 const routingCandidates = computed(() => {
   const candidates = assistants.value.filter(
@@ -3356,7 +3363,11 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
-  let targetUuid = requestedUuid || sessions.value[0]?.uuid
+  const rememberedUuid = useRouteSession && !isSmartCollaborationRoute.value
+    ? pickRecentSession(sessions.value, readRecentChat(userStore.user),
+        selectedAssistant.value?.slug)
+    : ''
+  let targetUuid = requestedUuid || rememberedUuid || sessions.value[0]?.uuid
   if (
     requestedUuid &&
     !sessions.value.some((session) => session.uuid === requestedUuid)
@@ -3446,6 +3457,7 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
   }
   sortManagedSessions()
   selectedSessionUuid.value = session.uuid
+  rememberChat(session.uuid)
   if (isSmartCollaborationConversation.value) {
     routingScopeDraft.value = [...(session.allowed_assistant_uuids || [])]
   }
@@ -3482,6 +3494,7 @@ function clearSessionSelection() {
   sessionLoadGeneration += 1
   clearAttachments()
   selectedSessionUuid.value = ''
+  rememberChat()
   messages.value = []
   currentRun.value = null
   question.value = ''
@@ -3878,6 +3891,7 @@ async function selectSession(session, updateRoute = true) {
     if (!isCurrentLoad()) return
     finishRunStatusResolution()
     if ([403, 404].includes(error?.response?.status)) {
+      rememberChat()
       showError(t('lens.chat.sessionAccessDenied'))
       messageError.value = true
       messageLoading.value = false
@@ -3889,6 +3903,7 @@ async function selectSession(session, updateRoute = true) {
     return
   }
   if (!isCurrentLoad()) return
+  rememberChat(session.uuid)
   messages.value = loadedMessages
   messageLoading.value = false
   // Session history is ready for display. An active run's SSE can stay open

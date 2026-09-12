@@ -270,4 +270,4 @@ For zero-downtime upgrades, see
 
 ## Design Principles
 
-Each Django app is self-contained (models, views, serializers, services, migrations, tests). Apps communicate via APIs. See [docs/DESIGN_PRINCIPLES.md](docs/DESIGN_PRINCIPLES.md).
+Each Django app is self-contained (models, views, serializers, services, migrations, tests). Apps communicate via APIs.

@@ -9,9 +9,6 @@
             <h1 class="admin-page-title">
               {{ t('lensRuns.title') }}
             </h1>
-            <p class="admin-page-subtitle">
-              {{ t('lensRuns.subtitle') }}
-            </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <BaseButton

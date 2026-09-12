@@ -195,12 +195,11 @@
                             (row.mode || row.routing_mode) === 'smart'
                         }"
                       >
-                        <UsersRound
-                          v-if="(row.mode || row.routing_mode) === 'smart'"
+                        <component
+                          :is="assistantIcon(row)"
                           :size="18"
                           aria-hidden="true"
                         />
-                        <Bot v-else :size="18" aria-hidden="true" />
                       </span>
                       <div class="min-w-0">
                         <button
@@ -438,6 +437,8 @@
 import {
   Bot,
   BookOpen,
+  Code2,
+  MessageCircle,
   Database,
   Plug,
   Globe as GlobeIcon,
@@ -621,6 +622,16 @@ function lensNodeName(value) {
       ? t('lensAdmin.assistantPresentation.nodeUnavailable')
       : t('lensAdmin.assistantPresentation.automaticNode'))
   )
+}
+
+
+function assistantIcon(row) {
+  if ((row.mode || row.routing_mode) === 'smart') return UsersRound
+  return {
+    general_chat: MessageCircle,
+    knowledge_qa: BookOpen,
+    code_analysis: Code2
+  }[row.capability] || Bot
 }
 
 function assistantTypeLabel(value) {

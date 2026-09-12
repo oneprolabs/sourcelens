@@ -213,6 +213,30 @@ def get_datasource_upload_timeout_s():
     return value if value > 0 else DEFAULT_DATASOURCE_UPLOAD_TIMEOUT_S
 
 
+def get_datasource_upload_limits():
+    """Return positive upload limits from global settings."""
+
+    defaults = {
+        "max_bytes": DATASOURCE_UPLOAD_MAX_BYTES,
+        "max_extracted_bytes": 100 * 1024 * 1024,
+        "max_extracted_files": 300,
+    }
+    prefix = "lens.datasource_upload."
+    rows = {
+        row.key: row.value
+        for row in GlobalSetting.objects.filter(
+            key__in=[prefix + key for key in defaults]
+        )
+    }
+    return {
+        key: value
+        if type(value) is int and value > 0
+        else default
+        for key, default in defaults.items()
+        for value in [rows.get(prefix + key, default)]
+    }
+
+
 def check_datasource_path(lensnode, target_path, source_type, config=None):
     """Ask a LensNode to inspect a datasource target path."""
 

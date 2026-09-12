@@ -194,7 +194,6 @@
       "statusListedHint": "管理员已将它加入助手的分享问答列表，仍只有有权访问该助手的用户才能查看。",
       "statusHiddenHint": "已被管理员下架，分享链接不再可用。",
       "adminTitle": "问答审核",
-      "adminSubtitle": "审核用户分享的问答，决定哪些进入公开列表。",
       "tabPending": "待审核",
       "tabListed": "已上榜",
       "tabHidden": "已下架",

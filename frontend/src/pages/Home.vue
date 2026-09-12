@@ -15,17 +15,13 @@ import AssistantEmptyState from '@/components/lens/AssistantEmptyState.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import { useUserStore } from '@/store/user'
 import { listAssistants } from '@/api/lens'
+import { readRecentChat, pickRecentAssistant } from '@/utils/recentChat'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const loading = ref(true)
 const variant = ref('visitor')
-
-function pickAssistant(list) {
-  const active = list.find((item) => item.status === 'active')
-  return active || list[0] || null
-}
 
 onMounted(async () => {
   // The router guard guarantees an authenticated user here. Every user
@@ -34,7 +30,10 @@ onMounted(async () => {
   // guide, regular users the no-assistant notice.
   try {
     const assistants = await listAssistants()
-    const target = pickAssistant(assistants || [])
+    const target = pickRecentAssistant(
+      assistants || [],
+      readRecentChat(userStore.user)
+    )
     if (target) {
       await router.replace(`/lens/assistants/${target.slug}/chat`)
       return

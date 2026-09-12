@@ -201,6 +201,8 @@ services:
       LENSNODE_CONTROL_WS_URL: ws://backend-api:8000/ws/lens/lensnodes/
       LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_RUNTIME_PATH: /runtime
+      LENSNODE_CHECKPOINT_DIR: /runtime/checkpoints
       HTTP_PROXY: ${LENSNODE_HTTP_PROXY:-}
       HTTPS_PROXY: ${LENSNODE_HTTPS_PROXY:-}
       ALL_PROXY: ${LENSNODE_ALL_PROXY:-}
@@ -232,6 +234,7 @@ services:
       PYTHONPATH: /opt/lensnode
     volumes:
       - ./data.dev/workspace:/workspace
+      - ./data.dev/runtime:/runtime
       - ./data.dev/storage/media:/opt/storage/media:ro
       - ./lensnode/lensnode:/opt/lensnode/lensnode:ro
       - ./plugins:/opt/plugins:ro

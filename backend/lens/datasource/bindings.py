@@ -51,8 +51,15 @@ class DatasourceBindingsField(serializers.Field):
             "datasource_uuid": str(row.datasource.uuid),
             "datasource_name": row.datasource.name,
             "source_type": row.datasource.source_type,
+            "plugin_key": row.datasource.plugin_key,
             "item_uuid": str(row.item.uuid) if row.item else None,
             "item_name": row.item.name if row.item else None,
+            "item_names": (
+                list(row.datasource.items.filter(status="active").values_list(
+                    "name", flat=True
+                ))
+                if row.item is None else []
+            ),
             "mount_name": row.mount_name,
             "required": row.required,
         } for row in manager.select_related("datasource", "item")]

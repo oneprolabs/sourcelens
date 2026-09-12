@@ -99,12 +99,13 @@ def prepare_runtime_resources(
 
     config = _apply_feature_flags(config, command.get("features"))
     workspace = Path(config.workspace_path)
-    base = workspace / ".sourcelens"
+    runtime_base = Path(getattr(config, "runtime_path", workspace))
+    base = runtime_base / ".sourcelens"
     cache_root = base / "cache"
     runtime_instance_id = (
         command.get("runtime_instance_id") or command["run_uuid"]
     )
-    runtime_root = _run_runtime_path(workspace, runtime_instance_id)
+    runtime_root = _run_runtime_path(runtime_base, runtime_instance_id)
     skills_root = runtime_root / "skills"
     mcp_root = runtime_root / "mcp"
 

@@ -68,10 +68,10 @@ class LensNodeClient:
         self.config = config
         if getattr(config, "node_options", ""):
             os.environ["NODE_OPTIONS"] = config.node_options
-        workspace_path = getattr(config, "workspace_path", None)
-        if workspace_path:
+        runtime_path = getattr(config, "runtime_path", None)
+        if runtime_path:
             cleanup_stale_runtime_resources(
-                workspace_path,
+                runtime_path,
                 max_age_s=int(checkpoint_ttl_hours() * 3600),
             )
         self.ssl_context = create_config_ssl_context(config)
@@ -629,7 +629,7 @@ class LensNodeClient:
                     getattr(self.config, "workspace_path", None),
                 )
                 cleanup_run_runtime_resources(
-                    getattr(self.config, "workspace_path", None),
+                    getattr(self.config, "runtime_path", None),
                     run_uuid,
                 )
             elif command is None:
@@ -654,13 +654,15 @@ class LensNodeClient:
                 )
             )
             workspace_path = getattr(self.config, "workspace_path", None)
+            runtime_path = getattr(self.config, "runtime_path", None)
             cleanup_deferred = self.executor.defer_cleanup_until_worker_stops(
                 run_uuid,
                 workspace_path,
+                runtime_path,
             )
             if not cleanup_deferred:
                 cleanup_run_checkpoint(run_uuid, workspace_path)
-                cleanup_run_runtime_resources(workspace_path, run_uuid)
+                cleanup_run_runtime_resources(runtime_path, run_uuid)
         elif message_type == "datasource_terminal_ack":
             task_id = str(message.get("task_id") or "")
             frame = self._pending_datasource_terminal_frames.get(task_id)
