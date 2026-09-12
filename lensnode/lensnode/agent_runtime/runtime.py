@@ -71,6 +71,7 @@ from .execution import (
     _synthesize_wrapup_answer,
 )
 from .limits import (
+    SharedTokenBudget,
     resolve_token_budget as _resolve_token_budget,
     resolve_tool_call_budget as _resolve_tool_call_budget,
 )
@@ -741,6 +742,9 @@ class LensDeepAgentRuntime:
             self.config,
             state.command,
         )
+        state.shared_token_budget = SharedTokenBudget(
+            state.token_budget["max_tokens"]
+        )
         state.tool_call_budget = _resolve_tool_call_budget(
             self.config,
             state.command,
@@ -808,6 +812,7 @@ class LensDeepAgentRuntime:
                 )
             ),
             trajectory=state.trajectory,
+            shared_token_budget=state.shared_token_budget,
         )
         if state.resume_state is not None:
             state.model.restore_runtime_state(
