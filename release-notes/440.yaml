@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Improved conversation startup feedback with explicit loading, empty, and retry states while restoring session history.
+zh-CN: 优化会话启动反馈，在恢复会话历史时明确展示加载、空列表和重试状态。
