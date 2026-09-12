@@ -45,6 +45,9 @@ DETAIL_ITEMS_LIMIT = 200
 DEFAULT_MAX_SPREADSHEET_CELLS = 100000
 DEFAULT_MAX_SPREADSHEET_XML_BYTES = 50 * 1024 * 1024
 MAX_AUTOMATIC_CONVERSION_ATTEMPTS = 3
+DEFAULT_VISUAL_MAX_ATTEMPTS = 3
+DEFAULT_VISUAL_RETRY_BASE_DELAY = 0.25
+DEFAULT_VISUAL_RETRY_MAX_DELAY = 2.0
 
 
 def _check_runtime_cancelled(context):
@@ -158,11 +161,30 @@ class MarkItDownDocumentConverter(BaseConverter):
                 reason=stats["warning"],
                 stats=stats,
             )
-        if stats.get("truncated"):
+        if stats.get("truncated") and path.suffix.lower() != ".xlsx":
             return ConversionOutput(
                 skipped=True,
                 reason=stats["truncation_reason"],
                 stats=stats,
+            )
+        if path.suffix.lower() == ".xlsx":
+            from .bounded_xlsx import inspect_xlsx
+
+            conversion = context.get("conversion") or {}
+            text, bounded_stats = inspect_xlsx(
+                path,
+                max_cells=int(conversion.get("max_spreadsheet_cells")
+                              or DEFAULT_MAX_SPREADSHEET_CELLS),
+                max_xml_bytes=int(conversion.get("max_spreadsheet_xml_bytes")
+                                  or DEFAULT_MAX_SPREADSHEET_XML_BYTES),
+                max_chars=int(conversion.get("max_spreadsheet_chars") or 1_000_000),
+            )
+            return ConversionOutput(
+                text=text,
+                stats=bounded_stats,
+                cost=empty_cost_stats(),
+                warning=("SPREADSHEET_RANGE_TRUNCATED"
+                         if bounded_stats.get("truncated") else ""),
             )
         try:
             from markitdown import MarkItDown
@@ -598,6 +620,7 @@ def post_process_documents(context, sync_result, emit=None):
         )
 
     summary["details"] = conversion_details_by_metric(summary["items"])
+    merge_cost_stats(summary["cost"], context.get("conversion_cost") or {})
     summary["details_truncated"] = conversion_details_truncated(summary)
     summary["warnings"] = list(dict.fromkeys(warnings))
     emit_conversion(
@@ -616,6 +639,14 @@ def conversion_error_reason(exc):
     """Return a safe machine-readable reason for conversion failures."""
 
     message = str(exc or "").upper()
+    for code in (
+        "VISUAL_PAYLOAD_TOO_LARGE",
+        "VISUAL_UPSTREAM_TIMEOUT",
+        "VISUAL_RETRY_EXHAUSTED",
+        "VISUAL_UNSUPPORTED_IMAGE",
+    ):
+        if code in message:
+            return code
     if "PASSWORD" in message or "ENCRYPT" in message:
         return "PASSWORD_PROTECTED"
     if "EMPTY" in message or "NO EXTRACTABLE" in message:
@@ -1263,6 +1294,11 @@ def empty_cost_stats():
         "completion_tokens": 0,
         "total_tokens": 0,
         "model_calls": 0,
+        "raw_attempts": 0,
+        "successful_requests": 0,
+        "failed_requests": 0,
+        "retry_attempts": 0,
+        "billable_model_calls": 0,
     }
 
 
@@ -2237,37 +2273,48 @@ def describe_image_file(path, context):
     )
 
 
-def describe_image_bytes(image_bytes, mime_type, context):
-    """Describe image bytes through the LensNode gateway."""
+def _visual_usage_bucket(context):
+    """Return mutable visual accounting bucket on conversion context."""
+    bucket = context.setdefault("conversion_cost", {})
+    for key in ("raw_attempts", "successful_requests", "failed_requests", "retry_attempts", "billable_model_calls", "prompt_tokens", "completion_tokens", "total_tokens"):
+        bucket.setdefault(key, 0)
+    return bucket
 
-    _check_runtime_cancelled(context)
-    _touch_runtime_activity(context)
+
+def _visual_status_code(exc):
+    """Extract HTTP status code from gateway exception."""
+    return getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def describe_image_bytes(image_bytes, mime_type, context):
+    """Describe image bytes through gateway with bounded retries."""
+    _check_runtime_cancelled(context); _touch_runtime_activity(context)
     conversion = context.get("conversion") or {}
-    model_ref = conversion.get("vision_model_ref") or context.get(
-        "vision_model_ref"
-    )
-    gateway_url = context.get("ai_gateway_url")
-    token = context.get("lensnode_token")
+    model_ref = conversion.get("vision_model_ref") or context.get("vision_model_ref")
+    gateway_url, token = context.get("ai_gateway_url"), context.get("lensnode_token")
     if not model_ref or not gateway_url or not token:
         raise RuntimeError("VISION_MODEL_NOT_CONFIGURED")
     from .gateway_model import describe_image_result
-
-    prompt = image_prompt(context)
-    result = describe_image_result(
-        image_bytes,
-        prompt,
-        mime_type,
-        model_ref=model_ref,
-        ai_gateway_url=gateway_url,
-        token=token,
-        run_uuid=context.get("run_uuid"),
-        tls_skip_verify=context.get("tls_skip_verify", False),
-        tls_ca_file=context.get("tls_ca_file"),
-        http_client=context.get("gateway_http_client"),
-    )
-    _check_runtime_cancelled(context)
-    _touch_runtime_activity(context)
-    return result.get("content") or "", result.get("usage") or {}
+    bucket = _visual_usage_bucket(context)
+    max_attempts = max(1, min(int(conversion.get("visual_max_attempts") or DEFAULT_VISUAL_MAX_ATTEMPTS), DEFAULT_VISUAL_MAX_ATTEMPTS))
+    for attempt in range(max_attempts):
+        bucket["raw_attempts"] += 1
+        try:
+            result = describe_image_result(image_bytes, image_prompt(context), mime_type, model_ref=model_ref, ai_gateway_url=gateway_url, token=token, run_uuid=context.get("run_uuid"), tls_skip_verify=context.get("tls_skip_verify", False), tls_ca_file=context.get("tls_ca_file"), http_client=context.get("gateway_http_client"))
+            bucket["successful_requests"] += 1; bucket["billable_model_calls"] += 1
+            usage = result.get("usage") or {}
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"): bucket[key] += int(usage.get(key) or 0)
+            _check_runtime_cancelled(context); _touch_runtime_activity(context)
+            return result.get("content") or "", usage
+        except Exception as exc:
+            bucket["failed_requests"] += 1
+            code = _visual_status_code(exc); message = str(exc)
+            if code == 413 or "413" in message: raise RuntimeError("VISUAL_PAYLOAD_TOO_LARGE") from exc
+            if code != 504 and "504" not in message: raise
+            if attempt + 1 >= max_attempts: raise RuntimeError("VISUAL_UPSTREAM_TIMEOUT") from exc
+            bucket["retry_attempts"] += 1
+            time.sleep(min(DEFAULT_VISUAL_RETRY_BASE_DELAY * (2 ** attempt), DEFAULT_VISUAL_RETRY_MAX_DELAY))
+    raise RuntimeError("VISUAL_UPSTREAM_TIMEOUT")
 
 
 def vision_configured(context):
