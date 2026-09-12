@@ -221,6 +221,13 @@
       "visitorSubtitle": "There are no assistants to chat with yet. Please contact your administrator."
     },
     "chat": {
+      "reasoningDepth": "Reasoning depth",
+      "reasoningDefault": "Assistant default",
+      "reasoningFlash": "Flash",
+      "reasoningFast": "Fast",
+      "reasoningBalanced": "Balanced",
+      "reasoningDeep": "Deep",
+      "reasoningMax": "Max",
       "liveOutput": "Live output",
       "newSession": "New session",
       "smartCollaboration": "Smart Collaboration",

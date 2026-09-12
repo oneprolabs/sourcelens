@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Improved Smart Collaboration run governance by enforcing shared parent token
+  budgets, reconciling delegated usage and terminal steps, and preserving
+  delegated citations in administration diagnostics.
+zh-CN: >-
+  优化智能协作运行治理：统一父 Run 与委派模型调用的令牌预算，校准委派用量和终态步骤，
+  并在管理诊断中保留委派引用。

@@ -281,7 +281,10 @@
                   {{ t('lens.chat.retryAction') }}
                 </button>
               </div>
-              <p v-else-if="!sessionsLoading && !sessions.length" class="session-list-empty">
+              <p
+                v-else-if="!sessionsLoading && !sessions.length"
+                class="session-list-empty"
+              >
                 {{
                   showArchivedSessions
                     ? t('lens.chat.noArchivedSessions')
@@ -441,7 +444,9 @@
               </button>
             </div>
             <div
-              v-else-if="isMobile && !decoratedMessages.length && !showLiveAnswer"
+              v-else-if="
+                isMobile && !decoratedMessages.length && !showLiveAnswer
+              "
               class="chat-welcome"
             >
               <p class="chat-welcome-assistant">{{ assistantName }}</p>
@@ -1751,6 +1756,28 @@
               </div>
             </div>
 
+            <div class="composer-rounds-label">
+              <label for="composer-rounds">{{
+                t('lens.chat.reasoningDepth')
+              }}</label>
+              <BaseSelect
+                id="composer-rounds"
+                v-model="agentRounds"
+                class="min-w-0 max-w-full"
+                size="sm"
+                :aria-label="t('lens.chat.reasoningDepth')"
+              >
+                <option value="">{{ t('lens.chat.reasoningDefault') }}</option>
+                <option
+                  v-for="tier in agentRoundsTiers"
+                  :key="tier.value"
+                  :value="tier.value"
+                >
+                  {{ tier.label }}
+                </option>
+              </BaseSelect>
+            </div>
+
             <p v-if="!isMobile" class="disclaimer">
               {{
                 t('lens.chat.disclaimer') ||
@@ -1862,6 +1889,7 @@ import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
 import AuthImage from '@/components/ui/AuthImage.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import RowActionMenu from '@/components/ui/RowActionMenu.vue'
 import BrandLogo from '@/components/layout/BrandLogo.vue'
@@ -2012,6 +2040,14 @@ const feedbackUpdatingRuns = ref(new Set())
 const selectedAssistantUuid = ref('')
 const selectedSessionUuid = ref('')
 const question = ref('')
+const agentRounds = ref('')
+const agentRoundsTiers = computed(() => [
+  { value: 'flash', label: t('lens.chat.reasoningFlash') },
+  { value: 'fast', label: t('lens.chat.reasoningFast') },
+  { value: 'balanced', label: t('lens.chat.reasoningBalanced') },
+  { value: 'deep', label: t('lens.chat.reasoningDeep') },
+  { value: 'max', label: t('lens.chat.reasoningMax') }
+])
 const attachments = ref([])
 const fileInput = ref(null)
 const partialAnswer = ref('')
@@ -3223,6 +3259,7 @@ async function bootstrap() {
   // permanently disabled. A stale submit during the brief load window is
   // instead guarded inside submit() by binding to the session it started in.
   question.value = ''
+  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   currentRun.value = null
   runStatusResolvingSessionUuid.value = ''
@@ -3341,13 +3378,10 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
   sessionsError.value = false
   let loadedSessions
   try {
-    loadedSessions = await listSessions(
-      selectedAssistant.value?.slug || '',
-      {
-        routingMode: isSmartCollaborationConversation.value ? 'smart' : '',
-        archived: showArchivedSessions.value
-      }
-    )
+    loadedSessions = await listSessions(selectedAssistant.value?.slug || '', {
+      routingMode: isSmartCollaborationConversation.value ? 'smart' : '',
+      archived: showArchivedSessions.value
+    })
   } catch {
     if (loadGeneration === sessionLoadGeneration) {
       sessionsError.value = true
@@ -3462,6 +3496,7 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
     routingScopeDraft.value = [...(session.allowed_assistant_uuids || [])]
   }
   question.value = ''
+  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   retryDraft.value = null
   clarificationAnswers.value = {}
@@ -3498,6 +3533,7 @@ function clearSessionSelection() {
   messages.value = []
   currentRun.value = null
   question.value = ''
+  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   retryDraft.value = null
   clarificationAnswers.value = {}
@@ -3911,6 +3947,7 @@ async function selectSession(session, updateRoute = true) {
   booted.value = true
   if (sessionChanged) {
     question.value = ''
+    agentRounds.value = ''
     mentionedAssistantUuids.value = []
     retryDraft.value = null
     if (composerRef.value) composerRef.value.style.height = 'auto'
@@ -4192,6 +4229,7 @@ async function submit() {
     showWarning(t('lens.chat.participatingAssistantsRequired'))
     return
   }
+  const agentRoundsAtSubmit = agentRounds.value
   const draftTextAtSubmit = question.value
   const mentionUuidsAtSubmit = [...mentionedAssistantUuids.value]
   const mentionAssistantsAtSubmit = [...mentionedAssistants.value]
@@ -4256,6 +4294,7 @@ async function submit() {
     mentionAssistantsAtSubmit
   )
   question.value = ''
+  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   // Snapshot ready attachments, clear the composer strip, and keep the object
   // URLs alive for the optimistic bubble until the server reload replaces it.
@@ -4269,6 +4308,7 @@ async function submit() {
     question: optimisticText,
     attachmentUuids,
     routingAssistantUuids: mentionUuidsAtSubmit,
+    agentRounds: agentRoundsAtSubmit,
     retryDraft: retryDraftAtSubmit,
     pendingSubmission: pendingRunSubmission.value
   })
@@ -4371,6 +4411,7 @@ async function submit() {
     }
     messages.value = messages.value.filter((m) => m.uuid !== '__optimistic__')
     question.value = draftTextAtSubmit
+    agentRounds.value = agentRoundsAtSubmit
     mentionedAssistantUuids.value = mentionUuidsAtSubmit
     retryDraft.value = retryDraftAtSubmit
     // Only a 4xx response proves that the Run transaction rejected the
@@ -5775,6 +5816,15 @@ onBeforeUnmount(() => {
   --composer-max-height: 200px;
   border-color: var(--sl-border-default);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.composer-rounds-label {
+  @apply pointer-events-auto mt-2 flex flex-wrap items-center gap-2
+    px-1 text-xs text-ink-500;
+}
+
+.composer-rounds-label :deep([role='combobox']) {
+  min-height: 44px;
 }
 
 .composer:focus-within {

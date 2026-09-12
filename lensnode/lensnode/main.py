@@ -147,6 +147,19 @@ class LensNodeClient:
         self._pending_terminal_frames = collections.OrderedDict()
         self._pending_datasource_terminal_frames = collections.OrderedDict()
 
+    def _enqueue_from_thread(self, loop, payload):
+        """Schedule an outbound frame while tolerating loop shutdown."""
+
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._enqueue, payload)
+        except (RuntimeError, AttributeError):
+            LOGGER.debug(
+                "Dropped outbound frame after event loop shutdown",
+                exc_info=True,
+            )
+
     def _enqueue(self, payload):
         """Append an outbound frame to the durable outbox.
 
@@ -943,7 +956,7 @@ class LensNodeClient:
                 "task_id": task_id,
                 **event,
             }
-            loop.call_soon_threadsafe(self._enqueue, payload)
+            self._enqueue_from_thread(loop, payload)
 
         try:
             if plugin:
@@ -1295,7 +1308,7 @@ class LensNodeClient:
                 "task_id": task_id,
                 **event,
             }
-            loop.call_soon_threadsafe(self._enqueue, payload)
+            self._enqueue_from_thread(loop, payload)
 
         try:
             command = {
@@ -1568,7 +1581,7 @@ class LensNodeClient:
         loop = asyncio.get_running_loop()
 
         def emit(payload):
-            loop.call_soon_threadsafe(self._enqueue, payload)
+            self._enqueue_from_thread(loop, payload)
 
         completed = False
         slot_acquired = False
@@ -1918,14 +1931,15 @@ class LensNodeClient:
     def _log_connection_error(self, error):
         """Log WebSocket connection errors."""
 
-        LOGGER.warning(
+        LOGGER.error(
             task_log(
                 (
                     "Checked LensNode control channel "
                     f"{self.config.name}. Current status is error."
                 ),
                 details=[f"Error: {error}"],
-            )
+            ),
+            exc_info=(type(error), error, error.__traceback__),
         )
 
     def _log_disconnected(self, status_code, message):

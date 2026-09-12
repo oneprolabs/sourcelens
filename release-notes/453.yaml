@@ -1,0 +1,5 @@
+type: feature
+audience: user
+en: Let users choose the reasoning depth for each chat request.
+zh-CN: 支持用户为每次聊天请求选择推理深度。
+es: Permite elegir la profundidad de razonamiento para cada solicitud de chat.

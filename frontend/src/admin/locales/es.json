@@ -2068,6 +2068,8 @@
       "issuedAt": "emitido {time}",
       "revoked": "Revocado",
       "notIssued": "Aún no emitido",
+      "existingDatasources": "Fuentes de datos existentes",
+      "noDatasources": "No hay fuentes de datos",
       "reissue": "Reemitir token",
       "reissueHint": "Reemitir genera un nuevo token y una nueva composición; el token antiguo deja de funcionar inmediatamente.",
       "directoryTree": "Vista previa del directorio",

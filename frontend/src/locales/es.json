@@ -221,6 +221,13 @@
       "visitorSubtitle": "Aún no hay asistentes para chatear. Por favor, contacte a su administrador."
     },
     "chat": {
+      "reasoningDepth": "Profundidad de razonamiento",
+      "reasoningDefault": "Predeterminado del asistente",
+      "reasoningFlash": "Flash",
+      "reasoningFast": "Rápido",
+      "reasoningBalanced": "Equilibrado",
+      "reasoningDeep": "Profundo",
+      "reasoningMax": "Máximo",
       "liveOutput": "Salida en vivo",
       "newSession": "Nueva sesión",
       "smartCollaboration": "Colaboración inteligente",
@@ -341,6 +348,7 @@
       "errorVisionProviderQuotaExceeded": "La cuota del proveedor de visión o el límite de velocidad se ha agotado. Por favor, inténtelo de nuevo más tarde o contacte a un administrador.",
       "errorVisionProviderUnavailable": "El proveedor de visión no está disponible temporalmente. Por favor, inténtelo de nuevo más tarde.",
       "retryAction": "Reintentar",
+      "sessionHistoryLoadFailed": "No se pudo cargar el historial de la conversación.",
       "loadFailed": "Error al cargar chat de Lens.",
       "assistantNotFound": "El asistente al que intenta acceder no existe. Por favor, contacte a su administrador para obtener un enlace válido.",
       "sessionAccessDenied": "No tienes acceso a esta sesión, o ya no existe. Seleccione una de sus sesiones recientes o inicie una nueva.",

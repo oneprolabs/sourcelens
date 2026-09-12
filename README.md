@@ -136,6 +136,15 @@ dependencies.
 | `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
 | `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
 
+The image build resolves these minimum versions from PyPI with `uv pip compile`;
+the generated `requirements.txt` is used only inside the image and is ignored by
+Git. Rebuild the development image after pulling this migration so any previous
+editable-install finder files are removed.
+
+For temporary agentcore source debugging, mount a checkout read-only and set
+`PYTHONPATH` to its package directory. Remove `PYTHONPATH` to return to the
+installed package. Do not run `uv pip install -e` in the container.
+
 ## Celery Task System
 
 - **Discovery**: `core/celery.py` calls `autodiscover_tasks()` to load `tasks.py` from every app

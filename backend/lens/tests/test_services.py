@@ -150,6 +150,69 @@ class LensServiceTests(TransactionTestCase):
             title="",
         )
 
+    @patch("lens.services.async_to_sync")
+    @patch("lens.services.get_channel_layer")
+    def test_request_rounds_freeze_dispatch_and_token_budget(
+        self, get_channel_layer, mock_async_to_sync
+    ):
+        """A request overrides all tier budgets without changing the Assistant."""
+        from lens.serializers import RunCreateSerializer
+
+        self.assistant.agent_rounds = "flash"
+        self.assistant.save(update_fields=["agent_rounds"])
+        for rounds in Assistant.AgentRounds.values:
+            with self.subTest(rounds=rounds):
+                serializer = RunCreateSerializer(
+                    data={
+                        "question": "Analyze this request",
+                        "agent_rounds": rounds,
+                        "enqueue": False,
+                    },
+                    context={"session": self.session},
+                )
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                run = serializer.save()
+                budget = token_budget_for_rounds(rounds)
+                self.assertEqual(run.execution.agent_rounds, rounds)
+                self.assertEqual(
+                    run.execution.token_budget_max_tokens,
+                    budget["max_tokens"],
+                )
+                self.assistant.refresh_from_db()
+                self.assertEqual(self.assistant.agent_rounds, "flash")
+                create_run_execution_snapshot(run, agent_rounds="balanced")
+                run.execution.refresh_from_db()
+                self.assertEqual(run.execution.agent_rounds, rounds)
+                dispatch_run_to_lensnode(run, "Analyze this request")
+                payload = mock_async_to_sync.return_value.call_args.args[1][
+                    "payload"
+                ]
+                self.assertEqual(payload["agent_rounds"], rounds)
+                self.assertEqual(
+                    payload["max_agent_turns"],
+                    max_agent_turns_for_rounds(rounds),
+                )
+                self.assertEqual(payload["token_budget"], budget)
+
+        default_run = create_execution_run(
+            session=self.session, question="Another question", enqueue=False
+        )
+        self.assertEqual(default_run.execution.agent_rounds, "flash")
+
+    def test_request_rounds_reject_invalid_choices(self):
+        """Reject invalid tiers before creating a Run."""
+        from lens.serializers import RunCreateSerializer
+
+        for rounds in ("", None, "unknown", "MAX", 100):
+            with self.subTest(rounds=rounds):
+                serializer = RunCreateSerializer(
+                    data={"question": "Check status", "agent_rounds": rounds},
+                    context={"session": self.session},
+                )
+                self.assertFalse(serializer.is_valid())
+                self.assertIn("agent_rounds", serializer.errors)
+        self.assertFalse(Run.objects.exists())
+
     def test_run_timeout_is_independent_of_execution_strategy(self):
         for agent_rounds in ("flash", "fast", "balanced", "deep", "max"):
             with self.subTest(agent_rounds=agent_rounds):

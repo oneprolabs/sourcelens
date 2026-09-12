@@ -135,6 +135,13 @@ Agentcore 通过项目依赖从 Python 包索引安装。
 | `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
 | `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
 
+镜像构建通过 `uv pip compile` 从 PyPI 解析这些最低版本；生成的
+`requirements.txt` 只在镜像内使用，并已被 Git 忽略。拉取本次迁移后，请重新构建
+开发镜像，以清理旧的可编辑安装 finder 文件。
+
+如需临时调试 agentcore 源码，可只读挂载源码目录并设置 `PYTHONPATH` 指向对应包目录；
+移除 `PYTHONPATH` 即可恢复使用已安装的包。不要在容器内运行 `uv pip install -e`。
+
 ## Celery 任务机制
 
 - **任务发现**：`core/celery.py` 通过 `autodiscover_tasks()` 自动加载各 app 的 `tasks.py`

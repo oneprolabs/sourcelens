@@ -4265,6 +4265,10 @@ class RunCreateSerializer(serializers.Serializer):
     retry_of_run_uuid = serializers.UUIDField(required=False, allow_null=True)
     enqueue = serializers.BooleanField(required=False, default=True)
     run_inline = serializers.BooleanField(required=False, default=False)
+    agent_rounds = serializers.ChoiceField(
+        choices=Assistant.AgentRounds.choices,
+        required=False,
+    )
     attachment_uuids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
@@ -4363,6 +4367,7 @@ class RunCreateSerializer(serializers.Serializer):
                 user=request.user if request else None,
                 routing_assistant_uuid=validated_data.get("routing_assistant_uuid"),
                 routing_assistant_uuids=validated_data.get("routing_assistant_uuids"),
+                agent_rounds=validated_data.get("agent_rounds"),
             )
         except AssistantNotRunnableError:
             raise PermissionDenied("You do not have access to this assistant.")
