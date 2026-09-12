@@ -337,6 +337,7 @@
       "errorVisionProviderQuotaExceeded": "The vision provider quota or rate limit is exhausted. Please retry later or contact an administrator.",
       "errorVisionProviderUnavailable": "The vision provider is temporarily unavailable. Please retry later.",
       "retryAction": "Retry",
+      "sessionHistoryLoadFailed": "Conversation history could not be loaded.",
       "loadFailed": "Failed to load Lens chat.",
       "assistantNotFound": "The assistant you're trying to access doesn't exist. Please contact your administrator for a valid link.",
       "sessionAccessDenied": "You don't have access to this session, or it no longer exists. Select one of your recent sessions or start a new one.",

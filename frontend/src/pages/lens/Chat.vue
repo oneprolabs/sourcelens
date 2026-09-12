@@ -194,7 +194,11 @@
               </div>
             </div>
             <div class="sessions-list">
+              <div v-if="sessionsLoading" class="session-list-loading">
+                <BaseLoading />
+              </div>
               <div
+                v-else
                 v-for="session in sessions"
                 :key="session.uuid"
                 class="session-item"
@@ -271,7 +275,13 @@
                   </div>
                 </template>
               </div>
-              <p v-if="!sessions.length" class="session-list-empty">
+              <div v-if="sessionsError" class="session-list-error">
+                <p>{{ t('lens.chat.sessionHistoryLoadFailed') }}</p>
+                <button type="button" @click="retrySessions">
+                  {{ t('lens.chat.retryAction') }}
+                </button>
+              </div>
+              <p v-else-if="!sessionsLoading && !sessions.length" class="session-list-empty">
                 {{
                   showArchivedSessions
                     ? t('lens.chat.noArchivedSessions')
@@ -421,8 +431,17 @@
             <AssistantEmptyState :variant="emptyVariant" />
           </div>
           <div v-else class="thread">
+            <div v-if="messageLoading" class="thread-loading">
+              <BaseLoading />
+            </div>
+            <div v-else-if="messageError" class="thread-load-error">
+              <p>{{ t('lens.chat.sessionHistoryLoadFailed') }}</p>
+              <button type="button" @click="retrySelectedSession">
+                {{ t('lens.chat.retryAction') }}
+              </button>
+            </div>
             <div
-              v-if="isMobile && !decoratedMessages.length && !showLiveAnswer"
+              v-else-if="isMobile && !decoratedMessages.length && !showLiveAnswer"
               class="chat-welcome"
             >
               <p class="chat-welcome-assistant">{{ assistantName }}</p>
@@ -1983,6 +2002,10 @@ const sessionActivity = useSessionActivity()
 const assistants = ref([])
 const sessions = ref([])
 const messages = ref([])
+const sessionsLoading = ref(false)
+const sessionsError = ref(false)
+const messageLoading = ref(false)
+const messageError = ref(false)
 const feedbackUpdatingRuns = ref(new Set())
 const selectedAssistantUuid = ref('')
 const selectedSessionUuid = ref('')
@@ -3204,6 +3227,10 @@ async function bootstrap() {
   showArchivedSessions.value = false
   resetStreamState()
   booted.value = false
+  sessionsLoading.value = false
+  sessionsError.value = false
+  messageLoading.value = false
+  messageError.value = false
 
   // Anonymous visitors can browse the shared chat page and see the
   // assistant name, but only authenticated users load private sessions.
@@ -3303,16 +3330,29 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
   }
 
   const loadGeneration = ++sessionLoadGeneration
-  const loadedSessions = await listSessions(
-    selectedAssistant.value?.slug || '',
-    {
-      routingMode: isSmartCollaborationConversation.value ? 'smart' : '',
-      archived: showArchivedSessions.value
+  sessionsLoading.value = true
+  sessionsError.value = false
+  let loadedSessions
+  try {
+    loadedSessions = await listSessions(
+      selectedAssistant.value?.slug || '',
+      {
+        routingMode: isSmartCollaborationConversation.value ? 'smart' : '',
+        archived: showArchivedSessions.value
+      }
+    )
+  } catch {
+    if (loadGeneration === sessionLoadGeneration) {
+      sessionsError.value = true
+      sessions.value = []
+      sessionsLoading.value = false
     }
-  )
+    return
+  }
   if (loadGeneration !== sessionLoadGeneration) return
 
   sessions.value = loadedSessions
+  sessionsLoading.value = false
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
@@ -3826,6 +3866,11 @@ async function selectSession(session, updateRoute = true) {
   clearAttachments()
   selectedSessionUuid.value = session.uuid
   runStatusResolvingSessionUuid.value = session.uuid
+  messageLoading.value = true
+  messageError.value = false
+  if (sessionChanged) {
+    messages.value = []
+  }
   let loadedMessages
   try {
     loadedMessages = await listMessages(session.uuid)
@@ -3834,12 +3879,18 @@ async function selectSession(session, updateRoute = true) {
     finishRunStatusResolution()
     if ([403, 404].includes(error?.response?.status)) {
       showError(t('lens.chat.sessionAccessDenied'))
+      messageError.value = true
+      messageLoading.value = false
       return
     }
-    throw error
+    messageError.value = true
+    messageLoading.value = false
+    booted.value = true
+    return
   }
   if (!isCurrentLoad()) return
   messages.value = loadedMessages
+  messageLoading.value = false
   // Session history is ready for display. An active run's SSE can stay open
   // for minutes, so it must not keep the whole chat behind the page loader.
   booted.value = true
@@ -3862,6 +3913,15 @@ async function selectSession(session, updateRoute = true) {
   clearUnreadSession(window.localStorage, session.uuid)
   refreshUnreadSessions()
   await maybeResumeActiveRun(session.uuid, isCurrentLoad)
+}
+
+function retrySessions() {
+  return loadSessions('', { useRouteSession: true })
+}
+
+function retrySelectedSession() {
+  if (!selectedSessionUuid.value) return Promise.resolve()
+  return selectSession({ uuid: selectedSessionUuid.value }, false)
 }
 
 // If the session has a run still in progress (e.g. the user navigated away
