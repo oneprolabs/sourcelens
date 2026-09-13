@@ -33,7 +33,9 @@
         @keydown="handleTriggerKeydown"
       >
         <span class="min-w-0 flex-1 truncate">
-          {{ selectedOption?.label || '' }}
+          <slot name="selected" :option="selectedOption">
+            {{ selectedOption?.label || '' }}
+          </slot>
         </span>
 
         <svg
@@ -104,8 +106,10 @@
           @click="selectOption(option, index)"
           @mouseenter="activateOption(option, index)"
         >
-          <span class="min-w-0 flex-1 whitespace-nowrap">
-            {{ option.label }}
+          <span class="min-w-0 flex-1">
+            <slot name="option" :option="option">
+              <span class="whitespace-nowrap">{{ option.label }}</span>
+            </slot>
           </span>
 
           <svg
@@ -198,6 +202,10 @@ const props = defineProps({
   mobileTouch: {
     type: Boolean,
     default: false
+  },
+  menuMinWidth: {
+    type: Number,
+    default: 96
   }
 })
 
@@ -519,10 +527,9 @@ function updateMenuPosition() {
   const availableAbove = rect.top - menuGap
   const opensAbove = availableBelow < 160 && availableAbove > availableBelow
   const availableHeight = opensAbove ? availableAbove : availableBelow
-  const minMenuWidth = 96
-  const width = Math.max(
-    minMenuWidth,
-    Math.min(rect.width, window.innerWidth - viewportMargin * 2)
+  const width = Math.min(
+    Math.max(props.menuMinWidth, rect.width),
+    window.innerWidth - viewportMargin * 2
   )
   const left = Math.max(
     viewportMargin,

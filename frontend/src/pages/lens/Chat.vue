@@ -1719,6 +1719,9 @@
                     @paste="onComposerPaste"
                     @input="handleComposerInput"
                   />
+                  <div class="composer-inline-toolbar">
+                    <ReasoningDepthSelect v-model="agentRounds" />
+                  </div>
                 </div>
                 <button
                   class="composer-action-btn"
@@ -1754,28 +1757,6 @@
                   </svg>
                 </button>
               </div>
-            </div>
-
-            <div class="composer-rounds-label">
-              <label for="composer-rounds">{{
-                t('lens.chat.reasoningDepth')
-              }}</label>
-              <BaseSelect
-                id="composer-rounds"
-                v-model="agentRounds"
-                class="min-w-0 max-w-full"
-                size="sm"
-                :aria-label="t('lens.chat.reasoningDepth')"
-              >
-                <option value="">{{ t('lens.chat.reasoningDefault') }}</option>
-                <option
-                  v-for="tier in agentRoundsTiers"
-                  :key="tier.value"
-                  :value="tier.value"
-                >
-                  {{ tier.label }}
-                </option>
-              </BaseSelect>
             </div>
 
             <p v-if="!isMobile" class="disclaimer">
@@ -1889,7 +1870,7 @@ import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
 import AuthImage from '@/components/ui/AuthImage.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import BaseSelect from '@/components/ui/BaseSelect.vue'
+import ReasoningDepthSelect from './components/ReasoningDepthSelect.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import RowActionMenu from '@/components/ui/RowActionMenu.vue'
 import BrandLogo from '@/components/layout/BrandLogo.vue'
@@ -2041,13 +2022,6 @@ const selectedAssistantUuid = ref('')
 const selectedSessionUuid = ref('')
 const question = ref('')
 const agentRounds = ref('')
-const agentRoundsTiers = computed(() => [
-  { value: 'flash', label: t('lens.chat.reasoningFlash') },
-  { value: 'fast', label: t('lens.chat.reasoningFast') },
-  { value: 'balanced', label: t('lens.chat.reasoningBalanced') },
-  { value: 'deep', label: t('lens.chat.reasoningDeep') },
-  { value: 'max', label: t('lens.chat.reasoningMax') }
-])
 const attachments = ref([])
 const fileInput = ref(null)
 const partialAnswer = ref('')
@@ -5819,12 +5793,13 @@ onBeforeUnmount(() => {
 }
 
 .composer-rounds-label {
-  @apply pointer-events-auto mt-2 flex flex-wrap items-center gap-2
-    px-1 text-xs text-ink-500;
+  @apply pointer-events-auto flex items-center;
 }
 
-.composer-rounds-label :deep([role='combobox']) {
-  min-height: 44px;
+.composer-inline-toolbar {
+  @apply pointer-events-auto flex basis-full items-center;
+  order: 3;
+  margin-top: -0.25rem;
 }
 
 .composer:focus-within {

@@ -28,7 +28,7 @@ def _sync_task(source, run):
     from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
-    from .tasks import register_datasource_sync_task, source_sync_task
+    from ..tasks import register_datasource_sync_task, source_sync_task
 
     source = DataSource.objects.select_for_update().get(pk=source.pk)
     active = TaskExecution.objects.filter(
