@@ -1907,7 +1907,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("selected_task", response.data)
 
-    def test_assistant_create_rejects_unreported_dir(self):
+    def test_assistant_create_allows_unreported_dir(self):
         payload = {
             "name": "Bad Dir",
             "slug": "bad-dir",
@@ -1922,8 +1922,11 @@ class LensApiTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("selected_dirs", str(response.data))
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.data["selected_dirs"],
+            [{"path": "/workspace/missing"}],
+        )
 
     def test_general_chat_create_allows_empty_dirs_with_skill(self):
         payload = {

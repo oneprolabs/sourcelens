@@ -114,18 +114,6 @@ def _task_names(lensnode):
     return names
 
 
-def _dir_paths(lensnode):
-    """Return available directory paths reported by a LensNode."""
-
-    paths = set()
-    for item in lensnode.available_dirs or []:
-        if isinstance(item, str):
-            paths.add(item)
-        elif isinstance(item, dict) and item.get("path"):
-            paths.add(item["path"])
-    return paths
-
-
 def validate_retrieval_scope(value):
     """Validate retrieval_scope JSON."""
 
@@ -187,17 +175,12 @@ def validate_selected_dirs(value, lensnode=None):
     if not isinstance(value, list):
         raise serializers.ValidationError("selected_dirs must be a list")
 
-    available = _dir_paths(lensnode) if lensnode else None
     for item in value:
         if not isinstance(item, dict):
             raise serializers.ValidationError("selected_dirs items must be objects")
         path = item.get("path")
         if not isinstance(path, str) or not path:
             raise serializers.ValidationError("selected_dirs.path is required")
-        if available is not None and path not in available:
-            raise serializers.ValidationError(
-                f"selected_dirs path is not available on LensNode: {path}"
-            )
         if "retrieval_scope" in item:
             validate_retrieval_scope(item.get("retrieval_scope"))
     return value
