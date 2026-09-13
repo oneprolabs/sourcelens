@@ -16,7 +16,9 @@ def run_datasource_snapshots(run):
     """Describe selected versions without exposing control-plane paths."""
 
     result = []
-    for row in run.session.datasource_snapshots.select_related("version"):
+    for row in run.session.datasource_snapshots.select_related(
+        "version", "datasource"
+    ):
         if row.version_id is None or row.version.status != "ready":
             raise ValueError("DATASOURCE_VERSION_NOT_READY")
         result.append({
@@ -24,6 +26,7 @@ def run_datasource_snapshots(run):
             "version_uuid": str(row.version.uuid),
             "datasource_uuid": str(row.datasource.uuid),
             "mount_name": row.mount_name,
+            "target_path": row.datasource.target_path,
         })
     return result
 
