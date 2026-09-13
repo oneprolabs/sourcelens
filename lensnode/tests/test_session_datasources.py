@@ -30,6 +30,7 @@ def test_materialize_datasource_uses_local_uuid_directory(tmp_path):
     datasource_uuid = uuid.uuid4()
     source = workspace / "datasources" / f"{datasource_uuid}-abc123"
     source.mkdir(parents=True)
+    (source / "README.md").write_text("ready", encoding="utf-8")
 
     command = _command(datasource_uuid)
     materialize_datasources(
@@ -41,6 +42,10 @@ def test_materialize_datasource_uses_local_uuid_directory(tmp_path):
     link = workspace / "sessions" / command["run_uuid"] / "sources" / "source"
     assert link.is_symlink()
     assert link.resolve() == source.resolve()
+    assert command["target_dirs"] == [{
+        "name": "source",
+        "path": str(link),
+    }]
 
 
 def test_materialize_datasource_rejects_missing_local_directory(tmp_path):
@@ -66,6 +71,8 @@ def test_local_datasource_target_prefers_newest_directory(tmp_path):
     newer = root / "datasources" / f"{datasource_uuid}-two"
     older.mkdir()
     newer.mkdir()
+    (older / "old.txt").write_text("old", encoding="utf-8")
+    (newer / "new.txt").write_text("new", encoding="utf-8")
     os.utime(older, (1, 1))
     os.utime(newer, (2, 2))
 
@@ -73,3 +80,11 @@ def test_local_datasource_target_prefers_newest_directory(tmp_path):
     assert default_datasource_target(datasource_uuid, root) == (
         root / "datasources" / str(datasource_uuid)
     )
+
+
+def test_local_datasource_target_rejects_empty_directories(tmp_path):
+    datasource_uuid = uuid.uuid4()
+    root = tmp_path / "workspace"
+    (root / "datasources" / f"{datasource_uuid}-empty").mkdir(parents=True)
+
+    assert local_datasource_target(datasource_uuid, root) is None

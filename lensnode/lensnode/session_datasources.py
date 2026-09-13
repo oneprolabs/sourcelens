@@ -44,7 +44,10 @@ def materialize_datasources(
             if local_target is not None:
                 destination = sources / name
                 destination.symlink_to(local_target, target_is_directory=True)
-                directories.append({"name": name, "path": str(target / name)})
+                directories.append({
+                    "name": name,
+                    "path": str(target / "sources" / name),
+                })
                 continue
             raise RuntimeError(
                 "DATASOURCE_TARGET_UNAVAILABLE:"
@@ -93,7 +96,10 @@ def local_datasource_target(datasource_uuid, workspace_root):
     exact = datasource_root / str(source_uuid)
     if exact.exists() and exact.is_dir():
         candidates.append(exact)
-    candidates = [path for path in candidates if path.is_dir()]
+    candidates = [
+        path for path in candidates
+        if path.is_dir() and _contains_readable_file(path)
+    ]
     if not candidates:
         return None
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
@@ -103,6 +109,18 @@ def local_datasource_target(datasource_uuid, workspace_root):
     except (OSError, ValueError):
         return None
     return resolved
+
+
+def _contains_readable_file(path):
+    """Return whether a datasource directory contains a regular file."""
+
+    try:
+        return next(
+            (item for item in path.rglob("*") if item.is_file()),
+            None,
+        ) is not None
+    except OSError:
+        return False
 
 
 def default_datasource_target(datasource_uuid, workspace_root):
