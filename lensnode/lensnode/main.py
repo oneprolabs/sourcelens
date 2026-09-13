@@ -2,8 +2,6 @@ import asyncio
 import collections
 import json
 import logging
-import tempfile
-import zipfile
 from pathlib import Path
 import os
 import signal
@@ -1258,28 +1256,6 @@ class LensNodeClient:
                 emit,
                 sync_datasource,
             )
-            if result.get("status") == "success" and not message.get("lensnode_id"):
-                datasource_uuid = message.get("datasource_uuid")
-                target = Path(result.get("target_path") or command["target_path"])
-                with tempfile.SpooledTemporaryFile() as archive:
-                    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as bundle:
-                        for path in target.rglob("*"):
-                            if path.is_file() and not path.is_symlink():
-                                bundle.write(path, path.relative_to(target).as_posix())
-                    archive.seek(0)
-                    base = self.config.ai_gateway_url.rstrip("/")
-                    if base.endswith("/ai-gateway"):
-                        base = base[:-len("/ai-gateway")]
-                    response = httpx.post(
-                        f"{base}/datasources/{datasource_uuid}/sync-result/",
-                        data={"task_id": str(message.get("task_id") or "")},
-                        files={"archive": ("sync.zip", archive, "application/zip")},
-                        headers={"Authorization": f"Bearer {self.config.token}"},
-                        timeout=self.config.request_timeout_s,
-                        verify=create_config_ssl_context(self.config),
-                    )
-                    response.raise_for_status()
-                    result["published_remotely"] = True
             return result
         except PluginRuntimeError as exc:
             return {"status": "failed", "error": str(exc)}
