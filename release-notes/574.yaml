@@ -1,0 +1,8 @@
+type: fix
+audience: user
+en: >-
+  Fixed workspace search, file discovery, and CodeGraph indexing for datasource
+  directories mounted through safe session symlinks.
+zh-CN: >-
+  修复通过安全会话软链接挂载的数据源目录无法被工作区搜索、文件发现和
+  CodeGraph 索引的问题。
