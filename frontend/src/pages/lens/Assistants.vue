@@ -249,9 +249,6 @@
                       </span>
                       <span
                         class="data-tool-count"
-                        :class="{
-                          'tool-count-empty': !row.skill_summary?.enabled
-                        }"
                         :title="skillCountLabel(row)"
                         :aria-label="skillCountLabel(row)"
                       >
@@ -260,9 +257,6 @@
                       </span>
                       <span
                         class="data-tool-count"
-                        :class="{
-                          'tool-count-empty': !row.mcp_summary?.enabled
-                        }"
                         :title="mcpCountLabel(row)"
                         :aria-label="mcpCountLabel(row)"
                       >
@@ -270,12 +264,11 @@
                         <span>{{ row.mcp_summary?.enabled || 0 }}</span>
                       </span>
                       <span
-                        v-if="row.plugin_summary?.enabled"
                         class="data-tool-count"
-                        :title="`${t('lensAdmin.assistantPresentation.plugins')} ${row.plugin_summary.enabled}`"
+                        :title="`${t('lensAdmin.assistantPresentation.plugins')} ${row.plugin_summary?.enabled || 0}`"
                       >
                         <Plug :size="16" aria-hidden="true" />
-                        <span>{{ row.plugin_summary.enabled }}</span>
+                        <span>{{ row.plugin_summary?.enabled || 0 }}</span>
                       </span>
                     </div>
                   </td>
@@ -799,25 +792,27 @@ async function switchArchiveView(archived) {
 }
 
 async function startCreate() {
-  await loadFormResources()
   detailAssistant.value = null
   mode.value = 'create'
   formError.value = ''
   form.value = defaultForm()
   formBaseline.value = serializeForm(form.value)
   showDrawer.value = true
+  loadFormResources().catch((error) => {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+  })
 }
 
 async function startEdit(row) {
-  const [assistant] = await Promise.all([
-    getAssistant(row.uuid),
-    loadFormResources()
-  ])
+  const assistant = await getAssistant(row.uuid)
   mode.value = 'edit'
   formError.value = ''
   form.value = formFromRow(assistant)
   formBaseline.value = serializeForm(form.value)
   showDrawer.value = true
+  loadFormResources().catch((error) => {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+  })
 }
 
 async function openDetails(row) {
@@ -1383,7 +1378,6 @@ onBeforeUnmount(revokePluginIconUrls)
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--sl-text-secondary);
-  background: var(--sl-bg-canvas);
 }
 
 .assistants-table-wrap {
@@ -1418,10 +1412,6 @@ onBeforeUnmount(revokePluginIconUrls)
 
 .tool-count {
   @apply inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-ink-600;
-}
-
-.tool-count-empty {
-  @apply text-ink-300;
 }
 
 .assistant-name-action {

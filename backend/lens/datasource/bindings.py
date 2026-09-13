@@ -3,6 +3,7 @@
 from rest_framework import serializers
 
 from ..models import AssistantDataSourceBinding, DataSource, DataSourceItem
+from ..plugins.registry import installed_plugin
 
 
 class BindingInput(serializers.Serializer):
@@ -26,6 +27,10 @@ class BindingInput(serializers.Serializer):
         item = attrs.get("item")
         if item and item.datasource_id != attrs["datasource"].pk:
             raise serializers.ValidationError("DATASOURCE_ITEM_MISMATCH")
+        if item and attrs["datasource"].plugin_key:
+            plugin = installed_plugin(attrs["datasource"].plugin_key)
+            if (plugin.datasource or {}).get("supports_item_selection") is False:
+                attrs["item"] = None
         return attrs
 
 

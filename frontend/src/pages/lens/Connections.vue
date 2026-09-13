@@ -13,9 +13,6 @@
                 {{ t('lensAdmin.pages.connections.title') }}
               </h1>
             </div>
-            <p class="mt-1 text-sm text-ink-500">
-              {{ t('lensAdmin.pages.connections.description') }}
-            </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <BaseButton
@@ -33,7 +30,7 @@
         </header>
 
         <div
-          class="grid gap-3 border-b border-line bg-surface-sunken px-5 py-3 sm:grid-cols-3"
+          class="grid gap-3 border-b border-line bg-surface-sunken px-5 py-3 sm:grid-cols-2"
         >
           <div
             class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3"
@@ -43,16 +40,6 @@
             }}</span>
             <strong class="text-xl font-semibold text-ink-900">{{
               connections.length
-            }}</strong>
-          </div>
-          <div
-            class="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3"
-          >
-            <span class="text-sm text-ink-500">{{
-              t('lensAdmin.connections.activeCount')
-            }}</span>
-            <strong class="text-xl font-semibold text-success-700">{{
-              activeConnectionCount
             }}</strong>
           </div>
           <div
@@ -692,9 +679,6 @@ const connectionResourceOptions = computed(() => ({
   }
 }))
 
-const activeConnectionCount = computed(
-  () => connections.value.filter((row) => row.status === 'active').length
-)
 const pluginCount = computed(
   () => new Set(connections.value.map((row) => row.plugin_key)).size
 )
@@ -818,10 +802,10 @@ function connectionUsageLabels(row) {
   const manifest = pluginManifests.value[row.plugin_key] || {}
   const labels = []
   const hasDatasource =
-    Number(row.datasource_count || 0) > 0 || Boolean(manifest.datasource)
+    Boolean(manifest.datasource) ||
+    Boolean(manifest.datasource_source_type)
   const hasTool =
-    Number(row.assistant_count || 0) > 0 ||
-    (Array.isArray(manifest.tools) && manifest.tools.length > 0)
+    Array.isArray(manifest.tools) && manifest.tools.length > 0
   if (hasDatasource) {
     labels.push({
       key: 'datasource',

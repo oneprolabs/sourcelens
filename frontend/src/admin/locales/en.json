@@ -2033,7 +2033,9 @@
       "feishuIncrementalTitle": "Incremental sync",
       "feishuIncrementalHint": "Skip Feishu files and documents that have not changed since the last sync.",
       "feishuDeleteMissingTitle": "Delete missing local files",
-      "feishuDeleteMissingHint": "When a Feishu item no longer exists remotely, delete the matching local file. Keep disabled to avoid accidental deletion."
+      "feishuDeleteMissingHint": "When a Feishu item no longer exists remotely, delete the matching local file. Keep disabled to avoid accidental deletion.",
+      "requiredField": "Required field",
+      "duplicateResourceUrl": "Feishu resource addresses must be unique."
     },
     "detail": {
       "runtimeLocation": "Runtime location",

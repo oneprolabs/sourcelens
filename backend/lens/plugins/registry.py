@@ -439,6 +439,7 @@ def _validate_datasource_definition(value, source_type, schema):
             "display_name": "Datasource",
             "description": "",
             "source_type": source_type,
+            "supports_item_selection": True,
             "config_schema": schema,
             "resources": [],
             "runtime": {
@@ -454,6 +455,11 @@ def _validate_datasource_definition(value, source_type, schema):
         raise PluginRegistryError("plugin datasource key is invalid")
     if value.get("source_type") != source_type:
         raise PluginRegistryError("plugin datasource source type is invalid")
+    supports_item_selection = value.get("supports_item_selection", True)
+    if not isinstance(supports_item_selection, bool):
+        raise PluginRegistryError(
+            "plugin datasource item selection capability is invalid"
+        )
     resources = value.get("resources") or []
     if not isinstance(resources, list) or len(resources) > 20:
         raise PluginRegistryError("plugin datasource resources are invalid")
@@ -527,6 +533,7 @@ def _validate_datasource_definition(value, source_type, schema):
         "source_type": source_type,
         "config_schema": schema,
         "resources": normalized_resources,
+        "supports_item_selection": supports_item_selection,
         "runtime": {
             "supports_incremental": bool(runtime.get("supports_incremental")),
             "supports_cancel": bool(runtime.get("supports_cancel")),

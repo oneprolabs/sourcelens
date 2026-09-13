@@ -12,6 +12,7 @@
     "display_name": "Feishu resources",
     "description": "Synchronize one or more accessible Feishu resource URLs into a LensNode workspace.",
     "source_type": "feishu",
+    "supports_item_selection": false,
     "resources": [],
     "runtime": {
       "supports_incremental": true,
@@ -89,27 +90,5 @@
       "resource_urls"
     ],
     "additionalProperties": false
-  },
-  "tools": [
-    {
-      "key": "feishu_get_document",
-      "description": "Read the text content of an authorized Feishu document.",
-      "capability": "document.read",
-      "side_effect": "none",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "token": {
-            "type": "string",
-            "minLength": 4,
-            "maxLength": 255
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "additionalProperties": false
-      }
-    }
-  ]
+  }
 }

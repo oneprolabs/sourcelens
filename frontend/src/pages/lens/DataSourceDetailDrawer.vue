@@ -68,6 +68,38 @@
               </dd>
             </div>
           </dl>
+          <div
+            v-if="datasource.deployments?.length"
+            class="mt-4 rounded-lg border border-line bg-surface-sunken p-3"
+          >
+            <div class="mb-2 text-xs font-semibold text-ink-700">
+              {{ t('lensAdmin.fields.lensnode') }}
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="deployment in datasource.deployments"
+                :key="deployment.uuid"
+                class="grid grid-cols-2 gap-3 rounded-md border border-line bg-surface px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <div class="text-[11px] text-ink-500">
+                    {{ t('lensAdmin.fields.lensnode') }}
+                  </div>
+                  <div class="truncate text-sm font-medium text-ink-900">
+                    {{ deployment.lensnode_name || deployment.lensnode_uuid }}
+                  </div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-[11px] text-ink-500">
+                    {{ t('lensAdmin.fields.targetPath') }}
+                  </div>
+                  <div class="truncate font-mono text-xs text-ink-700">
+                    {{ deployment.target_path || '-' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </DrawerSection>
 
         <section
@@ -501,7 +533,7 @@
             }}</span>
           </div>
           <div
-            v-if="filesLoading"
+            v-if="filesLoading && !files.length"
             class="px-4 py-8 text-center text-sm text-ink-500"
           >
             {{ t('common.loading') }}
@@ -523,32 +555,20 @@
             :files="files"
             :aria-label="t('lensAdmin.datasourceDetail.tabs.files')"
           />
+          <div ref="filesLoadMoreSentinel" class="h-px" aria-hidden="true" />
+          <div
+            v-if="filesLoading && files.length"
+            class="sr-only"
+            aria-live="polite"
+          >
+            {{ t('common.loading') }}
+          </div>
         </div>
         <div
-          v-if="filesCount > 0"
-          class="flex items-center justify-between gap-2"
+          v-if="files.length && !filesLoading && !filesHasMore"
+          class="text-center text-xs text-ink-500"
         >
-          <p class="text-sm text-ink-500">
-            {{ t('common.pagination.showing', filesPaginationShowing) }}
-          </p>
-          <div class="flex gap-2">
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :disabled="filesLoading || filePage <= 1"
-              @click="goPrevFilePage"
-            >
-              {{ t('common.pagination.previous') }}
-            </BaseButton>
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :disabled="filesLoading || filePage >= filesTotalPages"
-              @click="goNextFilePage"
-            >
-              {{ t('common.pagination.next') }}
-            </BaseButton>
-          </div>
+          {{ filesCount ? `${files.length} / ${filesCount}` : '' }}
         </div>
       </div>
     </div>
@@ -667,7 +687,9 @@ const filesLoading = ref(false)
 const filesError = ref('')
 const filesCount = ref(0)
 const filePage = ref(1)
-const filesTotalPages = ref(1)
+const filesHasMore = ref(true)
+const filesLoadMoreSentinel = ref(null)
+let filesLoadMoreObserver = null
 const fileQuery = ref('')
 const fileSyncStatus = ref('')
 const fileConversionStatus = ref('')
@@ -702,12 +724,6 @@ const paginationShowing = computed(() => ({
   from: (currentPage.value - 1) * pageSize + 1,
   to: Math.min(currentPage.value * pageSize, totalCount.value),
   total: totalCount.value
-}))
-
-const filesPaginationShowing = computed(() => ({
-  from: (filePage.value - 1) * pageSize + 1,
-  to: Math.min(filePage.value * pageSize, filesCount.value),
-  total: filesCount.value
 }))
 
 function mapTaskStatus(status) {
@@ -746,11 +762,12 @@ function resetTaskList() {
 function resetFileList() {
   files.value = []
   filesCount.value = 0
-  filesTotalPages.value = 1
+  filePage.value = 1
+  filesHasMore.value = true
   filesError.value = ''
 }
 
-async function loadFiles() {
+async function loadFiles({ append = false } = {}) {
   const requestSeq = fileRequestSeq.value + 1
   fileRequestSeq.value = requestSeq
   const uuid = props.datasource?.uuid
@@ -777,9 +794,10 @@ async function loadFiles() {
     ) {
       return
     }
-    files.value = Array.isArray(data.results) ? data.results : []
+    const results = Array.isArray(data.results) ? data.results : []
+    files.value = append ? [...files.value, ...results] : results
     filesCount.value = Number(data.count) || 0
-    filesTotalPages.value = Math.max(1, Math.ceil(filesCount.value / pageSize))
+    filesHasMore.value = Boolean(data.next) || results.length === pageSize
   } catch (error) {
     if (
       requestSeq !== fileRequestSeq.value ||
@@ -792,25 +810,37 @@ async function loadFiles() {
   } finally {
     if (requestSeq === fileRequestSeq.value) {
       filesLoading.value = false
+      // Re-arm the sentinel after appending rows. It can remain intersecting
+      // when the new batch does not fill the drawer viewport.
+      setTimeout(observeFilesLoadMoreSentinel, 0)
     }
   }
 }
 
 function searchFiles() {
-  filePage.value = 1
+  resetFileList()
   loadFiles()
 }
 
-function goPrevFilePage() {
-  if (filesLoading.value || filePage.value <= 1) return
-  filePage.value -= 1
-  loadFiles()
-}
-
-function goNextFilePage() {
-  if (filesLoading.value || filePage.value >= filesTotalPages.value) return
+function loadMoreFiles() {
+  if (filesLoading.value || !filesHasMore.value) return
   filePage.value += 1
-  loadFiles()
+  loadFiles({ append: true })
+}
+
+function observeFilesLoadMoreSentinel() {
+  filesLoadMoreObserver?.disconnect()
+  filesLoadMoreObserver = null
+  if (!filesLoadMoreSentinel.value || typeof IntersectionObserver === 'undefined') {
+    return
+  }
+  filesLoadMoreObserver = new IntersectionObserver(
+    ([entry]) => {
+      if (entry.isIntersecting) loadMoreFiles()
+    },
+    { rootMargin: '240px' }
+  )
+  filesLoadMoreObserver.observe(filesLoadMoreSentinel.value)
 }
 
 function hasProcessingTasks() {
@@ -1026,6 +1056,10 @@ watch(
   { immediate: true }
 )
 
+watch(filesLoadMoreSentinel, observeFilesLoadMoreSentinel)
+
+onBeforeUnmount(() => filesLoadMoreObserver?.disconnect())
+
 watch(
   () => [props.datasource?.uuid, props.show, activeTab.value],
   ([uuid, visible, tab]) => {
@@ -1107,12 +1141,6 @@ function formatSyncPolicy(syncPolicy) {
     : emptyValue
 }
 
-function lensNodeName(value) {
-  const uuid = typeof value === 'object' ? value?.uuid : value
-  const found = props.lensnodes.find((lensnode) => lensnode.uuid === uuid)
-  return found?.name || uuid || emptyValue
-}
-
 function detailItem(label, value, mono = false, options = {}) {
   const normalized = Array.isArray(value) ? value.join(', ') : value
   return {
@@ -1170,16 +1198,9 @@ const datasourceResourceDetails = computed(() => {
   if (row.source_type === 'managed_workspace') {
     return [
       detailItem(
-        t('lensAdmin.fields.lensnode'),
-        row.lensnode_name || lensNodeName(row.lensnode)
-      ),
-      detailItem(
         t('lensAdmin.availability.title'),
         t(`lensAdmin.availability.${row.availability_status || 'unknown'}`)
       ),
-      detailItem(t('lensAdmin.fields.targetPath'), row.target_path, true, {
-        wide: true
-      }),
       detailItem(
         t('lensAdmin.availability.checkedAt'),
         formatDateTime(row.availability_checked_at)
@@ -1199,11 +1220,6 @@ const datasourceResourceDetails = computed(() => {
         href: isHttpUrl(repositoryUrl) ? repositoryUrl : '',
         wide: true
       }),
-      detailItem(
-        t('lensAdmin.fields.lensnode'),
-        row.lensnode_name || lensNodeName(row.lensnode)
-      ),
-      detailItem(t('lensAdmin.fields.targetPath'), row.target_path, true),
       detailItem(
         t('lensAdmin.fields.authScheme'),
         row.connection
@@ -1235,13 +1251,6 @@ const datasourceResourceDetails = computed(() => {
       )
     ),
     detailItem(t('lensAdmin.fields.syncScope'), feishuScopeLabel()),
-    detailItem(
-      t('lensAdmin.fields.lensnode'),
-      row.lensnode_name || lensNodeName(row.lensnode)
-    ),
-    detailItem(t('lensAdmin.fields.targetPath'), row.target_path, true, {
-      wide: true
-    })
   ].filter((item) => item.value !== emptyValue)
 })
 

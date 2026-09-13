@@ -371,34 +371,6 @@
                 <span>{{ t('lensAdmin.pages.connections.title') }}</span>
               </router-link>
               <router-link
-                to="/management/lens/resources/credentials"
-                class="admin-nav-item admin-nav-item-child"
-                :class="
-                  isActive('/management/lens/resources/credentials')
-                    ? 'admin-nav-item-active'
-                    : ''
-                "
-                @click="isMobile && $emit('close')"
-                @mouseenter="
-                  preloadRoute('/management/lens/resources/credentials')
-                "
-              >
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H3v-4.586l5.257-5.257A6 6 0 1121 9z"
-                  />
-                </svg>
-                <span>{{ t('lensAdmin.pages.credentials.title') }}</span>
-              </router-link>
-              <router-link
                 to="/management/lens/resources/skills"
                 class="admin-nav-item admin-nav-item-child"
                 :class="

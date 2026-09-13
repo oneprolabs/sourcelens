@@ -174,7 +174,15 @@ class GitLabDatasourceProvider(DatasourceProvider):
         self.validate_connection(endpoint, connection_config)
         if not isinstance(selected_values, dict):
             raise DatasourceProviderError("resource dependency is invalid")
-        project = _project_name(selected_values.get("project"))
+        project_value = selected_values.get("project")
+        if project_value is None:
+            projects = selected_values.get("projects")
+            project_value = (
+                projects[0]
+                if isinstance(projects, list) and projects
+                else None
+            )
+        project = _project_name(project_value)
         allowed = {
             item.casefold()
             for item in self.validate_connection_scope(

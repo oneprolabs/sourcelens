@@ -12,16 +12,6 @@
               <h1 class="text-xl font-semibold text-ink-900">
                 {{ t('lensAdmin.pages.resourceSettings.title') }}
               </h1>
-              <span
-                class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-500"
-              >
-                {{
-                  t('lensAdmin.total', {
-                    label: t('lensAdmin.pages.resourceSettings.label'),
-                    count: settingDefinitions.length
-                  })
-                }}
-              </span>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">

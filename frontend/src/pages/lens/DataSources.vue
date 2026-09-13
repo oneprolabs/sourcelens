@@ -12,16 +12,6 @@
               <h1 class="text-xl font-semibold text-ink-900">
                 {{ t('lensAdmin.pages.datasources.title') }}
               </h1>
-              <span
-                class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs text-ink-500"
-              >
-                {{
-                  t('lensAdmin.total', {
-                    label: t('lensAdmin.pages.datasources.label'),
-                    count: totalDataSources
-                  })
-                }}
-              </span>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -160,10 +150,6 @@
                   {{ pluginDisplayName(plugin, t, te) }}
                 </option>
               </BaseSelect>
-              <span
-                >{{ enabledDataSourceCount }}
-                {{ t('common.status.active') }}</span
-              >
               <span v-if="searchFilters.length">
                 {{
                   t('lensAdmin.datasourceSearch.filterCount', {
@@ -409,6 +395,7 @@ import { Search as SearchIcon, X as XIcon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 
+import { createFeishuResourceValidation } from './feishuResourceValidation'
 import { extractErrorMessage } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
@@ -507,6 +494,9 @@ const uploadAccept = ['.zip'].join(',')
 const datasourceConfig = ref({})
 const datasourcePathResult = ref(null)
 const datasourceConnectionResult = ref(null)
+const feishuValidation = createFeishuResourceValidation((result) => {
+  datasourceConnectionResult.value = result
+})
 const loadingPluginResourceOptions = ref('')
 let pluginResourceRequestId = 0
 const suppressDatasourceConnectionReset = ref(false)
@@ -528,10 +518,6 @@ const dynamicRefreshSnapshot = ref('')
 
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(totalDataSources.value / pageSize.value))
-)
-
-const enabledDataSourceCount = computed(
-  () => dataSources.value.filter((row) => isDataSourceEnabled(row)).length
 )
 
 const currentPluginManifest = computed(
@@ -788,8 +774,10 @@ function closeDataSourceDetail() {
 function formatSourceType(rowOrType) {
   const sourceType = typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
   const pluginKey = typeof rowOrType === 'string' ? '' : rowOrType?.plugin_key
-  if (pluginKey === 'github') return 'GitHub'
-  if (pluginKey === 'gitlab') return 'GitLab'
+  if (pluginKey) {
+    const plugin = plugins.value.find((item) => item.key === pluginKey)
+    return pluginDisplayName(plugin, t, te) || pluginKey
+  }
   if (isPluginSourceType(sourceType)) {
     const plugin = plugins.value.find(
       (item) => item.key === pluginKeyFromSourceType(sourceType)
@@ -1086,6 +1074,7 @@ function handleVisibilityChange() {
 }
 
 function startCreate() {
+  feishuValidation.reset()
   showDatasourceDetailDrawer.value = false
   mode.value = 'create'
   formError.value = ''
@@ -1098,6 +1087,7 @@ function startCreate() {
 }
 
 function startEdit(row) {
+  feishuValidation.reset()
   showDatasourceDetailDrawer.value = false
   mode.value = 'edit'
   formError.value = ''
@@ -1110,6 +1100,7 @@ function startEdit(row) {
 }
 
 function closeDrawer() {
+  feishuValidation.reset()
   datasourceConnectionRequestId++
   testingDatasourceConnection.value = false
   showDrawer.value = false
@@ -1654,6 +1645,15 @@ function canSaveDatasource() {
 function resetDatasourceConnectionResult() {
   datasourceConnectionRequestId++
   testingDatasourceConnection.value = false
+  if (
+    isPluginSourceType(form.value.source_type) &&
+    form.value.plugin_key === 'feishu' &&
+    showDrawer.value
+  ) {
+    validateFeishuResources()
+    return
+  }
+  feishuValidation.reset()
   if (suppressDatasourceConnectionReset.value) {
     suppressDatasourceConnectionReset.value = false
     return
@@ -1689,31 +1689,49 @@ function resetDatasourceConnectionResult() {
   datasourceConnectionBaseSignature.value = ''
 }
 
+function validateFeishuResources() {
+  const connectionUuid = form.value.connection_uuid
+  const config = buildPluginDatasourceConfig()
+  feishuValidation.update(
+    connectionUuid,
+    datasourceConfig.value.resource_urls,
+    async (url) => {
+      try {
+        const result = await validateConnectionDatasource(connectionUuid, {
+          datasource_config: { ...config, resource_urls: [url] }
+        })
+        const resource = result.resources?.find((item) => item.url === url)
+        if (resource?.accessible === false) {
+          throw new Error(
+            resource.error || t('lensAdmin.credentials.validationFailed')
+          )
+        }
+        return t('lensAdmin.credentials.validationSuccess')
+      } catch (error) {
+        throw new Error(
+          extractErrorMessage(error, t('lensAdmin.credentials.validationFailed'))
+        )
+      }
+    }
+    ,
+    t('lensAdmin.datasourceWizard.duplicateResourceUrl')
+  )
+}
+
 async function testDatasourceConnection() {
+  if (
+    isPluginSourceType(form.value.source_type) &&
+    form.value.plugin_key === 'feishu'
+  ) {
+    validateFeishuResources()
+    return
+  }
   const requestId = ++datasourceConnectionRequestId
   testingDatasourceConnection.value = true
   datasourceConnectionResult.value = null
   try {
     if (isPluginSourceType(form.value.source_type)) {
       if (!form.value.connection_uuid) return
-      if (form.value.plugin_key === 'feishu') {
-        const result = await validateConnectionDatasource(
-          form.value.connection_uuid,
-          { datasource_config: buildPluginDatasourceConfig() }
-        )
-        if (requestId !== datasourceConnectionRequestId) return
-        datasourceConnectionResult.value = {
-          status: 'success',
-          message: t('lensAdmin.datasourceWizard.feishuResourcesAccessible'),
-          details: {
-            ...result,
-            connection_uuid: form.value.connection_uuid
-          }
-        }
-        datasourceConnectionBaseSignature.value =
-          datasourceConnectionSignature(true)
-        return
-      }
       const resources = await getConnectionResources(form.value.connection_uuid)
       if (requestId !== datasourceConnectionRequestId) return
       datasourceConnectionResult.value = {
@@ -2214,6 +2232,7 @@ onBeforeRouteLeave(() => {
 })
 
 onBeforeUnmount(() => {
+  feishuValidation.reset()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopDynamicRefresh()
   revokePluginIconUrls()
