@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: "Fix datasource synchronization when the API and LensNode run on separate hosts."
+zh-CN: "修复 API 与 LensNode 分主机部署时的数据源同步。"
