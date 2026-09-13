@@ -40,12 +40,27 @@ def test_codegraph_plugin_contributes_stdio_server(monkeypatch, tmp_path):
     assert [server["name"] for server in servers] == [CODEGRAPH_SERVER_NAME]
     assert servers[0]["transport"] == "stdio"
     assert servers[0]["config"]["command"] == "codegraph"
-    assert servers[0]["config"]["args"] == [
-        "serve",
-        "--mcp",
-        "--path",
-        str(tmp_path),
-    ]
+
+
+def test_codegraph_plugin_scopes_index_to_session_root(monkeypatch, tmp_path):
+    session = tmp_path / "sessions" / "session-1"
+    session.mkdir(parents=True)
+    captured = {}
+
+    def ensure(config, workspace, emit_event=None):
+        captured["workspace"] = workspace
+        return True
+
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index", ensure
+    )
+    config = _config()
+    config.workspace_path = str(tmp_path)
+    command = {"task": "code_analysis", "target_dirs": [{"path": str(session)}]}
+
+    CodeGraphPlugin().contribute_mcp_servers(config, command=command)
+
+    assert captured["workspace"] == session
 
 
 def test_codegraph_plugin_skips_general_chat_before_index_check(

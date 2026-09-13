@@ -202,6 +202,7 @@ class PublicAssistantView(APIView):
                 "name": assistant.name,
                 "description": assistant.description,
                 "slug": assistant.slug,
+                "agent_rounds": assistant.agent_rounds,
                 "status": assistant.status,
             }
         )

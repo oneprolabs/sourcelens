@@ -12,41 +12,12 @@ MAX_DATASOURCE_BYTES = 1024 * 1024 * 1024
 MAX_DATASOURCE_FILES = 100000
 
 
-def datasource_target_paths(run, rows):
-    """Resolve datasource paths for the LensNode executing a Run."""
-
-    if run.lensnode_id is None:
-        raise ValueError("LENSNODE_REQUIRED")
-    datasource_ids = {row.datasource_id for row in rows}
-    deployments = {
-        deployment.datasource_id: deployment
-        for deployment in run.lensnode.datasource_deployments.filter(
-            datasource_id__in=datasource_ids,
-            status="active",
-        )
-    }
-    paths = {}
-    for row in rows:
-        deployment = deployments.get(row.datasource_id)
-        path = deployment.target_path if deployment else ""
-        if not path and row.datasource.lensnode_id == run.lensnode_id:
-            path = row.datasource.target_path
-        if not path:
-            raise ValueError(
-                "DATASOURCE_LENSNODE_DEPLOYMENT_MISSING:"
-                + str(row.datasource.uuid)
-            )
-        paths[row.datasource_id] = path
-    return paths
-
-
 def run_datasource_snapshots(run):
-    """Describe selected versions without exposing control-plane paths."""
+    """Describe selected versions without exposing node-local paths."""
 
     rows = list(run.session.datasource_snapshots.select_related(
         "version", "datasource"
     ))
-    target_paths = datasource_target_paths(run, rows)
     result = []
     for row in rows:
         result.append({
@@ -54,7 +25,6 @@ def run_datasource_snapshots(run):
             "version_uuid": str(row.version.uuid) if row.version_id else "",
             "datasource_uuid": str(row.datasource.uuid),
             "mount_name": row.mount_name,
-            "target_path": target_paths[row.datasource_id],
         })
     return result
 

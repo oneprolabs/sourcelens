@@ -67,7 +67,9 @@ class CodeGraphPlugin(LensNodePlugin):
 
         if command is not None and command.get("task") != "code_analysis":
             return []
-        workspace = Path(config.workspace_path)
+        workspace = _codegraph_workspace(config, command)
+        if workspace is None:
+            return []
         if not _ensure_codegraph_index(
             config,
             workspace,
@@ -86,7 +88,6 @@ class CodeGraphPlugin(LensNodePlugin):
                 "load_config": {},
             }
         ]
-
     def contribute_agent_runtime(self, config, command, mcp_tools):
         """Prioritize CodeGraph when its MCP tools are available."""
 
@@ -119,6 +120,23 @@ class CodeGraphPlugin(LensNodePlugin):
             subagent_middleware=(middleware,),
             always_visible_tool_prefixes=("mcp__codegraph__",),
         )
+
+
+def _codegraph_workspace(config, command):
+    """Return the current Run's Session root for CodeGraph indexing."""
+
+    workspace_root = Path(config.workspace_path).resolve()
+    target_dirs = (command or {}).get("target_dirs") or []
+    candidate = target_dirs[0].get("path") if target_dirs else ""
+    if not candidate:
+        return workspace_root
+    workspace = Path(candidate).resolve()
+    sessions_root = workspace_root / "sessions"
+    try:
+        workspace.relative_to(sessions_root)
+    except ValueError:
+        return None
+    return workspace
 
 
 def _ensure_codegraph_index(config, workspace, emit_event=None):

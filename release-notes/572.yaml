@@ -1,0 +1,8 @@
+type: fix
+audience: user
+en: >-
+  Fixed datasource session preparation and chat reasoning mode defaults so Runs
+  use session-local data and the assistant's configured reasoning profile.
+zh-CN: >-
+  修复数据源会话准备和聊天回答模式默认值，确保 Run 使用会话本地数据，
+  并显示助手配置的回答模式。

@@ -37,7 +37,8 @@ import { useI18n } from 'vue-i18n'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 
 const props = defineProps({
-  modelValue: { type: String, default: '' }
+  modelValue: { type: String, default: '' },
+  defaultValue: { type: String, default: '' }
 })
 defineEmits(['update:modelValue'])
 
@@ -59,6 +60,7 @@ const tiers = computed(() =>
 const selectedTier = computed(
   () =>
     tiers.value.find((tier) => tier.value === props.modelValue) ||
+    tiers.value.find((tier) => tier.value === props.defaultValue) ||
     tiers.value[0]
 )
 </script>

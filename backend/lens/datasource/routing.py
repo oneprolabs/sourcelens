@@ -3,7 +3,6 @@
 from django.db import transaction
 
 from ..models import Run, RunExecution, SessionDataSource
-from .packages import datasource_target_paths
 
 
 class DatasourceRoutingError(RuntimeError):
@@ -31,10 +30,6 @@ def prepare_run_datasources(run):
     rows = SessionDataSource.objects.filter(session=run.session).select_related(
         "datasource"
     )
-    try:
-        datasource_target_paths(run, rows)
-    except ValueError as exc:
-        raise DatasourceRoutingError(str(exc)) from exc
     for row in rows:
         if row.datasource.status != "active":
             raise DatasourceRoutingError("DATASOURCE_DISABLED")
