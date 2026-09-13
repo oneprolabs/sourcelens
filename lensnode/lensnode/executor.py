@@ -140,7 +140,9 @@ async def _cleanup_after_cancelled_worker(
         except Exception:
             break
     cleanup_run_checkpoint(run_uuid, workspace_path)
-    cleanup_run_runtime_resources(runtime_path or workspace_path, run_uuid)
+    cleanup_run_runtime_resources(workspace_path, run_uuid)
+    if runtime_path and runtime_path != workspace_path:
+        cleanup_run_runtime_resources(runtime_path, run_uuid)
 
 
 TASKS = [

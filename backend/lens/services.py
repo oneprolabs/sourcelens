@@ -64,7 +64,7 @@ from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
-from .datasource.workspace import build_session_workspace, session_source_dirs
+from .datasource.workspace import session_source_dirs
 from .session_titles import fallback_session_title
 from .trace_context import root_observation_id_for_run, trace_id_for_run
 
@@ -2931,7 +2931,23 @@ def dispatch_run_to_lensnode(
     """
 
     execution = run.execution
-    runtime_snapshot = execution.runtime_snapshot or {}
+    runtime_snapshot = dict(execution.runtime_snapshot or {})
+    from .datasource.packages import run_datasource_snapshots
+
+    snapshots = runtime_snapshot.get("datasource_snapshots")
+    if snapshots is None:
+        try:
+            snapshots = run_datasource_snapshots(run)
+        except ValueError as exc:
+            raise LensNodeDispatchError(str(exc)) from exc
+        runtime_snapshot["datasource_snapshots"] = snapshots
+        execution.runtime_snapshot = runtime_snapshot
+        execution.save(update_fields=["runtime_snapshot"])
+    if snapshots and not (
+        (run.lensnode.labels or {}).get("session_datasource_download_v1")
+        is True
+    ):
+        raise LensNodeDispatchError("SESSION_DATASOURCE_UPGRADE_REQUIRED")
     model_refs = runtime_snapshot.get("model_refs") or {}
     runtime_settings = runtime_snapshot.get("settings")
     if not isinstance(runtime_settings, dict):
@@ -3034,6 +3050,7 @@ def dispatch_run_to_lensnode(
                 "history": build_run_history(run),
                 "history_artifacts": history_artifacts,
                 "target_dirs": execution.target_dirs,
+                "datasource_snapshots": snapshots,
                 "workspace_guide": runtime_snapshot.get("workspace_guide", ""),
                 "assistant_capability": runtime_snapshot.get(
                     "assistant_capability", "general_chat"

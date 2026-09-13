@@ -371,6 +371,7 @@ def dispatch_datasource_sync_async(
                 "request_id": request_id,
                 "task_id": task_id,
                 "datasource_uuid": str(datasource.uuid),
+                "lensnode_id": str(datasource.lensnode_id or ""),
                 "snapshot_uuid": str(snapshot.uuid),
                 "plugin_key": snapshot.plugin_key,
                 "plugin_version": snapshot.plugin_version,
