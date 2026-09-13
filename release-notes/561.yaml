@@ -1,0 +1,5 @@
+type: bugfix
+audience: user
+en: Fixed assistant configuration failures when selected workspace paths are not present in the LensNode heartbeat report.
+zh-CN: 修复助手配置中的工作区路径未出现在 LensNode 心跳上报目录列表时无法保存的问题。
+es: Se corrigieron los errores de configuración del asistente cuando las rutas de trabajo seleccionadas no aparecen en el informe de heartbeat de LensNode.

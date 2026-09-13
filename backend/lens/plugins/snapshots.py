@@ -27,6 +27,35 @@ SENSITIVE_CONFIG_KEYS = frozenset(
 )
 
 
+def datasource_runtime_target_path(
+    datasource,
+    lensnode,
+    datasource_config,
+):
+    """Return the stable runtime path for one resolved datasource config."""
+
+    if datasource.target_path:
+        return datasource.target_path
+    identity = {
+        "plugin_key": datasource.plugin_key,
+        "source_type": datasource.source_type,
+        "datasource_config": datasource_config,
+        "sync_policy": datasource.sync_policy or {},
+    }
+    config_hash = hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    return (
+        f"{lensnode.workspace_path}/datasources/"
+        f"{datasource.uuid}-{config_hash}"
+    )
+
+
 def create_datasource_sync_snapshot(datasource, *, lensnode=None):
     """Resolve one external datasource into an immutable execution snapshot."""
 
@@ -86,19 +115,11 @@ def create_datasource_sync_snapshot(datasource, *, lensnode=None):
         )
     except DatasourceProviderError as exc:
         raise PluginRegistryError(str(exc)) from exc
-    target_path = datasource.target_path
-    if not target_path:
-        config_hash = hashlib.sha256(
-            json.dumps(
-                datasource.datasource_config,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()[:12]
-        target_path = (
-            f"{lensnode.workspace_path}/datasources/"
-            f"{datasource.uuid}-{config_hash}"
-        )
+    target_path = datasource_runtime_target_path(
+        datasource,
+        lensnode,
+        datasource_config,
+    )
     resolved_config = {
         "endpoint": endpoint,
         "connection_config": deepcopy(connection.config),

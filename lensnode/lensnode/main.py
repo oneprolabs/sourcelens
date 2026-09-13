@@ -1222,6 +1222,13 @@ class LensNodeClient:
                 material,
                 message.get("trigger") or "plugin",
             )
+            # Plugin builders receive the immutable snapshot, but older plugin
+            # packages may omit the resolved workspace target from the
+            # provider command. Keep the runtime target authoritative so the
+            # control plane can publish unbound datasource results safely.
+            resolved = snapshot.get("resolved_config") or {}
+            if resolved.get("target_path") and not command.get("target_path"):
+                command["target_path"] = resolved["target_path"]
             plugin_http_pool = getattr(
                 self,
                 "plugin_http_pool",

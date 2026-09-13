@@ -270,6 +270,7 @@ def test_plugin_sync_does_not_fallback_to_legacy_credentials(monkeypatch):
     def fake_sync(command, workspace, emit):
         seen["token"] = command["config"].get("access_token")
         seen["directory"] = command["config"].get("directory")
+        seen["target_path"] = command["target_path"]
         seen["allow_submodules"] = command["config"].get(
             "allow_submodules"
         )
@@ -283,6 +284,7 @@ def test_plugin_sync_does_not_fallback_to_legacy_credentials(monkeypatch):
     assert result["status"] == "success"
     assert seen["token"] == "secret"
     assert seen["directory"] == "docs"
+    assert seen["target_path"] == "/workspace/repo"
     assert seen["allow_submodules"] is False
 
 
