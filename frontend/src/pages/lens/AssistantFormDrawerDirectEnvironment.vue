@@ -1957,14 +1957,8 @@ const selectedLensNodeDirs = computed(() => {
   const dirs = Array.isArray(selected?.available_dirs)
     ? selected.available_dirs
     : []
-  return dirs
-    .map((dir) => {
-      if (typeof dir === 'string') {
-        return { path: dir }
-      }
-      return { ...dir, path: dir.path || dir.name || '' }
-    })
-    .filter((dir) => dir.path)
+  const workspacePath = selected?.workspace_path || '/workspace'
+  return [{ path: workspacePath }]
 })
 
 function nextWizardStep() {
