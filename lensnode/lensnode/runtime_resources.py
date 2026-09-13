@@ -20,6 +20,7 @@ import httpx
 from .document_convert import convert_one
 from .path_rules import SIDECAR_SUFFIX, safe_filename
 from .plugins import collect_mcp_servers
+from .session_datasources import materialize_datasources
 from .tls import create_config_ssl_context
 
 MAX_SKILL_PACKAGE_BYTES = 25 * 1024 * 1024
@@ -111,6 +112,15 @@ def prepare_runtime_resources(
 
     skills_root.mkdir(parents=True, exist_ok=True)
     mcp_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        materialize_datasources(
+            config, command, runtime_root,
+            cancel_event=cancel_event, on_activity=on_activity,
+        )
+    except BaseException:
+        shutil.rmtree(runtime_root, ignore_errors=True)
+        raise
 
     skill_paths = []
     skill_environments = {}
@@ -672,7 +682,7 @@ def cleanup_runtime_resources(resources):
 
 
 def cleanup_run_runtime_resources(workspace_path, run_uuid):
-    """Remove one Run's deterministic runtime directory."""
+    """Remove one Run's runtime and session workspace directories."""
 
     if not workspace_path or not run_uuid:
         return False
@@ -680,8 +690,11 @@ def cleanup_run_runtime_resources(workspace_path, run_uuid):
         runtime_root = _run_runtime_path(workspace_path, run_uuid)
     except (OSError, ValueError):
         return False
+    session_root = Path(workspace_path) / "sessions" / str(run_uuid)
     shutil.rmtree(runtime_root, ignore_errors=True)
-    return not runtime_root.exists()
+    if session_root != runtime_root:
+        shutil.rmtree(session_root, ignore_errors=True)
+    return not runtime_root.exists() and not session_root.exists()
 
 
 def delete_skill_cache(workspace_path, skill_uuid):

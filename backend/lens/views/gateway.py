@@ -4,8 +4,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 import uuid
+import zipfile
+from pathlib import Path, PurePosixPath
 
 from django.conf import settings
 from django.core.cache import cache
@@ -25,7 +29,13 @@ from lens.document_attachments import (
     document_attachment_storage,
     get_document_attachment,
 )
-from lens.models import Run, RunExecution, RunOutputFile, Skill
+from lens.models import (
+    DataSourceVersion,
+    Run,
+    RunExecution,
+    RunOutputFile,
+    Skill,
+)
 from lens.services import (
     LensNodeDispatchError,
     create_delegated_run,
@@ -33,6 +43,82 @@ from lens.services import (
 from lens.skill_packages import package_zip_bytes
 
 from .base import EventStreamRenderer, LensNodeAuthMixin
+
+
+class LensNodeDatasourceSyncResultView(LensNodeAuthMixin, APIView):
+    """Accept a completed datasource archive from its LensNode."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, uuid: uuid.UUID):
+        """Store a bounded archive and publish a datasource version."""
+
+        from lens.models import DataSource
+        from lens.datasource.versions import record_datasource_versions
+
+        lensnode = self._authenticate_lensnode(request)
+        if lensnode is None:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        datasource = get_object_or_404(DataSource, uuid=uuid)
+        if datasource.lensnode_id not in (None, lensnode.uuid):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        task_id = str(request.data.get("task_id") or "")
+        if task_id:
+            from agentcore_task.adapters.django.models import TaskExecution
+
+            task = TaskExecution.objects.filter(
+                task_id=task_id,
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__lensnode_uuid=str(lensnode.uuid),
+            ).first()
+            if task is None:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+        else:
+            return Response({"detail": "task_id is required"}, status=400)
+        upload = request.FILES.get("archive")
+        if upload is None:
+            return Response({"detail": "archive is required"}, status=400)
+        item = datasource.items.filter(status="active").order_by("uuid").first()
+        if item is None:
+            item = datasource.items.create(
+                name=datasource.name,
+                source_type=datasource.source_type,
+                config=datasource.datasource_config,
+                storage_key=f"datasources/{datasource.uuid}/items/{uuid.uuid4()}",
+            )
+        root = Path(settings.MEDIA_ROOT) / item.storage_key
+        temporary = Path(tempfile.mkdtemp(dir=settings.MEDIA_ROOT))
+        try:
+            if upload.size > 1_100 * 1024 * 1024:
+                return Response({"detail": "archive too large"}, status=413)
+            total = 0
+            file_count = 0
+            with zipfile.ZipFile(upload) as bundle:
+                for entry in bundle.infolist():
+                    path = PurePosixPath(entry.filename)
+                    total += entry.file_size
+                    file_count += 1
+                    if (path.is_absolute() or ".." in path.parts
+                            or "\\" in entry.filename
+                            or total > 1024 * 1024 * 1024
+                            or file_count > 100000):
+                        return Response({"detail": "invalid archive"}, status=400)
+                    destination = temporary / path
+                    if entry.is_dir():
+                        destination.mkdir(parents=True, exist_ok=True)
+                    else:
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with bundle.open(entry) as source, destination.open("wb") as target:
+                            shutil.copyfileobj(source, target)
+            root.parent.mkdir(parents=True, exist_ok=True)
+            shutil.rmtree(root, ignore_errors=True)
+            temporary.rename(root)
+            record_datasource_versions(datasource)
+        except (OSError, zipfile.BadZipFile):
+            shutil.rmtree(temporary, ignore_errors=True)
+            return Response({"detail": "DATASOURCE_PUBLISH_FAILED"}, status=409)
+        return Response({"status": "success"})
 
 
 # While a provider call is thinking (reasoning, composing a tool call)
@@ -610,6 +696,54 @@ class LensNodeSkillPackageView(LensNodeAuthMixin, APIView):
             content_type="application/zip",
         )
         response["X-Skill-Package-Hash"] = skill.package_hash
+        return response
+
+
+class LensNodeRunDatasourceView(LensNodeAuthMixin, APIView):
+    """Serve only the frozen versions assigned to this Run's LensNode."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, run_uuid, uuid):
+        """Return a datasource archive after Run and version authorization."""
+
+        from lens.datasource.packages import datasource_version_archive
+
+        lensnode = self._authenticate_lensnode(request)
+        if lensnode is None:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        execution = get_object_or_404(
+            RunExecution,
+            run__uuid=run_uuid,
+            run__lensnode=lensnode,
+            lensnode=lensnode,
+        )
+        snapshots = (execution.runtime_snapshot or {}).get(
+            "datasource_snapshots", []
+        )
+        snapshot = next((row for row in snapshots
+                         if row["snapshot_uuid"] == str(uuid)), None)
+        if snapshot is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        version = get_object_or_404(
+            DataSourceVersion,
+            uuid=snapshot["version_uuid"],
+            item__datasource__uuid=snapshot["datasource_uuid"],
+            status="ready",
+        )
+        try:
+            archive = datasource_version_archive(version)
+        except (OSError, ValueError) as exc:
+            detail = str(exc) if isinstance(exc, ValueError) else (
+                "DATASOURCE_TARGET_UNAVAILABLE"
+            )
+            return Response({"detail": detail}, status=409)
+        response = FileResponse(
+            archive, content_type="application/zip",
+            as_attachment=True, filename=f"{version.uuid}.zip",
+        )
+        response["X-Datasource-Version"] = str(version.uuid)
         return response
 
 

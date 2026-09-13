@@ -28,6 +28,8 @@ from .gateway import (
     LensNodeDeliverableUploadView,
     LensNodeHistoryArtifactView,
     LensNodeRunAttachmentView,
+    LensNodeRunDatasourceView,
+    LensNodeDatasourceSyncResultView,
     LensNodeSkillPackageView,
 )
 from .global_settings import GlobalSettingViewSet
@@ -84,6 +86,7 @@ __all__ = [
     "LensNodeDeliverableUploadView",
     "LensNodeHistoryArtifactView",
     "LensNodeRunAttachmentView",
+    "LensNodeRunDatasourceView",
     "LensNodeSkillPackageView",
     "LensNodeViewSet",
     "MCPServerViewSet",

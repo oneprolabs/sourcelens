@@ -686,6 +686,12 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     ttl_s=get_datasource_sync_timeout_s(),
                 )
             execution_node = resolve_datasource_lensnode(datasource)
+            if not (task_execution.metadata or {}).get("lensnode_uuid"):
+                TaskTracker.update_task_status(
+                    task_id,
+                    TaskStatus.PENDING,
+                    metadata={"lensnode_uuid": str(execution_node.uuid)},
+                )
             if not _datasource_capacity_available(execution_node, task_id):
                 _queue_datasource_task(
                     task_id,
@@ -1414,12 +1420,21 @@ def complete_datasource_sync_task(task_id, result):
         and task.status not in TaskStatus.get_completed_statuses()
         and datasource is not None
         and datasource.lensnode_id is None
+        and not result.get("published_remotely")
     ):
         try:
             _publish_independent_datasource(datasource, metrics["target_path"])
         except (OSError, ValueError) as exc:
-            success = False
-            error = f"DATASOURCE_PUBLISH_FAILED: {exc}"
+            # A LensNode may run on a separate host. Its workspace path is
+            # not readable from the API container, so do not turn a
+            # successful node sync into a false publish failure.
+            if str(exc) == "DATASOURCE_TARGET_UNAVAILABLE":
+                warnings = list(result.get("warnings") or [])
+                warnings.append("DATASOURCE_PUBLISH_DEFERRED_REMOTE_TARGET")
+                result["warnings"] = warnings
+            else:
+                success = False
+                error = f"DATASOURCE_PUBLISH_FAILED: {exc}"
     conversion_summary = result.get("conversion_summary") or {}
     warnings = list(result.get("warnings") or [])
     if result.get("partial_success"):
