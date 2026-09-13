@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Fixed session datasource target paths and ignored empty local datasource directories.
+zh-CN: 修复会话数据源目标路径，并忽略空的本地数据源目录。
