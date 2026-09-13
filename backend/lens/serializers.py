@@ -697,6 +697,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "datasource_bindings",
             "name",
             "capability",
+            "agent_rounds",
             "slug",
             "lensnode",
             "lensnode_name",

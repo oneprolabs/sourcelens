@@ -69,7 +69,7 @@ class DatasourceStorageTests(TestCase):
                     link.resolve(), root / 'media' / first.storage_key
                 )
                 self.assertEqual(session_source_dirs(session), [
-                    {'path': str(link), 'name': 'sourcelens'}
+                    {'path': str(workspace), 'name': str(session.uuid)}
                 ])
                 self.assertEqual(
                     (workspace / 'sources/sourcelens/README.md').read_text(),

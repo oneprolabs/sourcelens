@@ -1,4 +1,4 @@
-"""Materialize Run-bound datasource versions without shared filesystems."""
+"""Materialize Run-bound datasource versions from local LensNode storage."""
 
 import shutil
 import tempfile
@@ -14,9 +14,8 @@ def materialize_datasources(
     snapshots = command.get("datasource_snapshots") or []
     if not snapshots:
         return
-    run_uuid = str(uuid.UUID(command["run_uuid"]))
     workspace_root = Path(config.workspace_path)
-    target = workspace_root / "sessions" / run_uuid
+    target = _session_workspace_target(command, workspace_root)
     directories = []
     names = set()
 
@@ -29,8 +28,9 @@ def materialize_datasources(
             on_activity()
 
     with tempfile.TemporaryDirectory(dir=runtime_root) as temporary:
-        staging = Path(temporary) / "sources"
-        staging.mkdir()
+        staging = Path(temporary) / "workspace"
+        sources = staging / "sources"
+        sources.mkdir(parents=True)
         for snapshot in snapshots:
             check_activity()
             name = snapshot["mount_name"]
@@ -38,15 +38,18 @@ def materialize_datasources(
                     or "\\" in name or name in names):
                 raise ValueError("SESSION_MOUNT_NAME_CONFLICT")
             names.add(name)
-            local_target = _local_datasource_target(
-                snapshot.get("target_path"), workspace_root,
+            local_target = local_datasource_target(
+                snapshot.get("datasource_uuid"), workspace_root,
             )
             if local_target is not None:
-                destination = staging / name
+                destination = sources / name
                 destination.symlink_to(local_target, target_is_directory=True)
                 directories.append({"name": name, "path": str(target / name)})
                 continue
-            raise RuntimeError("DATASOURCE_SYNC_REQUIRED")
+            raise RuntimeError(
+                "DATASOURCE_TARGET_UNAVAILABLE:"
+                + str(snapshot.get("datasource_uuid") or "")
+            )
         check_activity()
         if target.is_symlink():
             raise ValueError("SESSION_WORKSPACE_PATH_INVALID")
@@ -58,20 +61,56 @@ def materialize_datasources(
     command["workspace_path"] = str(target)
 
 
-def _local_datasource_target(value, workspace_root):
-    """Return an existing node datasource directory safe to symlink."""
+def _session_workspace_target(command, workspace_root):
+    """Return the validated Session root supplied by the control plane."""
 
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    source = Path(raw)
-    if not source.is_absolute():
-        source = workspace_root / source
+    workspace_root = Path(workspace_root).resolve()
+    target_dirs = command.get("target_dirs") or []
+    candidate = target_dirs[0].get("path") if target_dirs else ""
+    if candidate:
+        target = Path(candidate)
+        try:
+            resolved = target.resolve()
+            resolved.relative_to(workspace_root / "sessions")
+        except (OSError, ValueError):
+            resolved = None
+        if resolved is not None and resolved != workspace_root / "sessions":
+            return resolved
+    run_uuid = str(uuid.UUID(command["run_uuid"]))
+    return workspace_root / "sessions" / run_uuid
+
+
+def local_datasource_target(datasource_uuid, workspace_root):
+    """Return the unique local directory for a datasource UUID."""
+
+    workspace_root = Path(workspace_root)
     try:
-        resolved = source.resolve(strict=True)
+        source_uuid = uuid.UUID(str(datasource_uuid))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    datasource_root = workspace_root / "datasources"
+    candidates = sorted(datasource_root.glob(f"{source_uuid}-*"))
+    exact = datasource_root / str(source_uuid)
+    if exact.exists() and exact.is_dir():
+        candidates.append(exact)
+    candidates = [path for path in candidates if path.is_dir()]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    try:
+        resolved = candidates[0].resolve(strict=True)
         resolved.relative_to(workspace_root.resolve())
     except (OSError, ValueError):
         return None
-    if resolved == workspace_root.resolve() or not resolved.is_dir():
-        return None
     return resolved
+
+
+def default_datasource_target(datasource_uuid, workspace_root):
+    """Return the deterministic directory used for a first sync."""
+
+    workspace_root = Path(workspace_root)
+    try:
+        source_uuid = uuid.UUID(str(datasource_uuid))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return Path(workspace_root) / "datasources" / str(source_uuid)

@@ -1434,13 +1434,10 @@ def complete_datasource_sync_task(task_id, result):
                     item.save(update_fields=["storage_usage", "updated_at"])
             datasource.last_error = ""
             datasource.last_synced_at = timezone.now()
-            if metrics["target_path"] and datasource.lensnode_id is not None:
-                datasource.target_path = metrics["target_path"]
             datasource.save(
                 update_fields=[
                     "last_error",
                     "last_synced_at",
-                    "target_path",
                     "updated_at",
                 ]
             )

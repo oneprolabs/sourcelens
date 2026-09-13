@@ -385,9 +385,6 @@ def dispatch_datasource_sync_async(
     config = datasource_runtime_config(datasource)
     sync_policy = datasource.sync_policy or {}
     conversion = datasource_conversion_policy(sync_policy)
-    target_path = datasource.target_path or (
-        f"{lensnode.workspace_path}/datasources/{datasource.uuid}"
-    )
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         lensnode,
@@ -402,7 +399,6 @@ def dispatch_datasource_sync_async(
             "conversion": conversion,
             **_lensnode_gateway_config(),
             "sync_policy": sync_policy,
-            "target_path": target_path,
             "trigger": trigger,
             "max_workers": get_datasource_sync_max_workers(),
             "excluded_datasource_roots": excluded_datasource_roots(

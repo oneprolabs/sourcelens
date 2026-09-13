@@ -23,16 +23,14 @@ def session_workspace_path(session_uuid):
 
 
 def session_source_dirs(session):
-    """Return only datasource mounts frozen for this session."""
+    """Return the session root containing its datasource mounts."""
 
-    sources = session_workspace_path(session.uuid) / "sources"
-    directories = []
+    workspace = session_workspace_path(session.uuid)
     for snapshot in session.datasource_snapshots.all():
         name = snapshot.mount_name
         if not name or name in {".", ".."} or Path(name).name != name:
             raise SessionWorkspaceError("SESSION_MOUNT_NAME_CONFLICT")
-        directories.append({"path": str(sources / name), "name": name})
-    return directories
+    return [{"path": str(workspace), "name": str(session.uuid)}]
 
 
 def cleanup_session_workspace(session_uuid):

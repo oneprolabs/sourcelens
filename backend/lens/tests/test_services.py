@@ -1836,10 +1836,7 @@ class LensServiceTests(TransactionTestCase):
         dispatch_run_to_lensnode(run, "Analyze the repository")
 
         payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
-        self.assertEqual(
-            payload["datasource_snapshots"][0]["target_path"],
-            self.datasource.target_path,
-        )
+        self.assertNotIn("target_path", payload["datasource_snapshots"][0])
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")

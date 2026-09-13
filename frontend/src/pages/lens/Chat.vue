@@ -1719,9 +1719,12 @@
                     @paste="onComposerPaste"
                     @input="handleComposerInput"
                   />
-                  <div class="composer-inline-toolbar">
-                    <ReasoningDepthSelect v-model="agentRounds" />
-                  </div>
+                </div>
+                <div class="composer-inline-toolbar">
+                  <ReasoningDepthSelect
+                    v-model="agentRounds"
+                    :default-value="activeAssistant?.agent_rounds"
+                  />
                 </div>
                 <button
                   class="composer-action-btn"
@@ -2021,7 +2024,12 @@ const feedbackUpdatingRuns = ref(new Set())
 const selectedAssistantUuid = ref('')
 const selectedSessionUuid = ref('')
 const question = ref('')
-const agentRounds = ref('')
+const AGENT_ROUNDS_STORAGE_KEY = 'lens.chat.agentRounds'
+const agentRounds = ref(
+  typeof window !== 'undefined'
+    ? window.localStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
+    : ''
+)
 const attachments = ref([])
 const fileInput = ref(null)
 const partialAnswer = ref('')
@@ -2046,6 +2054,12 @@ const retryDraft = ref(null)
 const runStatusResolvingSessionUuid = ref('')
 const submittingSessionUuids = ref(new Set())
 const sessionCreationInProgress = ref(false)
+
+watch(agentRounds, (value) => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
+  }
+})
 const streamController = ref(null)
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
@@ -2127,6 +2141,10 @@ const selectedAssistant = computed(
     assistants.value.find(
       (item) => item.uuid === selectedAssistantUuid.value
     ) || null
+)
+
+const activeAssistant = computed(
+  () => selectedAssistant.value || publicAssistant.value
 )
 
 const selectedSession = computed(
@@ -3233,7 +3251,6 @@ async function bootstrap() {
   // permanently disabled. A stale submit during the brief load window is
   // instead guarded inside submit() by binding to the session it started in.
   question.value = ''
-  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   currentRun.value = null
   runStatusResolvingSessionUuid.value = ''
@@ -3470,7 +3487,6 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
     routingScopeDraft.value = [...(session.allowed_assistant_uuids || [])]
   }
   question.value = ''
-  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   retryDraft.value = null
   clarificationAnswers.value = {}
@@ -3507,7 +3523,6 @@ function clearSessionSelection() {
   messages.value = []
   currentRun.value = null
   question.value = ''
-  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   retryDraft.value = null
   clarificationAnswers.value = {}
@@ -3921,7 +3936,6 @@ async function selectSession(session, updateRoute = true) {
   booted.value = true
   if (sessionChanged) {
     question.value = ''
-    agentRounds.value = ''
     mentionedAssistantUuids.value = []
     retryDraft.value = null
     if (composerRef.value) composerRef.value.style.height = 'auto'
@@ -4268,7 +4282,6 @@ async function submit() {
     mentionAssistantsAtSubmit
   )
   question.value = ''
-  agentRounds.value = ''
   mentionedAssistantUuids.value = []
   // Snapshot ready attachments, clear the composer strip, and keep the object
   // URLs alive for the optimistic bubble until the server reload replaces it.
@@ -5797,9 +5810,8 @@ onBeforeUnmount(() => {
 }
 
 .composer-inline-toolbar {
-  @apply pointer-events-auto flex basis-full items-center;
-  order: 3;
-  margin-top: -0.25rem;
+  @apply pointer-events-auto flex items-center justify-end;
+  flex: 0 0 auto;
 }
 
 .composer:focus-within {

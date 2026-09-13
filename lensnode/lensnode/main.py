@@ -54,6 +54,10 @@ from .runtime_resources import (
     cleanup_stale_runtime_resources,
     delete_skill_cache,
 )
+from .session_datasources import (
+    default_datasource_target,
+    local_datasource_target,
+)
 from .tls import create_config_ssl_context
 from .tls import warn_if_verification_disabled
 from .workspace import available_dirs
@@ -960,6 +964,16 @@ class LensNodeClient:
             self._enqueue_from_thread(loop, payload)
 
         try:
+            local_target = local_datasource_target(
+                message.get("datasource_uuid"),
+                self.config.workspace_path,
+            )
+            target = local_target or default_datasource_target(
+                message.get("datasource_uuid"),
+                self.config.workspace_path,
+            )
+            if target is not None:
+                message = {**message, "target_path": str(target)}
             if plugin:
                 slot_acquired = False
 
@@ -1223,13 +1237,16 @@ class LensNodeClient:
                 material,
                 message.get("trigger") or "plugin",
             )
-            # Plugin builders receive the immutable snapshot, but older plugin
-            # packages may omit the resolved workspace target from the
-            # provider command. Keep the runtime target authoritative so the
-            # control plane can publish unbound datasource results safely.
-            resolved = snapshot.get("resolved_config") or {}
-            if resolved.get("target_path") and not command.get("target_path"):
-                command["target_path"] = resolved["target_path"]
+            local_target = local_datasource_target(
+                message.get("datasource_uuid"),
+                self.config.workspace_path,
+            )
+            target = local_target or default_datasource_target(
+                message.get("datasource_uuid"),
+                self.config.workspace_path,
+            )
+            if target is not None:
+                command["target_path"] = str(target)
             plugin_http_pool = getattr(
                 self,
                 "plugin_http_pool",
