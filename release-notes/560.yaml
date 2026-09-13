@@ -1,0 +1,5 @@
+type: improvement
+audience: user
+en: Integrated the reasoning depth selector into the chat composer with clear descriptions for each reasoning level.
+zh-CN: 将推理深度选择器集成到聊天输入框，并为每个推理级别提供清晰说明。
+es: Se integró el selector de profundidad de razonamiento en el compositor del chat con descripciones claras para cada nivel.
