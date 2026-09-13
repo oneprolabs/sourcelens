@@ -1,5 +1,7 @@
+import fnmatch
 import json
 import logging
+import os
 from itertools import islice
 from pathlib import Path
 import re
@@ -219,8 +221,35 @@ def glob_files(target_dirs, pattern, max_results=None, policy=None):
         if not root.exists() or not root.is_dir():
             continue
         scope = target_scope(item)
-        try:
-            for path in root.glob(pattern):
+        seen_dirs = set()
+        link_boundary = _symlink_boundary(root)
+        for current_root, dirnames, filenames in os.walk(
+            root, followlinks=True
+        ):
+            real_root = os.path.realpath(current_root)
+            if real_root in seen_dirs:
+                dirnames[:] = []
+                continue
+            seen_dirs.add(real_root)
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if (
+                    _include_hidden(scope, policy)
+                    or not name.startswith(".")
+                )
+                and _symlink_target_allowed(
+                    Path(current_root) / name, link_boundary
+                )
+                and os.path.realpath(
+                    os.path.join(current_root, name)
+                ) not in seen_dirs
+            ]
+            for name in filenames:
+                path = Path(current_root) / name
+                relative = path.relative_to(root).as_posix()
+                if not _matches_glob_pattern(relative, pattern):
+                    continue
                 if len(found) >= GLOB_SCAN_LIMIT:
                     break
                 if is_path_allowed(root, path, scope, policy):
@@ -233,8 +262,8 @@ def glob_files(target_dirs, pattern, max_results=None, policy=None):
                     ):
                         continue
                     found.append(visible)
-        except (ValueError, NotImplementedError):
-            continue
+            if len(found) >= GLOB_SCAN_LIMIT:
+                break
     found = sorted(set(found), key=_safe_mtime, reverse=True)
     return [str(path) for path in found[:max_results]]
 
@@ -343,7 +372,10 @@ def is_path_allowed(root, path, scope, policy):
     """
 
     try:
-        path.resolve().relative_to(root.resolve())
+        path.relative_to(root)
+        path.resolve().relative_to(_workspace_boundary(root))
+        if not _path_uses_allowed_links(root, path):
+            return False
     except (OSError, ValueError):
         return False
     if not path.is_file():
@@ -511,7 +543,25 @@ def _rg_glob_args(root, scope, policy, glob):
         args.extend(["-g", glob])
     for pattern in _exclude_globs(root, scope, policy):
         args.extend(["-g", f"!{pattern}"])
+    for pattern in _excluded_symlink_globs(root):
+        args.extend(["-g", f"!{pattern}"])
     return args
+
+
+def _excluded_symlink_globs(root):
+    """Return ripgrep exclusions for directory links outside datasources."""
+
+    boundary = _symlink_boundary(root)
+    excluded = []
+    for current_root, dirnames, _ in os.walk(root, followlinks=False):
+        for name in dirnames:
+            path = Path(current_root) / name
+            if path.is_symlink() and not _symlink_target_allowed(
+                path, boundary
+            ):
+                relative = path.relative_to(root).as_posix()
+                excluded.extend((relative, f"{relative}/**"))
+    return excluded
 
 
 def _rg_patterns(query, terms, regex):
@@ -538,7 +588,7 @@ def _rg_line_matches(
     max_line_chars = int(
         _option(scope, policy, "max_line_chars", DEFAULT_MAX_LINE_CHARS)
     )
-    cmd = ["rg", "--json"]
+    cmd = ["rg", "--follow", "--json"]
     if not case_sensitive:
         cmd.append("-i")
     if fixed:
@@ -575,7 +625,7 @@ def _rg_files_with_matches(
     patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
     if not patterns:
         return []
-    cmd = ["rg", "-l"]
+    cmd = ["rg", "--follow", "-l"]
     if not case_sensitive:
         cmd.append("-i")
     if fixed:
@@ -598,7 +648,7 @@ def _rg_counts(
     patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
     if not patterns:
         return []
-    cmd = ["rg", "-c"]
+    cmd = ["rg", "--follow", "-c"]
     if not case_sensitive:
         cmd.append("-i")
     if fixed:
@@ -762,11 +812,38 @@ def _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
 
     found = []
     for pattern in scope.get("include_paths") or ["**/*"]:
-        for path in root.glob(pattern):
-            if len(found) >= limit:
-                return sorted(set(found))[:limit]
-            if is_path_allowed(root, path, scope, policy):
-                found.append(path)
+        boundary = _symlink_boundary(root)
+        seen_dirs = set()
+        for current_root, dirnames, filenames in os.walk(
+            root, followlinks=True
+        ):
+            real_root = os.path.realpath(current_root)
+            if real_root in seen_dirs:
+                dirnames[:] = []
+                continue
+            seen_dirs.add(real_root)
+            dirnames[:] = [
+                name for name in dirnames
+                if (
+                    _include_hidden(scope, policy)
+                    or not name.startswith(".")
+                )
+                and _symlink_target_allowed(
+                    Path(current_root) / name, boundary
+                )
+                and os.path.realpath(
+                    os.path.join(current_root, name)
+                ) not in seen_dirs
+            ]
+            paths = [Path(current_root) / name for name in filenames]
+            for path in paths:
+                relative = path.relative_to(root).as_posix()
+                if not _matches_glob_pattern(relative, pattern):
+                    continue
+                if len(found) >= limit:
+                    return sorted(set(found))[:limit]
+                if is_path_allowed(root, path, scope, policy):
+                    found.append(path)
     return sorted(set(found))[:limit]
 
 
@@ -791,6 +868,69 @@ def _option(scope, policy, key, default):
     if key in policy:
         return policy[key]
     return default
+
+
+def _matches_glob_pattern(relative, pattern):
+    """Match a relative path using the previous Path.glob semantics."""
+
+    path = Path(relative)
+    if "/" not in pattern:
+        return path.parent == Path(".") and fnmatch.fnmatchcase(
+            path.name, pattern
+        )
+    patterns = [pattern]
+    if "**/" in pattern:
+        patterns.append(pattern.replace("**/", "", 1))
+    return any(path.match(candidate) for candidate in patterns)
+
+
+def _symlink_boundary(root):
+    """Return the trusted boundary for Session datasource symlinks."""
+
+    parts = root.resolve().parts
+    if "sessions" in parts:
+        workspace = Path(*parts[: parts.index("sessions")])
+        return workspace / "datasources"
+    return root.resolve()
+
+
+def _workspace_boundary(root):
+    """Return the workspace root allowed for resolved session paths."""
+
+    parts = root.resolve().parts
+    if "sessions" in parts:
+        return Path(*parts[: parts.index("sessions")])
+    return root.resolve()
+
+
+def _path_uses_allowed_links(root, path):
+    """Return whether resolved path components stay within link policy."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    current = root
+    boundary = _symlink_boundary(root)
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink() and not _symlink_target_allowed(
+            current, boundary
+        ):
+            return False
+    return True
+
+
+def _symlink_target_allowed(path, boundary):
+    """Allow datasource links while rejecting arbitrary external links."""
+
+    if not path.is_symlink():
+        return True
+    try:
+        path.resolve().relative_to(boundary)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def target_scope(item):
@@ -838,7 +978,13 @@ def is_path_excluded(root, path, scope, policy):
     """Return whether a path is excluded by configured rules."""
 
     try:
-        relative = path if root is None else path.relative_to(root)
+        if root is None:
+            relative = path
+        else:
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                relative = path.resolve().relative_to(root.resolve())
     except ValueError:
         return True
     if INTERNAL_CHECKPOINT_DIR in path.parts:
