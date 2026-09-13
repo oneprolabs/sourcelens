@@ -1673,9 +1673,12 @@ const workspaceDirectoryTree = computed(() => {
   const dirs = Array.isArray(selectedLensNode.value?.available_dirs)
     ? selectedLensNode.value.available_dirs
     : []
-  return dirs
-    .map((dir) => normalizeDirectoryNode(dir))
-    .filter((dir) => dir.relative)
+  return [{
+    path: workspaceRoot.value,
+    relative: '',
+    name: workspaceRoot.value.split('/').pop() || workspaceRoot.value,
+    children: []
+  }]
 })
 
 const targetPath = computed(() => {
