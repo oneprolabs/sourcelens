@@ -126,9 +126,6 @@ def _send_lensnode_command(lensnode, payload):
         "type": "lensnode.command",
         "payload": payload,
     }
-    if lensnode.connection_id:
-        async_to_sync(channel_layer.send)(lensnode.connection_id, message)
-        return
     async_to_sync(channel_layer.group_send)(
         lensnode_group_name(lensnode.uuid),
         message,

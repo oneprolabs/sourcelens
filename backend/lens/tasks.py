@@ -447,6 +447,19 @@ def _acquire_datasource_capacity(lensnode, task_id):
         if cache.get(key) == task_id:
             return slot
 
+    active_statuses = _datasource_active_statuses(TaskStatus)
+    for key in slot_keys:
+        owner_task_id = cache.get(key)
+        if not owner_task_id or owner_task_id == task_id:
+            continue
+        owner_exists = TaskExecution.objects.filter(
+            task_id=owner_task_id,
+            module__in=DATASOURCE_OPERATION_MODULES,
+            status__in=active_statuses,
+        ).exists()
+        if not owner_exists and cache.get(key) == owner_task_id:
+            cache.delete(key)
+
     legacy_tasks = TaskExecution.objects.filter(
         module__in=DATASOURCE_OPERATION_MODULES,
         status__in=_datasource_active_statuses(TaskStatus),

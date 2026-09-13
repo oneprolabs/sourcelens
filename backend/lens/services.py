@@ -2943,11 +2943,6 @@ def dispatch_run_to_lensnode(
         runtime_snapshot["datasource_snapshots"] = snapshots
         execution.runtime_snapshot = runtime_snapshot
         execution.save(update_fields=["runtime_snapshot"])
-    if snapshots and not (
-        (run.lensnode.labels or {}).get("session_datasource_download_v1")
-        is True
-    ):
-        raise LensNodeDispatchError("SESSION_DATASOURCE_UPGRADE_REQUIRED")
     model_refs = runtime_snapshot.get("model_refs") or {}
     runtime_settings = runtime_snapshot.get("settings")
     if not isinstance(runtime_settings, dict):

@@ -1807,6 +1807,42 @@ class LensServiceTests(TransactionTestCase):
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
+    def test_dispatch_does_not_require_datasource_download_upgrade(
+        self,
+        get_channel_layer,
+        mock_async_to_sync,
+    ):
+        """Existing local datasource snapshots do not require a node upgrade."""
+        run = create_execution_run(
+            session=self.session,
+            question="Analyze the repository",
+            enqueue=False,
+        )
+        execution = run.execution
+        execution.runtime_snapshot = {
+            **execution.runtime_snapshot,
+            "datasource_snapshots": [
+                {
+                    "snapshot_uuid": str(uuid4()),
+                    "version_uuid": str(uuid4()),
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "mount_name": "repo",
+                    "target_path": self.datasource.target_path,
+                },
+            ],
+        }
+        execution.save(update_fields=["runtime_snapshot"])
+
+        dispatch_run_to_lensnode(run, "Analyze the repository")
+
+        payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
+        self.assertEqual(
+            payload["datasource_snapshots"][0]["target_path"],
+            self.datasource.target_path,
+        )
+
+    @patch("lens.services.async_to_sync")
+    @patch("lens.services.get_channel_layer")
     def test_dispatch_sends_frozen_tool_budget_override(
         self,
         get_channel_layer,
@@ -4625,6 +4661,29 @@ class LensServiceTests(TransactionTestCase):
 
         release_datasource_lock(self.datasource.uuid, token="capacity-1")
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
+
+    def test_datasource_capacity_reclaims_revoked_task_slot(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 1}
+        self.lensnode.save(update_fields=["labels"])
+        stale_task = register_datasource_sync_task(
+            self.datasource,
+            "revoked-capacity-task",
+            "manual",
+        )
+        stale_task.status = "REVOKED"
+        stale_task.save(update_fields=["status"])
+        cache.set(
+            _datasource_capacity_slot_key(self.lensnode.uuid, 0),
+            stale_task.task_id,
+        )
+
+        self.assertTrue(
+            _datasource_capacity_available(self.lensnode, "replacement-task")
+        )
+        self.assertEqual(
+            cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0)),
+            "replacement-task",
+        )
 
     def test_complete_upload_releases_datasource_capacity_slot(self):
         datasource = DataSource.objects.create(
