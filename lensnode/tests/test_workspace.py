@@ -269,6 +269,54 @@ def test_glob_files_finds_by_type(tmp_path):
     assert all(path.endswith(".md") for path in files)
 
 
+def test_workspace_tools_follow_datasource_symlinks(tmp_path):
+    source = tmp_path / "datasources" / "source-version"
+    source.mkdir(parents=True)
+    document = source / "docs" / "guide.md"
+    document.parent.mkdir()
+    document.write_text("AGIOne retrieval marker\n", encoding="utf-8")
+    session = tmp_path / "sessions" / "run-1" / "sources"
+    session.mkdir(parents=True)
+    link = session / "ds_source"
+    link.symlink_to(source, target_is_directory=True)
+    target_dirs = [{"path": str(tmp_path / "sessions" / "run-1")}]
+
+    result = search_workspace(target_dirs, "AGIOne")
+    files = glob_files(target_dirs, "**/*.md")
+
+    assert any(match["path"].endswith("guide.md") for match in result["matches"])
+    assert any(path.endswith("guide.md") for path in files)
+
+
+def test_workspace_tools_reject_unselected_workspace_symlinks(tmp_path):
+    runtime = tmp_path / ".sourcelens" / "runtime" / "runs" / "other"
+    runtime.mkdir(parents=True)
+    (runtime / "secret.md").write_text("must stay private", encoding="utf-8")
+    session = tmp_path / "sessions" / "run-1" / "sources"
+    session.mkdir(parents=True)
+    (session / "runtime").symlink_to(runtime, target_is_directory=True)
+    target_dirs = [{"path": str(tmp_path / "sessions" / "run-1")}]
+
+    result = search_workspace(target_dirs, "private")
+    files = glob_files(target_dirs, "**/*.md")
+
+    assert result["matches"] == []
+    assert not files
+
+
+def test_workspace_tools_reject_unselected_file_symlinks(tmp_path):
+    secret = tmp_path / ".sourcelens" / "runtime" / "secret.txt"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("must stay private", encoding="utf-8")
+    session = tmp_path / "sessions" / "run-1"
+    session.mkdir(parents=True)
+    (session / "secret.txt").symlink_to(secret)
+
+    result = search_workspace([{"path": str(session)}], "private")
+
+    assert result["matches"] == []
+
+
 def test_glob_files_by_name_pattern(tmp_path):
     root = tmp_path / "ws"
     (root / "installation").mkdir(parents=True)

@@ -8,6 +8,7 @@ from lensnode.plugins.codegraph import (
     _codegraph_sync,
     _ensure_codegraph_index,
     _refresh_codegraph_index,
+    _has_indexable_code,
 )
 from lensnode.runtime_resources import _apply_feature_flags
 
@@ -61,6 +62,17 @@ def test_codegraph_plugin_scopes_index_to_session_root(monkeypatch, tmp_path):
     CodeGraphPlugin().contribute_mcp_servers(config, command=command)
 
     assert captured["workspace"] == session
+
+
+def test_codegraph_detects_code_through_datasource_symlink(tmp_path):
+    source = tmp_path / "datasources" / "source-version"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("print('hi')\n")
+    session = tmp_path / "sessions" / "run-1" / "sources"
+    session.mkdir(parents=True)
+    (session / "ds_source").symlink_to(source, target_is_directory=True)
+
+    assert _has_indexable_code(tmp_path / "sessions" / "run-1")
 
 
 def test_codegraph_plugin_skips_general_chat_before_index_check(

@@ -7,6 +7,7 @@ first use.
 
 import fcntl
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -299,12 +300,55 @@ def _has_indexable_code(workspace):
     if not workspace.is_dir():
         return False
     try:
-        for path in workspace.rglob("*"):
-            if (
-                path.is_file()
-                and path.suffix.lower() in CODEGRAPH_CODE_EXTENSIONS
+        seen_dirs = set()
+        boundary = _symlink_boundary(workspace)
+        for current_root, dirnames, filenames in os.walk(
+            workspace, followlinks=True
+        ):
+            real_root = os.path.realpath(current_root)
+            if real_root in seen_dirs:
+                dirnames[:] = []
+                continue
+            seen_dirs.add(real_root)
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if _symlink_target_allowed(
+                    Path(current_root) / name, boundary
+                )
+                if os.path.realpath(os.path.join(current_root, name))
+                not in seen_dirs
+            ]
+            if any(
+                Path(name).suffix.lower() in CODEGRAPH_CODE_EXTENSIONS
+                and _symlink_target_allowed(
+                    Path(current_root) / name, boundary
+                )
+                for name in filenames
             ):
                 return True
     except OSError:
         return False
     return False
+
+
+def _symlink_boundary(workspace):
+    """Return the trusted workspace boundary for datasource links."""
+
+    parts = workspace.resolve().parts
+    if "sessions" in parts:
+        workspace_root = Path(*parts[: parts.index("sessions")])
+        return workspace_root / "datasources"
+    return workspace.resolve()
+
+
+def _symlink_target_allowed(path, boundary):
+    """Allow Session datasource links but reject unrelated directories."""
+
+    if not path.is_symlink():
+        return True
+    try:
+        path.resolve().relative_to(boundary)
+    except (OSError, ValueError):
+        return False
+    return True
