@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.cache import cache
+from django.db import transaction
 from django.utils import timezone
 
 from .lensnode_auth import hash_lensnode_token
@@ -45,6 +46,33 @@ def _ack_session_cleanup(session_uuid, lensnode_uuid, error):
 
 
 DETAIL_ITEMS_LIMIT = 200
+
+
+@transaction.atomic
+def _ensure_file_upload_datasource(lensnode_uuid):
+    """Create the connectionless file upload datasource once per node."""
+
+    lensnode = LensNode.objects.select_for_update().get(pk=lensnode_uuid)
+    target_path = str(lensnode.workspace_path or "").strip()
+    if not target_path:
+        return None
+    datasource, _ = DataSource.objects.get_or_create(
+        lensnode=lensnode,
+        plugin_key="file_upload",
+        source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+        defaults={
+            "name": f"File uploads ({lensnode.name})",
+            "target_path": target_path,
+            "config": {},
+            "sync_policy": {},
+            "datasource_config": {},
+            "status": DataSource.Status.ACTIVE,
+        },
+    )
+    if datasource.target_path != target_path:
+        datasource.target_path = target_path
+        datasource.save(update_fields=["target_path", "updated_at"])
+    return datasource
 
 
 class LensNodeConsumer(AsyncJsonWebsocketConsumer):
@@ -258,6 +286,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         active_datasource_operations = content.get("active_datasource_operations")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self._update_lensnode_report(content, require_versions=True)
+        await database_sync_to_async(_ensure_file_upload_datasource)(
+            self.lensnode.uuid
+        )
         await database_sync_to_async(reconcile_orphaned_datasource_conversions)(
             self.lensnode.uuid,
             self.channel_name,
