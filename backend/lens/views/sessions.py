@@ -321,7 +321,7 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             {
                 "run_uuid": str(run.uuid),
                 "message_uuid": str(run.output_message.uuid),
-                "content": run.output_message.content,
+                "content": run.output_message.content[:50000],
                 "finished_at": run.finished_at.isoformat() if run.finished_at else None,
             }
             for run in runs
