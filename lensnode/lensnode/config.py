@@ -147,10 +147,7 @@ def load_config():
             os.getenv("LENSNODE_DELIVERABLE_MAX_BYTES", str(50 * 1024 * 1024))
         ),
         workspace_path=os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
-        runtime_path=os.getenv(
-            "LENSNODE_RUNTIME_PATH",
-            os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
-        ),
+        runtime_path=os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
         git_max_bytes=int(
             os.getenv("LENSNODE_GIT_MAX_BYTES", str(1024 * 1024 * 1024))
         ),
