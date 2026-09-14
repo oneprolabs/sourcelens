@@ -112,7 +112,13 @@
     "datasourceSyncFailed": "La sincronización falló. Compruebe la fuente e inténtelo de nuevo.",
     "datasourceSyncTimeout": "Tiempo de espera agotado al sincronizar.",
     "datasourceUploadRequired": "Suba archivos a esta fuente antes de preguntar.",
-    "datasourceDisabled": "La fuente seleccionada está desactivada."
+    "datasourceDisabled": "La fuente seleccionada está desactivada.",
+    "datasourceResourceLimit": "El origen de datos supera el límite de recursos. Elimine archivos grandes o aumente el límite de bytes de Git y vuelva a intentarlo.",
+    "datasourceCredentialInvalid": "Las credenciales del origen de datos no son válidas. Actualícelas y vuelva a intentarlo.",
+    "datasourceConfigInvalid": "La configuración del origen de datos no es válida. Revísela y vuelva a intentarlo.",
+    "datasourceTargetPathInvalid": "La ruta de destino no es válida. Revise el directorio y vuelva a intentarlo.",
+    "datasourceTargetPathRequired": "Se requiere una ruta de destino. Configure el directorio y vuelva a intentarlo.",
+    "datasourceGitLayoutMigration": "La estructura del repositorio Git requiere migración. Vuelva a sincronizar o contacte con un administrador."
   },
   "lens": {
     "share": {
@@ -431,6 +437,7 @@
         "clarificationRequired": "Introduzca más información primero.",
         "clarificationFailed": "Error al enviar la aclaración. Inténtalo de nuevo.",
         "outcomePartial": "Se devolvieron resultados parciales, pero la ejecución no se completó completamente. Revise los detalles de la ejecución para los elementos que faltan.",
+        "outcomePartialFlash": "Los resultados principales están listos; el modo Flash omitió los pasos opcionales.",
         "outcomeBlocked": "Esta solicitud no se completó. Revise los detalles en tiempo de ejecución y vuelva a intentarlo.",
         "activity": {
           "analyzingResults": "Analizando resultados recopilados",
