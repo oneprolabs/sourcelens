@@ -454,6 +454,12 @@ def _admin_run_row(run):
         "tool_call_count": tool_call_count,
         "retry_count": retry_count,
         "retry_of_run_uuid": (str(run.retry_of_run.uuid) if run.retry_of_run else None),
+        "continuation_available": (
+            run.status == Run.Status.DONE
+            and run.outcome == Run.Outcome.PARTIAL
+            and (run.termination_detail or {}).get("trigger")
+            in {"turn_limit", "loop_capped"}
+        ),
         "subagent_count": counts["subagent_count"],
         "subagent_denied_count": counts["subagent_denied_count"],
         "structured_analysis_calls": counts["structured_analysis_calls"],
