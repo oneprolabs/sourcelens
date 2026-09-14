@@ -190,7 +190,7 @@ class PublicAssistantView(APIView):
         assistant = Assistant.objects.filter(
             slug=slug,
             status=Assistant.Status.ACTIVE,
-            visibility=Assistant.Visibility.PUBLIC,
+            is_system=False,
         ).first()
         if assistant is None:
             return Response(
@@ -202,7 +202,5 @@ class PublicAssistantView(APIView):
                 "name": assistant.name,
                 "description": assistant.description,
                 "slug": assistant.slug,
-                "agent_rounds": assistant.agent_rounds,
-                "status": assistant.status,
             }
         )

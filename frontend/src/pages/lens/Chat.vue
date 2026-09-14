@@ -430,6 +430,33 @@
           <div v-if="!booted" class="thread-loading">
             <BaseLoading />
           </div>
+          <div
+            v-else-if="isAnonymous && hasAssistant"
+            class="thread-loading"
+          >
+            <div class="max-w-md px-6 py-12 text-center" role="status">
+              <h1 class="text-2xl font-semibold text-ink-900">
+                {{ assistantName }}
+              </h1>
+              <p
+                v-if="assistantDescription"
+                class="mt-3 text-sm text-ink-500"
+              >
+                {{ assistantDescription }}
+              </p>
+              <p class="mt-6 text-sm text-ink-500">
+                {{ t('lens.chat.loginRequired') }}
+              </p>
+              <BaseButton class="mt-4" @click="requireLogin">
+                {{ t('auth.login') }}
+              </BaseButton>
+            </div>
+          </div>
+          <div v-else-if="assistantError" class="thread-loading">
+            <p class="max-w-md px-6 text-center text-ink-500" role="alert">
+              {{ t(assistantError) }}
+            </p>
+          </div>
           <div v-else-if="!hasAssistant" class="thread-loading">
             <AssistantEmptyState :variant="emptyVariant" />
           </div>
@@ -2129,6 +2156,7 @@ const streamTextBuffer = createStreamTextBuffer({
 })
 
 const publicAssistant = ref(null)
+const assistantError = ref('')
 const showLoginModal = ref(false)
 const shareOpen = ref(false)
 const shareRunUuid = ref('')
@@ -2333,14 +2361,16 @@ function setSessionSubmitting(sessionUuid, submitting) {
 const hasAssistant = computed(() =>
   isAnonymous.value
     ? !!publicAssistant.value
-    : isSmartCollaborationConversation.value || !!selectedAssistantUuid.value
+    : isSmartCollaborationConversation.value || !!selectedAssistant.value
 )
 
 const canCompose = computed(
   () =>
+    booted.value &&
+    !isAnonymous.value &&
+    !assistantError.value &&
     hasAssistant.value &&
-    (isAnonymous.value ||
-      selectedSession.value?.status === 'active' ||
+    (selectedSession.value?.status === 'active' ||
       (!selectedSessionUuid.value && !showArchivedSessions.value))
 )
 
@@ -3283,6 +3313,9 @@ async function bootstrap() {
   showArchivedSessions.value = false
   resetStreamState()
   booted.value = false
+  assistantError.value = ''
+  publicAssistant.value = null
+  selectedAssistantUuid.value = ''
   sessionsLoading.value = false
   sessionsError.value = false
   messageLoading.value = false
@@ -3293,9 +3326,11 @@ async function bootstrap() {
   if (isAnonymous.value) {
     try {
       publicAssistant.value = await getPublicAssistant(route.params.slug)
-    } catch {
-      publicAssistant.value = null
-      showError(t('lens.chat.assistantNotFound'))
+    } catch (error) {
+      assistantError.value =
+        error?.response?.status === 404
+          ? 'lens.chat.assistantNotFound'
+          : 'lens.chat.loadFailed'
     }
     booted.value = true
     return
@@ -3316,20 +3351,14 @@ async function bootstrap() {
       return
     }
 
-    const current =
-      assistants.value.find((item) => item.slug === route.params.slug) ||
-      assistants.value[0]
+    const current = assistants.value.find(
+      (item) => item.slug === route.params.slug
+    )
 
     if (!current) {
-      // No assistants exist yet — surface the create-first-assistant guide
-      // (admin) or a no-assistant notice (end-user) instead of a spinner.
+      // Keep the requested link when the user's access list excludes it.
+      assistantError.value = 'lens.chat.assistantUnavailable'
       booted.value = true
-      return
-    }
-
-    if (current.slug !== route.params.slug) {
-      // Re-bootstraps under the canonical slug; keep showing the loader.
-      await router.replace(`/lens/assistants/${current.slug}/chat`)
       return
     }
 
@@ -3344,7 +3373,7 @@ async function bootstrap() {
     const getScrollContainer = () => scrollRef.value
     await scrollConversationToBottomAfterRender(getScrollContainer, nextTick)
   } catch {
-    showError(t('lens.chat.loadFailed'))
+    assistantError.value = 'lens.chat.loadFailed'
     booted.value = true
   }
 }
