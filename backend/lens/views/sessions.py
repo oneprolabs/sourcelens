@@ -250,6 +250,11 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             .distinct()
         )
         with transaction.atomic():
+            for lensnode_uuid in lensnode_uuids:
+                SessionCleanupOperation.objects.get_or_create(
+                    session_uuid=session_uuid,
+                    lensnode_uuid=lensnode_uuid,
+                )
             run_ids = list(
                 instance.run_set.values_list("id", flat=True)
             )
