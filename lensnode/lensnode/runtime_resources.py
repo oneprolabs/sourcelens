@@ -838,6 +838,24 @@ def cleanup_stale_runtime_resources(
             if not path.exists():
                 total -= size
                 removed += 1
+    session_quota = int(os.getenv("LENSNODE_SESSION_MAX_BYTES", "0") or 0)
+    sessions_root_path = Path(workspace_path) / "sessions"
+    if session_quota > 0 and sessions_root_path.exists():
+        entries = []
+        total = 0
+        for path in sessions_root_path.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+            entries.append((path.stat().st_mtime, path, size))
+            total += size
+        for _, path, size in sorted(entries):
+            if total <= session_quota:
+                break
+            shutil.rmtree(path, ignore_errors=True)
+            if not path.exists():
+                total -= size
+                removed += 1
     return removed
 
 
