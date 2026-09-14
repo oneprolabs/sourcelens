@@ -780,6 +780,8 @@
                     runtimeOutcomeNotice(message._runtimeState).kind ===
                     'blocked'
                       ? t('lens.chat.runtime.outcomeBlocked')
+                      : activeAssistant?.agent_rounds === 'flash'
+                        ? t('lens.chat.runtime.outcomePartialFlash')
                       : t('lens.chat.runtime.outcomePartial')
                   }}
                   <span
@@ -795,6 +797,7 @@
                     v-if="
                       runtimeOutcomeNotice(message._runtimeState).kind ===
                         'partial' &&
+                      activeAssistant?.agent_rounds !== 'flash' &&
                       canRetryLastQuestion(message)
                     "
                     type="button"
@@ -1561,6 +1564,8 @@
                   {{
                     runtimeOutcomeNotice(runtimeState).kind === 'blocked'
                       ? t('lens.chat.runtime.outcomeBlocked')
+                      : activeAssistant?.agent_rounds === 'flash'
+                        ? t('lens.chat.runtime.outcomePartialFlash')
                       : t('lens.chat.runtime.outcomePartial')
                   }}
                 </div>
@@ -4778,6 +4783,7 @@ function retryLastQuestion(message = null) {
 }
 
 function canRetryLastQuestion(message = null) {
+  if (activeAssistant.value?.agent_rounds === 'flash') return false
   return retryableUserMessage(messages.value, message) !== null
 }
 

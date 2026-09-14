@@ -1333,7 +1333,9 @@ def _sync_context(command, target):
     """Return the common datasource sync context."""
 
     conversion = (command.get("sync_policy") or {}).get("conversion")
-    conversion = command.get("conversion") or conversion or {}
+    conversion = dict(command.get("conversion") or conversion or {})
+    conversion.setdefault("queue", "parallel")
+    conversion.setdefault("workers", command.get("max_workers") or 4)
     return {
         "datasource_uuid": str(command.get("datasource_uuid") or ""),
         "name": command.get("name") or "",

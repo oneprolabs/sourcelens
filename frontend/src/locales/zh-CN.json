@@ -112,7 +112,13 @@
     "datasourceSyncFailed": "数据源同步失败，请检查数据源状态后重试。",
     "datasourceSyncTimeout": "等待数据源同步超时，请稍后重试。",
     "datasourceUploadRequired": "数据源没有可用文件，请先上传文件。",
-    "datasourceDisabled": "所选数据源已停用，请联系管理员。"
+    "datasourceDisabled": "所选数据源已停用，请联系管理员。",
+    "datasourceResourceLimit": "数据源超过资源上限，请清理大文件或提高 Git 字节上限后重试。",
+    "datasourceCredentialInvalid": "数据源凭证无效，请更新后重试。",
+    "datasourceConfigInvalid": "数据源配置无效，请检查后重试。",
+    "datasourceTargetPathInvalid": "目标路径无效，请检查数据源目录后重试。",
+    "datasourceTargetPathRequired": "缺少目标路径，请配置数据源目录后重试。",
+    "datasourceGitLayoutMigration": "Git 仓库目录结构需要迁移，请重新同步或联系管理员。"
   },
   "lens": {
     "share": {
@@ -431,6 +437,7 @@
         "clarificationRequired": "请先输入补充信息。",
         "clarificationFailed": "补充信息提交失败，请重试。",
         "outcomePartial": "已返回部分结果，但执行未完整结束，请查看运行详情了解缺失项。",
+        "outcomePartialFlash": "已返回核心结果，极速模式已跳过可选步骤。",
         "outcomeBlocked": "当前请求未完成，请查看运行详情后重试。",
         "activity": {
           "analyzingResults": "正在分析已取得的结果",

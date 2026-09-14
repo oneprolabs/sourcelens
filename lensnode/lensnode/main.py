@@ -1286,6 +1286,7 @@ class LensNodeClient:
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]
+            command["max_workers"] = message.get("max_workers")
             command["git_max_bytes"] = self.config.git_max_bytes
             result = runtime.sync_datasource(
                 command,
@@ -1303,7 +1304,7 @@ class LensNodeClient:
                     "error": "DATASOURCE_SYNC_CANCELLED",
                     "completion_reason": "DATASOURCE_SYNC_CANCELLED",
                 }
-            return {"status": "failed", "error": "PLUGIN_SYNC_FAILED"}
+            return {"status": "failed", "error": str(exc)}
         except Exception:
             LOGGER.exception("Plugin datasource runtime failed")
             return {"status": "failed", "error": "PLUGIN_EXECUTION_FAILED"}
