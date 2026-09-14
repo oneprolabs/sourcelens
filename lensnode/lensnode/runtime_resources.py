@@ -804,6 +804,27 @@ def cleanup_stale_runtime_resources(
         shutil.rmtree(path, ignore_errors=True)
         if not path.exists():
             removed += 1
+    quota = int(os.getenv("LENSNODE_RUNTIME_MAX_BYTES", "0") or 0)
+    if quota > 0:
+        entries = []
+        total = 0
+        for path in runs_root.iterdir() if runs_root.exists() else ():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            size = sum(
+                item.stat().st_size
+                for item in path.rglob("*")
+                if item.is_file()
+            )
+            entries.append((path.stat().st_mtime, path, size))
+            total += size
+        for _, path, size in sorted(entries):
+            if total <= quota:
+                break
+            shutil.rmtree(path, ignore_errors=True)
+            if not path.exists():
+                total -= size
+                removed += 1
     return removed
 
 
