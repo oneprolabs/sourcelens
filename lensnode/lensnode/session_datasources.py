@@ -36,47 +36,49 @@ def materialize_datasources(
         else nullcontext()
     )
     with lock_context:
-      with tempfile.TemporaryDirectory(dir=runtime_root) as temporary:
-        staging = Path(temporary) / "workspace"
-        sources = staging / "sources"
-        sources.mkdir(parents=True)
-        for snapshot in snapshots:
+        with tempfile.TemporaryDirectory(dir=runtime_root) as temporary:
+            staging = Path(temporary) / "workspace"
+            sources = staging / "sources"
+            sources.mkdir(parents=True)
+            for snapshot in snapshots:
+                check_activity()
+                name = snapshot["mount_name"]
+                if (not name or name in {".", ".."} or "/" in name
+                        or "\\" in name or name in names):
+                    raise ValueError("SESSION_MOUNT_NAME_CONFLICT")
+                names.add(name)
+                local_target = local_datasource_target(
+                    snapshot.get("datasource_uuid"), workspace_root,
+                )
+                if local_target is not None:
+                    destination = sources / name
+                    destination.symlink_to(
+                        local_target, target_is_directory=True,
+                    )
+                    directories.append({
+                        "name": name,
+                        "path": str(target / "sources" / name),
+                    })
+                    continue
+                raise RuntimeError(
+                    "DATASOURCE_TARGET_UNAVAILABLE:"
+                    + str(snapshot.get("datasource_uuid") or "")
+                )
             check_activity()
-            name = snapshot["mount_name"]
-            if (not name or name in {".", ".."} or "/" in name
-                    or "\\" in name or name in names):
-                raise ValueError("SESSION_MOUNT_NAME_CONFLICT")
-            names.add(name)
-            local_target = local_datasource_target(
-                snapshot.get("datasource_uuid"), workspace_root,
-            )
-            if local_target is not None:
-                destination = sources / name
-                destination.symlink_to(local_target, target_is_directory=True)
-                directories.append({
-                    "name": name,
-                    "path": str(target / "sources" / name),
-                })
-                continue
-            raise RuntimeError(
-                "DATASOURCE_TARGET_UNAVAILABLE:"
-                + str(snapshot.get("datasource_uuid") or "")
-            )
-        check_activity()
-        if target.is_symlink():
-            raise ValueError("SESSION_WORKSPACE_PATH_INVALID")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.mkdir(parents=True, exist_ok=True)
-        destination = target / "sources"
-        destination.mkdir(exist_ok=True)
-        for link in sources.iterdir():
-            existing = destination / link.name
-            if existing.exists() or existing.is_symlink():
-                if existing.is_symlink() or existing.is_file():
-                    existing.unlink()
-                else:
-                    shutil.rmtree(existing)
-            shutil.move(str(link), str(existing))
+            if target.is_symlink():
+                raise ValueError("SESSION_WORKSPACE_PATH_INVALID")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+            destination = target / "sources"
+            destination.mkdir(exist_ok=True)
+            for link in sources.iterdir():
+                existing = destination / link.name
+                if existing.exists() or existing.is_symlink():
+                    if existing.is_symlink() or existing.is_file():
+                        existing.unlink()
+                    else:
+                        shutil.rmtree(existing)
+                shutil.move(str(link), str(existing))
     command["target_dirs"] = directories
     command["workspace_path"] = str(target)
 
