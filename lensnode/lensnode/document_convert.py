@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import time
+import threading
 import zipfile
 from xml.etree import ElementTree
 from io import BytesIO
@@ -414,13 +415,13 @@ def post_process_documents(context, sync_result, emit=None):
     image_count = 0
     image_digests = set()
     jobs = []
-    active_job = {"value": None}
+    active_job = threading.local()
     original_context = context
 
     def report_visual_progress(detail):
         """Expose image work within a managed workspace file conversion."""
 
-        job = active_job["value"]
+        job = getattr(active_job, "value", None)
         if not context.get("managed_conversion_progress") or job is None:
             _emit_conversion_progress(original_context, detail)
             return
@@ -523,11 +524,11 @@ def post_process_documents(context, sync_result, emit=None):
     queue = conversion_queue_from_context(context)
 
     def handle_job(job):
-        active_job["value"] = job
+        active_job.value = job
         try:
             return convert_job(job, target, context)
         finally:
-            active_job["value"] = None
+            active_job.value = None
 
     for job, output in queue.run(jobs, handle_job):
         path = job.path

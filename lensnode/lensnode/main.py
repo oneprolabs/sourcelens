@@ -1286,6 +1286,7 @@ class LensNodeClient:
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]
+            command["max_workers"] = message.get("max_workers")
             command["git_max_bytes"] = self.config.git_max_bytes
             result = runtime.sync_datasource(
                 command,

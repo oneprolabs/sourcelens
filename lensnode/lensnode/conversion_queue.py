@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 
 
 @dataclass
@@ -45,7 +45,7 @@ class ParallelConversionQueue(ConversionQueue):
     name = "parallel"
 
     def __init__(self, workers=4):
-        self.workers = max(1, int(workers or 1))
+        self.workers = min(16, max(1, int(workers or 1)))
 
     def run(self, jobs, handler):
         """Run jobs concurrently and yield results in completion order."""
