@@ -3,7 +3,8 @@
 import json
 import logging
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
+from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Exists, F, OuterRef
 from django.http import (
@@ -51,8 +52,10 @@ from lens.models import (
     RunExecution,
     RunOutputFile,
     Session,
+    SessionCleanupOperation,
     SharedQA,
 )
+from lens.services import lensnode_group_name
 from lens.datasource.workspace import cleanup_session_workspace
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.session_lifecycle import (
@@ -241,7 +244,22 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         """
         session_uuid = instance.uuid
         user_id = instance.user_id
+        lensnode_uuids = list(
+            instance.run_set.filter(lensnode__isnull=False)
+            .values_list("lensnode__uuid", flat=True)
+            .distinct()
+        )
+        output_storage_names = list(
+            RunOutputFile.objects.filter(session=instance)
+            .exclude(file="")
+            .values_list("file", flat=True)
+        )
         with transaction.atomic():
+            for lensnode_uuid in lensnode_uuids:
+                SessionCleanupOperation.objects.get_or_create(
+                    session_uuid=session_uuid,
+                    lensnode_uuid=lensnode_uuid,
+                )
             run_ids = list(
                 instance.run_set.values_list("id", flat=True)
             )
@@ -264,6 +282,15 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             RunDiagnostic.objects.filter(run__session=instance).delete()
             instance.run_set.all().delete()
             instance.delete()
+        for storage_name in output_storage_names:
+            try:
+                default_storage.delete(storage_name)
+            except Exception:
+                logger.exception(
+                    "Unable to delete deliverable %s for Session %s.",
+                    storage_name,
+                    session_uuid,
+                )
         try:
             delete_session_document_attachments(
                 session_uuid,
@@ -280,6 +307,61 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             logger.exception(
                 "Unable to delete workspace for Session %s.", session_uuid
             )
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            for lensnode_uuid in lensnode_uuids:
+                async_to_sync(channel_layer.group_send)(
+                    lensnode_group_name(lensnode_uuid),
+                    {
+                        "type": "lensnode.command",
+                        "payload": {
+                            "type": "session_cleanup",
+                            "session_uuid": str(session_uuid),
+                        },
+                    },
+                )
+
+    @action(detail=True, methods=["get"], url_path="cleanup-status")
+    def cleanup_status(self, request, uuid=None):
+        """Return durable remote workspace cleanup status for this Session."""
+
+        session = self.get_object()
+        operations = SessionCleanupOperation.objects.filter(
+            session_uuid=session.uuid,
+        ).order_by("-created_at")
+        return Response({"operations": [
+            {
+                "lensnode_uuid": str(item.lensnode_uuid),
+                "status": item.status,
+                "attempts": item.attempts,
+                "last_error": item.last_error,
+                "next_retry_at": item.next_retry_at.isoformat() if item.next_retry_at else None,
+                "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+            }
+            for item in operations
+        ]})
+
+    @action(detail=True, methods=["get"], url_path="prior-results")
+    def prior_results(self, request, uuid=None):
+        """List completed outputs available for continuation in this Session."""
+
+        session = self.get_object()
+        runs = Run.objects.filter(
+            session=session,
+            status=Run.Status.DONE,
+            output_message__isnull=False,
+        ).exclude(output_message__content="").order_by("-finished_at")[:20]
+        return Response({"results": [
+            {
+                "run_uuid": str(run.uuid),
+                "message_uuid": str(run.output_message.uuid),
+                "content": run.output_message.content[:50000],
+                "truncated": len(run.output_message.content) > 50000,
+                "total_length": len(run.output_message.content),
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+            for run in runs
+        ]})
 
     @action(detail=True, methods=["post"])
     def pin(self, request, uuid=None):

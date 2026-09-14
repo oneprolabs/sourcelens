@@ -454,6 +454,12 @@ def _admin_run_row(run):
         "tool_call_count": tool_call_count,
         "retry_count": retry_count,
         "retry_of_run_uuid": (str(run.retry_of_run.uuid) if run.retry_of_run else None),
+        "continuation_available": (
+            run.status == Run.Status.DONE
+            and run.outcome == Run.Outcome.PARTIAL
+            and (run.termination_detail or {}).get("trigger")
+            in {"turn_limit", "loop_capped"}
+        ),
         "subagent_count": counts["subagent_count"],
         "subagent_denied_count": counts["subagent_denied_count"],
         "structured_analysis_calls": counts["structured_analysis_calls"],
@@ -1255,7 +1261,16 @@ class AdminRunRetryView(APIView):
                     {"detail": "Run not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            if run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]:
+            turn_limit_retry = (
+                run.status == Run.Status.DONE
+                and run.outcome == Run.Outcome.PARTIAL
+                and (run.termination_detail or {}).get("trigger")
+                in {"turn_limit", "loop_capped"}
+            )
+            if (
+                run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]
+                and not turn_limit_retry
+            ):
                 return Response(
                     {"detail": "RUN_NOT_RETRYABLE"},
                     status=status.HTTP_409_CONFLICT,
@@ -1273,6 +1288,11 @@ class AdminRunRetryView(APIView):
             attachment_uuids.extend(
                 item["uuid"] for item in get_run_document_attachments(run.uuid)
             )
+            detail = dict(run.termination_detail or {})
+            detail["continuation_status"] = "fallback_new_run"
+            detail["fallback_reason"] = "checkpoint_resume_not_supported"
+            run.termination_detail = detail
+            run.save(update_fields=["termination_detail"])
             retry = create_execution_run(
                 session=run.session,
                 question=run.input_message.content,

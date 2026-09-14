@@ -987,6 +987,15 @@ def select_session_attachment_context(session, question, explicit_uuids=None):
         if not same_kind:
             raise AttachmentError("ATTACHMENT_NOT_FOUND")
         return selected + same_kind[:1]
+    historical_documents = [
+        item for item in historical if item["kind"] == "document"
+    ]
+    if historical_documents:
+        return selected + sorted(
+            historical_documents,
+            key=lambda item: (item.get("created_at", ""), item["uuid"]),
+            reverse=True,
+        )[:1]
     return selected
 
 
@@ -2622,6 +2631,7 @@ def build_clarification_continuation_question(run, current_question):
 def build_run_history_artifacts(run):
     """Return bounded deliverables from trusted prior Run attempts."""
 
+
     all_prior_runs = list(
         Run.objects.filter(
             session=run.session,
@@ -3028,6 +3038,7 @@ def dispatch_run_to_lensnode(
             "payload": {
                 "type": "run_start",
                 "run_uuid": str(run.uuid),
+                "session_uuid": str(run.session.uuid),
                 "parent_run_uuid": (
                     str(run.parent_run.uuid) if run.parent_run_id else ""
                 ),

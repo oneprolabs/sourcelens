@@ -471,6 +471,27 @@ def build_agent_tools(command, resources=None, config=None, emit_event=None):
         )
         return _json({"repositories": summaries})
 
+    @tool
+    def read_prior_run_result(filename: str) -> str:
+        """Read a prior Run deliverable explicitly selected for this Run."""
+
+        allowed = {
+            str(item.get("path")): item
+            for item in command.get("history_artifact_paths") or []
+            if isinstance(item, dict)
+        }
+        if str(filename) not in allowed or resources is None:
+            return "Prior Run result is unavailable."
+        path = (resources.root / str(filename).lstrip("/")).resolve()
+        try:
+            path.relative_to(resources.root.resolve())
+        except ValueError:
+            return "Prior Run result path is invalid."
+        if not path.is_file() or path.is_symlink():
+            return "Prior Run result is unavailable."
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(50000)
+
     tools = [
         search_workspace,
         read_workspace_file,
@@ -478,6 +499,7 @@ def build_agent_tools(command, resources=None, config=None, emit_event=None):
         summarize_recent_changes,
         git_log,
         git_diff,
+        read_prior_run_result,
     ]
     if resources is not None and config is not None:
         tools.append(_build_append_file_tool(resources, emit_event))

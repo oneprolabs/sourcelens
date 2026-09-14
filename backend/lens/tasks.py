@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from datetime import timedelta
 
 from celery import shared_task
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -33,7 +35,84 @@ from .models import (
     RunTraceExport,
     ScheduledTask,
     Session,
+    SessionCleanupOperation,
 )
+from .services import lensnode_group_name
+
+
+@shared_task(name="lens.session_workspace_cleanup", queue="lens")
+def session_workspace_cleanup_task():
+    """Dispatch durable Session cleanup operations to online nodes."""
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return 0
+    now = timezone.now()
+    idle_setting = GlobalSetting.objects.filter(
+        key="lens.session_workspace.idle_ttl_seconds"
+    ).first()
+    try:
+        idle_ttl = max(int(idle_setting.value), 3600)
+    except (AttributeError, TypeError, ValueError):
+        idle_ttl = 7 * 24 * 3600
+    cutoff = now - timedelta(seconds=idle_ttl)
+    sessions = Session.objects.filter(
+        status=Session.Status.ARCHIVED, updated_at__lt=cutoff
+    ).exclude(run__status__in=[Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING])
+    for session in sessions:
+        node_ids = LensNode.objects.filter(
+            run__session=session
+        ).values_list("uuid", flat=True).distinct()
+        for node_uuid in node_ids:
+            SessionCleanupOperation.objects.get_or_create(
+                session_uuid=session.uuid, lensnode_uuid=node_uuid
+            )
+    sent = 0
+    operations = SessionCleanupOperation.objects.filter(
+        status__in=[SessionCleanupOperation.Status.PENDING, SessionCleanupOperation.Status.FAILED],
+    ).filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
+    for operation in operations:
+        with transaction.atomic():
+            locked = SessionCleanupOperation.objects.select_for_update().filter(
+                pk=operation.pk,
+                status__in=[
+                    SessionCleanupOperation.Status.PENDING,
+                    SessionCleanupOperation.Status.FAILED,
+                ],
+            ).first()
+            if locked is None or locked.attempts >= 10:
+                if locked is not None and locked.status != SessionCleanupOperation.Status.FAILED:
+                    locked.status = SessionCleanupOperation.Status.FAILED
+                    locked.last_error = "cleanup retry limit exceeded"
+                    locked.save(update_fields=["status", "last_error", "updated_at"])
+                    logger.error(
+                        "Session cleanup exhausted retries session=%s node=%s",
+                        locked.session_uuid,
+                        locked.lensnode_uuid,
+                    )
+                continue
+            node = LensNode.objects.filter(
+                uuid=locked.lensnode_uuid,
+                status=LensNode.Status.ONLINE,
+            ).first()
+            if node is None:
+                continue
+            locked.status = SessionCleanupOperation.Status.SENT
+            locked.attempts += 1
+            locked.next_retry_at = now + timedelta(minutes=10)
+            locked.save(update_fields=[
+                "status", "attempts", "next_retry_at", "updated_at",
+            ])
+            session_id = locked.session_uuid
+            node_id = node.uuid
+        async_to_sync(channel_layer.group_send)(
+            lensnode_group_name(node_id),
+            {"type": "lensnode.command", "payload": {
+                "type": "session_cleanup", "session_uuid": str(session_id),
+            }},
+        )
+        sent += 1
+    return sent
 
 logger = logging.getLogger(__name__)
 ANSWER_RUN_DOCUMENT_COUNT_HEADER = "sourcelens_expected_document_count"

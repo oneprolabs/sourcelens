@@ -431,11 +431,17 @@
             <BaseLoading />
           </div>
           <div
-            v-else-if="isAnonymous && hasAssistant"
+            v-else-if="
+              isAnonymous &&
+              (hasAssistant || assistantError === 'lens.chat.assistantNotFound')
+            "
             class="thread-loading"
           >
             <div class="max-w-md px-6 py-12 text-center" role="status">
-              <h1 class="text-2xl font-semibold text-ink-900">
+              <h1
+                v-if="hasAssistant"
+                class="text-2xl font-semibold text-ink-900"
+              >
                 {{ assistantName }}
               </h1>
               <p
@@ -444,7 +450,7 @@
               >
                 {{ assistantDescription }}
               </p>
-              <p class="mt-6 text-sm text-ink-500">
+              <p class="mt-6 text-base text-ink-500">
                 {{ t('lens.chat.loginRequired') }}
               </p>
               <BaseButton class="mt-4" @click="requireLogin">
@@ -776,6 +782,27 @@
                       ? t('lens.chat.runtime.outcomeBlocked')
                       : t('lens.chat.runtime.outcomePartial')
                   }}
+                  <span
+                    v-if="
+                      message._runtimeState?.terminationDetail?.continuation_status ===
+                      'fallback_new_run'
+                    "
+                    class="runtime-fallback-reason"
+                  >
+                    {{ t('lens.chat.runtime.continuationFallback') }}
+                  </span>
+                  <button
+                    v-if="
+                      runtimeOutcomeNotice(message._runtimeState).kind ===
+                        'partial' &&
+                      canRetryLastQuestion(message)
+                    "
+                    type="button"
+                    class="retry-hint-btn"
+                    @click="retryLastQuestion(message)"
+                  >
+                    {{ t('lens.chat.retryAction') }}
+                  </button>
                 </div>
 
                 <div

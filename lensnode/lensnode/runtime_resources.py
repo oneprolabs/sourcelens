@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import fcntl
 import json
 import multiprocessing
 import os
@@ -12,6 +13,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
@@ -21,6 +23,7 @@ from .document_convert import convert_one
 from .path_rules import SIDECAR_SUFFIX, safe_filename
 from .plugins import collect_mcp_servers
 from .session_datasources import materialize_datasources
+from .session_workspace import session_lock, session_root
 from .tls import create_config_ssl_context
 
 MAX_SKILL_PACKAGE_BYTES = 25 * 1024 * 1024
@@ -89,6 +92,14 @@ class RuntimeResources:
     mcp_configs: list[dict] = field(default_factory=list)
 
 
+def _session_resource_lock(config, session_id):
+    """Lock shared Session resource writes while preserving legacy runs."""
+
+    if session_id:
+        return session_lock(config, session_id)
+    return nullcontext()
+
+
 def prepare_runtime_resources(
     config,
     command,
@@ -107,11 +118,35 @@ def prepare_runtime_resources(
         command.get("runtime_instance_id") or command["run_uuid"]
     )
     runtime_root = _run_runtime_path(runtime_base, runtime_instance_id)
-    skills_root = runtime_root / "skills"
-    mcp_root = runtime_root / "mcp"
+    session_id = command.get("session_uuid")
+    shared_root = (
+        session_root(config, session_id) if session_id else runtime_root
+    )
+    shared_root.mkdir(parents=True, exist_ok=True)
+    if session_id:
+        session_metadata = shared_root / "session.json"
+        _write_private_json(
+            session_metadata,
+            {
+                "session_uuid": str(session_id),
+                "workspace_guide": command.get("workspace_guide", ""),
+            },
+        )
+    skills_root = shared_root / "skills"
+    mcp_root = shared_root / "mcp"
 
     skills_root.mkdir(parents=True, exist_ok=True)
     mcp_root.mkdir(parents=True, exist_ok=True)
+    if shared_root != runtime_root:
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        for name, target in (("skills", skills_root), ("mcp", mcp_root)):
+            alias = runtime_root / name
+            if alias.exists() or alias.is_symlink():
+                if alias.is_symlink():
+                    alias.unlink()
+                elif alias.is_dir():
+                    shutil.rmtree(alias)
+            alias.symlink_to(target, target_is_directory=True)
 
     try:
         materialize_datasources(
@@ -129,7 +164,10 @@ def prepare_runtime_resources(
     context_skill_contents = []
     general_chat_mode = command.get("task") == "general_chat"
     for skill in command.get("loaded_skills") or []:
-        skill_path = _materialize_skill(config, cache_root, skills_root, skill)
+        with _session_resource_lock(config, session_id):
+            skill_path = _materialize_skill(
+                config, cache_root, skills_root, skill
+            )
         if skill_path is not None:
             skill_paths.append(str(skill_path))
             environment = skill.get("environment") or {}
@@ -165,7 +203,8 @@ def prepare_runtime_resources(
 
     mcp_configs = []
     for mcp in command.get("loaded_mcps") or []:
-        mcp_config = _materialize_mcp(mcp_root, mcp)
+        with _session_resource_lock(config, session_id):
+            mcp_config = _materialize_mcp(mcp_root, mcp)
         if mcp_config is not None:
             mcp_configs.append(mcp_config)
     mcp_configs = collect_mcp_servers(
@@ -779,6 +818,59 @@ def cleanup_stale_runtime_resources(
         shutil.rmtree(path, ignore_errors=True)
         if not path.exists():
             removed += 1
+    quota = int(os.getenv("LENSNODE_RUNTIME_MAX_BYTES", "0") or 0)
+    if quota > 0:
+        entries = []
+        total = 0
+        for path in runs_root.iterdir() if runs_root.exists() else ():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            size = sum(
+                item.stat().st_size
+                for item in path.rglob("*")
+                if item.is_file()
+            )
+            entries.append((path.stat().st_mtime, path, size))
+            total += size
+        for _, path, size in sorted(entries):
+            if total <= quota:
+                break
+            shutil.rmtree(path, ignore_errors=True)
+            if not path.exists():
+                total -= size
+                removed += 1
+    session_quota = int(os.getenv("LENSNODE_SESSION_MAX_BYTES", "0") or 0)
+    sessions_root_path = Path(workspace_path) / "sessions"
+    if session_quota > 0 and sessions_root_path.exists():
+        entries = []
+        total = 0
+        for path in sessions_root_path.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+            total += size
+            if mtime > cutoff:
+                continue
+            lock_path = sessions_root_path.parent / ".session-locks" / (path.name + ".lock")
+            if lock_path.exists():
+                try:
+                    with lock_path.open("a+") as lock_handle:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                except (BlockingIOError, OSError):
+                    continue
+            entries.append((mtime, path, size))
+        for _, path, size in sorted(entries):
+            if total <= session_quota:
+                break
+            shutil.rmtree(path, ignore_errors=True)
+            if not path.exists():
+                total -= size
+                removed += 1
     return removed
 
 

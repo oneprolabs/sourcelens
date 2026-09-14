@@ -5,10 +5,11 @@ from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.core.cache import cache
 from django.utils import timezone
 
 from .lensnode_auth import hash_lensnode_token
-from .models import DataSource, LensNode, Run
+from .models import DataSource, LensNode, Run, SessionCleanupOperation
 from .run_trace import RunTraceValidationError, append_run_trace_events
 from .services import (
     acknowledge_run_admitted,
@@ -22,8 +23,27 @@ from .services import (
     schedule_lensnode_disconnect_grace_check,
 )
 from .tasks import reconcile_orphaned_datasource_conversions
+from .tasks import session_workspace_cleanup_task
 
 LOGGER = logging.getLogger(__name__)
+
+@database_sync_to_async
+def _ack_session_cleanup(session_uuid, lensnode_uuid, error):
+    """Persist one idempotent Session cleanup acknowledgement."""
+
+    status = (
+        SessionCleanupOperation.Status.FAILED
+        if error else SessionCleanupOperation.Status.COMPLETED
+    )
+    SessionCleanupOperation.objects.filter(
+        session_uuid=session_uuid, lensnode_uuid=lensnode_uuid,
+    ).update(
+        status=status, last_error=error,
+        completed_at=timezone.now() if not error else None,
+        next_retry_at=None,
+    )
+
+
 DETAIL_ITEMS_LIMIT = 200
 
 
@@ -42,6 +62,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         self.group_name = lensnode_group_name(self.lensnode.uuid)
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        session_workspace_cleanup_task.delay()
         await self.send_json(
             {
                 "type": "connected",
@@ -92,6 +113,27 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_run_output(content)
         elif frame_type == "run_done":
             await self._handle_run_done(content)
+        elif frame_type == "session_cleanup_done":
+            cleanup_error = str(content.get("error") or "")
+            await _ack_session_cleanup(
+                content.get("session_uuid"), self.lensnode.uuid, cleanup_error
+            )
+            cache.set(
+                "lens:session_cleanup:%s" % content.get("session_uuid"),
+                {
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                    "removed": bool(content.get("removed")),
+                    "error": str(content.get("error") or ""),
+                    "at": timezone.now().isoformat(),
+                },
+                timeout=7 * 24 * 3600,
+            )
+            LOGGER.info(
+                "Session workspace cleanup acknowledged session=%s removed=%s error=%s",
+                content.get("session_uuid"),
+                content.get("removed"),
+                content.get("error", ""),
+            )
         elif frame_type == "list_dirs_result":
             await self._handle_list_dirs_result(content)
         elif frame_type == "datasource_path_result":

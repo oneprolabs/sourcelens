@@ -58,6 +58,7 @@ from .session_datasources import (
     default_datasource_target,
     local_datasource_target,
 )
+from .session_workspace import cleanup_session
 from .tls import create_config_ssl_context
 from .tls import warn_if_verification_disabled
 from .workspace import available_dirs
@@ -275,7 +276,7 @@ class LensNodeClient:
     async def _runtime_cleanup_loop(self):
         """Periodically remove abandoned per-Run runtime directories."""
 
-        workspace_path = getattr(self.config, "workspace_path", None)
+        workspace_path = getattr(self.config, "runtime_path", None)
         if not workspace_path:
             return
         while not self.stopping.is_set():
@@ -576,6 +577,24 @@ class LensNodeClient:
         message_type = message.get("type")
         if message_type == "run_start":
             await self._start_command(message)
+        elif message_type == "session_cleanup":
+            session_uuid = str(message.get("session_uuid") or "")
+            try:
+                removed = await asyncio.to_thread(
+                    cleanup_session, self.config, session_uuid
+                )
+                self._enqueue({
+                    "type": "session_cleanup_done",
+                    "session_uuid": session_uuid,
+                    "removed": bool(removed),
+                })
+            except Exception as exc:
+                self._enqueue({
+                    "type": "session_cleanup_done",
+                    "session_uuid": session_uuid,
+                    "removed": False,
+                    "error": type(exc).__name__,
+                })
         elif message_type == "delegation_done":
             delegation_events.publish(message)
         elif message_type == "skill_cache_invalidate":
@@ -1267,6 +1286,7 @@ class LensNodeClient:
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]
+            command["git_max_bytes"] = self.config.git_max_bytes
             result = runtime.sync_datasource(
                 command,
                 self.config.workspace_path,
