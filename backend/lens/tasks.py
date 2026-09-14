@@ -41,13 +41,31 @@ from .services import lensnode_group_name
 
 @shared_task(name="lens.session_workspace_cleanup", queue="lens")
 def session_workspace_cleanup_task():
-    """Request cleanup for archived Sessions on their known LensNodes."""
+    """Request cleanup for expired Sessions on their known LensNodes."""
 
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return 0
+    idle_setting = GlobalSetting.objects.filter(
+        key="lens.session_workspace.idle_ttl_seconds"
+    ).first()
+    try:
+        idle_ttl = max(int(idle_setting.value), 3600)
+    except (AttributeError, TypeError, ValueError):
+        idle_ttl = 7 * 24 * 3600
+    cutoff = timezone.now() - timedelta(seconds=idle_ttl)
     sessions = (
-        Session.objects.filter(status=Session.Status.ARCHIVED)
+        Session.objects.filter(
+            status=Session.Status.ARCHIVED,
+            updated_at__lt=cutoff,
+        )
+        .exclude(
+            run__status__in=[
+                Run.Status.QUEUED,
+                Run.Status.RUNNING,
+                Run.Status.STREAMING,
+            ]
+        )
         .filter(run__lensnode__isnull=False)
         .values("uuid")
         .distinct()
