@@ -21,6 +21,7 @@ from .document_convert import convert_one
 from .path_rules import SIDECAR_SUFFIX, safe_filename
 from .plugins import collect_mcp_servers
 from .session_datasources import materialize_datasources
+from .session_workspace import session_root
 from .tls import create_config_ssl_context
 
 MAX_SKILL_PACKAGE_BYTES = 25 * 1024 * 1024
@@ -107,11 +108,35 @@ def prepare_runtime_resources(
         command.get("runtime_instance_id") or command["run_uuid"]
     )
     runtime_root = _run_runtime_path(runtime_base, runtime_instance_id)
-    skills_root = runtime_root / "skills"
-    mcp_root = runtime_root / "mcp"
+    session_id = command.get("session_uuid")
+    shared_root = (
+        session_root(config, session_id) if session_id else runtime_root
+    )
+    shared_root.mkdir(parents=True, exist_ok=True)
+    if session_id:
+        session_metadata = shared_root / "session.json"
+        _write_private_json(
+            session_metadata,
+            {
+                "session_uuid": str(session_id),
+                "workspace_guide": command.get("workspace_guide", ""),
+            },
+        )
+    skills_root = shared_root / "skills"
+    mcp_root = shared_root / "mcp"
 
     skills_root.mkdir(parents=True, exist_ok=True)
     mcp_root.mkdir(parents=True, exist_ok=True)
+    if shared_root != runtime_root:
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        for name, target in (("skills", skills_root), ("mcp", mcp_root)):
+            alias = runtime_root / name
+            if alias.exists() or alias.is_symlink():
+                if alias.is_symlink():
+                    alias.unlink()
+                elif alias.is_dir():
+                    shutil.rmtree(alias)
+            alias.symlink_to(target, target_is_directory=True)
 
     try:
         materialize_datasources(

@@ -3028,6 +3028,7 @@ def dispatch_run_to_lensnode(
             "payload": {
                 "type": "run_start",
                 "run_uuid": str(run.uuid),
+                "session_uuid": str(run.session.uuid),
                 "parent_run_uuid": (
                     str(run.parent_run.uuid) if run.parent_run_id else ""
                 ),

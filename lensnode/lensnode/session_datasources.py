@@ -5,6 +5,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from .session_workspace import session_root
+
 
 def materialize_datasources(
     config, command, runtime_root, cancel_event=None, on_activity=None,
@@ -15,7 +17,7 @@ def materialize_datasources(
     if not snapshots:
         return
     workspace_root = Path(config.workspace_path)
-    target = _session_workspace_target(command, workspace_root)
+    target = _session_workspace_target(command, config)
     directories = []
     names = set()
 
@@ -57,30 +59,48 @@ def materialize_datasources(
         if target.is_symlink():
             raise ValueError("SESSION_WORKSPACE_PATH_INVALID")
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.move(str(staging), str(target))
+        target.mkdir(parents=True, exist_ok=True)
+        destination = target / "sources"
+        destination.mkdir(exist_ok=True)
+        for link in sources.iterdir():
+            existing = destination / link.name
+            if existing.exists() or existing.is_symlink():
+                if existing.is_symlink() or existing.is_file():
+                    existing.unlink()
+                else:
+                    shutil.rmtree(existing)
+            shutil.move(str(link), str(existing))
     command["target_dirs"] = directories
     command["workspace_path"] = str(target)
 
 
-def _session_workspace_target(command, workspace_root):
+def _session_workspace_target(command, config):
     """Return the validated Session root supplied by the control plane."""
 
-    workspace_root = Path(workspace_root).resolve()
+    session_uuid = command.get("session_uuid")
+    if session_uuid:
+        return session_root(config, session_uuid)
+    workspace_root = Path(config.workspace_path).resolve()
     target_dirs = command.get("target_dirs") or []
     candidate = target_dirs[0].get("path") if target_dirs else ""
     if candidate:
         target = Path(candidate)
         try:
             resolved = target.resolve()
-            resolved.relative_to(workspace_root / "sessions")
+            resolved.relative_to(
+                Path(getattr(config, "runtime_path", workspace_root))
+                .resolve() / "sessions"
+            )
         except (OSError, ValueError):
             resolved = None
         if resolved is not None and resolved != workspace_root / "sessions":
             return resolved
     run_uuid = str(uuid.UUID(command["run_uuid"]))
-    return workspace_root / "sessions" / run_uuid
+    return (
+        Path(getattr(config, "runtime_path", workspace_root))
+        / "sessions"
+        / run_uuid
+    )
 
 
 def local_datasource_target(datasource_uuid, workspace_root):
