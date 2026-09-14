@@ -1257,6 +1257,31 @@ class Session(TimestampedUUIDModel):
         return self.title or str(self.uuid)
 
 
+class SessionCleanupOperation(TimestampedUUIDModel):
+    """Durable request to remove Session workspace from one LensNode."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    session_uuid = models.UUIDField(db_index=True)
+    lensnode_uuid = models.UUIDField(db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices,
+                              default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+    next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["session_uuid", "lensnode_uuid"],
+            name="lens_session_cleanup_unique_target",
+        )]
+
+
 class SessionDataSource(TimestampedUUIDModel):
     """Immutable data source selection captured when a Session starts."""
 

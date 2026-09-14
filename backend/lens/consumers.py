@@ -96,6 +96,16 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         elif frame_type == "run_done":
             await self._handle_run_done(content)
         elif frame_type == "session_cleanup_done":
+            cleanup_status = SessionCleanupOperation.Status.COMPLETED if not content.get("error") else SessionCleanupOperation.Status.FAILED
+            SessionCleanupOperation.objects.filter(
+                session_uuid=content.get("session_uuid"),
+                lensnode_uuid=self.lensnode.uuid,
+            ).update(
+                status=cleanup_status,
+                last_error=str(content.get("error") or ""),
+                completed_at=timezone.now() if cleanup_status == SessionCleanupOperation.Status.COMPLETED else None,
+                next_retry_at=None,
+            )
             cache.set(
                 "lens:session_cleanup:%s" % content.get("session_uuid"),
                 {

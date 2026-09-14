@@ -35,59 +35,45 @@ from .models import (
     RunTraceExport,
     ScheduledTask,
     Session,
+    SessionCleanupOperation,
 )
 from .services import lensnode_group_name
 
 
 @shared_task(name="lens.session_workspace_cleanup", queue="lens")
 def session_workspace_cleanup_task():
-    """Request cleanup for expired Sessions on their known LensNodes."""
+    """Dispatch durable Session cleanup operations to online nodes."""
 
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return 0
-    idle_setting = GlobalSetting.objects.filter(
-        key="lens.session_workspace.idle_ttl_seconds"
-    ).first()
-    try:
-        idle_ttl = max(int(idle_setting.value), 3600)
-    except (AttributeError, TypeError, ValueError):
-        idle_ttl = 7 * 24 * 3600
-    cutoff = timezone.now() - timedelta(seconds=idle_ttl)
-    sessions = (
-        Session.objects.filter(
-            status=Session.Status.ARCHIVED,
-            updated_at__lt=cutoff,
-        )
-        .exclude(
-            run__status__in=[
-                Run.Status.QUEUED,
-                Run.Status.RUNNING,
-                Run.Status.STREAMING,
-            ]
-        )
-        .filter(run__lensnode__isnull=False)
-        .values("uuid")
-        .distinct()
-    )
-    sent = 0
-    for item in sessions:
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=7 * 24 * 3600)
+    sessions = Session.objects.filter(
+        status=Session.Status.ARCHIVED, updated_at__lt=cutoff
+    ).exclude(run__status__in=[Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING])
+    for session in sessions:
         node_ids = LensNode.objects.filter(
-            status=LensNode.Status.ONLINE,
-            run__session_id=item["uuid"],
+            run__session=session
         ).values_list("uuid", flat=True).distinct()
         for node_uuid in node_ids:
-            async_to_sync(channel_layer.group_send)(
-                lensnode_group_name(node_uuid),
-                {
-                    "type": "lensnode.command",
-                    "payload": {
-                        "type": "session_cleanup",
-                        "session_uuid": str(item["uuid"]),
-                    },
-                },
+            SessionCleanupOperation.objects.get_or_create(
+                session_uuid=session.uuid, lensnode_uuid=node_uuid
             )
-            sent += 1
+    sent = 0
+    operations = SessionCleanupOperation.objects.filter(
+        status__in=[SessionCleanupOperation.Status.PENDING, SessionCleanupOperation.Status.FAILED],
+    ).filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
+    for operation in operations:
+        node = LensNode.objects.filter(uuid=operation.lensnode_uuid, status=LensNode.Status.ONLINE).first()
+        if node is None:
+            continue
+        operation.status = SessionCleanupOperation.Status.SENT
+        operation.attempts += 1
+        operation.next_retry_at = now + timedelta(minutes=10)
+        operation.save(update_fields=["status", "attempts", "next_retry_at", "updated_at"])
+        async_to_sync(channel_layer.group_send)(lensnode_group_name(node.uuid), {"type": "lensnode.command", "payload": {"type": "session_cleanup", "session_uuid": str(operation.session_uuid)}})
+        sent += 1
     return sent
 
 logger = logging.getLogger(__name__)
