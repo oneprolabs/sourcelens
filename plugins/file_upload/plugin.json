@@ -1,0 +1,33 @@
+{
+  "key": "file_upload",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "capability_family": "plugin",
+  "display_name": "File upload",
+  "icon": "assets/icon.svg",
+  "description": "Upload files or archives to a LensNode workspace and process them through the standard datasource pipeline.",
+  "datasource_source_type": "managed_workspace",
+  "datasource": {
+    "key": "file_upload",
+    "display_name": "File upload",
+    "description": "Local LensNode file upload datasource.",
+    "source_type": "managed_workspace",
+    "resources": []
+  },
+  "handlers": {
+    "control": "python_v1",
+    "runtime": "python_v1",
+    "datasource": "python_v1"
+  },
+  "connection_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "datasource_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "tools": []
+}
