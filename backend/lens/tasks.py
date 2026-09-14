@@ -85,6 +85,11 @@ def session_workspace_cleanup_task():
                     locked.status = SessionCleanupOperation.Status.FAILED
                     locked.last_error = "cleanup retry limit exceeded"
                     locked.save(update_fields=["status", "last_error", "updated_at"])
+                    logger.error(
+                        "Session cleanup exhausted retries session=%s node=%s",
+                        locked.session_uuid,
+                        locked.lensnode_uuid,
+                    )
                 continue
             node = LensNode.objects.filter(
                 uuid=locked.lensnode_uuid,
