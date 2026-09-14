@@ -22,6 +22,7 @@ from .services import (
     schedule_lensnode_disconnect_grace_check,
 )
 from .tasks import reconcile_orphaned_datasource_conversions
+from .tasks import session_workspace_cleanup_task
 
 LOGGER = logging.getLogger(__name__)
 DETAIL_ITEMS_LIMIT = 200
@@ -42,6 +43,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         self.group_name = lensnode_group_name(self.lensnode.uuid)
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        session_workspace_cleanup_task.delay()
         await self.send_json(
             {
                 "type": "connected",
