@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Add a built-in LensNode file upload datasource with archive extraction and standard document processing.
+zh-CN: 新增内置 LensNode 数据源文件上传能力，支持压缩包解压和统一文件处理。

@@ -2073,7 +2073,26 @@ class DataSourceSerializer(serializers.ModelSerializer):
             getattr(self.instance, "plugin_key", ""),
         )
         _validate_datasource_config_secret_fields(datasource_config)
-        if connection is None and (plugin_key or datasource_config):
+        if (
+            connection is None
+            and plugin_key == "file_upload"
+            and source_type == DataSource.SourceType.MANAGED_WORKSPACE
+        ):
+            if credential is not None or config or datasource_config:
+                raise serializers.ValidationError(
+                    {
+                        "plugin_key": (
+                            "File upload capability does not accept credentials "
+                            "or configuration"
+                        )
+                    }
+                )
+            attrs["plugin_key"] = plugin_key
+            attrs["credential"] = None
+            attrs["config"] = {}
+            attrs["datasource_config"] = {}
+            attrs["sync_policy"] = {}
+        elif connection is None and (plugin_key or datasource_config):
             raise serializers.ValidationError(
                 {
                     "connection_uuid": (

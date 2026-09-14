@@ -30,7 +30,9 @@ READ_ONLY_TOOL_CAPABILITIES = frozenset(
         "document.read",
     }
 )
-DATASOURCE_SOURCE_TYPES = frozenset({"feishu", "git", "jira"})
+DATASOURCE_SOURCE_TYPES = frozenset(
+    {"feishu", "git", "jira", "managed_workspace"}
+)
 SCHEMA_TYPES = frozenset({"array", "boolean", "integer", "string"})
 SCHEMA_FORMATS = frozenset(
     {
