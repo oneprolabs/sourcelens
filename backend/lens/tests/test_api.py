@@ -6836,9 +6836,44 @@ class AssistantAccessTests(TestCase):
         client.force_authenticate(user)
         return client
 
-    def test_public_view_404_for_private_assistant(self):
-        resp = self.client.get(f"/api/lens/public/assistants/{self.assistant.slug}/")
-        self.assertEqual(resp.status_code, 404)
+    def test_public_view_previews_private_assistant_without_private_config(self):
+        """A direct link reveals only display metadata before login."""
+        resp = self.client.get(
+            f"/api/lens/public/assistants/{self.assistant.slug}/"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["name"], self.assistant.name)
+        self.assertEqual(resp.data["description"], self.assistant.description)
+        self.assertEqual(
+            set(resp.data),
+            {"name", "description", "slug"},
+        )
+
+    def test_public_view_hides_archived_system_and_missing_assistants(self):
+        """Only active user-facing assistants have a link preview."""
+        url = f"/api/lens/public/assistants/{self.assistant.slug}/"
+        self.assistant.status = Assistant.Status.ARCHIVED
+        self.assistant.save(update_fields=["status"])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assistant.status = Assistant.Status.ACTIVE
+        self.assistant.is_system = True
+        self.assistant.save(update_fields=["status", "is_system"])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(
+            self.client.get(
+                "/api/lens/public/assistants/nonexistent/"
+            ).status_code,
+            404,
+        )
+
+    def test_preview_does_not_allow_anonymous_sessions(self):
+        """Seeing a preview does not grant conversation access."""
+        response = self.client.post(
+            "/api/lens/sessions/",
+            {"assistant_uuid": str(self.assistant.uuid)},
+            format="json",
+        )
+        self.assertIn(response.status_code, (401, 403))
 
     def test_public_view_200_when_public(self):
         self.assistant.visibility = Assistant.Visibility.PUBLIC
