@@ -450,7 +450,7 @@
               >
                 {{ assistantDescription }}
               </p>
-              <p class="mt-6 text-sm text-ink-500">
+              <p class="mt-6 text-base text-ink-500">
                 {{ t('lens.chat.loginRequired') }}
               </p>
               <BaseButton class="mt-4" @click="requireLogin">
