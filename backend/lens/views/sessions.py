@@ -3,7 +3,8 @@
 import json
 import logging
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
+from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Exists, F, OuterRef
 from django.http import (
@@ -53,6 +54,7 @@ from lens.models import (
     Session,
     SharedQA,
 )
+from lens.services import lensnode_group_name
 from lens.datasource.workspace import cleanup_session_workspace
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.session_lifecycle import (
@@ -241,6 +243,11 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         """
         session_uuid = instance.uuid
         user_id = instance.user_id
+        lensnode_uuids = list(
+            instance.run_set.filter(lensnode__isnull=False)
+            .values_list("lensnode__uuid", flat=True)
+            .distinct()
+        )
         with transaction.atomic():
             run_ids = list(
                 instance.run_set.values_list("id", flat=True)
@@ -280,6 +287,19 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             logger.exception(
                 "Unable to delete workspace for Session %s.", session_uuid
             )
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            for lensnode_uuid in lensnode_uuids:
+                async_to_sync(channel_layer.group_send)(
+                    lensnode_group_name(lensnode_uuid),
+                    {
+                        "type": "lensnode.command",
+                        "payload": {
+                            "type": "session_cleanup",
+                            "session_uuid": str(session_uuid),
+                        },
+                    },
+                )
 
     @action(detail=True, methods=["post"])
     def pin(self, request, uuid=None):
