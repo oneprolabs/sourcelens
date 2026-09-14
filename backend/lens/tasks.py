@@ -72,14 +72,36 @@ def session_workspace_cleanup_task():
         status__in=[SessionCleanupOperation.Status.PENDING, SessionCleanupOperation.Status.FAILED],
     ).filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
     for operation in operations:
-        node = LensNode.objects.filter(uuid=operation.lensnode_uuid, status=LensNode.Status.ONLINE).first()
-        if node is None:
-            continue
-        operation.status = SessionCleanupOperation.Status.SENT
-        operation.attempts += 1
-        operation.next_retry_at = now + timedelta(minutes=10)
-        operation.save(update_fields=["status", "attempts", "next_retry_at", "updated_at"])
-        async_to_sync(channel_layer.group_send)(lensnode_group_name(node.uuid), {"type": "lensnode.command", "payload": {"type": "session_cleanup", "session_uuid": str(operation.session_uuid)}})
+        with transaction.atomic():
+            locked = SessionCleanupOperation.objects.select_for_update().filter(
+                pk=operation.pk,
+                status__in=[
+                    SessionCleanupOperation.Status.PENDING,
+                    SessionCleanupOperation.Status.FAILED,
+                ],
+            ).first()
+            if locked is None:
+                continue
+            node = LensNode.objects.filter(
+                uuid=locked.lensnode_uuid,
+                status=LensNode.Status.ONLINE,
+            ).first()
+            if node is None:
+                continue
+            locked.status = SessionCleanupOperation.Status.SENT
+            locked.attempts += 1
+            locked.next_retry_at = now + timedelta(minutes=10)
+            locked.save(update_fields=[
+                "status", "attempts", "next_retry_at", "updated_at",
+            ])
+            session_id = locked.session_uuid
+            node_id = node.uuid
+        async_to_sync(channel_layer.group_send)(
+            lensnode_group_name(node_id),
+            {"type": "lensnode.command", "payload": {
+                "type": "session_cleanup", "session_uuid": str(session_id),
+            }},
+        )
         sent += 1
     return sent
 
