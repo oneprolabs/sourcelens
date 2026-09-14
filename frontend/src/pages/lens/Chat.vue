@@ -749,6 +749,18 @@
                       ? t('lens.chat.runtime.outcomeBlocked')
                       : t('lens.chat.runtime.outcomePartial')
                   }}
+                  <button
+                    v-if="
+                      runtimeOutcomeNotice(message._runtimeState).kind ===
+                        'partial' &&
+                      canRetryLastQuestion(message)
+                    "
+                    type="button"
+                    class="retry-hint-btn"
+                    @click="retryLastQuestion(message)"
+                  >
+                    {{ t('lens.chat.retryAction') }}
+                  </button>
                 </div>
 
                 <div
