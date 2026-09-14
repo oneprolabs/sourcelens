@@ -51,7 +51,6 @@ class LensNodeConfig:
     stream_recovery_backoff_max_s: float = 8.0
     max_concurrent_datasource_syncs: int = 1
     runtime_path: str = "/workspace"
-    git_max_files: int = 100000
     git_max_bytes: int = 1024 * 1024 * 1024
 
 
@@ -152,7 +151,6 @@ def load_config():
             "LENSNODE_RUNTIME_PATH",
             os.getenv("LENSNODE_WORKSPACE_PATH", "/workspace"),
         ),
-        git_max_files=int(os.getenv("LENSNODE_GIT_MAX_FILES", "100000")),
         git_max_bytes=int(
             os.getenv("LENSNODE_GIT_MAX_BYTES", str(1024 * 1024 * 1024))
         ),
