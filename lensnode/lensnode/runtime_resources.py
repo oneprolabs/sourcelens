@@ -848,21 +848,22 @@ def cleanup_stale_runtime_resources(
             if path.is_symlink() or not path.is_dir():
                 continue
             try:
-                if path.stat().st_mtime > cutoff:
-                    continue
-                lock_path = sessions_root_path.parent / ".session-locks" / (path.name + ".lock")
-                if lock_path.exists():
-                    with lock_path.open("a+") as lock_handle:
-                        try:
-                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                        except BlockingIOError:
-                            continue
+                mtime = path.stat().st_mtime
             except OSError:
                 continue
             size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
-            entries.append((path.stat().st_mtime, path, size))
             total += size
+            if mtime > cutoff:
+                continue
+            lock_path = sessions_root_path.parent / ".session-locks" / (path.name + ".lock")
+            if lock_path.exists():
+                try:
+                    with lock_path.open("a+") as lock_handle:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                except (BlockingIOError, OSError):
+                    continue
+            entries.append((mtime, path, size))
         for _, path, size in sorted(entries):
             if total <= session_quota:
                 break
