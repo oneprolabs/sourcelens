@@ -1288,6 +1288,11 @@ class AdminRunRetryView(APIView):
             attachment_uuids.extend(
                 item["uuid"] for item in get_run_document_attachments(run.uuid)
             )
+            detail = dict(run.termination_detail or {})
+            detail["continuation_status"] = "fallback_new_run"
+            detail["fallback_reason"] = "checkpoint_resume_not_supported"
+            run.termination_detail = detail
+            run.save(update_fields=["termination_detail"])
             retry = create_execution_run(
                 session=run.session,
                 question=run.input_message.content,
