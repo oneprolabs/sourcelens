@@ -53,8 +53,9 @@ def materialize_datasources(
                 )
                 if local_target is not None:
                     destination = sources / name
+                    # Staged links resolve from their final Session location.
                     relative_target = Path(
-                        os.path.relpath(local_target, destination.parent)
+                        os.path.relpath(local_target, target / "sources")
                     )
                     destination.symlink_to(
                         relative_target, target_is_directory=True,
