@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Prevent overlapping sync tasks for the same datasource while preserving concurrency across different datasources.
+zh-CN: 防止同一数据源同步任务重叠，同时保留不同数据源之间的并发能力。
