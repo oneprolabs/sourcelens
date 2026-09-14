@@ -92,6 +92,13 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_run_output(content)
         elif frame_type == "run_done":
             await self._handle_run_done(content)
+        elif frame_type == "session_cleanup_done":
+            LOGGER.info(
+                "Session workspace cleanup acknowledged session=%s removed=%s error=%s",
+                content.get("session_uuid"),
+                content.get("removed"),
+                content.get("error", ""),
+            )
         elif frame_type == "list_dirs_result":
             await self._handle_list_dirs_result(content)
         elif frame_type == "datasource_path_result":

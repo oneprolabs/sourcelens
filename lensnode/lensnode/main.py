@@ -579,7 +579,22 @@ class LensNodeClient:
             await self._start_command(message)
         elif message_type == "session_cleanup":
             session_uuid = str(message.get("session_uuid") or "")
-            await asyncio.to_thread(cleanup_session, self.config, session_uuid)
+            try:
+                removed = await asyncio.to_thread(
+                    cleanup_session, self.config, session_uuid
+                )
+                self._enqueue({
+                    "type": "session_cleanup_done",
+                    "session_uuid": session_uuid,
+                    "removed": bool(removed),
+                })
+            except Exception as exc:
+                self._enqueue({
+                    "type": "session_cleanup_done",
+                    "session_uuid": session_uuid,
+                    "removed": False,
+                    "error": type(exc).__name__,
+                })
         elif message_type == "delegation_done":
             delegation_events.publish(message)
         elif message_type == "skill_cache_invalidate":
