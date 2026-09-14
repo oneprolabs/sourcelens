@@ -55,6 +55,7 @@ def session_workspace_cleanup_task():
     sent = 0
     for item in sessions:
         node_ids = LensNode.objects.filter(
+            status=LensNode.Status.ONLINE,
             run__session_id=item["uuid"],
         ).values_list("uuid", flat=True).distinct()
         for node_uuid in node_ids:
