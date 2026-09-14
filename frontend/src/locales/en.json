@@ -356,6 +356,8 @@
       "retryAction": "Retry",
       "sessionHistoryLoadFailed": "Conversation history could not be loaded.",
       "loadFailed": "Failed to load Lens chat.",
+      "loginRequired": "Sign in to chat with this assistant. Access will be checked after you sign in.",
+      "assistantUnavailable": "This assistant is unavailable or you do not have access. Please contact your administrator.",
       "assistantNotFound": "The assistant you're trying to access doesn't exist. Please contact your administrator for a valid link.",
       "sessionAccessDenied": "You don't have access to this session, or it no longer exists. Select one of your recent sessions or start a new one.",
       "sessionTitle": "{name} query",

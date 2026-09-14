@@ -356,6 +356,8 @@
       "retryAction": "Reintentar",
       "sessionHistoryLoadFailed": "No se pudo cargar el historial de la conversación.",
       "loadFailed": "Error al cargar chat de Lens.",
+      "loginRequired": "Inicia sesión para conversar con este asistente. Se comprobará tu acceso después de iniciar sesión.",
+      "assistantUnavailable": "Este asistente no está disponible o no tienes acceso. Contacta con tu administrador.",
       "assistantNotFound": "El asistente al que intenta acceder no existe. Por favor, contacte a su administrador para obtener un enlace válido.",
       "sessionAccessDenied": "No tienes acceso a esta sesión, o ya no existe. Seleccione una de sus sesiones recientes o inicie una nueva.",
       "sessionTitle": "{name} consulta",
