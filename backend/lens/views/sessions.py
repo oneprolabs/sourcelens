@@ -321,6 +321,26 @@ class SessionViewSet(BaseAuthenticatedViewSet):
                     },
                 )
 
+    @action(detail=True, methods=["get"], url_path="cleanup-status")
+    def cleanup_status(self, request, uuid=None):
+        """Return durable remote workspace cleanup status for this Session."""
+
+        session = self.get_object()
+        operations = SessionCleanupOperation.objects.filter(
+            session_uuid=session.uuid,
+        ).order_by("-created_at")
+        return Response({"operations": [
+            {
+                "lensnode_uuid": str(item.lensnode_uuid),
+                "status": item.status,
+                "attempts": item.attempts,
+                "last_error": item.last_error,
+                "next_retry_at": item.next_retry_at.isoformat() if item.next_retry_at else None,
+                "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+            }
+            for item in operations
+        ]})
+
     @action(detail=True, methods=["get"], url_path="prior-results")
     def prior_results(self, request, uuid=None):
         """List completed outputs available for continuation in this Session."""
