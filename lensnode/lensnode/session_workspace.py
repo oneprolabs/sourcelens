@@ -93,7 +93,6 @@ def cleanup_session(config, session_uuid):
     root = session_root(config, session_uuid)
     if not root.exists():
         return False
-    lock_path = root / ".session.lock"
     with session_lock(config, session_uuid):
         for child in list(root.iterdir()):
             if child.name == ".session.lock":
@@ -104,7 +103,6 @@ def cleanup_session(config, session_uuid):
                 shutil.rmtree(child, ignore_errors=True)
             else:
                 child.unlink(missing_ok=True)
-    lock_path.unlink(missing_ok=True)
     try:
         root.rmdir()
     except OSError:
