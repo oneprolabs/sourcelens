@@ -431,11 +431,17 @@
             <BaseLoading />
           </div>
           <div
-            v-else-if="isAnonymous && hasAssistant"
+            v-else-if="
+              isAnonymous &&
+              (hasAssistant || assistantError === 'lens.chat.assistantNotFound')
+            "
             class="thread-loading"
           >
             <div class="max-w-md px-6 py-12 text-center" role="status">
-              <h1 class="text-2xl font-semibold text-ink-900">
+              <h1
+                v-if="hasAssistant"
+                class="text-2xl font-semibold text-ink-900"
+              >
                 {{ assistantName }}
               </h1>
               <p
