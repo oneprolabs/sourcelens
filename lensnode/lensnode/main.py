@@ -275,7 +275,7 @@ class LensNodeClient:
     async def _runtime_cleanup_loop(self):
         """Periodically remove abandoned per-Run runtime directories."""
 
-        workspace_path = getattr(self.config, "workspace_path", None)
+        workspace_path = getattr(self.config, "runtime_path", None)
         if not workspace_path:
             return
         while not self.stopping.is_set():

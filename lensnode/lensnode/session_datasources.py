@@ -3,9 +3,10 @@
 import shutil
 import tempfile
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
-from .session_workspace import session_root
+from .session_workspace import session_lock, session_root
 
 
 def materialize_datasources(
@@ -29,7 +30,13 @@ def materialize_datasources(
         if on_activity is not None:
             on_activity()
 
-    with tempfile.TemporaryDirectory(dir=runtime_root) as temporary:
+    lock_context = (
+        session_lock(config, command["session_uuid"])
+        if command.get("session_uuid")
+        else nullcontext()
+    )
+    with lock_context:
+      with tempfile.TemporaryDirectory(dir=runtime_root) as temporary:
         staging = Path(temporary) / "workspace"
         sources = staging / "sources"
         sources.mkdir(parents=True)
