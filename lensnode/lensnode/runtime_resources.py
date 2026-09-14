@@ -21,7 +21,7 @@ from .document_convert import convert_one
 from .path_rules import SIDECAR_SUFFIX, safe_filename
 from .plugins import collect_mcp_servers
 from .session_datasources import materialize_datasources
-from .session_workspace import session_root
+from .session_workspace import session_lock, session_root
 from .tls import create_config_ssl_context
 
 MAX_SKILL_PACKAGE_BYTES = 25 * 1024 * 1024
@@ -90,6 +90,16 @@ class RuntimeResources:
     mcp_configs: list[dict] = field(default_factory=list)
 
 
+def _session_resource_lock(config, session_id):
+    """Lock shared Session resource writes while preserving legacy runs."""
+
+    if session_id:
+        return session_lock(config, session_id)
+    from contextlib import nullcontext
+
+    return nullcontext()
+
+
 def prepare_runtime_resources(
     config,
     command,
@@ -154,7 +164,10 @@ def prepare_runtime_resources(
     context_skill_contents = []
     general_chat_mode = command.get("task") == "general_chat"
     for skill in command.get("loaded_skills") or []:
-        skill_path = _materialize_skill(config, cache_root, skills_root, skill)
+        with _session_resource_lock(config, session_id):
+            skill_path = _materialize_skill(
+                config, cache_root, skills_root, skill
+            )
         if skill_path is not None:
             skill_paths.append(str(skill_path))
             environment = skill.get("environment") or {}
@@ -190,7 +203,8 @@ def prepare_runtime_resources(
 
     mcp_configs = []
     for mcp in command.get("loaded_mcps") or []:
-        mcp_config = _materialize_mcp(mcp_root, mcp)
+        with _session_resource_lock(config, session_id):
+            mcp_config = _materialize_mcp(mcp_root, mcp)
         if mcp_config is not None:
             mcp_configs.append(mcp_config)
     mcp_configs = collect_mcp_servers(
