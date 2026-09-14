@@ -31,6 +31,7 @@ from lens.services import (
     MultimodalPreprocessingError,
     analyze_multimodal_intent,
     create_execution_run,
+    select_session_attachment_context,
 )
 
 User = get_user_model()
@@ -241,6 +242,34 @@ class AttachmentServiceTests(TestCase):
             run.execution.runtime_snapshot["session_attachment_uuids"],
             [],
         )
+
+    @patch(
+        "lens.services.get_session_document_attachments",
+        return_value=[
+            {
+                "uuid": "document-1",
+                "kind": "document",
+                "original_name": "notes.txt",
+                "created_at": "2026-09-14T06:00:00+00:00",
+            }
+        ],
+    )
+    def test_follow_up_reuses_latest_document_without_keyword_matching(
+        self, mock_documents
+    ):
+        """Follow-ups reuse the latest document without language keywords."""
+
+        selected = select_session_attachment_context(
+            self.session,
+            "Please turn this into a checklist; the user may mistype "
+            "references.",
+        )
+
+        self.assertEqual(
+            [item["uuid"] for item in selected],
+            ["document-1"],
+        )
+        mock_documents.assert_called_once_with(self.session.uuid)
 
     @patch("lens.services.get_session_document_attachments", return_value=[])
     def test_document_reference_never_falls_back_to_historical_image(
