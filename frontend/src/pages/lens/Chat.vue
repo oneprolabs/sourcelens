@@ -749,6 +749,15 @@
                       ? t('lens.chat.runtime.outcomeBlocked')
                       : t('lens.chat.runtime.outcomePartial')
                   }}
+                  <span
+                    v-if="
+                      message._runtimeState?.terminationDetail?.continuation_status ===
+                      'fallback_new_run'
+                    "
+                    class="runtime-fallback-reason"
+                  >
+                    {{ t('lens.chat.runtime.continuationFallback') }}
+                  </span>
                   <button
                     v-if="
                       runtimeOutcomeNotice(message._runtimeState).kind ===

@@ -354,6 +354,7 @@
       "errorVisionProviderQuotaExceeded": "La cuota del proveedor de visión o el límite de velocidad se ha agotado. Por favor, inténtelo de nuevo más tarde o contacte a un administrador.",
       "errorVisionProviderUnavailable": "El proveedor de visión no está disponible temporalmente. Por favor, inténtelo de nuevo más tarde.",
       "retryAction": "Reintentar",
+      "continuationFallback": "No se pudo reanudar el checkpoint; se continuó como una nueva ejecución",
       "sessionHistoryLoadFailed": "No se pudo cargar el historial de la conversación.",
       "loadFailed": "Error al cargar chat de Lens.",
       "assistantNotFound": "El asistente al que intenta acceder no existe. Por favor, contacte a su administrador para obtener un enlace válido.",
