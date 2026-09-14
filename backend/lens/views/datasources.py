@@ -517,6 +517,8 @@ class DataSourceViewSet(BaseAdminViewSet):
             trigger,
             created_by=user,
         )
+        if task_execution.task_id != task_id:
+            return task_execution
         metadata = dict(task_execution.metadata or {})
         metadata["celery_task_id"] = celery_task_id
         task_execution.metadata = metadata

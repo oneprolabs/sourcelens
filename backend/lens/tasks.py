@@ -275,11 +275,25 @@ def register_datasource_sync_task(
     """Register a datasource sync execution before Celery starts it."""
 
     from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
 
     task_metadata = _datasource_task_metadata(datasource, trigger)
     task_metadata.update(metadata or {})
     with transaction.atomic():
         DataSource.objects.select_for_update().get(pk=datasource.pk)
+        active_task = (
+            TaskExecution.objects.filter(
+                module="lens_datasource",
+                metadata__datasource_uuid=str(datasource.uuid),
+                status__in=_datasource_active_statuses(TaskStatus),
+            )
+            .exclude(task_id=task_id)
+            .order_by("-created_at")
+            .first()
+        )
+        if active_task is not None:
+            return active_task
         return TaskTracker.register_task(
             task_id=task_id,
             task_name=_datasource_sync_task_name(datasource),
@@ -663,6 +677,8 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             task_id,
             trigger,
         )
+        if task_execution.task_id != task_id:
+            return 0
         if task_execution.status in TaskStatus.get_completed_statuses():
             return 0
         if task_execution.status == DATASOURCE_CANCELLING_STATUS:
