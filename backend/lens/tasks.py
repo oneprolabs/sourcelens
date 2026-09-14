@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from datetime import timedelta
 
 from celery import shared_task
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -34,6 +36,40 @@ from .models import (
     ScheduledTask,
     Session,
 )
+from .services import lensnode_group_name
+
+
+@shared_task(name="lens.session_workspace_cleanup", queue="lens")
+def session_workspace_cleanup_task():
+    """Request cleanup for archived Sessions on their known LensNodes."""
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return 0
+    sessions = (
+        Session.objects.filter(status=Session.Status.ARCHIVED)
+        .filter(run__lensnode__isnull=False)
+        .values("uuid")
+        .distinct()
+    )
+    sent = 0
+    for item in sessions:
+        node_ids = LensNode.objects.filter(
+            run__session_id=item["uuid"],
+        ).values_list("uuid", flat=True).distinct()
+        for node_uuid in node_ids:
+            async_to_sync(channel_layer.group_send)(
+                lensnode_group_name(node_uuid),
+                {
+                    "type": "lensnode.command",
+                    "payload": {
+                        "type": "session_cleanup",
+                        "session_uuid": str(item["uuid"]),
+                    },
+                },
+            )
+            sent += 1
+    return sent
 
 logger = logging.getLogger(__name__)
 ANSWER_RUN_DOCUMENT_COUNT_HEADER = "sourcelens_expected_document_count"
