@@ -249,6 +249,11 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             .values_list("lensnode__uuid", flat=True)
             .distinct()
         )
+        output_storage_names = list(
+            RunOutputFile.objects.filter(session=instance)
+            .exclude(file="")
+            .values_list("file", flat=True)
+        )
         with transaction.atomic():
             for lensnode_uuid in lensnode_uuids:
                 SessionCleanupOperation.objects.get_or_create(
@@ -277,6 +282,15 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             RunDiagnostic.objects.filter(run__session=instance).delete()
             instance.run_set.all().delete()
             instance.delete()
+        for storage_name in output_storage_names:
+            try:
+                default_storage.delete(storage_name)
+            except Exception:
+                logger.exception(
+                    "Unable to delete deliverable %s for Session %s.",
+                    storage_name,
+                    session_uuid,
+                )
         try:
             delete_session_document_attachments(
                 session_uuid,
