@@ -5,6 +5,7 @@ from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.core.cache import cache
 from django.utils import timezone
 
 from .lensnode_auth import hash_lensnode_token
@@ -95,6 +96,16 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         elif frame_type == "run_done":
             await self._handle_run_done(content)
         elif frame_type == "session_cleanup_done":
+            cache.set(
+                "lens:session_cleanup:%s" % content.get("session_uuid"),
+                {
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                    "removed": bool(content.get("removed")),
+                    "error": str(content.get("error") or ""),
+                    "at": timezone.now().isoformat(),
+                },
+                timeout=7 * 24 * 3600,
+            )
             LOGGER.info(
                 "Session workspace cleanup acknowledged session=%s removed=%s error=%s",
                 content.get("session_uuid"),
