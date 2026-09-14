@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import fcntl
 import json
 import multiprocessing
 import os
@@ -849,6 +850,14 @@ def cleanup_stale_runtime_resources(
             try:
                 if path.stat().st_mtime > cutoff:
                     continue
+                lock_path = sessions_root_path.parent / ".session-locks" / (path.name + ".lock")
+                if lock_path.exists():
+                    with lock_path.open("a+") as lock_handle:
+                        try:
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                        except BlockingIOError:
+                            continue
             except OSError:
                 continue
             size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
