@@ -127,6 +127,24 @@ def test_cleanup_session_does_not_follow_datasource_links(config):
     assert retained.read_text(encoding="utf-8") == "other session"
 
 
+def test_cleanup_preserves_lock_inode_for_recreated_session(config):
+    """Deleting and recreating a Session cannot split its mutex."""
+
+    session_uuid = str(uuid4())
+    with session_lock(config, session_uuid):
+        pass
+    locks = Path(config.runtime_path) / ".session-locks"
+    lock = locks / f"{session_uuid}.lock"
+    inode = lock.stat().st_ino
+    assert cleanup_session(config, session_uuid)
+    assert cleanup_session(config, session_uuid)
+    assert not session_root(config, session_uuid).exists()
+    with session_lock(config, session_uuid):
+        assert lock.stat().st_ino == inode
+        with pytest.raises(RuntimeError, match="SESSION_WORKSPACE_BUSY"):
+            cleanup_session(config, session_uuid)
+
+
 def test_cleanup_session_rejects_symlinked_session(config, tmp_path):
     """A replaced session root must never redirect recursive deletion."""
     session_uuid = str(uuid4())

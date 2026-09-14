@@ -1,6 +1,7 @@
 """Validated Session and Run workspace paths and lifecycle operations."""
 
 import fcntl
+import os
 import re
 import shutil
 from contextlib import contextmanager
@@ -51,26 +52,35 @@ def run_root(config, session_uuid, run_uuid):
     session = session_root(config, session_uuid)
     runs = session / "runs"
     path = runs / _identifier(run_uuid, "Run")
-    if path.is_symlink() or path.resolve().parent != runs.resolve():
+    if runs.is_symlink() or path.is_symlink():
+        raise ValueError("Run workspace path is invalid")
+    if path.resolve().parent != runs:
         raise ValueError("Run workspace path is invalid")
     return path
 
 
 @contextmanager
-def session_lock(config, session_uuid):
+def session_lock(config, session_uuid, *, create=True):
     """Serialize Session setup, execution admission, and cleanup."""
 
     root = session_root(config, session_uuid)
-    root.mkdir(parents=True, exist_ok=True)
-    if root.is_symlink():
-        raise ValueError("Session workspace path is invalid")
-    lock_path = root / ".session.lock"
-    with lock_path.open("a+") as handle:
+    locks = root.parent.parent / ".session-locks"
+    if locks.is_symlink():
+        raise ValueError("Session lock directory is invalid")
+    locks.mkdir(parents=True, mode=0o700, exist_ok=True)
+    lock_path = locks / f"{root.name}.lock"
+    descriptor = os.open(
+        lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600,
+    )
+    with os.fdopen(descriptor, "a+") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("SESSION_WORKSPACE_BUSY") from exc
         try:
+            root = session_root(config, session_uuid)
+            if create:
+                root.mkdir(parents=True, mode=0o700, exist_ok=True)
             yield root
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -90,21 +100,7 @@ def cleanup_run(config, session_uuid, run_uuid):
 def cleanup_session(config, session_uuid):
     """Remove one Session workspace without following datasource links."""
 
-    root = session_root(config, session_uuid)
-    if not root.exists():
-        return False
-    with session_lock(config, session_uuid):
-        for child in list(root.iterdir()):
-            if child.name == ".session.lock":
-                continue
-            if child.is_symlink():
-                child.unlink(missing_ok=True)
-            elif child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-            else:
-                child.unlink(missing_ok=True)
-    try:
-        root.rmdir()
-    except OSError:
-        pass
-    return not root.exists()
+    with session_lock(config, session_uuid, create=False) as root:
+        if root.exists():
+            shutil.rmtree(root)
+        return True
