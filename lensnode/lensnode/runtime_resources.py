@@ -111,18 +111,21 @@ def prepare_runtime_resources(
 
     config = _apply_feature_flags(config, command.get("features"))
     workspace = Path(config.workspace_path)
-    runtime_base = Path(getattr(config, "runtime_path", workspace))
+    runtime_base = workspace
     base = runtime_base / ".sourcelens"
     cache_root = base / "cache"
     runtime_instance_id = (
         command.get("runtime_instance_id") or command["run_uuid"]
     )
-    runtime_root = _run_runtime_path(runtime_base, runtime_instance_id)
     session_id = command.get("session_uuid")
+    runtime_root = _run_runtime_path(
+        runtime_base, runtime_instance_id, session_id=session_id,
+    )
     shared_root = (
         session_root(config, session_id) if session_id else runtime_root
     )
     shared_root.mkdir(parents=True, exist_ok=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
     if session_id:
         session_metadata = shared_root / "session.json"
         _write_private_json(
@@ -721,19 +724,21 @@ def cleanup_runtime_resources(resources):
 
 
 def cleanup_run_runtime_resources(workspace_path, run_uuid):
-    """Remove one Run's runtime and session workspace directories."""
+    """Remove one Run's runtime directory under any Session workspace."""
 
     if not workspace_path or not run_uuid:
         return False
     try:
-        runtime_root = _run_runtime_path(workspace_path, run_uuid)
+        workspace_root = Path(workspace_path).resolve()
+        runtime_roots = list(
+            (workspace_root / "sessions").glob(f"*/runs/{run_uuid}")
+        )
+        runtime_roots.append(_run_runtime_path(workspace_root, run_uuid))
     except (OSError, ValueError):
         return False
-    session_root = Path(workspace_path) / "sessions" / str(run_uuid)
-    shutil.rmtree(runtime_root, ignore_errors=True)
-    if session_root != runtime_root:
-        shutil.rmtree(session_root, ignore_errors=True)
-    return not runtime_root.exists() and not session_root.exists()
+    for runtime_root in runtime_roots:
+        shutil.rmtree(runtime_root, ignore_errors=True)
+    return all(not path.exists() for path in runtime_roots)
 
 
 def delete_skill_cache(workspace_path, skill_uuid):
@@ -763,7 +768,7 @@ def delete_skill_cache(workspace_path, skill_uuid):
     return not skill_root.exists()
 
 
-def _run_runtime_path(workspace_path, run_uuid):
+def _run_runtime_path(workspace_path, run_uuid, session_id=None):
     """Return a contained runtime path for one validated Run identifier."""
 
     identifier = str(run_uuid).strip()
@@ -771,7 +776,14 @@ def _run_runtime_path(workspace_path, run_uuid):
         raise ValueError("Invalid Run identifier")
 
     workspace_root = Path(workspace_path).resolve()
-    runs_root = workspace_root / ".sourcelens" / "runtime" / "runs"
+    if session_id:
+        try:
+            session_identifier = str(uuid.UUID(str(session_id)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("Invalid Session identifier") from exc
+        runs_root = workspace_root / "sessions" / session_identifier / "runs"
+    else:
+        runs_root = workspace_root / ".sourcelens" / "runtime" / "runs"
     resolved_runs_root = runs_root.resolve()
     try:
         resolved_runs_root.relative_to(workspace_root)
