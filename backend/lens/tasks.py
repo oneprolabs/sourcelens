@@ -48,7 +48,14 @@ def session_workspace_cleanup_task():
     if channel_layer is None:
         return 0
     now = timezone.now()
-    cutoff = now - timedelta(seconds=7 * 24 * 3600)
+    idle_setting = GlobalSetting.objects.filter(
+        key="lens.session_workspace.idle_ttl_seconds"
+    ).first()
+    try:
+        idle_ttl = max(int(idle_setting.value), 3600)
+    except (AttributeError, TypeError, ValueError):
+        idle_ttl = 7 * 24 * 3600
+    cutoff = now - timedelta(seconds=idle_ttl)
     sessions = Session.objects.filter(
         status=Session.Status.ARCHIVED, updated_at__lt=cutoff
     ).exclude(run__status__in=[Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING])
