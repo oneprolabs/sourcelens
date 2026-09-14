@@ -3,7 +3,6 @@
 import fcntl
 import os
 import re
-import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -86,6 +85,24 @@ def session_lock(config, session_uuid, *, create=True):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _remove_tree_without_following_links(path):
+    """Remove a path while treating every symlink as a leaf."""
+
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    if not path.exists():
+        return
+    for child in path.iterdir():
+        if child.is_symlink():
+            child.unlink(missing_ok=True)
+        elif child.is_dir():
+            _remove_tree_without_following_links(child)
+        else:
+            child.unlink(missing_ok=True)
+    path.rmdir()
+
+
 def cleanup_run(config, session_uuid, run_uuid):
     """Remove disposable Run files while preserving retained resources."""
 
@@ -93,7 +110,7 @@ def cleanup_run(config, session_uuid, run_uuid):
     if not run.exists():
         return False
     for name in ("tmp", "conversation-artifacts", "subject-documents"):
-        shutil.rmtree(run / name, ignore_errors=True)
+        _remove_tree_without_following_links(run / name)
     return True
 
 
@@ -102,5 +119,5 @@ def cleanup_session(config, session_uuid):
 
     with session_lock(config, session_uuid, create=False) as root:
         if root.exists():
-            shutil.rmtree(root)
+            _remove_tree_without_following_links(root)
         return True
