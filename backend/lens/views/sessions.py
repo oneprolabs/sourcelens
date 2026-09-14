@@ -52,6 +52,7 @@ from lens.models import (
     RunExecution,
     RunOutputFile,
     Session,
+    SessionCleanupOperation,
     SharedQA,
 )
 from lens.services import lensnode_group_name
