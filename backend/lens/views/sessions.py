@@ -307,6 +307,26 @@ class SessionViewSet(BaseAuthenticatedViewSet):
                     },
                 )
 
+    @action(detail=True, methods=["get"], url_path="prior-results")
+    def prior_results(self, request, uuid=None):
+        """List completed outputs available for continuation in this Session."""
+
+        session = self.get_object()
+        runs = Run.objects.filter(
+            session=session,
+            status=Run.Status.DONE,
+            output_message__isnull=False,
+        ).exclude(output_message__content="").order_by("-finished_at")[:20]
+        return Response({"results": [
+            {
+                "run_uuid": str(run.uuid),
+                "message_uuid": str(run.output_message.uuid),
+                "content": run.output_message.content,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+            for run in runs
+        ]})
+
     @action(detail=True, methods=["post"])
     def pin(self, request, uuid=None):
         """Pin an active session above ordinary recent sessions."""
