@@ -1303,7 +1303,7 @@ class LensNodeClient:
                     "error": "DATASOURCE_SYNC_CANCELLED",
                     "completion_reason": "DATASOURCE_SYNC_CANCELLED",
                 }
-            return {"status": "failed", "error": "PLUGIN_SYNC_FAILED"}
+            return {"status": "failed", "error": str(exc)}
         except Exception:
             LOGGER.exception("Plugin datasource runtime failed")
             return {"status": "failed", "error": "PLUGIN_EXECUTION_FAILED"}
