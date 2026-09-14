@@ -1255,7 +1255,16 @@ class AdminRunRetryView(APIView):
                     {"detail": "Run not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            if run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]:
+            turn_limit_retry = (
+                run.status == Run.Status.DONE
+                and run.outcome == Run.Outcome.PARTIAL
+                and (run.termination_detail or {}).get("trigger")
+                in {"turn_limit", "loop_capped"}
+            )
+            if (
+                run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]
+                and not turn_limit_retry
+            ):
                 return Response(
                     {"detail": "RUN_NOT_RETRYABLE"},
                     status=status.HTTP_409_CONFLICT,
