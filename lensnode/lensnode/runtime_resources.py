@@ -846,6 +846,11 @@ def cleanup_stale_runtime_resources(
         for path in sessions_root_path.iterdir():
             if path.is_symlink() or not path.is_dir():
                 continue
+            try:
+                if path.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
             size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
             entries.append((path.stat().st_mtime, path, size))
             total += size
