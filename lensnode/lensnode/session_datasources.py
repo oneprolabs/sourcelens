@@ -1,5 +1,6 @@
 """Materialize Run-bound datasource versions from local LensNode storage."""
 
+import os
 import shutil
 import tempfile
 import uuid
@@ -52,8 +53,11 @@ def materialize_datasources(
                 )
                 if local_target is not None:
                     destination = sources / name
+                    relative_target = Path(
+                        os.path.relpath(local_target, destination.parent)
+                    )
                     destination.symlink_to(
-                        local_target, target_is_directory=True,
+                        relative_target, target_is_directory=True,
                     )
                     directories.append({
                         "name": name,
