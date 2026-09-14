@@ -489,7 +489,8 @@ def build_agent_tools(command, resources=None, config=None, emit_event=None):
             return "Prior Run result path is invalid."
         if not path.is_file() or path.is_symlink():
             return "Prior Run result is unavailable."
-        return path.read_text(encoding="utf-8", errors="replace")[:50000]
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(50000)
 
     tools = [
         search_workspace,
