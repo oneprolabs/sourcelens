@@ -2148,7 +2148,11 @@ def _sync_git(command, workspace_path, emit):
             git_options=git_options,
         )
 
-    _validate_git_tree_size(target)
+    _validate_git_tree_size(
+        target,
+        max_files=int(config.get("git_max_files", GIT_MAX_FILES)),
+        max_bytes=int(config.get("git_max_bytes", GIT_MAX_BYTES)),
+    )
 
     items = _git_manifest_items(
         target,
@@ -2741,7 +2745,7 @@ def _git_manifest_items(target, repo_url, branch, directory=""):
     return items
 
 
-def _validate_git_tree_size(target):
+def _validate_git_tree_size(target, max_files=GIT_MAX_FILES, max_bytes=GIT_MAX_BYTES):
     """Reject repositories that exceed the LensNode resource ceiling."""
 
     files = 0
@@ -2756,7 +2760,7 @@ def _validate_git_tree_size(target):
             raise DataSourceSyncError(
                 "LENS_SOURCE_RESOURCE_STAT_FAILED"
             ) from exc
-        if files > GIT_MAX_FILES or total_bytes > GIT_MAX_BYTES:
+        if files > max_files or total_bytes > max_bytes:
             raise DataSourceSyncError("LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED")
 
 
