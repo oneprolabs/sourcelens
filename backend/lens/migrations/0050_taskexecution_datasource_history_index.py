@@ -12,7 +12,10 @@ def create_datasource_history_index(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    if schema_editor.connection.settings_dict.get("TEST", {}).get("NAME"):
+    if (
+        schema_editor.connection.settings_dict.get("TEST", {}).get("NAME")
+        or schema_editor.connection.in_atomic_block
+    ):
         return
     schema_editor.execute(f"""
         CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME}
@@ -27,7 +30,10 @@ def drop_datasource_history_index(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    if schema_editor.connection.settings_dict.get("TEST", {}).get("NAME"):
+    if (
+        schema_editor.connection.settings_dict.get("TEST", {}).get("NAME")
+        or schema_editor.connection.in_atomic_block
+    ):
         return
     schema_editor.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX_NAME}")
 
