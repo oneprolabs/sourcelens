@@ -12,6 +12,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
@@ -95,8 +96,6 @@ def _session_resource_lock(config, session_id):
 
     if session_id:
         return session_lock(config, session_id)
-    from contextlib import nullcontext
-
     return nullcontext()
 
 
