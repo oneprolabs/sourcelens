@@ -1,0 +1,4 @@
+type: feature
+audience: user
+en: Add reusable Session workspaces, isolated Run storage, resumable continuation fallback, and durable remote workspace cleanup.
+zh-CN: 新增可复用的 Session 工作区、隔离的 Run 存储、可审计的续接降级，以及持久化的远程工作区清理。
