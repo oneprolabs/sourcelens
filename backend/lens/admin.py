@@ -14,6 +14,7 @@ from .models import (
     RunStep,
     ScheduledTask,
     Session,
+    SessionCleanupOperation,
     Skill,
 )
 
@@ -65,6 +66,13 @@ class MCPServerAdmin(admin.ModelAdmin):
 class SessionAdmin(admin.ModelAdmin):
     list_display = ("uuid", "assistant", "user", "status", "created_at")
     search_fields = ("title",)
+
+
+@admin.register(SessionCleanupOperation)
+class SessionCleanupOperationAdmin(admin.ModelAdmin):
+    list_display = ("session_uuid", "lensnode_uuid", "status", "attempts", "next_retry_at")
+    list_filter = ("status",)
+    search_fields = ("session_uuid", "lensnode_uuid")
 
 
 admin.site.register(AssistantSkill)
