@@ -2254,7 +2254,25 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
         "oldest_age_seconds": oldest_age,
         "queue_timeout_seconds": DATASOURCE_QUEUE_TIMEOUT_SECONDS,
         "queue_capacity_multiplier": DATASOURCE_QUEUE_CAPACITY_MULTIPLIER,
+        "nodes": {},
     }
+    for node in LensNode.objects.filter(
+        status=LensNode.Status.ONLINE,
+    ).only("uuid", "labels"):
+        node_id = str(node.uuid)
+        node_queued = queued_tasks.filter(
+            metadata__lensnode_uuid=node_id,
+        ).count()
+        capacity = _datasource_capacity(node)
+        occupied = sum(
+            cache.get(_datasource_capacity_slot_key(node_id, slot)) is not None
+            for slot in range(capacity)
+        )
+        queue_metrics["nodes"][node_id] = {
+            "queued": node_queued,
+            "capacity": capacity,
+            "occupied": occupied,
+        }
 
     return {
         "failed": failed_count,
