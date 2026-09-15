@@ -56,7 +56,6 @@ from lens.models import (
     SharedQA,
 )
 from lens.services import lensnode_group_name
-from lens.datasource.workspace import cleanup_session_workspace
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.session_lifecycle import (
     SessionStateError,
@@ -300,12 +299,6 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             logger.exception(
                 "Unable to delete temporary documents for Session %s.",
                 session_uuid,
-            )
-        try:
-            cleanup_session_workspace(session_uuid)
-        except Exception:
-            logger.exception(
-                "Unable to delete workspace for Session %s.", session_uuid
             )
         channel_layer = get_channel_layer()
         if channel_layer is not None:

@@ -5269,14 +5269,14 @@ class LensServiceTests(TransactionTestCase):
         task.enabled = False
         task.save(update_fields=["enabled"])
 
-        self.datasource.sync_policy = {"interval_seconds": 120}
+        self.datasource.sync_policy = {"interval_seconds": 600}
         self.datasource.save(update_fields=["sync_policy", "updated_at"])
 
         ensure_datasource_periodic_task(self.datasource)
 
         task.refresh_from_db()
         self.assertTrue(task.enabled)
-        self.assertEqual(task.interval.every, 120)
+        self.assertEqual(task.interval.every, 600)
         self.assertEqual(task.interval.period, "seconds")
         self.assertEqual(task.task, "lens.source_sync")
         self.assertEqual(task.args, f'["{self.datasource.uuid}"]')
@@ -5304,14 +5304,14 @@ class LensServiceTests(TransactionTestCase):
         task = PeriodicTask.objects.get(pk=record.periodic_task_ref)
         task.enabled = False
         task.save(update_fields=["enabled"])
-        self.datasource.sync_policy = {"interval_seconds": 120}
+        self.datasource.sync_policy = {"interval_seconds": 600}
         self.datasource.save(update_fields=["sync_policy", "updated_at"])
 
         discover_and_register()
 
         task.refresh_from_db()
         self.assertTrue(task.enabled)
-        self.assertEqual(task.interval.every, 120)
+        self.assertEqual(task.interval.every, 600)
 
     def test_discover_and_register_backfills_periodic_task_refs(self):
         discover_and_register()

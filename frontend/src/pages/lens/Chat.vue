@@ -766,43 +766,13 @@
 
                 <div
                   v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(message._runtimeState).kind
-                    )
+                    runtimeOutcomeNotice(message._runtimeState).kind ===
+                    'blocked'
                   "
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(message._runtimeState).kind ===
-                    'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : activeAssistant?.agent_rounds === 'flash'
-                        ? t('lens.chat.runtime.outcomePartialFlash')
-                        : t('lens.chat.runtime.outcomePartial')
-                  }}
-                  <span
-                    v-if="
-                      message._runtimeState?.terminationDetail
-                        ?.continuation_status === 'fallback_new_run'
-                    "
-                    class="runtime-fallback-reason"
-                  >
-                    {{ t('lens.chat.runtime.continuationFallback') }}
-                  </span>
-                  <button
-                    v-if="
-                      runtimeOutcomeNotice(message._runtimeState).kind ===
-                        'partial' &&
-                      activeAssistant?.agent_rounds !== 'flash' &&
-                      canRetryLastQuestion(message)
-                    "
-                    type="button"
-                    class="retry-hint-btn"
-                    @click="retryLastQuestion(message)"
-                  >
-                    {{ t('lens.chat.retryAction') }}
-                  </button>
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1550,21 +1520,11 @@
                 </div>
 
                 <div
-                  v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(runtimeState).kind
-                    )
-                  "
+                  v-if="runtimeOutcomeNotice(runtimeState).kind === 'blocked'"
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(runtimeState).kind === 'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : activeAssistant?.agent_rounds === 'flash'
-                        ? t('lens.chat.runtime.outcomePartialFlash')
-                        : t('lens.chat.runtime.outcomePartial')
-                  }}
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1950,6 +1910,7 @@ import {
   isPreviewable
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
+import { extractErrorMessage } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
@@ -3509,6 +3470,14 @@ async function selectSearchedSession(session) {
   await selectSession(session)
 }
 
+function sessionCreateErrorMessage(error) {
+  const message = extractErrorMessage(error, '')
+  if (message.includes('SMART_COLLABORATION_MODEL_NOT_CONFIGURED')) {
+    return t('lens.chat.errorSmartCollaborationModelNotConfigured')
+  }
+  return t('lens.chat.sessionCreateFailed')
+}
+
 async function createNewSession(notify = true, allowedAssistantUuids = []) {
   if (!selectedAssistant.value && !isSmartCollaborationConversation.value) {
     return null
@@ -3531,8 +3500,8 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
           }
         : { assistant_uuid: selectedAssistant.value.uuid, title: '' }
     )
-  } catch {
-    showError(t('lens.chat.sessionCreateFailed'))
+  } catch (error) {
+    showError(sessionCreateErrorMessage(error))
     return null
   }
 

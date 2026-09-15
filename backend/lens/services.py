@@ -64,7 +64,6 @@ from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
-from .datasource.workspace import session_source_dirs
 from .session_titles import fallback_session_title
 from .trace_context import root_observation_id_for_run, trace_id_for_run
 
@@ -1197,13 +1196,16 @@ def create_execution_run(
             DatasourceRoutingError,
             selected_bindings,
         )
-        from .datasource.snapshots import capture_session_datasources
+        from .datasource.snapshots import (
+            DatasourceSnapshotError,
+            capture_session_datasources,
+        )
 
         try:
             bindings = selected_bindings(assistant, question)
-        except DatasourceRoutingError as exc:
+            capture_session_datasources(session, assistant, bindings=bindings)
+        except (DatasourceRoutingError, DatasourceSnapshotError) as exc:
             raise LensNodeDispatchError(str(exc)) from exc
-        capture_session_datasources(session, assistant, bindings=bindings)
     create_run_execution_snapshot(
         run,
         answer_language=answer_language,
@@ -2144,12 +2146,9 @@ def validate_run_dispatch(run):
             raise LensNodeDispatchError("GENERAL_CHAT_SKILL_REQUIRED")
     else:
         available = available_dir_paths(lensnode)
-        session_paths = {
-            item["path"] for item in session_source_dirs(run.session)
-        }
         for item in execution.target_dirs or []:
             path = item.get("path")
-            if path not in available and path not in session_paths:
+            if path not in available:
                 raise LensNodeDispatchError("LENSNODE_DIR_UNAVAILABLE")
 
     for skill in runtime_skills:
@@ -2325,7 +2324,11 @@ def create_run_execution_snapshot(
             "loaded_plugins": loaded_plugins,
             "agent_rounds": agent_rounds,
             "run_timeout_s": run_timeout_for_rounds(agent_rounds),
-            "target_dirs": session_source_dirs(run.session),
+            "target_dirs": (
+                []
+                if assistant.capability == Assistant.Capability.GENERAL_CHAT
+                else assistant.selected_dirs
+            ),
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],
             "token_budget_max_tokens": token_budget["max_tokens"],

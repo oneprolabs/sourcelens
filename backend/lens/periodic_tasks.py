@@ -195,7 +195,7 @@ def estimate_datasource_next_run(datasource, record=None):
 
     from datetime import timedelta
 
-    interval = max(int(sync_policy.get("interval_seconds") or 3600), 1)
+    interval = max(int(sync_policy.get("interval_seconds") or 86400), 600)
     return last_run_at + timedelta(seconds=interval)
 
 
@@ -256,9 +256,9 @@ def _datasource_schedule(sync_policy):
 
     from django_celery_beat.models import IntervalSchedule
 
-    interval = sync_policy.get("interval_seconds", 3600)
+    interval = sync_policy.get("interval_seconds", 86400)
     schedule, _ = IntervalSchedule.objects.get_or_create(
-        every=max(int(interval), 1),
+        every=max(int(interval), 600),
         period=IntervalSchedule.SECONDS,
     )
     return "interval", schedule
@@ -331,7 +331,7 @@ def register_periodic_tasks():
         ],
     )
     for datasource in datasources:
-        interval = datasource.sync_policy.get("interval_seconds", 3600)
+        interval = datasource.sync_policy.get("interval_seconds", 86400)
         _ensure_source_scheduled_task(datasource)
         TASK_REGISTRY.add(
             name=f"lens-source-sync-{datasource.uuid}",

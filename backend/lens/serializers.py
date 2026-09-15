@@ -12,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from .assistant_lifecycle import (
     AssistantNotRunnableError,
+    SmartCollaborationModelNotConfiguredError,
     create_assistant_session,
     create_smart_collaboration_session,
     fixed_collaboration_assistants,
@@ -2897,9 +2898,9 @@ def _validate_sync_policy(sync_policy):
             )
         return
     interval = sync_policy.get("interval_seconds")
-    if interval is not None and (not isinstance(interval, int) or interval <= 0):
+    if interval is not None and (not isinstance(interval, int) or interval < 600):
         raise serializers.ValidationError(
-            {"sync_policy": "interval_seconds must be a positive integer"}
+            {"sync_policy": "interval_seconds must be an integer of at least 600"}
         )
 
 
@@ -4321,6 +4322,10 @@ class SessionCreateSerializer(serializers.Serializer):
                 validated_data["assistant_uuid"],
                 request.user,
                 validated_data.get("title", ""),
+            )
+        except SmartCollaborationModelNotConfiguredError:
+            raise PermissionDenied(
+                "SMART_COLLABORATION_MODEL_NOT_CONFIGURED"
             )
         except AssistantNotRunnableError:
             raise PermissionDenied("You do not have access to this assistant.")

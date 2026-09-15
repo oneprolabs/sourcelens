@@ -652,35 +652,6 @@
         </div>
 
         <div v-else-if="activeStepKey === 'sync'" class="space-y-5">
-          <p class="text-sm text-ink-500">
-            {{ t('lensAdmin.datasourceWizard.step3Desc') }}
-          </p>
-          <FormRow
-            v-if="isManagedWorkspace"
-            :label="t('lensAdmin.fields.lensnode')"
-          >
-            <BaseSelect v-model="form.lensnode_uuid">
-              <option value="">
-                {{ t('lensAdmin.placeholders.selectLensNode') }}
-              </option>
-              <option
-                v-for="node in onlineLensNodes"
-                :key="node.uuid"
-                :value="node.uuid"
-              >
-                {{ node.name }} · {{ node.workspace_path || '/workspace' }}
-              </option>
-            </BaseSelect>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
-            </p>
-          </FormRow>
-          <div
-            v-if="isManagedWorkspace && !onlineLensNodes.length"
-            class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
-          >
-            {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
-          </div>
           <FormRow
             v-if="showTargetPath"
             :label="t('lensAdmin.fields.targetPath')"
@@ -1021,7 +992,7 @@
             <input
               v-model.number="syncIntervalSeconds"
               class="form-input w-40"
-              min="60"
+              min="600"
               type="number"
             />
             <p class="mt-1 text-xs text-ink-500">
@@ -1535,7 +1506,7 @@ const props = defineProps({
   plugins: { type: Array, default: () => [] },
   pluginManifest: { type: Object, default: null },
   llmConfigOptions: { type: Array, default: () => [] },
-  syncIntervalSeconds: { type: Number, default: 3600 },
+  syncIntervalSeconds: { type: Number, default: 86400 },
   syncPolicyMode: { type: String, default: 'interval' },
   syncCron: { type: String, default: '0 2 * * *' },
   syncTimezone: { type: String, default: 'Asia/Shanghai' },
@@ -1844,6 +1815,11 @@ const wizardStepsMeta = computed(() => {
           ? 'lensAdmin.datasourceWizard.fileUploadDesc'
           : 'lensAdmin.datasourceWizard.step2Desc'
       )
+    },
+    {
+      key: 'sync',
+      title: t('lensAdmin.datasourceWizard.step3Title'),
+      description: t('lensAdmin.datasourceWizard.step3Desc')
     }
   ]
 })

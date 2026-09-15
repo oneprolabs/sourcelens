@@ -2547,6 +2547,51 @@ class LensApiTests(TestCase):
         with self.assertRaises(PermissionDenied):
             serializer.save()
 
+    def test_smart_collaboration_falls_back_to_default_llm(self):
+        """An unset coordinator model reuses the default global LLM config."""
+
+        config = LLMConfig.objects.create(
+            scope=LLMConfig.Scope.GLOBAL,
+            provider="openai",
+            model_type=LLMConfig.MODEL_TYPE_LLM,
+            config={"model": "gpt-4o-mini"},
+            is_active=True,
+        )
+        self.assistant.visibility = Assistant.Visibility.PUBLIC
+        self.assistant.save(update_fields=["visibility"])
+        serializer = SessionCreateSerializer(
+            data={
+                "routing_mode": "smart",
+                "allowed_assistant_uuids": [str(self.assistant.uuid)],
+            },
+            context={"request": SimpleNamespace(user=self.user)},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        session = serializer.save()
+
+        self.assertEqual(session.routing_mode, Session.RoutingMode.SMART)
+        self.assertEqual(
+            str(session.assistant.agent_model_ref),
+            str(config.uuid),
+        )
+
+    def test_smart_collaboration_without_any_llm_reports_unconfigured(self):
+        """No coordinator setting and no global LLM surfaces a distinct code."""
+
+        serializer = SessionCreateSerializer(
+            data={"routing_mode": "smart"},
+            context={"request": SimpleNamespace(user=self.user)},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        with self.assertRaises(PermissionDenied) as context:
+            serializer.save()
+        self.assertEqual(
+            str(context.exception.detail),
+            "SMART_COLLABORATION_MODEL_NOT_CONFIGURED",
+        )
+
     def test_smart_session_run_allows_hidden_coordinator(self):
         """Smart sessions may run through their hidden system coordinator."""
 
@@ -5492,7 +5537,7 @@ class LensApiTests(TestCase):
             "source_type": "git",
             "lensnode_uuid": str(self.lensnode.uuid),
             "config": {"repo_url": "https://example.com/repo.git"},
-            "sync_policy": {"interval_seconds": 120},
+            "sync_policy": {"interval_seconds": 600},
             "target_path": "/workspace/scheduled",
         }
 
@@ -5507,6 +5552,24 @@ class LensApiTests(TestCase):
             response.data["target_path"],
             f"/workspace/datasources/{response.data['uuid']}",
         )
+
+    def test_datasource_create_rejects_short_sync_interval(self):
+        payload = {
+            "name": "Too Frequent Repo",
+            "source_type": "git",
+            "lensnode_uuid": str(self.lensnode.uuid),
+            "config": {"repo_url": "https://example.com/repo.git"},
+            "sync_policy": {"interval_seconds": 120},
+        }
+
+        response = self.client.post(
+            "/api/lens/admin/datasources/",
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sync_policy", response.data)
 
     def test_datasource_list_filters_by_plugin_key(self):
         self.datasource.plugin_key = "github"

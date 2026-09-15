@@ -527,7 +527,7 @@ const checkingDatasourcePath = ref(false)
 const testingDatasourceConnection = ref(false)
 const refreshingCredentials = ref(false)
 const refreshingDirectories = ref(false)
-const syncIntervalSeconds = ref(3600)
+const syncIntervalSeconds = ref(86400)
 const syncPolicyMode = ref('interval')
 const syncCron = ref('0 2 * * *')
 const syncTimezone = ref('Asia/Shanghai')
@@ -1143,7 +1143,7 @@ function startCreate() {
   datasourceConnectionResult.value = null
   pendingUploadFiles.value = []
   uploadBaselineNames.value = []
-  syncIntervalSeconds.value = 3600
+  syncIntervalSeconds.value = 86400
   form.value = defaultForm()
   showDrawer.value = true
 }
@@ -1155,7 +1155,7 @@ async function startEdit(row) {
   formError.value = ''
   datasourceConfig.value = { ...(row.config || {}) }
   datasourcePathResult.value = null
-  syncIntervalSeconds.value = row.sync_policy?.interval_seconds || 3600
+  syncIntervalSeconds.value = row.sync_policy?.interval_seconds || 86400
   form.value = formFromRow(row)
   pendingUploadFiles.value = []
   uploadBaselineNames.value = []
@@ -1426,7 +1426,7 @@ const datasourceTypeStrategies = [
 
 function resetDatasourceSyncPolicy() {
   syncPolicyMode.value = 'interval'
-  syncIntervalSeconds.value = 3600
+  syncIntervalSeconds.value = 86400
   syncCron.value = '0 2 * * *'
   syncTimezone.value = 'Asia/Shanghai'
 }
@@ -1439,7 +1439,7 @@ function hydrateDatasourceSyncPolicy(syncPolicy) {
     return
   }
   syncPolicyMode.value = 'interval'
-  syncIntervalSeconds.value = Number(syncPolicy.interval_seconds) || 3600
+  syncIntervalSeconds.value = Number(syncPolicy.interval_seconds) || 86400
   syncCron.value = '0 2 * * *'
   syncTimezone.value = 'Asia/Shanghai'
 }
@@ -1711,7 +1711,7 @@ function buildDatasourceSyncPolicy() {
   }
   return {
     mode: 'interval',
-    interval_seconds: Math.max(1, Number(syncIntervalSeconds.value) || 3600),
+    interval_seconds: Math.max(600, Number(syncIntervalSeconds.value) || 86400),
     conversion
   }
 }

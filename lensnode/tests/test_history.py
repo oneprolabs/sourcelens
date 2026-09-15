@@ -6111,7 +6111,7 @@ def test_truncated_run_falls_back_to_wrapup_when_no_answer_text():
     assert truncated is True
     assert termination_reason == "turn_limit"
     assert "best-effort synthesis" in answer
-    assert "Reached the current execution safety boundary" in answer
+    assert "Reached the current execution safety boundary" not in answer
     assert model.invoked_with is not None
 
 

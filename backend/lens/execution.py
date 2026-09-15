@@ -160,10 +160,6 @@ def _lensnode_dispatch(state):
                 run.retry_of_run,
             ),
         )
-        from .datasource.workspace import session_source_dirs
-
-        execution.target_dirs = session_source_dirs(run.session)
-        execution.save(update_fields=["target_dirs"])
         execution.loaded_plugins = build_loaded_plugins(assistant)
         execution.loaded_skills = build_loaded_skills(assistant)
         execution.loaded_skills.extend(

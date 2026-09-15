@@ -591,6 +591,49 @@ def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
     assert (root / "same.txt").read_bytes() == b"after"
 
 
+def test_managed_workspace_upload_replaces_archive_in_place(tmp_path):
+    """Re-uploading an archive replaces the previous extracted directory."""
+
+    def archive_bytes(entries):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as package:
+            for name, content in entries.items():
+                package.writestr(name, content)
+        return base64.b64encode(archive.getvalue()).decode()
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    try:
+        upload_managed_workspace(
+            {
+                "datasource_uuid": "uuid-1",
+                "filename": "package.zip",
+                "upload_version": 1,
+                "content_base64": archive_bytes({"old.txt": b"old"}),
+            },
+            workspace_path=tmp_path,
+        )
+        upload_managed_workspace(
+            {
+                "datasource_uuid": "uuid-1",
+                "filename": "package.zip",
+                "upload_version": 2,
+                "content_base64": archive_bytes({"new.txt": b"new"}),
+            },
+            workspace_path=tmp_path,
+        )
+    finally:
+        monkeypatch.undo()
+
+    root = tmp_path / "datasources" / "uuid-1"
+    assert not (root / "package.v2").exists()
+    assert not (root / "package" / "old.txt").exists()
+    assert (root / "package" / "new.txt").read_bytes() == b"new"
+
+
 def test_delete_datasource_upload_removes_file_and_metadata(tmp_path):
     """Deleting a plain upload removes the file and its sidecar."""
 

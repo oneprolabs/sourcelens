@@ -731,12 +731,9 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         max_bytes = 50 * 1024 * 1024
     if len(content) > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
-    version = int(command.get("upload_version") or 1)
     is_archive = _is_upload_archive(filename)
+    archive_name = Path(filename).stem
     if is_archive:
-        archive_name = Path(filename).stem
-        if version > 1:
-            archive_name = f"{archive_name}.v{version}"
         target = datasource_root / safe_filename(archive_name)
     else:
         target = datasource_root
