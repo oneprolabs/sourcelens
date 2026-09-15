@@ -16,3 +16,19 @@ Target: `http://localhost:8000`
 
 The browser task space was finished after the checks. No production or existing
 user data was modified.
+
+## Follow-up Smart Collaboration execution
+
+Date: 2026-09-15; task space 4 (`SourceLens Smart Collaboration acceptance`).
+
+| Case | Result | Evidence |
+| --- | --- | --- |
+| Select Smart Collaboration | PASS | Assistant switcher exposed the `智能协作` mode and the three configured members: `hello`, `托管工作区助手`, and `鹅鹅鹅`. |
+| Actual delegated execution | PASS | Submitted “请让每位协作助手分别用一句话说明自己的名称，并汇总成三条列表”。 The UI displayed an `Agent 活动` group with all three members marked `已完成` and three completed activities. |
+| Parent aggregation | PASS | The parent answer contained a three-item list with each member name and its response, followed by a clarification paragraph. |
+| Workspace backed collaboration | PASS (smoke) | The collaboration assistant configuration showed `智能协作`, one collaboration member, and a managed-workspace description. The prior completed plan visibly included `托管工作区助手`, `鹅鹅鹅`, and `hello`; no runtime filesystem path was exposed. |
+| Missing model handling | OBSERVED | The `托管工作区智能助手` detail showed `Agent 模型：尚未配置`; the existing collaboration session still completed through configured members. A dedicated no-model-only run was not triggered to avoid changing shared configuration. |
+
+This follow-up confirms the browser-visible delegation and parent result
+aggregation. Runtime nesting and reaping remain supplemental checks requiring
+server-side evidence.
