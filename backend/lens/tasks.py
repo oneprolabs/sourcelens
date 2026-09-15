@@ -121,6 +121,7 @@ SESSION_TITLE_TASK_NAME = "lens.generate_session_title.v2"
 DATASOURCE_CANCELLING_STATUS = "CANCELLING"
 DATASOURCE_QUEUE_HEARTBEAT_SECONDS = 30
 DATASOURCE_QUEUE_TIMEOUT_SECONDS = 30 * 60
+DATASOURCE_QUEUE_CAPACITY_MULTIPLIER = 4
 DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
 DATASOURCE_ADMISSION_STATE = "admission_state"
 DATASOURCE_ADMITTED = "DISPATCHED"
@@ -653,7 +654,25 @@ def _queue_datasource_task(task_id, message):
     """
 
     from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
+
+    task = TaskExecution.objects.filter(task_id=task_id).first()
+    metadata = dict(task.metadata or {}) if task is not None else {}
+    lensnode_uuid = str(metadata.get("lensnode_uuid") or "")
+    if lensnode_uuid:
+        capacity = _datasource_capacity(
+            LensNode.objects.filter(uuid=lensnode_uuid).first()
+        )
+        queued_count = TaskExecution.objects.filter(
+            module__in=DATASOURCE_OPERATION_MODULES,
+            status=TaskStatus.PENDING,
+            metadata__lensnode_uuid=lensnode_uuid,
+            metadata__admission_state=DATASOURCE_QUEUED,
+        ).exclude(task_id=task_id).count()
+        if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
+            _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
+            return False
 
     TaskTracker.update_task_status(
         task_id,
@@ -667,6 +686,7 @@ def _queue_datasource_task(task_id, message):
             "progress_message": message,
         },
     )
+    return True
 
 
 def _mark_datasource_task_dispatched(task_id):
@@ -904,10 +924,12 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     metadata={"lensnode_uuid": str(execution_node.uuid)},
                 )
             if not _datasource_capacity_available(execution_node, task_id):
-                _queue_datasource_task(
+                if not _queue_datasource_task(
                     task_id,
                     "Waiting for LensNode datasource sync capacity.",
-                )
+                ):
+                    release_datasource_lock(datasource.uuid, token=task_id)
+                    return 0
                 _append_datasource_task_step(
                     task_id,
                     "admission",
@@ -1101,10 +1123,12 @@ def datasource_conversion_task(
                 ttl_s=get_datasource_sync_timeout_s(),
             )
         if not _datasource_capacity_available(datasource.lensnode, task_id):
-            _queue_datasource_task(
+            if not _queue_datasource_task(
                 task_id,
                 "Waiting for LensNode datasource sync capacity.",
-            )
+            ):
+                release_datasource_lock(datasource.uuid, token=task_id)
+                return 0
             _append_datasource_task_step(
                 task_id,
                 "admission",
@@ -1181,7 +1205,8 @@ def datasource_conversion_task(
                 str(exc),
             ),
         )
-        _queue_datasource_task(task_id, str(exc))
+        if not _queue_datasource_task(task_id, str(exc)):
+            release_datasource_lock(datasource.uuid, token=task_id)
         return 0
     except Exception:
         release_datasource_lock(datasource.uuid, token=task_id)
@@ -1267,13 +1292,16 @@ def datasource_upload_task(
                 ttl_s=get_datasource_upload_timeout_s(),
             )
     except SourceSyncBusy as exc:
-        _queue_datasource_task(task_id, str(exc))
+        if not _queue_datasource_task(task_id, str(exc)):
+            release_datasource_lock(datasource.uuid, token=task_id)
         return 0
     if not _datasource_capacity_available(execution_node, task_id):
-        _queue_datasource_task(
+        if not _queue_datasource_task(
             task_id,
             "Waiting for LensNode datasource sync capacity.",
-        )
+        ):
+            release_datasource_lock(datasource.uuid, token=task_id)
+            return 0
         _refresh_datasource_lock(
             datasource.uuid,
             task_id,
