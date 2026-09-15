@@ -3400,11 +3400,8 @@ function openMyShares() {
   }
 }
 
-async function onLoginSuccess() {
+function onLoginSuccess() {
   showLoginModal.value = false
-  // Load the now-authenticated user's assistants and sessions so the
-  // composer becomes usable without a full page reload.
-  await bootstrap()
 }
 
 async function loadMyShareState() {
@@ -4862,6 +4859,14 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => userStore.isAuthenticated,
+  (isAuthenticated, wasAuthenticated) => {
+    if (isAuthenticated === wasAuthenticated) return
+    bootstrap()
+  }
+)
+
 onMounted(async () => {
   window.addEventListener('storage', handleCompletionStorage)
   window.addEventListener('focus', handleCompletionVisibility)
@@ -4873,10 +4878,10 @@ onMounted(async () => {
   if (window.innerWidth < 1024) {
     sidebarOpen.value = false
   }
-  // Public route: hydrate a stored user (if any), then bootstrap once.
+  // Hydration changes isAuthenticated, which triggers the authentication
+  // watcher and bootstraps the page once the user state is ready.
   if (!userStore.user && localStorage.getItem('access_token')) {
     await userStore.checkAuthStatus()
-    bootstrap()
   }
 })
 
