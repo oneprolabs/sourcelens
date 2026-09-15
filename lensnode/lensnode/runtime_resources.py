@@ -718,13 +718,21 @@ def _history_artifact_url(
 
 
 def cleanup_runtime_resources(resources):
-    """Remove per-run runtime resources but keep shared cache."""
+    """Release transient resources while retaining the Run workspace."""
 
-    shutil.rmtree(resources.root, ignore_errors=True)
+    root = Path(resources.root)
+    parts = root.parts
+    if "sessions" in parts and "runs" in parts:
+        return
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def cleanup_run_runtime_resources(workspace_path, run_uuid):
-    """Remove one Run's runtime directory under any Session workspace."""
+    """Retain one completed Run's workspace for later inspection.
+
+    Run directories are removed by the retention cleanup process, rather than
+    at terminal acknowledgement time.
+    """
 
     if not workspace_path or not run_uuid:
         return False
@@ -736,9 +744,7 @@ def cleanup_run_runtime_resources(workspace_path, run_uuid):
         runtime_roots.append(_run_runtime_path(workspace_root, run_uuid))
     except (OSError, ValueError):
         return False
-    for runtime_root in runtime_roots:
-        shutil.rmtree(runtime_root, ignore_errors=True)
-    return all(not path.exists() for path in runtime_roots)
+    return all(path.exists() for path in runtime_roots)
 
 
 def delete_skill_cache(workspace_path, skill_uuid):
@@ -809,12 +815,15 @@ def cleanup_stale_runtime_resources(
     """Remove abandoned per-Run directories older than the safety window."""
 
     runs_root = Path(workspace_path) / ".sourcelens" / "runtime" / "runs"
+    session_runs = list(
+        (Path(workspace_path) / "sessions").glob("*/runs/*")
+    )
     cutoff = float(time.time() if now is None else now) - max(
         0,
         int(max_age_s),
     )
     try:
-        candidates = list(runs_root.iterdir())
+        candidates = list(runs_root.iterdir()) + session_runs
     except (FileNotFoundError, OSError):
         return 0
 

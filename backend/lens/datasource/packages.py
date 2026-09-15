@@ -25,6 +25,12 @@ def run_datasource_snapshots(run):
             "version_uuid": str(row.version.uuid) if row.version_id else "",
             "datasource_uuid": str(row.datasource.uuid),
             "mount_name": row.mount_name,
+            "target_path": (
+                row.datasource.target_path
+                if row.datasource.source_type
+                == row.datasource.SourceType.MANAGED_WORKSPACE
+                else ""
+            ),
         })
     return result
 
