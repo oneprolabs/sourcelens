@@ -69,7 +69,7 @@
                 {{ t('lensAdmin.connections.allPlugins') }}
               </option>
               <option
-                v-for="plugin in plugins"
+                v-for="plugin in connectionPlugins"
                 :key="plugin.key"
                 :value="plugin.key"
               >
@@ -458,7 +458,7 @@
                 class="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
               >
                 <button
-                  v-for="plugin in plugins"
+                  v-for="plugin in connectionPlugins"
                   :key="plugin.key"
                   type="button"
                   class="flex items-center gap-3 rounded-lg border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-brand-500/20"
@@ -656,6 +656,9 @@ const { t, te } = useI18n()
 const { showError, showSuccess } = useToast()
 const connections = ref([])
 const plugins = ref([])
+const connectionPlugins = computed(() =>
+  plugins.value.filter((plugin) => plugin.key !== 'file_upload')
+)
 const pluginManifests = ref({})
 const loading = ref(false)
 const saving = ref(false)
