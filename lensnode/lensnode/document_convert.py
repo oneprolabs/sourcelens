@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import time
+import threading
 import zipfile
 from xml.etree import ElementTree
 from io import BytesIO
@@ -17,7 +18,16 @@ from .path_rules import sidecar_path
 from .path_rules import source_sha256
 
 OFFICE_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx"}
-PLAIN_TEXT_EXTENSIONS = {".txt", ".md"}
+PLAIN_TEXT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".html",
+    ".htm",
+    ".xml",
+}
 DOCUMENT_EXTENSIONS = OFFICE_DOCUMENT_EXTENSIONS | PLAIN_TEXT_EXTENSIONS
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 EMBEDDED_IMAGE_PREFIXES = {
@@ -413,14 +423,15 @@ def post_process_documents(context, sync_result, emit=None):
     max_images = int(conversion.get("max_images") or DEFAULT_MAX_IMAGES)
     image_count = 0
     image_digests = set()
+    context["_conversion_cost_lock"] = threading.Lock()
     jobs = []
-    active_job = {"value": None}
+    active_job = threading.local()
     original_context = context
 
     def report_visual_progress(detail):
         """Expose image work within a managed workspace file conversion."""
 
-        job = active_job["value"]
+        job = getattr(active_job, "value", None)
         if not context.get("managed_conversion_progress") or job is None:
             _emit_conversion_progress(original_context, detail)
             return
@@ -523,11 +534,11 @@ def post_process_documents(context, sync_result, emit=None):
     queue = conversion_queue_from_context(context)
 
     def handle_job(job):
-        active_job["value"] = job
+        active_job.value = job
         try:
             return convert_job(job, target, context)
         finally:
-            active_job["value"] = None
+            active_job.value = None
 
     for job, output in queue.run(jobs, handle_job):
         path = job.path
@@ -2281,6 +2292,16 @@ def _visual_usage_bucket(context):
     return bucket
 
 
+def _conversion_cost_lock(context):
+    """Return the shared lock for visual usage accounting."""
+
+    lock = context.get("_conversion_cost_lock")
+    if lock is None:
+        lock = threading.Lock()
+        context["_conversion_cost_lock"] = lock
+    return lock
+
+
 def _visual_status_code(exc):
     """Extract HTTP status code from gateway exception."""
     return getattr(getattr(exc, "response", None), "status_code", None)
@@ -2298,21 +2319,31 @@ def describe_image_bytes(image_bytes, mime_type, context):
     bucket = _visual_usage_bucket(context)
     max_attempts = max(1, min(int(conversion.get("visual_max_attempts") or DEFAULT_VISUAL_MAX_ATTEMPTS), DEFAULT_VISUAL_MAX_ATTEMPTS))
     for attempt in range(max_attempts):
-        bucket["raw_attempts"] += 1
+        with _conversion_cost_lock(context):
+            bucket["raw_attempts"] += 1
         try:
             result = describe_image_result(image_bytes, image_prompt(context), mime_type, model_ref=model_ref, ai_gateway_url=gateway_url, token=token, run_uuid=context.get("run_uuid"), tls_skip_verify=context.get("tls_skip_verify", False), tls_ca_file=context.get("tls_ca_file"), http_client=context.get("gateway_http_client"))
-            bucket["successful_requests"] += 1; bucket["billable_model_calls"] += 1
             usage = result.get("usage") or {}
-            for key in ("prompt_tokens", "completion_tokens", "total_tokens"): bucket[key] += int(usage.get(key) or 0)
+            with _conversion_cost_lock(context):
+                bucket["successful_requests"] += 1
+                bucket["billable_model_calls"] += 1
+                for key in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                ):
+                    bucket[key] += int(usage.get(key) or 0)
             _check_runtime_cancelled(context); _touch_runtime_activity(context)
             return result.get("content") or "", usage
         except Exception as exc:
-            bucket["failed_requests"] += 1
+            with _conversion_cost_lock(context):
+                bucket["failed_requests"] += 1
             code = _visual_status_code(exc); message = str(exc)
             if code == 413 or "413" in message: raise RuntimeError("VISUAL_PAYLOAD_TOO_LARGE") from exc
             if code != 504 and "504" not in message: raise
             if attempt + 1 >= max_attempts: raise RuntimeError("VISUAL_UPSTREAM_TIMEOUT") from exc
-            bucket["retry_attempts"] += 1
+            with _conversion_cost_lock(context):
+                bucket["retry_attempts"] += 1
             time.sleep(min(DEFAULT_VISUAL_RETRY_BASE_DELAY * (2 ** attempt), DEFAULT_VISUAL_RETRY_MAX_DELAY))
     raise RuntimeError("VISUAL_UPSTREAM_TIMEOUT")
 
@@ -2569,6 +2600,50 @@ def write_meta(target, path, item, context, conversion):
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def ensure_source_metadata(target, path, context, item=None):
+    """Record source attributes so every workspace file is tracked.
+
+    Conversion writes a sidecar only for the files a converter handles.
+    This fills the gap for the rest (unsupported types, unextracted
+    archives) so change detection covers the whole workspace: the stored
+    content hash marks whether the file changed since the last run.
+    """
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    previous = read_json(sidecar_path(path) / "meta.json")
+    source = previous.get("source") or {}
+    mtime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime))
+    if (
+        previous.get("schema_version")
+        and source.get("sha256")
+        and str(source.get("size")) == str(stat.st_size)
+        and source.get("mtime") == mtime
+    ):
+        return False
+
+    digest = source_sha256(path)
+    if source.get("sha256") == digest:
+        return False
+    write_meta(
+        target,
+        path,
+        item or {},
+        context,
+        {
+            "status": "not_converted",
+            "error": "",
+            "fingerprint": "",
+            "stats": {},
+            "attempts": 0,
+            "source_sha256": digest,
+        },
+    )
+    return True
 
 
 def read_json(path):

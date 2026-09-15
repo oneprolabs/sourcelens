@@ -430,6 +430,36 @@
           <div v-if="!booted" class="thread-loading">
             <BaseLoading />
           </div>
+          <div
+            v-else-if="
+              isAnonymous &&
+              (hasAssistant || assistantError === 'lens.chat.assistantNotFound')
+            "
+            class="thread-loading"
+          >
+            <div class="max-w-md px-6 py-12 text-center" role="status">
+              <h1
+                v-if="hasAssistant"
+                class="text-2xl font-semibold text-ink-900"
+              >
+                {{ assistantName }}
+              </h1>
+              <p v-if="assistantDescription" class="mt-3 text-sm text-ink-500">
+                {{ assistantDescription }}
+              </p>
+              <p class="mt-6 text-base text-ink-500">
+                {{ t('lens.chat.loginRequired') }}
+              </p>
+              <BaseButton class="mt-4" @click="requireLogin">
+                {{ t('auth.login') }}
+              </BaseButton>
+            </div>
+          </div>
+          <div v-else-if="assistantError" class="thread-loading">
+            <p class="max-w-md px-6 text-center text-ink-500" role="alert">
+              {{ t(assistantError) }}
+            </p>
+          </div>
           <div v-else-if="!hasAssistant" class="thread-loading">
             <AssistantEmptyState :variant="emptyVariant" />
           </div>
@@ -736,40 +766,13 @@
 
                 <div
                   v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(message._runtimeState).kind
-                    )
+                    runtimeOutcomeNotice(message._runtimeState).kind ===
+                    'blocked'
                   "
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(message._runtimeState).kind ===
-                    'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : t('lens.chat.runtime.outcomePartial')
-                  }}
-                  <span
-                    v-if="
-                      message._runtimeState?.terminationDetail?.continuation_status ===
-                      'fallback_new_run'
-                    "
-                    class="runtime-fallback-reason"
-                  >
-                    {{ t('lens.chat.runtime.continuationFallback') }}
-                  </span>
-                  <button
-                    v-if="
-                      runtimeOutcomeNotice(message._runtimeState).kind ===
-                        'partial' &&
-                      canRetryLastQuestion(message)
-                    "
-                    type="button"
-                    class="retry-hint-btn"
-                    @click="retryLastQuestion(message)"
-                  >
-                    {{ t('lens.chat.retryAction') }}
-                  </button>
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1517,19 +1520,11 @@
                 </div>
 
                 <div
-                  v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(runtimeState).kind
-                    )
-                  "
+                  v-if="runtimeOutcomeNotice(runtimeState).kind === 'blocked'"
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(runtimeState).kind === 'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : t('lens.chat.runtime.outcomePartial')
-                  }}
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1915,6 +1910,7 @@ import {
   isPreviewable
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
+import { extractErrorMessage } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
@@ -2023,7 +2019,11 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
-import { readRecentChat, saveRecentChat, pickRecentSession } from '@/utils/recentChat'
+import {
+  readRecentChat,
+  saveRecentChat,
+  pickRecentSession
+} from '@/utils/recentChat'
 
 const route = useRoute()
 const router = useRouter()
@@ -2129,6 +2129,7 @@ const streamTextBuffer = createStreamTextBuffer({
 })
 
 const publicAssistant = ref(null)
+const assistantError = ref('')
 const showLoginModal = ref(false)
 const shareOpen = ref(false)
 const shareRunUuid = ref('')
@@ -2333,14 +2334,16 @@ function setSessionSubmitting(sessionUuid, submitting) {
 const hasAssistant = computed(() =>
   isAnonymous.value
     ? !!publicAssistant.value
-    : isSmartCollaborationConversation.value || !!selectedAssistantUuid.value
+    : isSmartCollaborationConversation.value || !!selectedAssistant.value
 )
 
 const canCompose = computed(
   () =>
+    booted.value &&
+    !isAnonymous.value &&
+    !assistantError.value &&
     hasAssistant.value &&
-    (isAnonymous.value ||
-      selectedSession.value?.status === 'active' ||
+    (selectedSession.value?.status === 'active' ||
       (!selectedSessionUuid.value && !showArchivedSessions.value))
 )
 
@@ -3283,6 +3286,9 @@ async function bootstrap() {
   showArchivedSessions.value = false
   resetStreamState()
   booted.value = false
+  assistantError.value = ''
+  publicAssistant.value = null
+  selectedAssistantUuid.value = ''
   sessionsLoading.value = false
   sessionsError.value = false
   messageLoading.value = false
@@ -3293,9 +3299,11 @@ async function bootstrap() {
   if (isAnonymous.value) {
     try {
       publicAssistant.value = await getPublicAssistant(route.params.slug)
-    } catch {
-      publicAssistant.value = null
-      showError(t('lens.chat.assistantNotFound'))
+    } catch (error) {
+      assistantError.value =
+        error?.response?.status === 404
+          ? 'lens.chat.assistantNotFound'
+          : 'lens.chat.loadFailed'
     }
     booted.value = true
     return
@@ -3316,20 +3324,14 @@ async function bootstrap() {
       return
     }
 
-    const current =
-      assistants.value.find((item) => item.slug === route.params.slug) ||
-      assistants.value[0]
+    const current = assistants.value.find(
+      (item) => item.slug === route.params.slug
+    )
 
     if (!current) {
-      // No assistants exist yet — surface the create-first-assistant guide
-      // (admin) or a no-assistant notice (end-user) instead of a spinner.
+      // Keep the requested link when the user's access list excludes it.
+      assistantError.value = 'lens.chat.assistantUnavailable'
       booted.value = true
-      return
-    }
-
-    if (current.slug !== route.params.slug) {
-      // Re-bootstraps under the canonical slug; keep showing the loader.
-      await router.replace(`/lens/assistants/${current.slug}/chat`)
       return
     }
 
@@ -3344,7 +3346,7 @@ async function bootstrap() {
     const getScrollContainer = () => scrollRef.value
     await scrollConversationToBottomAfterRender(getScrollContainer, nextTick)
   } catch {
-    showError(t('lens.chat.loadFailed'))
+    assistantError.value = 'lens.chat.loadFailed'
     booted.value = true
   }
 }
@@ -3360,11 +3362,8 @@ function openMyShares() {
   }
 }
 
-async function onLoginSuccess() {
+function onLoginSuccess() {
   showLoginModal.value = false
-  // Load the now-authenticated user's assistants and sessions so the
-  // composer becomes usable without a full page reload.
-  await bootstrap()
 }
 
 async function loadMyShareState() {
@@ -3409,10 +3408,14 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
-  const rememberedUuid = useRouteSession && !isSmartCollaborationRoute.value
-    ? pickRecentSession(sessions.value, readRecentChat(userStore.user),
-        selectedAssistant.value?.slug)
-    : ''
+  const rememberedUuid =
+    useRouteSession && !isSmartCollaborationRoute.value
+      ? pickRecentSession(
+          sessions.value,
+          readRecentChat(userStore.user),
+          selectedAssistant.value?.slug
+        )
+      : ''
   let targetUuid = requestedUuid || rememberedUuid || sessions.value[0]?.uuid
   if (
     requestedUuid &&
@@ -3464,6 +3467,14 @@ async function selectSearchedSession(session) {
   await selectSession(session)
 }
 
+function sessionCreateErrorMessage(error) {
+  const message = extractErrorMessage(error, '')
+  if (message.includes('SMART_COLLABORATION_MODEL_NOT_CONFIGURED')) {
+    return t('lens.chat.errorSmartCollaborationModelNotConfigured')
+  }
+  return t('lens.chat.sessionCreateFailed')
+}
+
 async function createNewSession(notify = true, allowedAssistantUuids = []) {
   if (!selectedAssistant.value && !isSmartCollaborationConversation.value) {
     return null
@@ -3486,8 +3497,8 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
           }
         : { assistant_uuid: selectedAssistant.value.uuid, title: '' }
     )
-  } catch {
-    showError(t('lens.chat.sessionCreateFailed'))
+  } catch (error) {
+    showError(sessionCreateErrorMessage(error))
     return null
   }
 
@@ -4743,6 +4754,7 @@ function retryLastQuestion(message = null) {
 }
 
 function canRetryLastQuestion(message = null) {
+  if (activeAssistant.value?.agent_rounds === 'flash') return false
   return retryableUserMessage(messages.value, message) !== null
 }
 
@@ -4821,6 +4833,14 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => userStore.isAuthenticated,
+  (isAuthenticated, wasAuthenticated) => {
+    if (isAuthenticated === wasAuthenticated) return
+    bootstrap()
+  }
+)
+
 onMounted(async () => {
   window.addEventListener('storage', handleCompletionStorage)
   window.addEventListener('focus', handleCompletionVisibility)
@@ -4832,10 +4852,10 @@ onMounted(async () => {
   if (window.innerWidth < 1024) {
     sidebarOpen.value = false
   }
-  // Public route: hydrate a stored user (if any), then bootstrap once.
+  // Hydration changes isAuthenticated, which triggers the authentication
+  // watcher and bootstraps the page once the user state is ready.
   if (!userStore.user && localStorage.getItem('access_token')) {
     await userStore.checkAuthStatus()
-    bootstrap()
   }
 })
 

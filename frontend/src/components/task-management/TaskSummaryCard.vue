@@ -72,6 +72,16 @@ const props = defineProps({
 
 const { t } = useI18n()
 
+const SYNC_ERROR_KEYS = {
+  LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED: 'datasourceResourceLimit',
+  LENS_SOURCE_SYNC_TIMEOUT: 'datasourceSyncTimeout',
+  LENS_SOURCE_CREDENTIAL_INVALID: 'datasourceCredentialInvalid',
+  LENS_SOURCE_CONFIG_INVALID: 'datasourceConfigInvalid',
+  LENS_SOURCE_TARGET_PATH_INVALID: 'datasourceTargetPathInvalid',
+  LENS_SOURCE_TARGET_PATH_REQUIRED: 'datasourceTargetPathRequired',
+  LENS_SOURCE_GIT_LAYOUT_MIGRATION_REQUIRED: 'datasourceGitLayoutMigration'
+}
+
 const STATUS_MAP = {
   PENDING: 'pending',
   STARTED: 'processing',
@@ -111,7 +121,10 @@ const progressText = computed(() => {
   return msg || step || ''
 })
 const errorText = computed(() => {
-  return props.task?.error || readField(props.task, 'metadata.error') || ''
+  const raw = props.task?.error || readField(props.task, 'metadata.error') || ''
+  const code = String(raw).split(':', 1)[0].trim().toUpperCase()
+  const key = SYNC_ERROR_KEYS[code]
+  return key ? t(`lensNodeErrors.${key}`) : raw
 })
 const itemResults = computed(() => {
   const steps = readField(props.task, 'metadata.steps')

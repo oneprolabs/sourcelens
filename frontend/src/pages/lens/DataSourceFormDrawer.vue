@@ -3,7 +3,7 @@
     :show="show"
     :title="drawerTitle"
     :subtitle="drawerSubtitle"
-    width="6xl"
+    width="5xl"
     @close="$emit('close')"
   >
     <div class="datasource-wizard-layout">
@@ -21,7 +21,7 @@
                 'datasource-wizard-step-complete': i + 1 < wizardStep
               }"
               :aria-current="i + 1 === wizardStep ? 'step' : undefined"
-              :disabled="i + 1 > wizardStep"
+              :disabled="mode !== 'edit' && i + 1 > wizardStep"
               @click="goToWizardStep(i + 1)"
             >
               <span class="datasource-wizard-number">
@@ -56,745 +56,774 @@
           </span>
         </header>
 
-    <div v-if="activeStepKey === 'basic'" class="space-y-5">
-      <FormRow :label="t('lensAdmin.fields.name')" required>
-        <input v-model="form.name" class="form-input" required />
-      </FormRow>
-      <FormRow :label="t('lensAdmin.fields.type')" required>
-        <BaseSelect v-model="form.source_type" @change="$emit('type-change')">
-          <option
-            v-for="type in sourceTypes"
-            :key="type.value"
-            :value="type.value"
-          >
-            {{ type.label }}
-          </option>
-        </BaseSelect>
-        <p class="mt-1 text-xs text-ink-500">
-          {{ selectedSourceTypeDescription }}
-        </p>
-      </FormRow>
-    </div>
-
-    <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
-      <template v-if="isPluginSourceType(form.source_type)">
-        <FormRow :label="t('lensAdmin.pages.connections.label')" required>
-          <div
-            class="grid gap-3 sm:grid-cols-2"
-            role="group"
-            :aria-label="t('lensAdmin.pages.connections.label')"
-            :aria-invalid="connectionFieldInvalid"
-          >
-            <label
-              v-for="connection in pluginConnections"
-              :key="connection.uuid"
-              class="connection-card"
-              :class="{
-                'connection-card-selected':
-                  form.connection_uuid === connection.uuid,
-                'border-danger-500': connectionFieldInvalid
-              }"
-            >
-              <input
-                type="radio"
-                name="datasource-connection"
-                class="h-4 w-4 shrink-0 border-line text-brand-600 focus:ring-brand-500"
-                :value="connection.uuid"
-                :checked="form.connection_uuid === connection.uuid"
-                @change="handlePluginConnectionChange(connection.uuid)"
-              />
-              <PluginIcon
-                :plugin-key="connection.plugin_key"
-                :label="selectedSourceTypeLabel"
-              />
-              <span class="min-w-0">
-                <span class="block break-words text-sm font-medium text-ink-900">
-                  {{ connection.name }}
-                </span>
-                <span class="mt-0.5 block text-xs text-ink-500">
-                  {{ selectedSourceTypeLabel }}
-                </span>
-              </span>
-            </label>
-          </div>
-          <p v-if="connectionFieldInvalid" class="mt-1 text-xs text-danger-600">
-            {{ t('lensAdmin.datasourceWizard.requiredField') }}
-          </p>
-          <p class="mt-1 text-xs text-ink-500">
-            {{ t('lensAdmin.datasourceWizard.createConnectionHint') }}
-            <a
-              class="font-medium text-brand-600 hover:text-brand-700"
-              href="/management/lens/resources/connections"
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              {{ t('lensAdmin.datasourceWizard.createConnectionLink') }}
-            </a>
-          </p>
-        </FormRow>
-        <div
-          v-if="testingConnection && form.plugin_key !== 'feishu'"
-          class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
-        >
-          <LoaderCircleIcon class="h-4 w-4 animate-spin" />
-          <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
-        </div>
-        <ManifestSchemaForm
-          v-if="datasourceSchema"
-          :model-value="config"
-          :resources="pluginResources"
-          :loading-resource="loadingResourceOptions"
-          :schema="datasourceSchema"
-          :add-array-item-label="t('common.add')"
-          :remove-array-item-label="t('common.delete')"
-          :empty-resource-text="t('lensAdmin.pluginForm.noResourcesLoaded')"
-          :tree-search-placeholder="t('lensAdmin.pluginForm.searchResources')"
-          :resource-search-empty-text="
-            t('lensAdmin.pluginForm.noMatchingResources')
-          "
-          :resource-count-label="t('lensAdmin.pluginForm.resources')"
-          :selected-count-label="t('lensAdmin.pluginForm.selected')"
-          :invalid-fields="missingDatasourceFields"
-          :required-field-error="t('lensAdmin.datasourceWizard.requiredField')"
-          :private-resource-label="t('lensAdmin.pluginForm.private')"
-          :select-option-label="t('lensAdmin.pluginForm.selectOption')"
-          :loading-options-label="t('lensAdmin.pluginForm.loadingOptions')"
-          @resource-options-request="$emit('request-resource-options', $event)"
-          @update:model-value="updatePluginConfig"
-        >
-          <template #field-suffix="{ field, index }">
-            <span
-              v-if="form.plugin_key === 'feishu' && field.key === 'resource_urls' && index !== undefined"
-              class="flex h-9 w-9 shrink-0 items-center justify-center"
-              :class="{
-                'text-primary-600': feishuResourceStatus(index) === 'checking',
-                'text-success-600': feishuResourceStatus(index) === 'success',
-                'text-danger-600': feishuResourceStatus(index) === 'failed'
-              }"
-              :title="feishuResourceResult(index)?.message"
-              role="status"
-              :aria-label="feishuResourceResult(index)?.message"
-            >
-              <LoaderCircleIcon
-                v-if="feishuResourceStatus(index) === 'checking'"
-                class="h-3.5 w-3.5 animate-spin"
-              />
-              <CheckCircleIcon
-                v-else-if="feishuResourceStatus(index) === 'success'"
-                class="h-3.5 w-3.5"
-              />
-              <XCircleIcon
-                v-else-if="feishuResourceStatus(index) === 'failed'"
-                class="h-3.5 w-3.5"
-              />
-            </span>
-          </template>
-        </ManifestSchemaForm>
-      </template>
-      <template v-else-if="isGitSourceType(form.source_type)">
-        <FormRow :label="t('lensAdmin.fields.credential')" required>
-          <div class="flex flex-col gap-2">
-            <div class="flex gap-2">
-              <BaseSelect
-                :model-value="form.credential_uuid"
-                @update:model-value="handleCredentialChange"
-              >
-                <option value="">
-                  {{ t('lensAdmin.datasourceWizard.selectCredential') }}
-                </option>
-                <option
-                  v-for="credential in filteredCredentials"
-                  :key="credential.uuid"
-                  :value="credential.uuid"
-                >
-                  {{ credentialOptionLabel(credential) }}
-                </option>
-              </BaseSelect>
-              <BaseButton
-                class="shrink-0"
-                size="sm"
-                variant="outline"
-                :disabled="refreshingCredentials"
-                :title="t('common.refresh')"
-                @click="$emit('refresh-credentials')"
-              >
-                <RefreshCwIcon
-                  class="h-4 w-4"
-                  :class="{ 'animate-spin': refreshingCredentials }"
-                />
-                <span class="sr-only">{{ t('common.refresh') }}</span>
-              </BaseButton>
-            </div>
-          </div>
-        </FormRow>
-        <div
-          v-if="selectedCredential"
-          class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="font-medium text-ink-900">
-              {{ selectedCredential.name }}
-            </span>
-            <span class="rounded border border-line bg-surface px-1.5 py-0.5">
-              {{ credentialProviderText(selectedCredential) }}
-            </span>
-            <span
-              class="rounded border px-1.5 py-0.5"
-              :class="credentialValidationClass(selectedCredential)"
-            >
-              {{ credentialValidationText(selectedCredential) }}
-            </span>
-          </div>
-          <div class="break-all font-mono">
-            {{ credentialScopeText(selectedCredential) }}
-          </div>
-        </div>
-        <FormRow
-          v-if="!testingConnection && gitBranchOptions.length"
-          :label="t('lensAdmin.fields.branch')"
-          required
-        >
-          <BaseSelect v-model="config.branch">
-            <option value="">
-              {{ t('lensAdmin.datasourceWizard.branchPlaceholder') }}
-            </option>
-            <option
-              v-for="branch in gitBranchOptions"
-              :key="branch"
-              :value="branch"
-            >
-              {{ branch }}
-            </option>
-          </BaseSelect>
-        </FormRow>
-      </template>
-      <template v-else-if="isManagedWorkspace">
-        <div
-          class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-800"
-        >
-          {{ t('lensAdmin.datasourceWizard.managedWorkspaceDesc') }}
-        </div>
-      </template>
-      <template v-else>
-        <FormRow :label="t('lensAdmin.fields.credential')" required>
-          <div class="flex flex-col gap-2">
-            <div class="flex gap-2">
-              <BaseSelect
-                :model-value="form.credential_uuid"
-                @update:model-value="handleCredentialChange"
-              >
-                <option value="">
-                  {{ t('lensAdmin.datasourceWizard.selectFeishuCredential') }}
-                </option>
-                <option
-                  v-for="credential in filteredCredentials"
-                  :key="credential.uuid"
-                  :value="credential.uuid"
-                >
-                  {{ credentialOptionLabel(credential) }}
-                </option>
-              </BaseSelect>
-              <BaseButton
-                class="shrink-0"
-                size="sm"
-                variant="outline"
-                :disabled="refreshingCredentials"
-                :title="t('common.refresh')"
-                @click="$emit('refresh-credentials')"
-              >
-                <RefreshCwIcon
-                  class="h-4 w-4"
-                  :class="{ 'animate-spin': refreshingCredentials }"
-                />
-                <span class="sr-only">{{ t('common.refresh') }}</span>
-              </BaseButton>
-            </div>
-          </div>
-        </FormRow>
-        <div
-          v-if="selectedCredential"
-          class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="font-medium text-ink-900">
-              {{ selectedCredential.name }}
-            </span>
-            <span class="rounded border border-line bg-surface px-1.5 py-0.5">
-              {{ credentialProviderText(selectedCredential) }}
-            </span>
-            <span
-              class="rounded border px-1.5 py-0.5"
-              :class="credentialValidationClass(selectedCredential)"
-            >
-              {{ credentialValidationText(selectedCredential) }}
-            </span>
-          </div>
-          <div class="break-all font-mono">
-            {{ credentialScopeText(selectedCredential) }}
-          </div>
-        </div>
-        <div
-          v-if="testingConnection"
-          class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
-        >
-          <LoaderCircleIcon class="h-4 w-4 animate-spin" />
-          <span>{{ t('lensAdmin.datasourceWizard.loadingFeishuScope') }}</span>
-        </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
-          <FormRow :label="t('lensAdmin.fields.recursive')">
-            <label class="inline-flex items-center gap-2 text-sm text-ink-600">
-              <input
-                v-model="config.recursive"
-                type="checkbox"
-                class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-              />
-              {{ t('lensAdmin.datasourceWizard.recursiveHint') }}
-            </label>
+        <div v-if="activeStepKey === 'basic'" class="space-y-5">
+          <FormRow :label="t('lensAdmin.fields.name')" required>
+            <input v-model="form.name" class="form-input" required />
           </FormRow>
-          <FormRow
-            v-if="config.recursive"
-            :label="t('lensAdmin.fields.maxDepth')"
-          >
-            <input
-              v-model.number="config.max_depth"
-              class="form-input"
-              min="1"
-              type="number"
-            />
-          </FormRow>
-        </div>
-      </template>
-      <div
-        v-if="
-          !isPluginSourceType(form.source_type) &&
-          isGitSourceType(form.source_type) &&
-          testingConnection
-        "
-        class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
-      >
-        <LoaderCircleIcon class="h-4 w-4 animate-spin" />
-        <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
-      </div>
-      <div
-        v-if="
-          !isPluginSourceType(form.source_type) &&
-          isGitSourceType(form.source_type) &&
-          !testingConnection &&
-          gitBranchOptions.length
-        "
-        class="text-xs text-ink-500"
-      >
-        {{
-          t('lensAdmin.datasourceWizard.branchCount', {
-            count: gitBranchOptions.length
-          })
-        }}
-      </div>
-      <div class="flex items-center gap-2">
-        <span
-          v-if="
-            !isPluginSourceType(form.source_type) &&
-            isGitSourceType(form.source_type) &&
-            !testingConnection &&
-            !gitBranchOptions.length &&
-            !gitOrganizationRepositories.length
-          "
-          class="text-xs text-ink-500"
-        >
-          {{ t('lensAdmin.datasourceWizard.branchTestHint') }}
-        </span>
-      </div>
-      <section
-        v-if="!testingConnection && gitOrganizationRepositories.length"
-        class="space-y-3 rounded-md border border-line bg-surface p-3"
-      >
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceWizard.gitOrganizationReposTitle') }}
-            </h3>
+          <FormRow :label="t('lensAdmin.fields.type')" required>
+            <BaseSelect
+              v-model="form.source_type"
+              @change="$emit('type-change')"
+            >
+              <option
+                v-for="type in sourceTypes"
+                :key="type.value"
+                :value="type.value"
+              >
+                {{ type.label }}
+              </option>
+            </BaseSelect>
             <p class="mt-1 text-xs text-ink-500">
+              {{ selectedSourceTypeDescription }}
+            </p>
+          </FormRow>
+        </div>
+
+        <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
+          <template
+            v-if="isPluginSourceType(form.source_type) && !isManagedWorkspace"
+          >
+            <FormRow :label="t('lensAdmin.pages.connections.label')" required>
+              <div
+                class="grid gap-3 sm:grid-cols-2"
+                role="group"
+                :aria-label="t('lensAdmin.pages.connections.label')"
+                :aria-invalid="connectionFieldInvalid"
+              >
+                <label
+                  v-for="connection in pluginConnections"
+                  :key="connection.uuid"
+                  class="connection-card"
+                  :class="{
+                    'connection-card-selected':
+                      form.connection_uuid === connection.uuid,
+                    'border-danger-500': connectionFieldInvalid
+                  }"
+                >
+                  <input
+                    type="radio"
+                    name="datasource-connection"
+                    class="h-4 w-4 shrink-0 border-line text-brand-600 focus:ring-brand-500"
+                    :value="connection.uuid"
+                    :checked="form.connection_uuid === connection.uuid"
+                    @change="handlePluginConnectionChange(connection.uuid)"
+                  />
+                  <PluginIcon
+                    :plugin-key="connection.plugin_key"
+                    :label="selectedSourceTypeLabel"
+                  />
+                  <span class="min-w-0">
+                    <span
+                      class="block break-words text-sm font-medium text-ink-900"
+                    >
+                      {{ connection.name }}
+                    </span>
+                    <span class="mt-0.5 block text-xs text-ink-500">
+                      {{ selectedSourceTypeLabel }}
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <p
+                v-if="connectionFieldInvalid"
+                class="mt-1 text-xs text-danger-600"
+              >
+                {{ t('lensAdmin.datasourceWizard.requiredField') }}
+              </p>
+              <p class="mt-1 text-xs text-ink-500">
+                {{ t('lensAdmin.datasourceWizard.createConnectionHint') }}
+                <a
+                  class="font-medium text-brand-600 hover:text-brand-700"
+                  href="/management/lens/resources/connections"
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  {{ t('lensAdmin.datasourceWizard.createConnectionLink') }}
+                </a>
+              </p>
+            </FormRow>
+            <div
+              v-if="testingConnection && form.plugin_key !== 'feishu'"
+              class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
+            >
+              <LoaderCircleIcon class="h-4 w-4 animate-spin" />
+              <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
+            </div>
+            <ManifestSchemaForm
+              v-if="datasourceSchema"
+              :model-value="config"
+              :resources="pluginResources"
+              :loading-resource="loadingResourceOptions"
+              :schema="datasourceSchema"
+              :add-array-item-label="t('common.add')"
+              :remove-array-item-label="t('common.delete')"
+              :empty-resource-text="t('lensAdmin.pluginForm.noResourcesLoaded')"
+              :tree-search-placeholder="
+                t('lensAdmin.pluginForm.searchResources')
+              "
+              :resource-search-empty-text="
+                t('lensAdmin.pluginForm.noMatchingResources')
+              "
+              :resource-count-label="t('lensAdmin.pluginForm.resources')"
+              :selected-count-label="t('lensAdmin.pluginForm.selected')"
+              :invalid-fields="missingDatasourceFields"
+              :required-field-error="
+                t('lensAdmin.datasourceWizard.requiredField')
+              "
+              :private-resource-label="t('lensAdmin.pluginForm.private')"
+              :select-option-label="t('lensAdmin.pluginForm.selectOption')"
+              :loading-options-label="t('lensAdmin.pluginForm.loadingOptions')"
+              @resource-options-request="
+                $emit('request-resource-options', $event)
+              "
+              @update:model-value="updatePluginConfig"
+            >
+              <template #field-suffix="{ field, index }">
+                <span
+                  v-if="
+                    form.plugin_key === 'feishu' &&
+                    field.key === 'resource_urls' &&
+                    index !== undefined
+                  "
+                  class="flex h-9 w-9 shrink-0 items-center justify-center"
+                  :class="{
+                    'text-primary-600':
+                      feishuResourceStatus(index) === 'checking',
+                    'text-success-600':
+                      feishuResourceStatus(index) === 'success',
+                    'text-danger-600': feishuResourceStatus(index) === 'failed'
+                  }"
+                  :title="feishuResourceResult(index)?.message"
+                  role="status"
+                  :aria-label="feishuResourceResult(index)?.message"
+                >
+                  <LoaderCircleIcon
+                    v-if="feishuResourceStatus(index) === 'checking'"
+                    class="h-3.5 w-3.5 animate-spin"
+                  />
+                  <CheckCircleIcon
+                    v-else-if="feishuResourceStatus(index) === 'success'"
+                    class="h-3.5 w-3.5"
+                  />
+                  <XCircleIcon
+                    v-else-if="feishuResourceStatus(index) === 'failed'"
+                    class="h-3.5 w-3.5"
+                  />
+                </span>
+              </template>
+            </ManifestSchemaForm>
+          </template>
+          <template v-else-if="isGitSourceType(form.source_type)">
+            <FormRow :label="t('lensAdmin.fields.credential')" required>
+              <div class="flex flex-col gap-2">
+                <div class="flex gap-2">
+                  <BaseSelect
+                    :model-value="form.credential_uuid"
+                    @update:model-value="handleCredentialChange"
+                  >
+                    <option value="">
+                      {{ t('lensAdmin.datasourceWizard.selectCredential') }}
+                    </option>
+                    <option
+                      v-for="credential in filteredCredentials"
+                      :key="credential.uuid"
+                      :value="credential.uuid"
+                    >
+                      {{ credentialOptionLabel(credential) }}
+                    </option>
+                  </BaseSelect>
+                  <BaseButton
+                    class="shrink-0"
+                    size="sm"
+                    variant="outline"
+                    :disabled="refreshingCredentials"
+                    :title="t('common.refresh')"
+                    @click="$emit('refresh-credentials')"
+                  >
+                    <RefreshCwIcon
+                      class="h-4 w-4"
+                      :class="{ 'animate-spin': refreshingCredentials }"
+                    />
+                    <span class="sr-only">{{ t('common.refresh') }}</span>
+                  </BaseButton>
+                </div>
+              </div>
+            </FormRow>
+            <div
+              v-if="selectedCredential"
+              class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium text-ink-900">
+                  {{ selectedCredential.name }}
+                </span>
+                <span
+                  class="rounded border border-line bg-surface px-1.5 py-0.5"
+                >
+                  {{ credentialProviderText(selectedCredential) }}
+                </span>
+                <span
+                  class="rounded border px-1.5 py-0.5"
+                  :class="credentialValidationClass(selectedCredential)"
+                >
+                  {{ credentialValidationText(selectedCredential) }}
+                </span>
+              </div>
+              <div class="break-all font-mono">
+                {{ credentialScopeText(selectedCredential) }}
+              </div>
+            </div>
+            <FormRow
+              v-if="!testingConnection && gitBranchOptions.length"
+              :label="t('lensAdmin.fields.branch')"
+              required
+            >
+              <BaseSelect v-model="config.branch">
+                <option value="">
+                  {{ t('lensAdmin.datasourceWizard.branchPlaceholder') }}
+                </option>
+                <option
+                  v-for="branch in gitBranchOptions"
+                  :key="branch"
+                  :value="branch"
+                >
+                  {{ branch }}
+                </option>
+              </BaseSelect>
+            </FormRow>
+          </template>
+          <template v-else-if="isManagedWorkspace">
+            <FormRow :label="t('lensAdmin.fields.lensnode')" required>
+              <BaseSelect v-model="form.lensnode_uuid">
+                <option value="">
+                  {{ t('lensAdmin.placeholders.selectLensNode') }}
+                </option>
+                <option
+                  v-for="node in onlineLensNodes"
+                  :key="node.uuid"
+                  :value="node.uuid"
+                >
+                  {{ node.name }} · {{ node.workspace_path || '/workspace' }}
+                </option>
+              </BaseSelect>
+              <p class="mt-1 text-xs text-ink-500">
+                {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
+              </p>
+            </FormRow>
+            <div v-if="isFileUpload" class="file-upload-panel">
+              <div class="file-upload-panel-heading">
+                <div class="file-upload-icon">
+                  <UploadCloudIcon class="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-ink-900">
+                    {{ t('lensAdmin.datasourceWizard.fileUploadPanelTitle') }}
+                  </h4>
+                  <p class="mt-1 text-xs leading-5 text-ink-500">
+                    {{ t('lensAdmin.datasourceWizard.fileUploadDesc') }}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="file-upload-dropzone"
+                :class="{ 'file-upload-dropzone-active': fileUploadDragging }"
+                @click="fileUploadInput?.click()"
+                @dragover.prevent="fileUploadDragging = true"
+                @dragleave.prevent="fileUploadDragging = false"
+                @drop.prevent="handleFileUploadDrop"
+              >
+                <UploadCloudIcon
+                  class="h-8 w-8 text-brand-500"
+                  aria-hidden="true"
+                />
+                <span class="text-sm font-medium text-ink-800">
+                  {{ t('lensAdmin.actions.uploadFile') }}
+                </span>
+                <span class="text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.fileUploadHint') }}
+                </span>
+              </button>
+              <input
+                ref="fileUploadInput"
+                type="file"
+                class="hidden"
+                multiple
+                :accept="DATASOURCE_UPLOAD_ACCEPT"
+                @change="handleFileUploadChange"
+              />
+              <ul
+                v-if="uploadFiles.length"
+                class="divide-y divide-line rounded-md border border-line"
+              >
+                <li
+                  v-for="file in uploadFiles"
+                  :key="`${file.name}:${file.size}:${file.lastModified}`"
+                  class="grid grid-cols-[minmax(0,1fr)_5rem_2rem] items-center gap-3 px-3 py-2"
+                >
+                  <span class="min-w-0 truncate text-sm text-ink-800">
+                    {{ file.name }}
+                  </span>
+                  <span class="shrink-0 text-right text-xs text-ink-500">
+                    {{ formatUploadFileSize(file.size) }}
+                  </span>
+                  <button
+                    type="button"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-400 hover:bg-danger-50 hover:text-danger-600 focus:outline-none focus:ring-2 focus:ring-danger-500/30"
+                    :aria-label="
+                      t('lensAdmin.upload.remove', { name: file.name })
+                    "
+                    :title="t('common.delete')"
+                    @click="removeUploadFile(file)"
+                  >
+                    <XIcon class="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <div
+              v-else
+              class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-800"
+            >
+              {{ t('lensAdmin.datasourceWizard.managedWorkspaceDesc') }}
+            </div>
+            <p v-if="!onlineLensNodes.length" class="text-xs text-warning-700">
+              {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
+            </p>
+          </template>
+          <template v-else>
+            <FormRow :label="t('lensAdmin.fields.credential')" required>
+              <div class="flex flex-col gap-2">
+                <div class="flex gap-2">
+                  <BaseSelect
+                    :model-value="form.credential_uuid"
+                    @update:model-value="handleCredentialChange"
+                  >
+                    <option value="">
+                      {{
+                        t('lensAdmin.datasourceWizard.selectFeishuCredential')
+                      }}
+                    </option>
+                    <option
+                      v-for="credential in filteredCredentials"
+                      :key="credential.uuid"
+                      :value="credential.uuid"
+                    >
+                      {{ credentialOptionLabel(credential) }}
+                    </option>
+                  </BaseSelect>
+                  <BaseButton
+                    class="shrink-0"
+                    size="sm"
+                    variant="outline"
+                    :disabled="refreshingCredentials"
+                    :title="t('common.refresh')"
+                    @click="$emit('refresh-credentials')"
+                  >
+                    <RefreshCwIcon
+                      class="h-4 w-4"
+                      :class="{ 'animate-spin': refreshingCredentials }"
+                    />
+                    <span class="sr-only">{{ t('common.refresh') }}</span>
+                  </BaseButton>
+                </div>
+              </div>
+            </FormRow>
+            <div
+              v-if="selectedCredential"
+              class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium text-ink-900">
+                  {{ selectedCredential.name }}
+                </span>
+                <span
+                  class="rounded border border-line bg-surface px-1.5 py-0.5"
+                >
+                  {{ credentialProviderText(selectedCredential) }}
+                </span>
+                <span
+                  class="rounded border px-1.5 py-0.5"
+                  :class="credentialValidationClass(selectedCredential)"
+                >
+                  {{ credentialValidationText(selectedCredential) }}
+                </span>
+              </div>
+              <div class="break-all font-mono">
+                {{ credentialScopeText(selectedCredential) }}
+              </div>
+            </div>
+            <div
+              v-if="testingConnection"
+              class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
+            >
+              <LoaderCircleIcon class="h-4 w-4 animate-spin" />
+              <span>{{
+                t('lensAdmin.datasourceWizard.loadingFeishuScope')
+              }}</span>
+            </div>
+            <div v-else class="grid gap-4 md:grid-cols-2">
+              <FormRow :label="t('lensAdmin.fields.recursive')">
+                <label
+                  class="inline-flex items-center gap-2 text-sm text-ink-600"
+                >
+                  <input
+                    v-model="config.recursive"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                  />
+                  {{ t('lensAdmin.datasourceWizard.recursiveHint') }}
+                </label>
+              </FormRow>
+              <FormRow
+                v-if="config.recursive"
+                :label="t('lensAdmin.fields.maxDepth')"
+              >
+                <input
+                  v-model.number="config.max_depth"
+                  class="form-input"
+                  min="1"
+                  type="number"
+                />
+              </FormRow>
+            </div>
+          </template>
+          <div
+            v-if="
+              !isPluginSourceType(form.source_type) &&
+              isGitSourceType(form.source_type) &&
+              testingConnection
+            "
+            class="flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
+          >
+            <LoaderCircleIcon class="h-4 w-4 animate-spin" />
+            <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
+          </div>
+          <div
+            v-if="
+              !isPluginSourceType(form.source_type) &&
+              isGitSourceType(form.source_type) &&
+              !testingConnection &&
+              gitBranchOptions.length
+            "
+            class="text-xs text-ink-500"
+          >
+            {{
+              t('lensAdmin.datasourceWizard.branchCount', {
+                count: gitBranchOptions.length
+              })
+            }}
+          </div>
+          <div class="flex items-center gap-2">
+            <span
+              v-if="
+                !isPluginSourceType(form.source_type) &&
+                isGitSourceType(form.source_type) &&
+                !testingConnection &&
+                !gitBranchOptions.length &&
+                !gitOrganizationRepositories.length
+              "
+              class="text-xs text-ink-500"
+            >
+              {{ t('lensAdmin.datasourceWizard.branchTestHint') }}
+            </span>
+          </div>
+          <section
+            v-if="!testingConnection && gitOrganizationRepositories.length"
+            class="space-y-3 rounded-md border border-line bg-surface p-3"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{
+                    t('lensAdmin.datasourceWizard.gitOrganizationReposTitle')
+                  }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{
+                    t('lensAdmin.datasourceWizard.gitOrganizationReposHint', {
+                      count: gitOrganizationRepositories.length
+                    })
+                  }}
+                </p>
+              </div>
+              <label
+                class="flex shrink-0 items-center gap-2 text-xs text-ink-600"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                  :checked="allGitOrganizationRepositoriesSelected"
+                  @change="toggleAllGitOrganizationRepositories"
+                />
+                {{ t('common.selectAll') }}
+              </label>
+            </div>
+            <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_220px_auto]">
+              <input
+                v-model="gitRepositorySearch"
+                class="form-input h-9"
+                :placeholder="t('common.search')"
+              />
+              <BaseSelect v-model="gitBulkBranch" size="sm">
+                <option value="">{{ t('lensAdmin.fields.branch') }}</option>
+                <option
+                  v-for="branch in organizationBranchOptions"
+                  :key="branch"
+                  :value="branch"
+                >
+                  {{ branch }}
+                </option>
+              </BaseSelect>
+              <BaseButton
+                size="sm"
+                variant="outline"
+                :disabled="!gitBulkBranch.trim()"
+                @click="applyGitBulkBranch"
+              >
+                {{ t('common.apply') }}
+              </BaseButton>
+            </div>
+            <div class="max-h-72 overflow-y-auto rounded-md border border-line">
+              <div
+                v-for="repo in filteredGitOrganizationRepositories"
+                :key="repo.repo_url"
+                class="grid gap-3 border-b border-line px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,1fr)_180px]"
+              >
+                <label class="flex min-w-0 items-start gap-3">
+                  <input
+                    v-model="repo.selected"
+                    type="checkbox"
+                    class="mt-1 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                  />
+                  <span class="min-w-0">
+                    <span
+                      class="block truncate text-sm font-medium text-ink-900"
+                    >
+                      {{ repo.name || repo.path }}
+                    </span>
+                    <span class="block truncate font-mono text-xs text-ink-500">
+                      {{ repo.repo_url }}
+                    </span>
+                  </span>
+                </label>
+                <BaseSelect
+                  v-model="repo.branch"
+                  size="sm"
+                  :disabled="!repo.selected || !repo.branches?.length"
+                >
+                  <option value="">
+                    {{ t('lensAdmin.datasourceWizard.branchPlaceholder') }}
+                  </option>
+                  <option
+                    v-for="branch in repo.branches || []"
+                    :key="branch"
+                    :value="branch"
+                  >
+                    {{ branch }}
+                  </option>
+                </BaseSelect>
+              </div>
+            </div>
+            <p class="text-xs text-ink-500">
               {{
-                t('lensAdmin.datasourceWizard.gitOrganizationReposHint', {
-                  count: gitOrganizationRepositories.length
+                t('lensAdmin.datasourceWizard.gitOrganizationSelectedHint', {
+                  count: selectedGitOrganizationRepositories.length
                 })
               }}
             </p>
-          </div>
-          <label class="flex shrink-0 items-center gap-2 text-xs text-ink-600">
-            <input
-              type="checkbox"
-              class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-              :checked="allGitOrganizationRepositoriesSelected"
-              @change="toggleAllGitOrganizationRepositories"
-            />
-            {{ t('common.selectAll') }}
-          </label>
-        </div>
-        <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_220px_auto]">
-          <input
-            v-model="gitRepositorySearch"
-            class="form-input h-9"
-            :placeholder="t('common.search')"
-          />
-          <BaseSelect v-model="gitBulkBranch" size="sm">
-            <option value="">{{ t('lensAdmin.fields.branch') }}</option>
-            <option
-              v-for="branch in organizationBranchOptions"
-              :key="branch"
-              :value="branch"
-            >
-              {{ branch }}
-            </option>
-          </BaseSelect>
-          <BaseButton
-            size="sm"
-            variant="outline"
-            :disabled="!gitBulkBranch.trim()"
-            @click="applyGitBulkBranch"
-          >
-            {{ t('common.apply') }}
-          </BaseButton>
-        </div>
-        <div class="max-h-72 overflow-y-auto rounded-md border border-line">
+          </section>
           <div
-            v-for="repo in filteredGitOrganizationRepositories"
-            :key="repo.repo_url"
-            class="grid gap-3 border-b border-line px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,1fr)_180px]"
-          >
-            <label class="flex min-w-0 items-start gap-3">
-              <input
-                v-model="repo.selected"
-                type="checkbox"
-                class="mt-1 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-              />
-              <span class="min-w-0">
-                <span class="block truncate text-sm font-medium text-ink-900">
-                  {{ repo.name || repo.path }}
-                </span>
-                <span class="block truncate font-mono text-xs text-ink-500">
-                  {{ repo.repo_url }}
-                </span>
-              </span>
-            </label>
-            <BaseSelect
-              v-model="repo.branch"
-              size="sm"
-              :disabled="!repo.selected || !repo.branches?.length"
-            >
-              <option value="">
-                {{ t('lensAdmin.datasourceWizard.branchPlaceholder') }}
-              </option>
-              <option
-                v-for="branch in repo.branches || []"
-                :key="branch"
-                :value="branch"
-              >
-                {{ branch }}
-              </option>
-            </BaseSelect>
-          </div>
-        </div>
-        <p class="text-xs text-ink-500">
-          {{
-            t('lensAdmin.datasourceWizard.gitOrganizationSelectedHint', {
-              count: selectedGitOrganizationRepositories.length
-            })
-          }}
-        </p>
-      </section>
-      <div
-        v-if="
-          connectionResult &&
-          connectionResult.status !== 'success' &&
-          !testingConnection &&
-          form.plugin_key !== 'feishu'
-        "
-        class="rounded-md border p-3 text-sm"
-        :class="
-          connectionResult.status === 'success'
-            ? 'border-success-200 bg-success-50 text-success-800'
-            : 'border-danger-200 bg-danger-50 text-danger-800'
-        "
-      >
-        {{ connectionResultMessage }}
-      </div>
-    </div>
-
-    <div v-else-if="activeStepKey === 'sync'" class="space-y-5">
-      <p class="text-sm text-ink-500">
-        {{ t('lensAdmin.datasourceWizard.step3Desc') }}
-      </p>
-      <FormRow
-        v-if="isManagedWorkspace"
-        :label="t('lensAdmin.fields.lensnode')"
-      >
-        <BaseSelect v-model="form.lensnode_uuid">
-          <option value="">
-            {{ t('lensAdmin.placeholders.selectLensNode') }}
-          </option>
-          <option
-            v-for="node in onlineLensNodes"
-            :key="node.uuid"
-            :value="node.uuid"
-          >
-            {{ node.name }} · {{ node.workspace_path || '/workspace' }}
-          </option>
-        </BaseSelect>
-        <p class="mt-1 text-xs text-ink-500">
-          {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
-        </p>
-      </FormRow>
-      <div
-        v-if="isManagedWorkspace && !onlineLensNodes.length"
-        class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800"
-      >
-        {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
-      </div>
-      <FormRow
-        v-if="isManagedWorkspace"
-        :label="t('lensAdmin.fields.targetPath')"
-        required
-      >
-        <div class="space-y-3">
-          <input
-            v-if="isManagedWorkspace"
-            v-model="form.workspace_relative_path"
-            class="form-input font-mono"
-            :placeholder="
-              t('lensAdmin.datasourceWizard.managedPathPlaceholder')
+            v-if="
+              connectionResult &&
+              connectionResult.status !== 'success' &&
+              !testingConnection &&
+              form.plugin_key !== 'feishu'
             "
-            @change="$emit('check-path')"
-          />
-          <div
-            class="rounded-md border border-line bg-surface-sunken px-3 py-2"
+            class="rounded-md border p-3 text-sm"
+            :class="
+              connectionResult.status === 'success'
+                ? 'border-success-200 bg-success-50 text-success-800'
+                : 'border-danger-200 bg-danger-50 text-danger-800'
+            "
           >
-            <div class="text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.selectedTargetPath') }}
-            </div>
-            <div class="mt-1 flex items-center gap-2">
-              <div
-                class="min-w-0 flex-1 break-all font-mono text-sm text-ink-900"
-              >
-                {{
-                  form.workspace_relative_path ? targetPath : workspacePrefix
-                }}
-              </div>
-              <LoaderCircleIcon
-                v-if="checkingPath"
-                class="h-4 w-4 shrink-0 animate-spin text-primary-600"
-              />
-              <CheckCircleIcon
-                v-else-if="pathResult && pathResult.status !== 'blocked'"
-                class="h-4 w-4 shrink-0 text-success-600"
-              />
-              <XCircleIcon
-                v-else-if="pathResult && pathResult.status === 'blocked'"
-                class="h-4 w-4 shrink-0 text-danger-600"
-              />
-            </div>
-            <p
-              v-if="pathResultMessage"
-              class="mt-1 text-xs"
-              :class="
-                pathResult?.status === 'blocked'
-                  ? 'text-danger-700'
-                  : 'text-success-700'
-              "
-            >
-              {{ pathResultMessage }}
-            </p>
+            {{ connectionResultMessage }}
           </div>
-          <div class="rounded-md border border-line bg-surface">
-            <div
-              class="flex items-center justify-between border-b border-line px-3 py-2"
-            >
-              <div class="text-sm font-medium text-ink-900">
-                {{ workspaceRoot }}
-              </div>
-              <div class="flex items-center gap-1">
-                <button
-                  class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-40"
-                  type="button"
-                  :disabled="refreshingDirectories || !form.lensnode_uuid"
-                  :title="t('lensAdmin.datasourceWizard.refreshDirectories')"
-                  @click="$emit('refresh-dirs')"
-                >
-                  <RefreshCwIcon
-                    class="h-4 w-4"
-                    :class="{ 'animate-spin': refreshingDirectories }"
-                  />
-                  <span class="sr-only">
-                    {{ t('lensAdmin.datasourceWizard.refreshDirectories') }}
-                  </span>
-                </button>
-                <button
-                  v-if="!isManagedWorkspace"
-                  class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
-                  type="button"
-                  :title="t('lensAdmin.datasourceWizard.createAtWorkspace')"
-                  @click="startCreateTargetDirectory('')"
-                >
-                  <PlusIcon class="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <div class="max-h-64 overflow-y-auto p-2">
+        </div>
+
+        <div v-else-if="activeStepKey === 'sync'" class="space-y-5">
+          <FormRow
+            v-if="showTargetPath"
+            :label="t('lensAdmin.fields.targetPath')"
+            required
+          >
+            <div class="space-y-3">
+              <input
+                v-if="isManagedWorkspace"
+                v-model="form.workspace_relative_path"
+                class="form-input font-mono"
+                :placeholder="
+                  t('lensAdmin.datasourceWizard.managedPathPlaceholder')
+                "
+                @change="$emit('check-path')"
+              />
               <div
-                v-if="!isManagedWorkspace && creatingDirectoryParent === ''"
-                class="flex gap-1 px-2 py-1"
+                class="rounded-md border border-line bg-surface-sunken px-3 py-2"
               >
-                <span class="h-7 w-7 shrink-0" />
-                <input
-                  v-model="newDirectoryName"
-                  class="directory-name-input"
-                  :placeholder="
-                    t('lensAdmin.datasourceWizard.newDirPlaceholder')
-                  "
-                  @keyup.enter="selectNewTargetDirectory"
-                />
-                <button
-                  class="directory-action-button text-success-600 hover:bg-success-50 hover:text-success-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  type="button"
-                  :disabled="!canCreateTargetDirectory"
-                  :title="t('common.confirm')"
-                  @click="selectNewTargetDirectory"
-                >
-                  <CheckIcon class="h-4 w-4" />
-                </button>
-                <button
-                  class="directory-action-button text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
-                  type="button"
-                  :title="t('common.cancel')"
-                  @click="cancelCreateTargetDirectory"
-                >
-                  <XIcon class="h-4 w-4" />
-                </button>
-              </div>
-              <div
-                v-if="!workspaceDirectoryTree.length"
-                class="px-2 py-3 text-sm text-ink-500"
-              >
-                {{ t('lensAdmin.datasourceWizard.noWorkspaceDirs') }}
-              </div>
-              <div
-                v-for="dir in workspaceDirectoryTree"
-                :key="dir.path"
-                class="space-y-1"
-              >
-                <div class="flex items-center gap-1">
-                  <button
-                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
-                    type="button"
-                    @click="toggleDirectoryExpanded(dir.relative)"
-                  >
-                    <component
-                      :is="
-                        isDirectoryExpanded(dir.relative)
-                          ? ChevronDownIcon
-                          : ChevronRightIcon
-                      "
-                      class="h-4 w-4"
-                    />
-                  </button>
-                  <button
-                    class="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-surface-sunken"
-                    :class="directoryButtonClass(dir.relative)"
-                    type="button"
-                    @click="selectTargetDirectory(dir.relative)"
-                  >
-                    <component
-                      :is="
-                        isSelectedDirectory(dir.relative)
-                          ? FolderOpenIcon
-                          : FolderIcon
-                      "
-                      class="h-4 w-4 shrink-0"
-                    />
-                    <span class="truncate">{{ dir.name }}</span>
-                  </button>
-                  <button
-                    v-if="!isManagedWorkspace"
-                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
-                    type="button"
-                    :title="t('lensAdmin.datasourceWizard.createTargetDir')"
-                    @click="startCreateTargetDirectory(dir.relative)"
-                  >
-                    <PlusIcon class="h-4 w-4" />
-                  </button>
+                <div class="text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.selectedTargetPath') }}
                 </div>
-                <div
-                  v-if="
-                    !isManagedWorkspace &&
-                    creatingDirectoryParent === dir.relative
-                  "
-                  class="ml-5 flex gap-1 border-l border-line pl-10"
-                >
-                  <input
-                    v-model="newDirectoryName"
-                    class="directory-name-input"
-                    :placeholder="
-                      t('lensAdmin.datasourceWizard.newDirPlaceholder')
-                    "
-                    @keyup.enter="selectNewTargetDirectory"
-                  />
-                  <button
-                    class="directory-action-button text-success-600 hover:bg-success-50 hover:text-success-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    type="button"
-                    :disabled="!canCreateTargetDirectory"
-                    :title="t('common.confirm')"
-                    @click="selectNewTargetDirectory"
-                  >
-                    <CheckIcon class="h-4 w-4" />
-                  </button>
-                  <button
-                    class="directory-action-button text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
-                    type="button"
-                    :title="t('common.cancel')"
-                    @click="cancelCreateTargetDirectory"
-                  >
-                    <XIcon class="h-4 w-4" />
-                  </button>
-                </div>
-                <div
-                  v-if="isDirectoryExpanded(dir.relative)"
-                  class="ml-5 space-y-1 border-l border-line pl-2"
-                >
+                <div class="mt-1 flex items-center gap-2">
                   <div
-                    v-if="!dir.children.length"
-                    class="px-2 py-1.5 text-xs text-ink-400"
+                    class="min-w-0 flex-1 break-all font-mono text-sm text-ink-900"
                   >
-                    {{ t('lensAdmin.datasourceWizard.noChildDirs') }}
+                    {{
+                      form.workspace_relative_path
+                        ? targetPath
+                        : workspacePrefix
+                    }}
+                  </div>
+                  <LoaderCircleIcon
+                    v-if="checkingPath"
+                    class="h-4 w-4 shrink-0 animate-spin text-primary-600"
+                  />
+                  <CheckCircleIcon
+                    v-else-if="pathResult && pathResult.status !== 'blocked'"
+                    class="h-4 w-4 shrink-0 text-success-600"
+                  />
+                  <XCircleIcon
+                    v-else-if="pathResult && pathResult.status === 'blocked'"
+                    class="h-4 w-4 shrink-0 text-danger-600"
+                  />
+                </div>
+                <p
+                  v-if="pathResultMessage"
+                  class="mt-1 text-xs"
+                  :class="
+                    pathResult?.status === 'blocked'
+                      ? 'text-danger-700'
+                      : 'text-success-700'
+                  "
+                >
+                  {{ pathResultMessage }}
+                </p>
+              </div>
+              <div class="rounded-md border border-line bg-surface">
+                <div
+                  class="flex items-center justify-between border-b border-line px-3 py-2"
+                >
+                  <div class="text-sm font-medium text-ink-900">
+                    {{ workspaceRoot }}
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-40"
+                      type="button"
+                      :disabled="refreshingDirectories || !form.lensnode_uuid"
+                      :title="
+                        t('lensAdmin.datasourceWizard.refreshDirectories')
+                      "
+                      @click="$emit('refresh-dirs')"
+                    >
+                      <RefreshCwIcon
+                        class="h-4 w-4"
+                        :class="{ 'animate-spin': refreshingDirectories }"
+                      />
+                      <span class="sr-only">
+                        {{ t('lensAdmin.datasourceWizard.refreshDirectories') }}
+                      </span>
+                    </button>
+                    <button
+                      v-if="!isManagedWorkspace"
+                      class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
+                      type="button"
+                      :title="t('lensAdmin.datasourceWizard.createAtWorkspace')"
+                      @click="startCreateTargetDirectory('')"
+                    >
+                      <PlusIcon class="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <div class="max-h-64 overflow-y-auto p-2">
+                  <div
+                    v-if="!isManagedWorkspace && creatingDirectoryParent === ''"
+                    class="flex gap-1 px-2 py-1"
+                  >
+                    <span class="h-7 w-7 shrink-0" />
+                    <input
+                      v-model="newDirectoryName"
+                      class="directory-name-input"
+                      :placeholder="
+                        t('lensAdmin.datasourceWizard.newDirPlaceholder')
+                      "
+                      @keyup.enter="selectNewTargetDirectory"
+                    />
+                    <button
+                      class="directory-action-button text-success-600 hover:bg-success-50 hover:text-success-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      type="button"
+                      :disabled="!canCreateTargetDirectory"
+                      :title="t('common.confirm')"
+                      @click="selectNewTargetDirectory"
+                    >
+                      <CheckIcon class="h-4 w-4" />
+                    </button>
+                    <button
+                      class="directory-action-button text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
+                      type="button"
+                      :title="t('common.cancel')"
+                      @click="cancelCreateTargetDirectory"
+                    >
+                      <XIcon class="h-4 w-4" />
+                    </button>
                   </div>
                   <div
-                    v-for="child in dir.children"
-                    :key="child.path"
+                    v-if="!workspaceDirectoryTree.length"
+                    class="px-2 py-3 text-sm text-ink-500"
+                  >
+                    {{ t('lensAdmin.datasourceWizard.noWorkspaceDirs') }}
+                  </div>
+                  <div
+                    v-for="dir in workspaceDirectoryTree"
+                    :key="dir.path"
                     class="space-y-1"
                   >
                     <div class="flex items-center gap-1">
-                      <span class="h-7 w-7 shrink-0" />
                       <button
-                        class="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-surface-sunken"
-                        :class="directoryButtonClass(child.relative)"
+                        class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
                         type="button"
-                        @click="selectTargetDirectory(child.relative)"
+                        @click="toggleDirectoryExpanded(dir.relative)"
                       >
                         <component
                           :is="
-                            isSelectedDirectory(child.relative)
+                            isDirectoryExpanded(dir.relative)
+                              ? ChevronDownIcon
+                              : ChevronRightIcon
+                          "
+                          class="h-4 w-4"
+                        />
+                      </button>
+                      <button
+                        class="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-surface-sunken"
+                        :class="directoryButtonClass(dir.relative)"
+                        type="button"
+                        @click="selectTargetDirectory(dir.relative)"
+                      >
+                        <component
+                          :is="
+                            isSelectedDirectory(dir.relative)
                               ? FolderOpenIcon
                               : FolderIcon
                           "
                           class="h-4 w-4 shrink-0"
                         />
-                        <span class="truncate">{{ child.name }}</span>
+                        <span class="truncate">{{ dir.name }}</span>
                       </button>
                       <button
                         v-if="!isManagedWorkspace"
                         class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
                         type="button"
                         :title="t('lensAdmin.datasourceWizard.createTargetDir')"
-                        @click="startCreateTargetDirectory(child.relative)"
+                        @click="startCreateTargetDirectory(dir.relative)"
                       >
                         <PlusIcon class="h-4 w-4" />
                       </button>
@@ -802,9 +831,9 @@
                     <div
                       v-if="
                         !isManagedWorkspace &&
-                        creatingDirectoryParent === child.relative
+                        creatingDirectoryParent === dir.relative
                       "
-                      class="ml-8 flex gap-1"
+                      class="ml-5 flex gap-1 border-l border-line pl-10"
                     >
                       <input
                         v-model="newDirectoryName"
@@ -832,450 +861,560 @@
                         <XIcon class="h-4 w-4" />
                       </button>
                     </div>
+                    <div
+                      v-if="isDirectoryExpanded(dir.relative)"
+                      class="ml-5 space-y-1 border-l border-line pl-2"
+                    >
+                      <div
+                        v-if="!dir.children.length"
+                        class="px-2 py-1.5 text-xs text-ink-400"
+                      >
+                        {{ t('lensAdmin.datasourceWizard.noChildDirs') }}
+                      </div>
+                      <div
+                        v-for="child in dir.children"
+                        :key="child.path"
+                        class="space-y-1"
+                      >
+                        <div class="flex items-center gap-1">
+                          <span class="h-7 w-7 shrink-0" />
+                          <button
+                            class="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-surface-sunken"
+                            :class="directoryButtonClass(child.relative)"
+                            type="button"
+                            @click="selectTargetDirectory(child.relative)"
+                          >
+                            <component
+                              :is="
+                                isSelectedDirectory(child.relative)
+                                  ? FolderOpenIcon
+                                  : FolderIcon
+                              "
+                              class="h-4 w-4 shrink-0"
+                            />
+                            <span class="truncate">{{ child.name }}</span>
+                          </button>
+                          <button
+                            v-if="!isManagedWorkspace"
+                            class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
+                            type="button"
+                            :title="
+                              t('lensAdmin.datasourceWizard.createTargetDir')
+                            "
+                            @click="startCreateTargetDirectory(child.relative)"
+                          >
+                            <PlusIcon class="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div
+                          v-if="
+                            !isManagedWorkspace &&
+                            creatingDirectoryParent === child.relative
+                          "
+                          class="ml-8 flex gap-1"
+                        >
+                          <input
+                            v-model="newDirectoryName"
+                            class="directory-name-input"
+                            :placeholder="
+                              t('lensAdmin.datasourceWizard.newDirPlaceholder')
+                            "
+                            @keyup.enter="selectNewTargetDirectory"
+                          />
+                          <button
+                            class="directory-action-button text-success-600 hover:bg-success-50 hover:text-success-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            type="button"
+                            :disabled="!canCreateTargetDirectory"
+                            :title="t('common.confirm')"
+                            @click="selectNewTargetDirectory"
+                          >
+                            <CheckIcon class="h-4 w-4" />
+                          </button>
+                          <button
+                            class="directory-action-button text-ink-500 hover:bg-surface-sunken hover:text-ink-900"
+                            type="button"
+                            :title="t('common.cancel')"
+                            @click="cancelCreateTargetDirectory"
+                          >
+                            <XIcon class="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-        <p class="mt-1 text-xs text-ink-500">
-          {{
-            isManagedWorkspace
-              ? t('lensAdmin.datasourceWizard.managedPathHint')
-              : isGitOrganizationMode
-                ? t('lensAdmin.datasourceWizard.gitOrganizationPathHint')
-                : t('lensAdmin.datasourceWizard.pathHint')
-          }}
-        </p>
-      </FormRow>
-      <FormRow
-        v-if="!isManagedWorkspace"
-        :label="t('lensAdmin.fields.syncPolicy')"
-        required
-      >
-        <div class="flex items-center gap-2">
-          <BaseSelect v-model="syncPolicyMode" class="min-w-0 flex-1">
-            <option value="interval">
-              {{ t('lensAdmin.datasourceWizard.syncPolicyInterval') }}
-            </option>
-            <option value="crontab">
-              {{ t('lensAdmin.datasourceWizard.syncPolicyCrontab') }}
-            </option>
-          </BaseSelect>
-          <BaseButton
-            class="h-10 w-10 shrink-0"
-            size="sm"
-            variant="outline"
-            :aria-label="t('lensAdmin.datasourceWizard.refreshDirectories')"
-            :disabled="refreshingDirectories || !form.lensnode_uuid"
-            @click="emit('refresh-dirs')"
-          >
-            <RefreshCwIcon
-              class="h-4 w-4"
-              :class="{ 'animate-spin': refreshingDirectories }"
-            />
-          </BaseButton>
-        </div>
-      </FormRow>
-      <FormRow
-        v-if="!isManagedWorkspace && syncPolicyMode === 'interval'"
-        :label="t('lensAdmin.fields.syncInterval')"
-        required
-      >
-        <input
-          v-model.number="syncIntervalSeconds"
-          class="form-input w-40"
-          min="60"
-          type="number"
-        />
-        <p class="mt-1 text-xs text-ink-500">
-          {{ t('lensAdmin.datasourceWizard.intervalHint') }}
-        </p>
-      </FormRow>
-      <div v-else-if="!isManagedWorkspace" class="grid gap-4 md:grid-cols-2">
-        <FormRow :label="t('lensAdmin.fields.cron')" required>
-          <input
-            v-model="syncCron"
-            class="form-input font-mono"
-            placeholder="0 2 * * *"
-          />
-        </FormRow>
-        <FormRow :label="t('lensAdmin.fields.timezone')">
-          <input
-            v-model="syncTimezone"
-            class="form-input"
-            placeholder="Asia/Shanghai"
-          />
-        </FormRow>
-      </div>
-      <section v-if="form.source_type === 'feishu'" class="space-y-3 pt-1">
-        <button
-          class="flex w-full items-center justify-between text-left"
-          type="button"
-          @click="feishuAdvancedOpen = !feishuAdvancedOpen"
-        >
-          <span class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceWizard.feishuAdvancedTitle') }}
-          </span>
-          <component
-            :is="feishuAdvancedOpen ? ChevronDownIcon : ChevronRightIcon"
-            class="h-4 w-4 text-ink-500"
-          />
-        </button>
-        <div v-if="feishuAdvancedOpen" class="space-y-3">
-          <label class="flex items-start gap-3">
-            <input
-              v-model="config.feishu_incremental"
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-            />
-            <span>
-              <span class="block text-sm font-medium text-ink-800">
-                {{ t('lensAdmin.datasourceWizard.feishuIncrementalTitle') }}
-              </span>
-              <span class="mt-0.5 block text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.feishuIncrementalHint') }}
-              </span>
-            </span>
-          </label>
-          <label class="flex items-start gap-3">
-            <input
-              v-model="config.feishu_delete_missing"
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-            />
-            <span>
-              <span class="block text-sm font-medium text-ink-800">
-                {{ t('lensAdmin.datasourceWizard.feishuDeleteMissingTitle') }}
-              </span>
-              <span class="mt-0.5 block text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.feishuDeleteMissingHint') }}
-              </span>
-            </span>
-          </label>
-        </div>
-      </section>
-    </div>
-
-    <section
-      v-if="activeStepKey === 'sync'"
-      class="mt-5 rounded-xl border border-line bg-surface"
-    >
-      <button
-        type="button"
-        class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-        @click="conversionOpen = !conversionOpen"
-      >
-        <span>
-          <span class="block text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceWizard.processingTitle') }}
-          </span>
-          <span class="mt-0.5 block text-xs text-ink-500">
-            {{ t('lensAdmin.datasourceWizard.processingHint') }}
-          </span>
-        </span>
-        <component
-          :is="conversionOpen ? ChevronDownIcon : ChevronRightIcon"
-          class="h-4 w-4 shrink-0 text-ink-500"
-        />
-      </button>
-      <div v-if="conversionOpen" class="space-y-5 border-t border-line p-4">
-        <section class="space-y-4 rounded-md border border-line p-3">
-          <div>
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceWizard.documentContentTitle') }}
-            </h3>
             <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.documentContentHint') }}
-            </p>
-          </div>
-          <label class="flex items-start gap-3 text-sm text-ink-700">
-            <input
-              v-model="form.conversion_document"
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-            />
-            <span>
-              <span class="font-medium">
-                {{ t('lensAdmin.datasourceWizard.convertDocuments') }}
-              </span>
-              <span class="block text-xs text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.convertDocumentsHint') }}
-              </span>
-            </span>
-          </label>
-          <FormRow
-            v-if="form.conversion_document"
-            :label="t('lensAdmin.fields.documentModel')"
-            :hint="t('lensAdmin.datasourceWizard.documentModelTooltip')"
-          >
-            <BaseSelect v-model="form.conversion_document_model_ref">
-              <option value="">
-                {{ t('lensAdmin.placeholders.noModel') }}
-              </option>
-              <option
-                v-for="config in llmConfigOptions"
-                :key="config.uuid || config.id"
-                :value="config.uuid || config.id"
-              >
-                {{ formatLLMConfigLabel(config) }}
-              </option>
-            </BaseSelect>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.documentModelHint') }}
+              {{
+                isManagedWorkspace
+                  ? t('lensAdmin.datasourceWizard.managedPathHint')
+                  : isGitOrganizationMode
+                    ? t('lensAdmin.datasourceWizard.gitOrganizationPathHint')
+                    : t('lensAdmin.datasourceWizard.pathHint')
+              }}
             </p>
           </FormRow>
-          <label
-            class="flex items-start gap-3 text-sm"
-            :class="form.conversion_document ? 'text-ink-700' : 'text-ink-400'"
+          <FormRow
+            v-if="!isManagedWorkspace"
+            :label="t('lensAdmin.fields.syncPolicy')"
+            required
+          >
+            <div class="flex items-center gap-2">
+              <BaseSelect v-model="syncPolicyMode" class="min-w-0 flex-1">
+                <option value="interval">
+                  {{ t('lensAdmin.datasourceWizard.syncPolicyInterval') }}
+                </option>
+                <option value="crontab">
+                  {{ t('lensAdmin.datasourceWizard.syncPolicyCrontab') }}
+                </option>
+              </BaseSelect>
+              <BaseButton
+                class="h-10 w-10 shrink-0"
+                size="sm"
+                variant="outline"
+                :aria-label="t('lensAdmin.datasourceWizard.refreshDirectories')"
+                :disabled="refreshingDirectories || !form.lensnode_uuid"
+                @click="emit('refresh-dirs')"
+              >
+                <RefreshCwIcon
+                  class="h-4 w-4"
+                  :class="{ 'animate-spin': refreshingDirectories }"
+                />
+              </BaseButton>
+            </div>
+          </FormRow>
+          <FormRow
+            v-if="!isManagedWorkspace && syncPolicyMode === 'interval'"
+            :label="t('lensAdmin.fields.syncInterval')"
+            required
           >
             <input
-              v-model="form.conversion_embedded_image"
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500 disabled:opacity-50"
-              :disabled="!form.conversion_document"
+              v-model.number="syncIntervalSeconds"
+              class="form-input w-40"
+              min="600"
+              type="number"
             />
-            <span>
-              <span class="font-medium">
-                {{ t('lensAdmin.datasourceWizard.convertEmbeddedImages') }}
-              </span>
-              <span class="block text-xs text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.convertEmbeddedImagesHint') }}
-              </span>
-            </span>
-          </label>
-          <section
-            v-if="form.conversion_document && form.conversion_embedded_image"
-            class="rounded-md border border-line bg-ink-50/50"
+            <p class="mt-1 text-xs text-ink-500">
+              {{ t('lensAdmin.datasourceWizard.intervalHint') }}
+            </p>
+          </FormRow>
+          <div
+            v-else-if="!isManagedWorkspace"
+            class="grid gap-4 md:grid-cols-2"
           >
+            <FormRow :label="t('lensAdmin.fields.cron')" required>
+              <input
+                v-model="syncCron"
+                class="form-input font-mono"
+                placeholder="0 2 * * *"
+              />
+            </FormRow>
+            <FormRow :label="t('lensAdmin.fields.timezone')">
+              <input
+                v-model="syncTimezone"
+                class="form-input"
+                placeholder="Asia/Shanghai"
+              />
+            </FormRow>
+          </div>
+          <section v-if="form.source_type === 'feishu'" class="space-y-3 pt-1">
             <button
+              class="flex w-full items-center justify-between text-left"
               type="button"
-              class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-medium text-ink-800"
-              @click="pdfAdvancedOpen = !pdfAdvancedOpen"
+              @click="feishuAdvancedOpen = !feishuAdvancedOpen"
             >
-              <span>
-                {{ t('lensAdmin.datasourceWizard.pdfAdvancedTitle') }}
+              <span class="text-sm font-semibold text-ink-900">
+                {{ t('lensAdmin.datasourceWizard.feishuAdvancedTitle') }}
               </span>
               <component
-                :is="pdfAdvancedOpen ? ChevronDownIcon : ChevronRightIcon"
+                :is="feishuAdvancedOpen ? ChevronDownIcon : ChevronRightIcon"
                 class="h-4 w-4 text-ink-500"
               />
             </button>
-            <div
-              v-if="pdfAdvancedOpen"
-              class="space-y-4 border-t border-line p-3"
-            >
-              <p class="text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.pdfAdvancedHint') }}
-              </p>
+            <div v-if="feishuAdvancedOpen" class="space-y-3">
+              <label class="flex items-start gap-3">
+                <input
+                  v-model="config.feishu_incremental"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                />
+                <span>
+                  <span class="block text-sm font-medium text-ink-800">
+                    {{ t('lensAdmin.datasourceWizard.feishuIncrementalTitle') }}
+                  </span>
+                  <span class="mt-0.5 block text-xs leading-5 text-ink-500">
+                    {{ t('lensAdmin.datasourceWizard.feishuIncrementalHint') }}
+                  </span>
+                </span>
+              </label>
+              <label class="flex items-start gap-3">
+                <input
+                  v-model="config.feishu_delete_missing"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                />
+                <span>
+                  <span class="block text-sm font-medium text-ink-800">
+                    {{
+                      t('lensAdmin.datasourceWizard.feishuDeleteMissingTitle')
+                    }}
+                  </span>
+                  <span class="mt-0.5 block text-xs leading-5 text-ink-500">
+                    {{
+                      t('lensAdmin.datasourceWizard.feishuDeleteMissingHint')
+                    }}
+                  </span>
+                </span>
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <section
+          v-if="activeStepKey === 'sync'"
+          class="mt-5 rounded-xl border border-line bg-surface"
+        >
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            @click="conversionOpen = !conversionOpen"
+          >
+            <span>
+              <span class="block text-sm font-semibold text-ink-900">
+                {{ t('lensAdmin.datasourceWizard.processingTitle') }}
+              </span>
+              <span class="mt-0.5 block text-xs text-ink-500">
+                {{ t('lensAdmin.datasourceWizard.processingHint') }}
+              </span>
+            </span>
+            <component
+              :is="conversionOpen ? ChevronDownIcon : ChevronRightIcon"
+              class="h-4 w-4 shrink-0 text-ink-500"
+            />
+          </button>
+          <div v-if="conversionOpen" class="space-y-5 border-t border-line p-4">
+            <section class="space-y-4 rounded-md border border-line p-3">
+              <div>
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{ t('lensAdmin.datasourceWizard.documentContentTitle') }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.documentContentHint') }}
+                </p>
+              </div>
               <label class="flex items-start gap-3 text-sm text-ink-700">
                 <input
-                  v-model="form.conversion_pdf_extract_images"
+                  v-model="form.conversion_document"
                   type="checkbox"
                   class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
                 />
                 <span>
                   <span class="font-medium">
-                    {{ t('lensAdmin.datasourceWizard.pdfExtractImages') }}
+                    {{ t('lensAdmin.datasourceWizard.convertDocuments') }}
                   </span>
                   <span class="block text-xs text-ink-500">
-                    {{ t('lensAdmin.datasourceWizard.pdfExtractImagesHint') }}
+                    {{ t('lensAdmin.datasourceWizard.convertDocumentsHint') }}
                   </span>
                 </span>
               </label>
+              <FormRow
+                v-if="form.conversion_document"
+                :label="t('lensAdmin.fields.documentModel')"
+                :hint="t('lensAdmin.datasourceWizard.documentModelTooltip')"
+              >
+                <BaseSelect v-model="form.conversion_document_model_ref">
+                  <option value="">
+                    {{ t('lensAdmin.placeholders.noModel') }}
+                  </option>
+                  <option
+                    v-for="config in llmConfigOptions"
+                    :key="config.uuid || config.id"
+                    :value="config.uuid || config.id"
+                  >
+                    {{ formatLLMConfigLabel(config) }}
+                  </option>
+                </BaseSelect>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.documentModelHint') }}
+                </p>
+              </FormRow>
+              <label
+                class="flex items-start gap-3 text-sm"
+                :class="
+                  form.conversion_document ? 'text-ink-700' : 'text-ink-400'
+                "
+              >
+                <input
+                  v-model="form.conversion_embedded_image"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                  :disabled="!form.conversion_document"
+                />
+                <span>
+                  <span class="font-medium">
+                    {{ t('lensAdmin.datasourceWizard.convertEmbeddedImages') }}
+                  </span>
+                  <span class="block text-xs text-ink-500">
+                    {{
+                      t('lensAdmin.datasourceWizard.convertEmbeddedImagesHint')
+                    }}
+                  </span>
+                </span>
+              </label>
+              <section
+                v-if="
+                  form.conversion_document && form.conversion_embedded_image
+                "
+                class="rounded-md border border-line bg-ink-50/50"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-medium text-ink-800"
+                  @click="pdfAdvancedOpen = !pdfAdvancedOpen"
+                >
+                  <span>
+                    {{ t('lensAdmin.datasourceWizard.pdfAdvancedTitle') }}
+                  </span>
+                  <component
+                    :is="pdfAdvancedOpen ? ChevronDownIcon : ChevronRightIcon"
+                    class="h-4 w-4 text-ink-500"
+                  />
+                </button>
+                <div
+                  v-if="pdfAdvancedOpen"
+                  class="space-y-4 border-t border-line p-3"
+                >
+                  <p class="text-xs leading-5 text-ink-500">
+                    {{ t('lensAdmin.datasourceWizard.pdfAdvancedHint') }}
+                  </p>
+                  <label class="flex items-start gap-3 text-sm text-ink-700">
+                    <input
+                      v-model="form.conversion_pdf_extract_images"
+                      type="checkbox"
+                      class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                    />
+                    <span>
+                      <span class="font-medium">
+                        {{ t('lensAdmin.datasourceWizard.pdfExtractImages') }}
+                      </span>
+                      <span class="block text-xs text-ink-500">
+                        {{
+                          t('lensAdmin.datasourceWizard.pdfExtractImagesHint')
+                        }}
+                      </span>
+                    </span>
+                  </label>
+                  <label class="flex items-start gap-3 text-sm text-ink-700">
+                    <input
+                      v-model="form.conversion_pdf_render_scanned_pages"
+                      type="checkbox"
+                      class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                    />
+                    <span>
+                      <span class="font-medium">
+                        {{
+                          t('lensAdmin.datasourceWizard.pdfRenderScannedPages')
+                        }}
+                      </span>
+                      <span class="block text-xs text-amber-700">
+                        {{
+                          t(
+                            'lensAdmin.datasourceWizard.pdfRenderScannedPagesHint'
+                          )
+                        }}
+                      </span>
+                    </span>
+                  </label>
+                  <label class="flex items-start gap-3 text-sm text-ink-700">
+                    <input
+                      v-model="form.conversion_pdf_extract_images_on_text_pages"
+                      type="checkbox"
+                      class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                    />
+                    <span>
+                      <span class="font-medium">
+                        {{
+                          t(
+                            'lensAdmin.datasourceWizard.pdfExtractImagesOnTextPages'
+                          )
+                        }}
+                      </span>
+                      <span class="block text-xs text-amber-700">
+                        {{
+                          t(
+                            'lensAdmin.datasourceWizard.pdfExtractImagesOnTextPagesHint'
+                          )
+                        }}
+                      </span>
+                    </span>
+                  </label>
+                  <div class="grid gap-4 md:grid-cols-2">
+                    <FormRow
+                      :label="t('lensAdmin.fields.pdfMaxPages')"
+                      :hint="t('lensAdmin.datasourceWizard.pdfMaxPagesTooltip')"
+                    >
+                      <input
+                        v-model.number="form.conversion_pdf_max_pages"
+                        class="form-input"
+                        min="1"
+                        type="number"
+                      />
+                    </FormRow>
+                    <FormRow
+                      :label="t('lensAdmin.fields.pdfMaxImagesPerPage')"
+                      :hint="
+                        t(
+                          'lensAdmin.datasourceWizard.pdfMaxImagesPerPageTooltip'
+                        )
+                      "
+                    >
+                      <input
+                        v-model.number="form.conversion_pdf_max_images_per_page"
+                        class="form-input"
+                        min="1"
+                        type="number"
+                      />
+                    </FormRow>
+                    <FormRow
+                      :label="t('lensAdmin.fields.pdfRenderDpi')"
+                      :hint="
+                        t('lensAdmin.datasourceWizard.pdfRenderDpiTooltip')
+                      "
+                    >
+                      <input
+                        v-model.number="form.conversion_pdf_render_dpi"
+                        class="form-input"
+                        min="1"
+                        type="number"
+                      />
+                    </FormRow>
+                    <FormRow
+                      :label="t('lensAdmin.fields.pdfMinTextChars')"
+                      :hint="
+                        t('lensAdmin.datasourceWizard.pdfMinTextCharsTooltip')
+                      "
+                    >
+                      <input
+                        v-model.number="form.conversion_pdf_min_text_chars"
+                        class="form-input"
+                        min="1"
+                        type="number"
+                      />
+                    </FormRow>
+                    <FormRow
+                      :label="t('lensAdmin.fields.pdfMinImageAreaRatio')"
+                      :hint="
+                        t(
+                          'lensAdmin.datasourceWizard.pdfMinImageAreaRatioTooltip'
+                        )
+                      "
+                    >
+                      <input
+                        v-model.number="
+                          form.conversion_pdf_min_image_area_ratio
+                        "
+                        class="form-input"
+                        max="1"
+                        min="0.01"
+                        step="0.01"
+                        type="number"
+                      />
+                    </FormRow>
+                  </div>
+                </div>
+              </section>
+            </section>
+            <section class="space-y-4 rounded-md border border-line p-3">
+              <div>
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{ t('lensAdmin.datasourceWizard.standaloneImagesTitle') }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.standaloneImagesHint') }}
+                </p>
+              </div>
               <label class="flex items-start gap-3 text-sm text-ink-700">
                 <input
-                  v-model="form.conversion_pdf_render_scanned_pages"
+                  v-model="form.conversion_image"
                   type="checkbox"
                   class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
                 />
                 <span>
                   <span class="font-medium">
-                    {{ t('lensAdmin.datasourceWizard.pdfRenderScannedPages') }}
+                    {{ t('lensAdmin.datasourceWizard.convertImages') }}
                   </span>
-                  <span class="block text-xs text-amber-700">
-                    {{
-                      t('lensAdmin.datasourceWizard.pdfRenderScannedPagesHint')
-                    }}
+                  <span class="block text-xs text-ink-500">
+                    {{ t('lensAdmin.datasourceWizard.convertImagesHint') }}
                   </span>
                 </span>
               </label>
-              <label class="flex items-start gap-3 text-sm text-ink-700">
-                <input
-                  v-model="form.conversion_pdf_extract_images_on_text_pages"
-                  type="checkbox"
-                  class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-                />
-                <span>
-                  <span class="font-medium">
-                    {{
-                      t(
-                        'lensAdmin.datasourceWizard.pdfExtractImagesOnTextPages'
-                      )
-                    }}
-                  </span>
-                  <span class="block text-xs text-amber-700">
-                    {{
-                      t(
-                        'lensAdmin.datasourceWizard.pdfExtractImagesOnTextPagesHint'
-                      )
-                    }}
-                  </span>
-                </span>
-              </label>
+              <FormRow
+                v-if="form.conversion_image"
+                :label="t('lensAdmin.fields.visionModel')"
+                :hint="t('lensAdmin.datasourceWizard.visionModelTooltip')"
+              >
+                <BaseSelect v-model="form.conversion_vision_model_ref">
+                  <option value="">
+                    {{ t('lensAdmin.placeholders.noModel') }}
+                  </option>
+                  <option
+                    v-for="config in llmConfigOptions"
+                    :key="config.uuid || config.id"
+                    :value="config.uuid || config.id"
+                  >
+                    {{ formatLLMConfigLabel(config) }}
+                  </option>
+                </BaseSelect>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('lensAdmin.datasourceWizard.visionModelHint') }}
+                </p>
+              </FormRow>
+            </section>
+            <section class="space-y-4 rounded-md border border-line p-3">
+              <div>
+                <h3 class="text-sm font-semibold text-ink-900">
+                  {{
+                    t('lensAdmin.datasourceWizard.globalConversionLimitsTitle')
+                  }}
+                </h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{
+                    t('lensAdmin.datasourceWizard.globalConversionLimitsHint')
+                  }}
+                </p>
+              </div>
               <div class="grid gap-4 md:grid-cols-2">
                 <FormRow
-                  :label="t('lensAdmin.fields.pdfMaxPages')"
-                  :hint="t('lensAdmin.datasourceWizard.pdfMaxPagesTooltip')"
+                  :label="t('lensAdmin.fields.maxFileSizeMb')"
+                  :hint="t('lensAdmin.datasourceWizard.maxFileSizeTooltip')"
                 >
                   <input
-                    v-model.number="form.conversion_pdf_max_pages"
+                    v-model.number="form.conversion_max_file_size_mb"
                     class="form-input"
                     min="1"
                     type="number"
                   />
                 </FormRow>
                 <FormRow
-                  :label="t('lensAdmin.fields.pdfMaxImagesPerPage')"
-                  :hint="
-                    t('lensAdmin.datasourceWizard.pdfMaxImagesPerPageTooltip')
-                  "
+                  :label="t('lensAdmin.fields.maxImages')"
+                  :hint="t('lensAdmin.datasourceWizard.maxImagesTooltip')"
                 >
                   <input
-                    v-model.number="form.conversion_pdf_max_images_per_page"
+                    v-model.number="form.conversion_max_images"
                     class="form-input"
                     min="1"
-                    type="number"
-                  />
-                </FormRow>
-                <FormRow
-                  :label="t('lensAdmin.fields.pdfRenderDpi')"
-                  :hint="t('lensAdmin.datasourceWizard.pdfRenderDpiTooltip')"
-                >
-                  <input
-                    v-model.number="form.conversion_pdf_render_dpi"
-                    class="form-input"
-                    min="1"
-                    type="number"
-                  />
-                </FormRow>
-                <FormRow
-                  :label="t('lensAdmin.fields.pdfMinTextChars')"
-                  :hint="t('lensAdmin.datasourceWizard.pdfMinTextCharsTooltip')"
-                >
-                  <input
-                    v-model.number="form.conversion_pdf_min_text_chars"
-                    class="form-input"
-                    min="1"
-                    type="number"
-                  />
-                </FormRow>
-                <FormRow
-                  :label="t('lensAdmin.fields.pdfMinImageAreaRatio')"
-                  :hint="
-                    t('lensAdmin.datasourceWizard.pdfMinImageAreaRatioTooltip')
-                  "
-                >
-                  <input
-                    v-model.number="form.conversion_pdf_min_image_area_ratio"
-                    class="form-input"
-                    max="1"
-                    min="0.01"
-                    step="0.01"
                     type="number"
                   />
                 </FormRow>
               </div>
-            </div>
-          </section>
-        </section>
-        <section class="space-y-4 rounded-md border border-line p-3">
-          <div>
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceWizard.standaloneImagesTitle') }}
-            </h3>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.standaloneImagesHint') }}
-            </p>
-          </div>
-          <label class="flex items-start gap-3 text-sm text-ink-700">
-            <input
-              v-model="form.conversion_image"
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
-            />
-            <span>
-              <span class="font-medium">
-                {{ t('lensAdmin.datasourceWizard.convertImages') }}
-              </span>
-              <span class="block text-xs text-ink-500">
-                {{ t('lensAdmin.datasourceWizard.convertImagesHint') }}
-              </span>
-            </span>
-          </label>
-          <FormRow
-            v-if="form.conversion_image"
-            :label="t('lensAdmin.fields.visionModel')"
-            :hint="t('lensAdmin.datasourceWizard.visionModelTooltip')"
-          >
-            <BaseSelect v-model="form.conversion_vision_model_ref">
-              <option value="">
-                {{ t('lensAdmin.placeholders.noModel') }}
-              </option>
-              <option
-                v-for="config in llmConfigOptions"
-                :key="config.uuid || config.id"
-                :value="config.uuid || config.id"
-              >
-                {{ formatLLMConfigLabel(config) }}
-              </option>
-            </BaseSelect>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.visionModelHint') }}
-            </p>
-          </FormRow>
-        </section>
-        <section class="space-y-4 rounded-md border border-line p-3">
-          <div>
-            <h3 class="text-sm font-semibold text-ink-900">
-              {{ t('lensAdmin.datasourceWizard.globalConversionLimitsTitle') }}
-            </h3>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.datasourceWizard.globalConversionLimitsHint') }}
-            </p>
-          </div>
-          <div class="grid gap-4 md:grid-cols-2">
-            <FormRow
-              :label="t('lensAdmin.fields.maxFileSizeMb')"
-              :hint="t('lensAdmin.datasourceWizard.maxFileSizeTooltip')"
-            >
-              <input
-                v-model.number="form.conversion_max_file_size_mb"
-                class="form-input"
-                min="1"
-                type="number"
-              />
-            </FormRow>
-            <FormRow
-              :label="t('lensAdmin.fields.maxImages')"
-              :hint="t('lensAdmin.datasourceWizard.maxImagesTooltip')"
-            >
-              <input
-                v-model.number="form.conversion_max_images"
-                class="form-input"
-                min="1"
-                type="number"
-              />
-            </FormRow>
+            </section>
           </div>
         </section>
-      </div>
-    </section>
 
-    <p v-if="formError" class="mt-4 text-sm text-danger-700">
-      {{ formError }}
-    </p>
-
+        <p v-if="formError" class="mt-4 text-sm text-danger-700">
+          {{ formError }}
+        </p>
       </section>
     </div>
 
@@ -1314,9 +1453,11 @@
             @click="$emit('save')"
           >
             {{
-              mode === 'create'
-                ? t('lensAdmin.wizard.finish')
-                : t('common.save')
+              isFileUpload && mode === 'create' && uploadFiles.length
+                ? t('lensAdmin.actions.uploadFile')
+                : mode === 'create'
+                  ? t('lensAdmin.wizard.finish')
+                  : t('common.save')
             }}
           </BaseButton>
         </div>
@@ -1337,17 +1478,11 @@ import {
   LoaderCircle as LoaderCircleIcon,
   Plus as PlusIcon,
   RefreshCw as RefreshCwIcon,
+  UploadCloud as UploadCloudIcon,
   X as XIcon,
   XCircle as XCircleIcon
 } from '@lucide/vue'
-import {
-  computed,
-  defineComponent,
-  h,
-  nextTick,
-  ref,
-  watch
-} from 'vue'
+import { computed, defineComponent, h, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -1355,6 +1490,7 @@ import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PluginIcon from '@/components/ui/PluginIcon.vue'
 import ManifestSchemaForm from '@/components/lens/ManifestSchemaForm.vue'
+import { DATASOURCE_UPLOAD_ACCEPT } from '@/utils/lens'
 import { localizePluginManifest } from '@/utils/pluginI18n'
 
 import { formatLLMConfigLabel } from './adminHelpers'
@@ -1370,7 +1506,7 @@ const props = defineProps({
   plugins: { type: Array, default: () => [] },
   pluginManifest: { type: Object, default: null },
   llmConfigOptions: { type: Array, default: () => [] },
-  syncIntervalSeconds: { type: Number, default: 3600 },
+  syncIntervalSeconds: { type: Number, default: 86400 },
   syncPolicyMode: { type: String, default: 'interval' },
   syncCron: { type: String, default: '0 2 * * *' },
   syncTimezone: { type: String, default: 'Asia/Shanghai' },
@@ -1382,12 +1518,16 @@ const props = defineProps({
   refreshingCredentials: Boolean,
   refreshingDirectories: Boolean,
   saving: Boolean,
-  formError: { type: String, default: '' }
+  formError: { type: String, default: '' },
+  uploadFiles: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits([
   'close',
   'save',
+  'upload',
+  'upload-files',
+  'remove-upload-file',
   'type-change',
   'check-path',
   'test-connection',
@@ -1412,6 +1552,8 @@ const gitRepositorySearch = ref('')
 const gitBulkBranch = ref('')
 const acceptedCredentialUuid = ref('')
 const conversionOpen = ref(false)
+const fileUploadInput = ref(null)
+const fileUploadDragging = ref(false)
 
 const syncIntervalSeconds = computed({
   get() {
@@ -1557,18 +1699,37 @@ const sourceTypes = computed(() => {
   const types = [
     ...props.plugins.map((plugin) => {
       const localized = localizePluginManifest(plugin, t, te)
+      const fileUploadPlugin = plugin.key === 'file_upload'
       return {
         value: `plugin:${plugin.key}`,
-        label: localized.display_name,
+        label: fileUploadPlugin
+          ? t('lensAdmin.datasourceWizard.fileUploadTitle')
+          : localized.display_name,
         description: localized.description || ''
       }
     })
   ]
+  if (props.mode === 'edit' && props.form.source_type === 'upload') {
+    types.push({
+      value: 'upload',
+      label: t('lensAdmin.datasourceWizard.fileUploadTitle'),
+      description: t('lensAdmin.datasourceWizard.fileUploadDesc')
+    })
+  }
   if (props.mode === 'edit' && props.form.source_type === 'managed_workspace') {
+    const fileUpload = props.form.plugin_key === 'file_upload'
     types.push({
       value: 'managed_workspace',
-      label: t('lensAdmin.datasourceWizard.managedWorkspace'),
-      description: t('lensAdmin.datasourceWizard.managedWorkspaceDesc')
+      label: t(
+        fileUpload
+          ? 'lensAdmin.datasourceWizard.fileUploadTitle'
+          : 'lensAdmin.datasourceWizard.managedWorkspace'
+      ),
+      description: t(
+        fileUpload
+          ? 'lensAdmin.datasourceWizard.fileUploadDesc'
+          : 'lensAdmin.datasourceWizard.managedWorkspaceDesc'
+      )
     })
   }
   if (
@@ -1619,8 +1780,21 @@ const pluginResources = computed(
 )
 
 const isManagedWorkspace = computed(
-  () => props.form.source_type === 'managed_workspace'
+  () =>
+    ['managed_workspace', 'upload'].includes(props.form.source_type) ||
+    ['managed_workspace', 'upload'].includes(
+      localizedPluginManifest.value?.datasource_source_type
+    )
 )
+
+const showTargetPath = computed(
+  () =>
+    props.form.source_type === 'managed_workspace' ||
+    localizedPluginManifest.value?.datasource_source_type ===
+      'managed_workspace'
+)
+
+const isFileUpload = computed(() => props.form.plugin_key === 'file_upload')
 
 const wizardStepsMeta = computed(() => {
   return [
@@ -1631,8 +1805,21 @@ const wizardStepsMeta = computed(() => {
     },
     {
       key: 'connection',
-      title: t('lensAdmin.datasourceWizard.step2Title'),
-      description: t('lensAdmin.datasourceWizard.step2Desc')
+      title: t(
+        isFileUpload.value
+          ? 'lensAdmin.datasourceWizard.fileUploadTitle'
+          : 'lensAdmin.datasourceWizard.step2Title'
+      ),
+      description: t(
+        isFileUpload.value
+          ? 'lensAdmin.datasourceWizard.fileUploadDesc'
+          : 'lensAdmin.datasourceWizard.step2Desc'
+      )
+    },
+    {
+      key: 'sync',
+      title: t('lensAdmin.datasourceWizard.step3Title'),
+      description: t('lensAdmin.datasourceWizard.step3Desc')
     }
   ]
 })
@@ -1643,7 +1830,8 @@ const activeStepKey = computed(
 )
 
 function goToWizardStep(step) {
-  if (step < 1 || step > wizardStep.value) return
+  if (step < 1 || step > wizardStepCount.value) return
+  if (props.mode !== 'edit' && step > wizardStep.value) return
   wizardStep.value = step
 }
 
@@ -1673,12 +1861,14 @@ const workspaceDirectoryTree = computed(() => {
   const dirs = Array.isArray(selectedLensNode.value?.available_dirs)
     ? selectedLensNode.value.available_dirs
     : []
-  return [{
-    path: workspaceRoot.value,
-    relative: '',
-    name: workspaceRoot.value.split('/').pop() || workspaceRoot.value,
-    children: []
-  }]
+  return [
+    {
+      path: workspaceRoot.value,
+      relative: '',
+      name: workspaceRoot.value.split('/').pop() || workspaceRoot.value,
+      children: []
+    }
+  ]
 })
 
 const targetPath = computed(() => {
@@ -1753,16 +1943,24 @@ const connectionResultMessage = computed(() => {
 })
 
 const missingDatasourceFields = computed(() => {
-  if (!datasourceSchema.value || !isPluginSourceType(props.form.source_type)) return []
+  if (!datasourceSchema.value || !isPluginSourceType(props.form.source_type))
+    return []
   return (datasourceSchema.value.required || []).filter((key) => {
     const value = props.config?.[key]
-    return value === undefined || value === null || value === '' ||
+    return (
+      value === undefined ||
+      value === null ||
+      value === '' ||
       (Array.isArray(value) && value.length === 0)
+    )
   })
 })
 
-const connectionFieldInvalid = computed(() =>
-  isPluginSourceType(props.form.source_type) && !props.form.connection_uuid
+const connectionFieldInvalid = computed(
+  () =>
+    isPluginSourceType(props.form.source_type) &&
+    !isManagedWorkspace.value &&
+    !props.form.connection_uuid
 )
 
 const canProceedWizard = computed(() => {
@@ -1772,7 +1970,14 @@ const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'node') return true
   if (activeStepKey.value === 'connection') {
     if (isManagedWorkspace.value) {
-      return true
+      if (isFileUpload.value) {
+        return onlineLensNodes.value.some(
+          (node) => node.uuid === props.form.lensnode_uuid
+        )
+      }
+      return onlineLensNodes.value.some(
+        (node) => node.uuid === props.form.lensnode_uuid
+      )
     }
     if (props.connectionResult?.status !== 'success') {
       return false
@@ -1940,6 +2145,30 @@ function updatePluginConfig(value) {
   })
   Object.assign(props.config, value)
   emit('connection-change')
+}
+
+function emitUploadFiles(files) {
+  const selected = Array.from(files || [])
+  fileUploadDragging.value = false
+  if (!selected.length) return
+  emit('upload-files', selected)
+}
+
+function removeUploadFile(file) {
+  emit('remove-upload-file', file)
+}
+
+function formatUploadFileSize(bytes) {
+  return `${new Intl.NumberFormat().format(Math.ceil(bytes / 1024))} KB`
+}
+
+function handleFileUploadChange(event) {
+  emitUploadFiles(event.target.files)
+  event.target.value = ''
+}
+
+function handleFileUploadDrop(event) {
+  emitUploadFiles(event.dataTransfer?.files)
 }
 
 function feishuResourceResult(index) {
@@ -2133,7 +2362,7 @@ function cancelCreateTargetDirectory() {
 }
 
 function checkCurrentPathIfNeeded() {
-  if (!props.show || activeStepKey.value !== 'sync') {
+  if (!props.show || activeStepKey.value !== 'sync' || !showTargetPath.value) {
     return
   }
   if (
@@ -2343,7 +2572,6 @@ watch(
   { flush: 'post' }
 )
 
-
 function datasourceConnectionConfigSignature() {
   if (isPluginSourceType(props.form.source_type)) {
     return JSON.stringify(props.config || {})
@@ -2537,5 +2765,25 @@ function datasourceConnectionConfigSignature() {
 
 .directory-name-input {
   @apply h-7 min-w-0 flex-1 rounded border border-line bg-surface px-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+}
+
+.file-upload-panel {
+  @apply space-y-4 rounded-lg border border-line bg-surface p-4;
+}
+
+.file-upload-panel-heading {
+  @apply flex items-start gap-3;
+}
+
+.file-upload-icon {
+  @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-700;
+}
+
+.file-upload-dropzone {
+  @apply flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line bg-surface-sunken px-4 py-8 text-center transition-colors hover:border-brand-200 hover:bg-brand-50/40 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.file-upload-dropzone-active {
+  @apply border-brand-200 bg-brand-50;
 }
 </style>

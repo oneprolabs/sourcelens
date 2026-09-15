@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Fixed datasource sync tasks remaining queued indefinitely and ensured session datasource workspaces are initialized before LensNode execution. Conversion workers now honor configured parallelism with safe progress and usage accounting.
+zh-CN: 修复数据源同步任务长期排队无法执行的问题，并确保 LensNode 执行前初始化 Session 数据源工作区；转换 worker 按配置并发运行，同时保证进度和用量统计安全。

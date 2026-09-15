@@ -209,6 +209,14 @@ def _run_agent_with_turn_limit(
             (last_state or {}).get("messages", []),
             answer_language,
             emit_event,
+            current_question=next(
+                (
+                    str(item.get("content") or "")
+                    for item in reversed(messages)
+                    if item.get("role") == "user"
+                ),
+                "",
+            ),
             reason=truncation_reason or "limit",
         )
         if synthesis:
@@ -225,25 +233,15 @@ def _run_agent_with_turn_limit(
         raise EmptyAgentResponseError(
             "Agent returned no answer after one recovery attempt."
         )
-    if truncated and answer.strip():
-        if truncation_reason == "soft_deadline":
-            answer += _pick_text(
-                "\n\n---\n*即将达到硬截止时间，以上回答由当前已有证据"
-                "综合生成，调查可能尚未完全完成。*",
-                "\n\n---\n*Approaching the hard deadline, this answer was "
-                "synthesized from the evidence already collected and the "
-                "investigation may be incomplete.*",
-                answer_language,
-            )
-        else:
-            answer += _pick_text(
-                "\n\n---\n*已达到当前执行安全边界，本次调查未完全完成。"
-                "可从已保存的检查点继续执行。*",
-                "\n\n---\n*Reached the current execution safety boundary before "
-                "the investigation fully completed. Retry to continue "
-                "from the saved checkpoint.*",
-                answer_language,
-            )
+    if truncated and answer.strip() and truncation_reason == "soft_deadline":
+        answer += _pick_text(
+            "\n\n---\n*即将达到硬截止时间，以上回答由当前已有证据"
+            "综合生成，调查可能尚未完全完成。*",
+            "\n\n---\n*Approaching the hard deadline, this answer was "
+            "synthesized from the evidence already collected and the "
+            "investigation may be incomplete.*",
+            answer_language,
+        )
     termination_reason = truncation_reason
     if termination_reason is None and model is not None:
         model_reason = getattr(model, "stop_reason", None)
@@ -545,6 +543,7 @@ def _synthesize_wrapup_answer(
     current,
     answer_language,
     emit_event,
+    current_question="",
     reason="limit",
 ):
     """Ask once for a tool-free answer after cutoff or an empty terminal.
@@ -604,8 +603,17 @@ def _synthesize_wrapup_answer(
             "any part of the investigation you were not able to confirm.",
             answer_language,
         )
+    current_question_hint = ""
+    if current_question:
+        current_question_hint = _pick_text(
+            f"当前需要回答的问题是：{current_question}",
+            f"The question to answer now is: {current_question}",
+            answer_language,
+        )
+        current_question_hint += "\n\n"
     instruction = (
         f"{instruction}\n\n"
+        f"{current_question_hint}"
         f"{_answer_language_requirement(answer_language)}"
     )
     wrapup_history = _strip_dangling_tool_call(current)

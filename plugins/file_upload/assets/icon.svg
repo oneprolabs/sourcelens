@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 64 64" role="img" aria-label="File upload">
+  <rect width="64" height="64" rx="14" fill="#2563eb"/>
+  <path d="M20 14h17l9 9v27H20z" fill="#dbeafe"/>
+  <path d="M37 14v11h9" fill="#93c5fd"/>
+  <path d="M32 45V29m0 0-7 7m7-7 7 7" fill="none"
+    stroke="#2563eb" stroke-linecap="round" stroke-linejoin="round"
+    stroke-width="4"/>
+</svg>

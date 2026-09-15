@@ -111,18 +111,34 @@ def prepare_runtime_resources(
 
     config = _apply_feature_flags(config, command.get("features"))
     workspace = Path(config.workspace_path)
-    runtime_base = Path(getattr(config, "runtime_path", workspace))
+    runtime_base = workspace
     base = runtime_base / ".sourcelens"
     cache_root = base / "cache"
     runtime_instance_id = (
         command.get("runtime_instance_id") or command["run_uuid"]
     )
-    runtime_root = _run_runtime_path(runtime_base, runtime_instance_id)
-    session_id = command.get("session_uuid")
+    # A delegated Run is transient: it renders under its parent Run's
+    # ``delegations/<run>`` directory (never as a Session of its own) so the
+    # work stays attributable to the parent conversation while still being
+    # disposable. Without a parent Session id it falls back to run scratch.
+    delegated = bool(command.get("parent_run_uuid"))
+    session_id = None if delegated else command.get("session_uuid")
+    runtime_root = _run_runtime_path(
+        runtime_base,
+        runtime_instance_id,
+        session_id=session_id,
+        parent_session_id=(
+            command.get("parent_session_uuid") if delegated else None
+        ),
+        parent_run_uuid=(
+            command.get("parent_run_uuid") if delegated else None
+        ),
+    )
     shared_root = (
         session_root(config, session_id) if session_id else runtime_root
     )
     shared_root.mkdir(parents=True, exist_ok=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
     if session_id:
         session_metadata = shared_root / "session.json"
         _write_private_json(
@@ -132,21 +148,12 @@ def prepare_runtime_resources(
                 "workspace_guide": command.get("workspace_guide", ""),
             },
         )
-    skills_root = shared_root / "skills"
-    mcp_root = shared_root / "mcp"
+    skills_root = runtime_root / "skills"
+    mcp_root = runtime_root / "mcp"
 
     skills_root.mkdir(parents=True, exist_ok=True)
     mcp_root.mkdir(parents=True, exist_ok=True)
-    if shared_root != runtime_root:
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        for name, target in (("skills", skills_root), ("mcp", mcp_root)):
-            alias = runtime_root / name
-            if alias.exists() or alias.is_symlink():
-                if alias.is_symlink():
-                    alias.unlink()
-                elif alias.is_dir():
-                    shutil.rmtree(alias)
-            alias.symlink_to(target, target_is_directory=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
 
     try:
         materialize_datasources(
@@ -715,25 +722,37 @@ def _history_artifact_url(
 
 
 def cleanup_runtime_resources(resources):
-    """Remove per-run runtime resources but keep shared cache."""
+    """Release transient resources while retaining the Run workspace."""
 
-    shutil.rmtree(resources.root, ignore_errors=True)
+    root = Path(resources.root)
+    parts = root.parts
+    # Delegated Runs are transient even though they live under ``sessions/``.
+    if "delegations" in parts:
+        shutil.rmtree(root, ignore_errors=True)
+        return
+    if "sessions" in parts and "runs" in parts:
+        return
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def cleanup_run_runtime_resources(workspace_path, run_uuid):
-    """Remove one Run's runtime and session workspace directories."""
+    """Retain one completed Run's workspace for later inspection.
+
+    Run directories are removed by the retention cleanup process, rather than
+    at terminal acknowledgement time.
+    """
 
     if not workspace_path or not run_uuid:
         return False
     try:
-        runtime_root = _run_runtime_path(workspace_path, run_uuid)
+        workspace_root = Path(workspace_path).resolve()
+        runtime_roots = list(
+            (workspace_root / "sessions").glob(f"*/runs/{run_uuid}")
+        )
+        runtime_roots.append(_run_runtime_path(workspace_root, run_uuid))
     except (OSError, ValueError):
         return False
-    session_root = Path(workspace_path) / "sessions" / str(run_uuid)
-    shutil.rmtree(runtime_root, ignore_errors=True)
-    if session_root != runtime_root:
-        shutil.rmtree(session_root, ignore_errors=True)
-    return not runtime_root.exists() and not session_root.exists()
+    return all(path.exists() for path in runtime_roots)
 
 
 def delete_skill_cache(workspace_path, skill_uuid):
@@ -763,15 +782,49 @@ def delete_skill_cache(workspace_path, skill_uuid):
     return not skill_root.exists()
 
 
-def _run_runtime_path(workspace_path, run_uuid):
-    """Return a contained runtime path for one validated Run identifier."""
+def _run_runtime_path(
+    workspace_path,
+    run_uuid,
+    session_id=None,
+    parent_session_id=None,
+    parent_run_uuid=None,
+):
+    """Return a contained runtime path for one validated Run identifier.
+
+    A delegated Run is nested under its parent Run as
+    ``sessions/<parent_session>/runs/<parent_run>/delegations/<run>`` so it
+    remains attributable to the parent conversation.
+    """
 
     identifier = str(run_uuid).strip()
     if not RUN_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError("Invalid Run identifier")
 
     workspace_root = Path(workspace_path).resolve()
-    runs_root = workspace_root / ".sourcelens" / "runtime" / "runs"
+    if parent_run_uuid and parent_session_id:
+        try:
+            session_identifier = str(uuid.UUID(str(parent_session_id)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("Invalid Session identifier") from exc
+        parent_identifier = str(parent_run_uuid).strip()
+        if not RUN_IDENTIFIER_PATTERN.fullmatch(parent_identifier):
+            raise ValueError("Invalid Run identifier")
+        runs_root = (
+            workspace_root
+            / "sessions"
+            / session_identifier
+            / "runs"
+            / parent_identifier
+            / "delegations"
+        )
+    elif session_id:
+        try:
+            session_identifier = str(uuid.UUID(str(session_id)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("Invalid Session identifier") from exc
+        runs_root = workspace_root / "sessions" / session_identifier / "runs"
+    else:
+        runs_root = workspace_root / ".sourcelens" / "runtime" / "runs"
     resolved_runs_root = runs_root.resolve()
     try:
         resolved_runs_root.relative_to(workspace_root)
@@ -797,12 +850,14 @@ def cleanup_stale_runtime_resources(
     """Remove abandoned per-Run directories older than the safety window."""
 
     runs_root = Path(workspace_path) / ".sourcelens" / "runtime" / "runs"
+    sessions = Path(workspace_path) / "sessions"
+    session_runs = list(sessions.glob("*/runs/*"))
     cutoff = float(time.time() if now is None else now) - max(
         0,
         int(max_age_s),
     )
     try:
-        candidates = list(runs_root.iterdir())
+        candidates = list(runs_root.iterdir()) + session_runs
     except (FileNotFoundError, OSError):
         return 0
 
@@ -813,6 +868,16 @@ def cleanup_stale_runtime_resources(
                 continue
             if path.stat().st_mtime > cutoff:
                 continue
+            # A parent Run directory contains delegated child directories.
+            # Keep it while any descendant was recently active.
+            if (path / "delegations").is_dir():
+                descendant_mtimes = [
+                    item.stat().st_mtime
+                    for item in (path / "delegations").rglob("*")
+                    if not item.is_symlink()
+                ]
+                if descendant_mtimes and max(descendant_mtimes) > cutoff:
+                    continue
         except (FileNotFoundError, OSError):
             continue
         shutil.rmtree(path, ignore_errors=True)

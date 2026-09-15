@@ -112,7 +112,13 @@
     "datasourceSyncFailed": "Datasource sync failed. Check the datasource before retrying.",
     "datasourceSyncTimeout": "Timed out waiting for datasource sync. Retry later.",
     "datasourceUploadRequired": "Upload files to this datasource before asking.",
-    "datasourceDisabled": "The selected datasource is disabled. Contact an administrator."
+    "datasourceDisabled": "The selected datasource is disabled. Contact an administrator.",
+    "datasourceResourceLimit": "The datasource exceeds its resource limit. Remove large files or increase the Git byte limit, then try again.",
+    "datasourceCredentialInvalid": "The datasource credentials are invalid. Update them and try again.",
+    "datasourceConfigInvalid": "The datasource configuration is invalid. Check it and try again.",
+    "datasourceTargetPathInvalid": "The target path is invalid. Check the datasource directory and try again.",
+    "datasourceTargetPathRequired": "A target path is required. Configure the datasource directory and try again.",
+    "datasourceGitLayoutMigration": "The Git repository layout requires migration. Sync again or contact an administrator."
   },
   "lens": {
     "share": {
@@ -351,13 +357,16 @@
       "errorVisionModelConfiguration": "The vision model configuration is invalid. Check its parameters and retry.",
       "errorModelNotVisionCapable": "The selected model is not confirmed to accept image input. Ask an administrator to configure it.",
       "errorVisionModelNotConfigured": "No vision model is configured. Ask an administrator to configure one.",
+      "errorSmartCollaborationModelNotConfigured": "No LLM is configured, so a Smart Collaboration session cannot start. Ask an administrator to add a model under LLM Config.",
       "errorVisionProviderQuotaExceeded": "The vision provider quota or rate limit is exhausted. Please retry later or contact an administrator.",
       "errorVisionProviderUnavailable": "The vision provider is temporarily unavailable. Please retry later.",
       "retryAction": "Retry",
       "continuationFallback": "Checkpoint resume was unavailable; continued as a new run",
       "sessionHistoryLoadFailed": "Conversation history could not be loaded.",
       "loadFailed": "Failed to load Lens chat.",
-      "assistantNotFound": "The assistant you're trying to access doesn't exist. Please contact your administrator for a valid link.",
+      "loginRequired": "Sign in to start exploring.",
+      "assistantUnavailable": "This assistant is unavailable or you do not have access. Please contact your administrator.",
+      "assistantNotFound": "Sign in to start exploring.",
       "sessionAccessDenied": "You don't have access to this session, or it no longer exists. Select one of your recent sessions or start a new one.",
       "sessionTitle": "{name} query",
       "sessionCreated": "Session created.",
@@ -429,6 +438,7 @@
         "clarificationRequired": "Enter more information first.",
         "clarificationFailed": "Failed to submit the clarification. Try again.",
         "outcomePartial": "Partial results were returned, but execution did not finish completely. Review the run details for missing items.",
+        "outcomePartialFlash": "Core results are ready; Flash mode skipped optional steps.",
         "outcomeBlocked": "This request did not complete. Review the runtime details and retry.",
         "activity": {
           "analyzingResults": "Analyzing collected results",

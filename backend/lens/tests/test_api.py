@@ -81,7 +81,6 @@ from lens.services import (
 )
 from lens.skill_packages import package_zip_bytes
 from lens.tasks import (
-    SourceSyncBusy,
     acquire_datasource_lock,
     complete_datasource_sync_task,
     release_datasource_lock,
@@ -2547,6 +2546,51 @@ class LensApiTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         with self.assertRaises(PermissionDenied):
             serializer.save()
+
+    def test_smart_collaboration_falls_back_to_default_llm(self):
+        """An unset coordinator model reuses the default global LLM config."""
+
+        config = LLMConfig.objects.create(
+            scope=LLMConfig.Scope.GLOBAL,
+            provider="openai",
+            model_type=LLMConfig.MODEL_TYPE_LLM,
+            config={"model": "gpt-4o-mini"},
+            is_active=True,
+        )
+        self.assistant.visibility = Assistant.Visibility.PUBLIC
+        self.assistant.save(update_fields=["visibility"])
+        serializer = SessionCreateSerializer(
+            data={
+                "routing_mode": "smart",
+                "allowed_assistant_uuids": [str(self.assistant.uuid)],
+            },
+            context={"request": SimpleNamespace(user=self.user)},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        session = serializer.save()
+
+        self.assertEqual(session.routing_mode, Session.RoutingMode.SMART)
+        self.assertEqual(
+            str(session.assistant.agent_model_ref),
+            str(config.uuid),
+        )
+
+    def test_smart_collaboration_without_any_llm_reports_unconfigured(self):
+        """No coordinator setting and no global LLM surfaces a distinct code."""
+
+        serializer = SessionCreateSerializer(
+            data={"routing_mode": "smart"},
+            context={"request": SimpleNamespace(user=self.user)},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        with self.assertRaises(PermissionDenied) as context:
+            serializer.save()
+        self.assertEqual(
+            str(context.exception.detail),
+            "SMART_COLLABORATION_MODEL_NOT_CONFIGURED",
+        )
 
     def test_smart_session_run_allows_hidden_coordinator(self):
         """Smart sessions may run through their hidden system coordinator."""
@@ -5487,13 +5531,13 @@ class LensApiTests(TestCase):
         # status event is only emitted when the run status actually changes.
         self.assertNotIn('"type": "status"', body)
 
-    def test_datasource_create_uses_target_path(self):
+    def test_datasource_create_uses_unified_target_path(self):
         payload = {
             "name": "Scheduled Repo",
             "source_type": "git",
             "lensnode_uuid": str(self.lensnode.uuid),
             "config": {"repo_url": "https://example.com/repo.git"},
-            "sync_policy": {"interval_seconds": 120},
+            "sync_policy": {"interval_seconds": 600},
             "target_path": "/workspace/scheduled",
         }
 
@@ -5506,8 +5550,26 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(
             response.data["target_path"],
-            "/workspace/scheduled",
+            f"/workspace/datasources/{response.data['uuid']}",
         )
+
+    def test_datasource_create_rejects_short_sync_interval(self):
+        payload = {
+            "name": "Too Frequent Repo",
+            "source_type": "git",
+            "lensnode_uuid": str(self.lensnode.uuid),
+            "config": {"repo_url": "https://example.com/repo.git"},
+            "sync_policy": {"interval_seconds": 120},
+        }
+
+        response = self.client.post(
+            "/api/lens/admin/datasources/",
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sync_policy", response.data)
 
     def test_datasource_list_filters_by_plugin_key(self):
         self.datasource.plugin_key = "github"
@@ -5922,12 +5984,13 @@ class LensApiTests(TestCase):
         )
         apply_async.assert_not_called()
 
-    def test_managed_workspace_upload_registers_and_queues_task(self):
+    def test_upload_datasource_registers_and_queues_task(self):
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
+            target_path="/workspace/datasources/manual-upload",
         )
         uploaded = SimpleUploadedFile(
             "requirements.pdf",
@@ -5968,11 +6031,60 @@ class LensApiTests(TestCase):
         self.assertEqual(task.created_by, self.user)
         self.assertEqual(task.metadata["filename"], "requirements.pdf")
 
+    def test_upload_history_records_files_and_excludes_other_sources(self):
+        """Keep file metadata and processing state scoped to the datasource."""
+        datasource = DataSource.objects.create(
+            name="Upload history",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+            target_path="/workspace/datasources/upload-history",
+        )
+        with (
+            patch(
+                "lens.views.datasources.default_storage.save",
+                return_value="uploads/test.zip",
+            ),
+            patch("lens.views.datasources.datasource_upload_task.apply_async"),
+        ):
+            for name in ("first.zip", "second.zip"):
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}/upload/",
+                    {"file": SimpleUploadedFile(
+                        name, b"archive", content_type="application/zip",
+                    )},
+                    format="multipart",
+                )
+                self.assertEqual(response.status_code, 202, response.data)
+                task = TaskExecution.objects.get(
+                    task_id=response.data["task_id"],
+                )
+                self.assertEqual(task.metadata["filename"], name)
+                self.assertEqual(task.metadata["byte_size"], 7)
+                self.assertEqual(
+                    task.metadata["content_type"], "application/zip",
+                )
+                self.assertEqual(task.created_by, self.user)
+                self.assertIsNotNone(task.created_at)
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/sync-tasks/",
+            {"metadata_fields": "filename,byte_size,content_type"},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        payload = response.data
+        rows = payload["results"] if isinstance(payload, dict) else payload
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(
+            {row["metadata"]["filename"] for row in rows},
+            {"first.zip", "second.zip"},
+        )
+        self.assertTrue(all(row["status"] == "PENDING" for row in rows))
+
     def test_datasource_upload_rejects_unsupported_source_and_file(self):
         unsupported = SimpleUploadedFile(
-            "notes.txt",
+            "installer.exe",
             b"not supported",
-            content_type="text/plain",
+            content_type="application/octet-stream",
         )
 
         response = self.client.post(
@@ -5988,10 +6100,11 @@ class LensApiTests(TestCase):
         )
 
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
+            target_path="/workspace/datasources/manual-upload",
         )
         response = self.client.post(
             f"/api/lens/admin/datasources/{datasource.uuid}/upload/",
@@ -6128,7 +6241,7 @@ class LensApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_cancel_managed_workspace_conversion_waits_for_callback(self):
+    def test_cancel_managed_workspace_conversion_finishes_immediately(self):
         datasource = DataSource.objects.create(
             name="Managed Snapshot",
             source_type=DataSource.SourceType.MANAGED_WORKSPACE,
@@ -6170,19 +6283,19 @@ class LensApiTests(TestCase):
         cancel.assert_called_once_with(self.lensnode, "running-conversion")
         task.refresh_from_db()
         datasource.refresh_from_db()
-        self.assertEqual(task.status, "CANCELLING")
-        self.assertEqual(datasource.last_conversion_status, "CANCELLING")
-        self.assertIsNone(datasource.last_conversion_at)
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_CONVERSION_CANCELLED")
+        self.assertEqual(datasource.last_conversion_status, "REVOKED")
+        self.assertIsNotNone(datasource.last_conversion_at)
 
-        with self.assertRaises(SourceSyncBusy):
-            acquire_datasource_lock(
-                datasource.uuid,
-                token="new-conversion",
-                ttl_s=60,
-            )
+        acquire_datasource_lock(
+            datasource.uuid,
+            token="new-conversion",
+            ttl_s=60,
+        )
         release_datasource_lock(
             datasource.uuid,
-            token="running-conversion",
+            token="new-conversion",
         )
 
     @patch("lens.views.datasources.check_datasource_path")
@@ -6436,7 +6549,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["detail"], "DATASOURCE_DISABLED")
         apply_async.assert_not_called()
 
-    def test_cancel_datasource_sync_waits_for_stop_confirmation(self):
+    def test_cancel_datasource_sync_finishes_immediately(self):
         task = TaskExecution.objects.create(
             task_id="running-sync",
             task_name="datasource_sync:Repo Cache",
@@ -6474,19 +6587,15 @@ class LensApiTests(TestCase):
         )
         cancel.assert_called_once_with(self.lensnode, "running-sync")
         task.refresh_from_db()
-        self.assertEqual(task.status, "CANCELLING")
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_SYNC_CANCELLED")
 
-        delete_response = self.client.delete(
-            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        acquire_datasource_lock(
+            self.datasource.uuid,
+            token="new-sync",
+            ttl_s=60,
         )
-        self.assertEqual(delete_response.status_code, 409)
-
-        with self.assertRaises(SourceSyncBusy):
-            acquire_datasource_lock(
-                self.datasource.uuid,
-                token="new-sync",
-                ttl_s=60,
-            )
+        release_datasource_lock(self.datasource.uuid, token="new-sync")
 
         complete_datasource_sync_task(
             task.task_id,
@@ -6498,12 +6607,11 @@ class LensApiTests(TestCase):
 
         task.refresh_from_db()
         self.assertEqual(task.status, "REVOKED")
-        acquire_datasource_lock(
-            self.datasource.uuid,
-            token="new-sync",
-            ttl_s=60,
+
+        delete_response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
         )
-        release_datasource_lock(self.datasource.uuid, token="new-sync")
+        self.assertEqual(delete_response.status_code, 204)
 
     def test_datasource_create_uses_lensnode_workspace_path(self):
         self.lensnode.workspace_path = "/data/lens-workspace"
@@ -6525,10 +6633,10 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(
             response.data["target_path"],
-            "/data/lens-workspace/repos/custom",
+            f"/data/lens-workspace/datasources/{response.data['uuid']}",
         )
 
-    def test_datasource_create_rejects_path_outside_lensnode_workspace(self):
+    def test_datasource_create_ignores_path_outside_lensnode_workspace(self):
         self.lensnode.workspace_path = "/data/lens-workspace"
         self.lensnode.save(update_fields=["workspace_path", "updated_at"])
         payload = {
@@ -6545,8 +6653,11 @@ class LensApiTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("LENS_SOURCE_TARGET_PATH_INVALID", str(response.data))
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.data["target_path"],
+            f"/data/lens-workspace/datasources/{response.data['uuid']}",
+        )
 
     def test_datasource_rejects_inline_credentials(self):
         payload = {
@@ -6836,9 +6947,44 @@ class AssistantAccessTests(TestCase):
         client.force_authenticate(user)
         return client
 
-    def test_public_view_404_for_private_assistant(self):
-        resp = self.client.get(f"/api/lens/public/assistants/{self.assistant.slug}/")
-        self.assertEqual(resp.status_code, 404)
+    def test_public_view_previews_private_assistant_without_private_config(self):
+        """A direct link reveals only display metadata before login."""
+        resp = self.client.get(
+            f"/api/lens/public/assistants/{self.assistant.slug}/"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["name"], self.assistant.name)
+        self.assertEqual(resp.data["description"], self.assistant.description)
+        self.assertEqual(
+            set(resp.data),
+            {"name", "description", "slug"},
+        )
+
+    def test_public_view_hides_archived_system_and_missing_assistants(self):
+        """Only active user-facing assistants have a link preview."""
+        url = f"/api/lens/public/assistants/{self.assistant.slug}/"
+        self.assistant.status = Assistant.Status.ARCHIVED
+        self.assistant.save(update_fields=["status"])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assistant.status = Assistant.Status.ACTIVE
+        self.assistant.is_system = True
+        self.assistant.save(update_fields=["status", "is_system"])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(
+            self.client.get(
+                "/api/lens/public/assistants/nonexistent/"
+            ).status_code,
+            404,
+        )
+
+    def test_preview_does_not_allow_anonymous_sessions(self):
+        """Seeing a preview does not grant conversation access."""
+        response = self.client.post(
+            "/api/lens/sessions/",
+            {"assistant_uuid": str(self.assistant.uuid)},
+            format="json",
+        )
+        self.assertIn(response.status_code, (401, 403))
 
     def test_public_view_200_when_public(self):
         self.assistant.visibility = Assistant.Visibility.PUBLIC

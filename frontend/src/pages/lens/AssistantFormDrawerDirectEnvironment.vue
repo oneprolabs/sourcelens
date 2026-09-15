@@ -336,7 +336,9 @@
                     <PluginIcon
                       :plugin-key="binding.source.plugin_key"
                       :src="pluginIconUrl(binding.source.plugin_key)"
-                      :label="binding.source.plugin_key || binding.source.source_type"
+                      :label="
+                        binding.source.plugin_key || binding.source.source_type
+                      "
                     />
                     <span class="min-w-0 truncate" :title="binding.label">
                       {{ binding.label }}
@@ -395,26 +397,26 @@
                   >
                     <label class="datasource-option">
                       <input
-                      type="checkbox"
-                      :checked="isSourceFullySelected(source)"
-                      :indeterminate="
-                        hasAnySourceBinding(source) &&
-                        !isSourceFullySelected(source)
-                      "
-                      :disabled="
-                        saving ||
-                        (source.status !== 'active' &&
-                          !hasAnySourceBinding(source))
-                      "
-                      :aria-label="
-                        source.status === 'active'
-                          ? source.name
-                          : `${source.name} · ${t('lensAdmin.datasourceSelection.disabled')}`
-                      "
-                      class="h-4 w-4 rounded border-line text-brand-600"
-                      @change="
-                        selectSource(source, null, $event.target.checked)
-                      "
+                        type="checkbox"
+                        :checked="isSourceFullySelected(source)"
+                        :indeterminate="
+                          hasAnySourceBinding(source) &&
+                          !isSourceFullySelected(source)
+                        "
+                        :disabled="
+                          saving ||
+                          (source.status !== 'active' &&
+                            !hasAnySourceBinding(source))
+                        "
+                        :aria-label="
+                          source.status === 'active'
+                            ? source.name
+                            : `${source.name} · ${t('lensAdmin.datasourceSelection.disabled')}`
+                        "
+                        class="h-4 w-4 rounded border-line text-brand-600"
+                        @change="
+                          selectSource(source, null, $event.target.checked)
+                        "
                       />
                       <span class="min-w-0 flex-1 truncate">{{
                         source.name
@@ -429,7 +431,8 @@
                     <div
                       v-if="
                         supportsSourceItemSelection(source) &&
-                        hasAnySourceBinding(source) && source.items?.length > 1
+                        hasAnySourceBinding(source) &&
+                        source.items?.length > 1
                       "
                       class="ml-6 border-l border-line pl-2"
                     >
@@ -1824,8 +1827,7 @@ const selectedDatasourceLabels = computed(() => {
       source.items.every((item) =>
         (props.form.datasource_bindings || []).some(
           (row) =>
-            row.datasource_uuid === source.uuid &&
-            row.item_uuid === item.uuid
+            row.datasource_uuid === source.uuid && row.item_uuid === item.uuid
         )
       )
     ) {
@@ -1839,10 +1841,9 @@ const selectedDatasourceLabels = computed(() => {
       })
       continue
     }
-    const item =
-      !supportsSourceItemSelection(source)
-        ? null
-        : source.items?.find((child) => child.uuid === binding.item_uuid)
+    const item = !supportsSourceItemSelection(source)
+      ? null
+      : source.items?.find((child) => child.uuid === binding.item_uuid)
     labels.push({
       key: `${source.uuid}:${binding.item_uuid || 'source'}`,
       label: item ? `${source.name} / ${item.name}` : source.name,
@@ -2338,9 +2339,9 @@ function isSourceFullySelected(source) {
 
 function selectSource(source, item, checked) {
   if (!item && supportsSourceItemSelection(source) && source.items?.length) {
-    props.form.datasource_bindings = (props.form.datasource_bindings || []).filter(
-      (binding) => binding.datasource_uuid !== source.uuid
-    )
+    props.form.datasource_bindings = (
+      props.form.datasource_bindings || []
+    ).filter((binding) => binding.datasource_uuid !== source.uuid)
     if (checked) {
       props.form.datasource_bindings = source.items.reduce(
         (bindings, child) => toggleBinding(bindings, source, child, true),

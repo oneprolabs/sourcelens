@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.cache import cache
+from django.db import transaction
 from django.utils import timezone
 
 from .lensnode_auth import hash_lensnode_token
@@ -45,6 +46,50 @@ def _ack_session_cleanup(session_uuid, lensnode_uuid, error):
 
 
 DETAIL_ITEMS_LIMIT = 200
+
+
+@transaction.atomic
+def _ensure_file_upload_datasource(lensnode_uuid):
+    """Create the connectionless file upload datasource once per node."""
+
+    lensnode = (
+        LensNode.objects.select_for_update().filter(uuid=lensnode_uuid).first()
+    )
+    if lensnode is None:
+        LOGGER.warning(
+            "Skipping file upload datasource setup for unknown LensNode %s",
+            lensnode_uuid,
+        )
+        return None
+    workspace_path = str(lensnode.workspace_path or "").strip().rstrip("/")
+    if not workspace_path:
+        return None
+    system_name = f"File uploads ({lensnode.name})"
+    datasource = (
+        DataSource.objects.filter(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+        )
+        .order_by("-name", "created_at")
+        .first()
+    )
+    if datasource is None:
+        datasource = DataSource.objects.create(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            name=system_name,
+            config={},
+            sync_policy={},
+            datasource_config={},
+            status=DataSource.Status.ACTIVE,
+        )
+    target_path = f"{workspace_path}/datasources/{datasource.uuid}"
+    if datasource.target_path != target_path:
+        datasource.target_path = target_path
+        datasource.save(update_fields=["target_path", "updated_at"])
+    return datasource
 
 
 class LensNodeConsumer(AsyncJsonWebsocketConsumer):
@@ -140,6 +185,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_datasource_path_result(content)
         elif frame_type == "datasource_files_result":
             await self._handle_datasource_files_result(content)
+        elif frame_type == "datasource_upload_delete_result":
+            cache.set(
+                f"lens:datasource_upload_delete:{content.get('request_id')}",
+                content.get("result") or {},
+                timeout=60,
+            )
         elif frame_type == "datasource_connection_result":
             await self._handle_datasource_connection_result(content)
         elif frame_type == "datasource_sync_event":
@@ -258,6 +309,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         active_datasource_operations = content.get("active_datasource_operations")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self._update_lensnode_report(content, require_versions=True)
+        await database_sync_to_async(_ensure_file_upload_datasource)(
+            self.lensnode.uuid
+        )
         await database_sync_to_async(reconcile_orphaned_datasource_conversions)(
             self.lensnode.uuid,
             self.channel_name,
@@ -469,6 +523,16 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             citations=content.get("citations"),
             planned_evidence=content.get("planned_evidence"),
         )
+        if run is None:
+            # A redelivered terminal frame for an already-reaped Run: ack it
+            # so the LensNode stops retrying.
+            await self.send_json(
+                {
+                    "type": "run_done_ack",
+                    "run_uuid": str(run_uuid),
+                }
+            )
+            return
         parent_update = await database_sync_to_async(self._delegation_done_payload)(
             run.pk
         )

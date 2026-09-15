@@ -1,4 +1,8 @@
+import hashlib
+from datetime import timedelta
+
 from core.periodic_registry import TASK_REGISTRY
+from django.utils import timezone
 
 from .models import DataSource, GlobalSetting, ScheduledTask
 
@@ -105,7 +109,10 @@ def _ensure_source_scheduled_task(datasource):
 def ensure_datasource_periodic_task(datasource):
     """Create missing Celery Beat and UI rows for a datasource sync."""
 
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         _disable_datasource_periodic_task(datasource)
         return None
     if datasource.status == DataSource.Status.DISABLED:
@@ -116,6 +123,9 @@ def ensure_datasource_periodic_task(datasource):
 
     schedule_field, schedule = _datasource_schedule(datasource.sync_policy)
     name = f"lens-source-sync-{datasource.uuid}"
+    digest = hashlib.sha256(str(datasource.uuid).encode()).digest()
+    jitter_seconds = int.from_bytes(digest[:2], "big") % 1201 - 600
+    start_time = timezone.now() + timedelta(seconds=jitter_seconds)
     task, created = PeriodicTask.objects.get_or_create(
         name=name,
         defaults={
@@ -124,12 +134,16 @@ def ensure_datasource_periodic_task(datasource):
             "args": f'["{datasource.uuid}"]',
             "queue": "lens",
             "enabled": True,
+            "start_time": start_time,
         },
     )
     changed = created
     expected_args = f'["{datasource.uuid}"]'
     update_fields = []
     if not created:
+        if task.start_time is None:
+            task.start_time = start_time
+            update_fields.append("start_time")
         if task.task != "lens.source_sync":
             task.task = "lens.source_sync"
             update_fields.append("task")
@@ -166,7 +180,10 @@ def ensure_datasource_periodic_task(datasource):
 def estimate_datasource_next_run(datasource, record=None):
     """Return a best-effort next run time for datasource sync."""
 
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         return None
     if datasource.status == DataSource.Status.DISABLED:
         return None
@@ -189,7 +206,7 @@ def estimate_datasource_next_run(datasource, record=None):
 
     from datetime import timedelta
 
-    interval = max(int(sync_policy.get("interval_seconds") or 3600), 1)
+    interval = max(int(sync_policy.get("interval_seconds") or 86400), 600)
     return last_run_at + timedelta(seconds=interval)
 
 
@@ -250,9 +267,9 @@ def _datasource_schedule(sync_policy):
 
     from django_celery_beat.models import IntervalSchedule
 
-    interval = sync_policy.get("interval_seconds", 3600)
+    interval = sync_policy.get("interval_seconds", 86400)
     schedule, _ = IntervalSchedule.objects.get_or_create(
-        every=max(int(interval), 1),
+        every=max(int(interval), 600),
         period=IntervalSchedule.SECONDS,
     )
     return "interval", schedule
@@ -318,9 +335,14 @@ def register_periodic_tasks():
 
     datasources = DataSource.objects.filter(
         status=DataSource.Status.ACTIVE,
-    ).exclude(source_type=DataSource.SourceType.MANAGED_WORKSPACE)
+    ).exclude(
+        source_type__in=[
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ],
+    )
     for datasource in datasources:
-        interval = datasource.sync_policy.get("interval_seconds", 3600)
+        interval = datasource.sync_policy.get("interval_seconds", 86400)
         _ensure_source_scheduled_task(datasource)
         TASK_REGISTRY.add(
             name=f"lens-source-sync-{datasource.uuid}",

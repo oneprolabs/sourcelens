@@ -124,20 +124,32 @@ class CodeGraphPlugin(LensNodePlugin):
 
 
 def _codegraph_workspace(config, command):
-    """Return the current Run's Session root for CodeGraph indexing."""
+    """Return the Run directory CodeGraph should index, or None.
+
+    Indexing is scoped to the Run's selected directories so a Run never
+    reaches the source of another Session. Candidates must resolve inside
+    the node workspace; when a Run selects nothing we skip CodeGraph
+    entirely rather than indexing the whole workspace.
+    """
 
     workspace_root = Path(config.workspace_path).resolve()
-    target_dirs = (command or {}).get("target_dirs") or []
-    candidate = target_dirs[0].get("path") if target_dirs else ""
-    if not candidate:
-        return workspace_root
-    workspace = Path(candidate).resolve()
-    sessions_root = workspace_root / "sessions"
-    try:
-        workspace.relative_to(sessions_root)
-    except ValueError:
-        return None
-    return workspace
+    entries = [
+        item
+        for item in (command or {}).get("target_dirs") or []
+        if isinstance(item, dict) and item.get("path")
+    ]
+    references = [
+        item for item in entries if item.get("material_role") != "subject"
+    ]
+    for item in references + entries:
+        try:
+            workspace = Path(str(item["path"])).resolve()
+            workspace.relative_to(workspace_root)
+        except (OSError, ValueError):
+            continue
+        if workspace.is_dir():
+            return workspace
+    return None
 
 
 def _ensure_codegraph_index(config, workspace, emit_event=None):

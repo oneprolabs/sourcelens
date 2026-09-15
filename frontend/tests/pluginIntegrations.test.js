@@ -36,7 +36,8 @@ test('Tool-only Plugins stay out of datasource creation', async () => {
   const page = await source('pages/lens/DataSources.vue')
 
   assert.match(page, /const datasourcePlugins = computed/)
-  assert.match(page, /plugin\.datasource && plugin\.datasource_source_type/)
+  assert.match(page, /plugin\.datasource &&\s*plugin\.datasource_source_type/)
+  assert.match(page, /plugin\.datasource_source_type !== 'managed_workspace'/)
   assert.match(page, /:plugins="datasourcePlugins"/)
 })
 
@@ -473,7 +474,10 @@ test('managed workspace setup does not request a credential', async () => {
 
   assert.match(drawer, /v-else-if="isManagedWorkspace"/)
   assert.match(drawer, /managedWorkspaceDesc/)
-  assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return true/)
+  assert.match(
+    drawer,
+    /if \(isManagedWorkspace\.value\) \{\s*if \(isFileUpload\.value\) \{[\s\S]*?return onlineLensNodes/
+  )
   assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return false/)
 })
 

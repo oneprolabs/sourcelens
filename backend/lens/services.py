@@ -64,7 +64,6 @@ from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
-from .datasource.workspace import session_source_dirs
 from .session_titles import fallback_session_title
 from .trace_context import root_observation_id_for_run, trace_id_for_run
 
@@ -1197,13 +1196,16 @@ def create_execution_run(
             DatasourceRoutingError,
             selected_bindings,
         )
-        from .datasource.snapshots import capture_session_datasources
+        from .datasource.snapshots import (
+            DatasourceSnapshotError,
+            capture_session_datasources,
+        )
 
         try:
             bindings = selected_bindings(assistant, question)
-        except DatasourceRoutingError as exc:
+            capture_session_datasources(session, assistant, bindings=bindings)
+        except (DatasourceRoutingError, DatasourceSnapshotError) as exc:
             raise LensNodeDispatchError(str(exc)) from exc
-        capture_session_datasources(session, assistant, bindings=bindings)
     create_run_execution_snapshot(
         run,
         answer_language=answer_language,
@@ -2144,12 +2146,9 @@ def validate_run_dispatch(run):
             raise LensNodeDispatchError("GENERAL_CHAT_SKILL_REQUIRED")
     else:
         available = available_dir_paths(lensnode)
-        session_paths = {
-            item["path"] for item in session_source_dirs(run.session)
-        }
         for item in execution.target_dirs or []:
             path = item.get("path")
-            if path not in available and path not in session_paths:
+            if path not in available:
                 raise LensNodeDispatchError("LENSNODE_DIR_UNAVAILABLE")
 
     for skill in runtime_skills:
@@ -2325,7 +2324,11 @@ def create_run_execution_snapshot(
             "loaded_plugins": loaded_plugins,
             "agent_rounds": agent_rounds,
             "run_timeout_s": run_timeout_for_rounds(agent_rounds),
-            "target_dirs": session_source_dirs(run.session),
+            "target_dirs": (
+                []
+                if assistant.capability == Assistant.Capability.GENERAL_CHAT
+                else assistant.selected_dirs
+            ),
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],
             "token_budget_max_tokens": token_budget["max_tokens"],
@@ -3042,6 +3045,11 @@ def dispatch_run_to_lensnode(
                 "parent_run_uuid": (
                     str(run.parent_run.uuid) if run.parent_run_id else ""
                 ),
+                "parent_session_uuid": (
+                    str(run.parent_run.session.uuid)
+                    if run.parent_run_id
+                    else ""
+                ),
                 "dispatch_id": str(dispatch_id) if dispatch_id else None,
                 "task": execution.task,
                 "features": features_payload,
@@ -3469,17 +3477,22 @@ def finish_lensnode_run(
 ):
     """Mark a LensNode-dispatched run finished."""
 
-    run = (
-        Run.objects.select_related(
-            "input_message",
-            "output_message",
-            "session",
-            "session__assistant",
-            "session__user",
+    try:
+        run = (
+            Run.objects.select_related(
+                "input_message",
+                "output_message",
+                "session",
+                "session__assistant",
+                "session__user",
+            )
+            .select_for_update(of=("self",))
+            .get(uuid=run_uuid)
         )
-        .select_for_update(of=("self",))
-        .get(uuid=run_uuid)
-    )
+    except Run.DoesNotExist:
+        # A terminal frame can be redelivered at-least-once after the Run
+        # (e.g. a reaped transient delegated child) has already been removed.
+        return None
     if run.status in TERMINAL_RUN_STATUSES:
         return run
     now = timezone.now()
@@ -3651,8 +3664,81 @@ def finish_lensnode_run(
             lambda export_uuid=trace_export.uuid: _enqueue_trace_export(export_uuid)
         )
 
+    if run.parent_run_id is None:
+        _finalize_delegated_children(run)
+
     _promote_next_queued_run(run.session.assistant)
     return run
+
+
+def _finalize_delegated_children(run):
+    """Fold a parent Run's terminal delegated children into the parent.
+
+    Delegated Runs are transient: instead of persisting their own Sessions,
+    their results are summarized onto the parent Run and the coordinating
+    child Sessions are removed once every Run they own has reached a
+    terminal state. Children still active are cancelled by
+    ``cancel_descendant_runs`` and reaped by the retention sweep.
+    """
+
+    children = list(
+        Run.objects.filter(
+            parent_run=run,
+            status__in=TERMINAL_RUN_STATUSES,
+        ).select_related(
+            "session",
+            "session__assistant",
+            "input_message",
+            "output_message",
+        )
+    )
+    if not children:
+        return
+
+    results = []
+    candidate_session_ids = set()
+    for child in children:
+        assistant = child.session.assistant
+        results.append(
+            {
+                "assistant_uuid": str(assistant.uuid),
+                "assistant_name": assistant.name[:160],
+                "question": (
+                    str(child.input_message.content or "")[:2000]
+                    if child.input_message_id
+                    else ""
+                ),
+                "answer": (
+                    str(child.output_message.content or "")[:8000]
+                    if child.output_message_id
+                    else ""
+                ),
+                "status": child.status,
+            }
+        )
+        candidate_session_ids.add(child.session_id)
+
+    execution = getattr(run, "execution", None)
+    if execution is not None:
+        runtime_snapshot = dict(execution.runtime_snapshot or {})
+        runtime_snapshot["delegated_results"] = results
+        execution.runtime_snapshot = runtime_snapshot
+        execution.save(update_fields=["runtime_snapshot"])
+
+    reaped_session_ids = [
+        session_id
+        for session_id in candidate_session_ids
+        if not (
+            Run.objects.filter(session_id=session_id)
+            .exclude(status__in=TERMINAL_RUN_STATUSES)
+            .exists()
+        )
+    ]
+    if reaped_session_ids:
+        # Runs first: ``Run.input_message`` PROTECTs the Messages that a
+        # Session delete would otherwise cascade into.
+        Run.objects.filter(session_id__in=reaped_session_ids).delete()
+        Session.objects.filter(pk__in=reaped_session_ids).delete()
 
 
 def _enqueue_trace_export(export_uuid):

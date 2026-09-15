@@ -18,11 +18,13 @@ from . import datasource_manifest as manifest_store
 from .datasource_adapters import DataSourceAdapterRegistry
 from .datasource_adapters import FunctionDataSourceAdapter
 from .document_convert import empty_cost_stats
+from .document_convert import ensure_source_metadata
 from .document_convert import is_convertible, post_process_documents
 from .document_convert import merge_cost_stats
 from .path_rules import is_excluded_path
 from .path_rules import normalize_excluded_roots
 from .path_rules import relative_path
+from .path_rules import remove_sidecar
 from .path_rules import safe_filename
 from .path_rules import sidecar_path
 from .path_rules import source_sha256
@@ -133,7 +135,7 @@ def inspect_datasource_path(command, workspace_path=WORKSPACE_ROOT):
         result["message"] = "Directory will be created during first sync."
         return result
 
-    if not target.is_dir():
+    if command.get("plugin_key") != "file_upload" and not target.is_dir():
         result.update(
             {
                 "source_compatible": False,
@@ -345,7 +347,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
     source_type = str(command.get("source_type") or "")
     marker = manifest_store.read_manifest_marker(target)
     if (
-        source_type != "managed_workspace"
+        source_type not in {"managed_workspace", "upload"}
         and (
             not datasource_uuid
             or marker.get("datasource_uuid") != datasource_uuid
@@ -365,7 +367,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
         raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
 
     candidates = []
-    if source_type == "managed_workspace":
+    if source_type in {"managed_workspace", "upload"}:
         manifest_items = _managed_workspace_catalog_items(target)
     else:
         manifest_items = manifest_store.manifest_items(
@@ -507,17 +509,20 @@ def convert_managed_workspace(
 ):
     """Convert files in a managed workspace without synchronizing it."""
 
-    if command.get("source_type") != "managed_workspace":
+    source_type = command.get("source_type")
+    if source_type not in {"managed_workspace", "upload"}:
         raise DataSourceSyncError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
     target = normalize_target_path(
         command.get("target_path"),
         workspace_path,
     )
-    if not target.is_dir():
+    if source_type == "managed_workspace" and not target.is_dir():
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
 
     context = _sync_context(command, target)
     context["managed_conversion_progress"] = True
+    if context.get("source_type") == "upload":
+        _ensure_upload_metadata(target, context)
     conversion = context["conversion"]
     _emit_managed_conversion_event(
         emit,
@@ -693,13 +698,23 @@ def convert_managed_workspace(
 
 
 def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
-    """Write one upload into a managed workspace and convert its contents."""
+    """Write one manual upload into a datasource workspace and convert it.
 
-    if command.get("source_type", "managed_workspace") != "managed_workspace":
+    Archives are extracted into a directory named after the archive; a
+    plain file is stored directly under the datasource root. Both paths
+    end in the same conversion pipeline, and every stored file is given
+    a sidecar so its content hash tracks later changes.
+    """
+
+    if command.get("source_type", "upload") != "upload":
         raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
-    target = normalize_target_path(command.get("target_path"), workspace_path)
-    if not target.is_dir():
-        raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
+    datasource_uuid = safe_filename(command.get("datasource_uuid"))
+    if not datasource_uuid:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
+    datasource_root = (
+        Path(workspace_path).resolve() / "datasources" / datasource_uuid
+    )
+    datasource_root.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(command.get("filename"))
     if not filename:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_FILENAME_INVALID")
@@ -716,39 +731,54 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         max_bytes = 50 * 1024 * 1024
     if len(content) > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
-    archive_path = target / filename
-    staging = target / ".sourcelens-upload-staging.sourcelens"
+    is_archive = _is_upload_archive(filename)
+    archive_name = Path(filename).stem
+    if is_archive:
+        target = datasource_root / safe_filename(archive_name)
+    else:
+        target = datasource_root
+    target.mkdir(parents=True, exist_ok=True)
+    staging = datasource_root / ".sourcelens-upload-staging.sourcelens"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()
-    staged_archive = staging / filename
-    staged_archive.write_bytes(content)
+    staged_upload = staging / filename
+    staged_upload.write_bytes(content)
     extracted = []
     try:
-        if filename.lower().endswith(".zip"):
-            extracted = _extract_zip_archive(staged_archive, staging, limits)
-        elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
-            extracted = _extract_tar_archive(staged_archive, staging, limits)
-        previous = target / ".sourcelens-uploaded.sourcelens"
-        if previous.exists():
-            for path in previous.read_text(encoding="utf-8").splitlines():
-                candidate = (target / path).resolve()
-                if candidate.is_file():
-                    candidate.unlink()
-        members = [filename] + [
-            path.relative_to(staging).as_posix() for path in extracted
-        ]
-        for member in members:
-            source = staging / member
-            destination = target / member
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(destination)
-        previous.write_text("\n".join(members), encoding="utf-8")
+        if is_archive:
+            if filename.lower().endswith(".zip"):
+                extracted = _extract_zip_archive(
+                    staged_upload, staging, limits
+                )
+            else:
+                extracted = _extract_tar_archive(
+                    staged_upload, staging, limits
+                )
+            previous = target / ".sourcelens-uploaded.sourcelens"
+            if previous.exists():
+                for path in previous.read_text(encoding="utf-8").splitlines():
+                    candidate = (target / path).resolve()
+                    if candidate.is_file():
+                        candidate.unlink()
+            members = [
+                path.relative_to(staging).as_posix() for path in extracted
+            ]
+            for member in members:
+                source = staging / member
+                destination = target / member
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.replace(destination)
+            previous.write_text("\n".join(members), encoding="utf-8")
+        else:
+            destination = target / filename
+            staged_upload.replace(destination)
+            extracted = [destination]
         result = convert_managed_workspace(
             {
                 **command,
                 "target_path": str(target),
-                "source_type": "managed_workspace",
+                "source_type": "upload",
                 "conversion": command.get("conversion")
                 or {"document": True, "image": True},
             },
@@ -762,6 +792,63 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     result["uploaded"] = filename
     result["extracted_files"] = [str(path) for path in extracted]
     return result
+
+
+def _is_upload_archive(filename):
+    """Return whether an uploaded filename is an extractable archive."""
+
+    lower = str(filename or "").lower()
+    return lower.endswith((".zip", ".tar", ".tar.gz", ".tgz"))
+
+
+def delete_datasource_upload(command, workspace_path=WORKSPACE_ROOT):
+    """Remove one uploaded file or extracted archive directory.
+
+    Decide by the uploaded filename: an archive became a directory named
+    after the archive (versioned directories included), while a plain
+    file lives directly under the datasource root. A directory that
+    merely shares a plain file's stem is never touched.
+    """
+
+    datasource_uuid = safe_filename(command.get("datasource_uuid"))
+    filename = str(command.get("filename") or "").strip()
+    if not datasource_uuid or not filename:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID")
+    try:
+        version = int(command.get("upload_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    root = (
+        Path(workspace_path).resolve() / "datasources" / datasource_uuid
+    ).resolve()
+    deleted = ""
+    if _is_upload_archive(filename):
+        stem = Path(filename).stem
+        directory_names = [stem]
+        if version > 1:
+            directory_names.append(f"{stem}.v{version}")
+        for name in directory_names:
+            target = (root / safe_filename(name)).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            if target.is_dir():
+                shutil.rmtree(target)
+                deleted = deleted or target.name
+        if not deleted:
+            return {"status": "success", "deleted": ""}
+        return {"status": "success", "deleted": deleted}
+    file_path = (root / safe_filename(filename)).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError as exc:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID") from exc
+    if file_path.is_file():
+        file_path.unlink()
+        remove_sidecar(file_path)
+        return {"status": "success", "deleted": file_path.name}
+    return {"status": "success", "deleted": ""}
 
 
 def _archive_member_path(root, name):
@@ -853,6 +940,25 @@ def _extract_tar_archive(archive_path, root, limits=None):
                 shutil.copyfileobj(source, target, length=1024 * 1024)
             extracted.append(path)
     return extracted
+
+
+def _ensure_upload_metadata(target, context):
+    """Give every file under an upload datasource change-tracking metadata.
+
+    Convertible files also get a conversion sidecar later; this records
+    source attributes for the rest so the whole upload tree is covered.
+    """
+
+    for item in _managed_workspace_conversion_items(
+        target,
+        context["excluded_datasource_roots"],
+    ):
+        ensure_source_metadata(
+            target,
+            target / item.local_path,
+            context,
+            item,
+        )
 
 
 def _managed_workspace_conversion_items(target, excluded_roots):
@@ -1333,7 +1439,9 @@ def _sync_context(command, target):
     """Return the common datasource sync context."""
 
     conversion = (command.get("sync_policy") or {}).get("conversion")
-    conversion = command.get("conversion") or conversion or {}
+    conversion = dict(command.get("conversion") or conversion or {})
+    conversion.setdefault("queue", "parallel")
+    conversion.setdefault("workers", command.get("max_workers") or 4)
     return {
         "datasource_uuid": str(command.get("datasource_uuid") or ""),
         "name": command.get("name") or "",
@@ -2148,7 +2256,10 @@ def _sync_git(command, workspace_path, emit):
             git_options=git_options,
         )
 
-    _validate_git_tree_size(target)
+    _validate_git_tree_size(
+        target,
+        max_bytes=int(config.get("git_max_bytes", GIT_MAX_BYTES)),
+    )
 
     items = _git_manifest_items(
         target,
@@ -2741,7 +2852,7 @@ def _git_manifest_items(target, repo_url, branch, directory=""):
     return items
 
 
-def _validate_git_tree_size(target):
+def _validate_git_tree_size(target, max_bytes=GIT_MAX_BYTES):
     """Reject repositories that exceed the LensNode resource ceiling."""
 
     files = 0
@@ -2756,7 +2867,7 @@ def _validate_git_tree_size(target):
             raise DataSourceSyncError(
                 "LENS_SOURCE_RESOURCE_STAT_FAILED"
             ) from exc
-        if files > GIT_MAX_FILES or total_bytes > GIT_MAX_BYTES:
+        if files > GIT_MAX_FILES or total_bytes > max_bytes:
             raise DataSourceSyncError("LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED")
 
 

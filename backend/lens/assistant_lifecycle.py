@@ -14,6 +14,10 @@ class AssistantNotRunnableError(RuntimeError):
     """Raised when an assistant cannot accept new work."""
 
 
+class SmartCollaborationModelNotConfiguredError(AssistantNotRunnableError):
+    """Raised when Smart Collaboration has no coordinator model configured."""
+
+
 def _has_document_attachments(session):
     """Return whether cached document uploads still belong to a session."""
 
@@ -161,15 +165,28 @@ def smart_collaboration_assistants(
     return values
 
 
-def _smart_collaboration_assistant():
-    """Return the hidden coordinator backed by the configured global model."""
+def _smart_collaboration_model_ref():
+    """Return the coordinator model, falling back to the default LLM."""
 
     setting = GlobalSetting.objects.filter(
         key=SMART_COLLABORATION_MODEL_SETTING
     ).first()
     model_ref = str(setting.value or "") if setting else ""
+    if model_ref:
+        return model_ref
+    from agentcore_metering.adapters.django.services.config_source import (
+        get_default_llm_config_uuid,
+    )
+
+    return str(get_default_llm_config_uuid() or "")
+
+
+def _smart_collaboration_assistant():
+    """Return the hidden coordinator backed by the configured global model."""
+
+    model_ref = _smart_collaboration_model_ref()
     if not model_ref:
-        raise AssistantNotRunnableError
+        raise SmartCollaborationModelNotConfiguredError
     assistant, _ = Assistant.objects.get_or_create(
         slug=SMART_COLLABORATION_SLUG,
         defaults={

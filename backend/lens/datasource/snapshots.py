@@ -1,14 +1,40 @@
 """Immutable datasource selections captured for assistant sessions."""
 
+import re
+
 from ..models import (
     AssistantDataSourceBinding,
     DataSourceItem,
     SessionDataSource,
 )
 
+MOUNT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+MOUNT_NAME_MAX_LENGTH = 120
+
 
 class DatasourceSnapshotError(RuntimeError):
     """Raised when a required datasource has no ready version."""
+
+
+def _validate_mount_names(rows):
+    """Reject Session mount names that are unsafe or ambiguous.
+
+    The LensNode materializes each snapshot under ``sources/<mount_name>``,
+    so a duplicate or path-like name would collide at run time. Validate the
+    fully expanded names here so a bad selection fails before dispatch.
+    """
+
+    seen = set()
+    for row in rows:
+        name = str(row.mount_name or "")
+        if (
+            not name
+            or len(name) > MOUNT_NAME_MAX_LENGTH
+            or not MOUNT_NAME_PATTERN.fullmatch(name)
+            or name in seen
+        ):
+            raise DatasourceSnapshotError("SESSION_MOUNT_NAME_CONFLICT")
+        seen.add(name)
 
 
 def capture_session_datasources(session, assistant, bindings=None):
@@ -55,4 +81,5 @@ def capture_session_datasources(session, assistant, bindings=None):
                     storage_key=storage_key,
                 )
             )
+    _validate_mount_names(rows)
     return SessionDataSource.objects.bulk_create(rows)

@@ -173,10 +173,7 @@
           <input
             :id="arrayItemId(field, index)"
             :value="item"
-            :class="[
-              controlClass,
-              'min-w-0 flex-1 font-mono',
-            ]"
+            :class="[controlClass, 'min-w-0 flex-1 font-mono']"
             :type="arrayInputType(field)"
             :aria-label="`${field.title || field.key} ${index + 1}`"
             :placeholder="field.description || ''"
@@ -235,7 +232,10 @@
       <input
         v-else
         :id="fieldId(field)"
-        :class="[controlClass, isInvalid(field) ? 'border-danger-500 ring-2 ring-danger-500/20' : '']"
+        :class="[
+          controlClass,
+          isInvalid(field) ? 'border-danger-500 ring-2 ring-danger-500/20' : ''
+        ]"
         :type="inputType(field)"
         :value="fieldValue(field)"
         :min="field.minimum"
@@ -296,10 +296,7 @@ const props = defineProps({
   readOnly: { type: Boolean, default: false }
 })
 
-const emit = defineEmits([
-  'resource-options-request',
-  'update:modelValue'
-])
+const emit = defineEmits(['resource-options-request', 'update:modelValue'])
 const treeSearch = ref({})
 const collapsedTreeGroups = ref({})
 

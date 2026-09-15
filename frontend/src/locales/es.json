@@ -112,7 +112,13 @@
     "datasourceSyncFailed": "La sincronización falló. Compruebe la fuente e inténtelo de nuevo.",
     "datasourceSyncTimeout": "Tiempo de espera agotado al sincronizar.",
     "datasourceUploadRequired": "Suba archivos a esta fuente antes de preguntar.",
-    "datasourceDisabled": "La fuente seleccionada está desactivada."
+    "datasourceDisabled": "La fuente seleccionada está desactivada.",
+    "datasourceResourceLimit": "El origen de datos supera el límite de recursos. Elimine archivos grandes o aumente el límite de bytes de Git y vuelva a intentarlo.",
+    "datasourceCredentialInvalid": "Las credenciales del origen de datos no son válidas. Actualícelas y vuelva a intentarlo.",
+    "datasourceConfigInvalid": "La configuración del origen de datos no es válida. Revísela y vuelva a intentarlo.",
+    "datasourceTargetPathInvalid": "La ruta de destino no es válida. Revise el directorio y vuelva a intentarlo.",
+    "datasourceTargetPathRequired": "Se requiere una ruta de destino. Configure el directorio y vuelva a intentarlo.",
+    "datasourceGitLayoutMigration": "La estructura del repositorio Git requiere migración. Vuelva a sincronizar o contacte con un administrador."
   },
   "lens": {
     "share": {
@@ -351,13 +357,16 @@
       "errorVisionModelConfiguration": "La configuración del modelo de visión no es válida. Verifique sus parámetros y vuelva a intentarlo.",
       "errorModelNotVisionCapable": "No se confirma que el modelo seleccionado acepte entradas de imagen. Pida a un administrador que lo configure.",
       "errorVisionModelNotConfigured": "No se ha configurado ningún modelo de visión. Pida a un administrador que configure uno.",
+      "errorSmartCollaborationModelNotConfigured": "No hay ningún modelo LLM configurado, así que no se puede iniciar una sesión de Colaboración inteligente. Pida a un administrador que añada un modelo en la configuración de LLM.",
       "errorVisionProviderQuotaExceeded": "La cuota del proveedor de visión o el límite de velocidad se ha agotado. Por favor, inténtelo de nuevo más tarde o contacte a un administrador.",
       "errorVisionProviderUnavailable": "El proveedor de visión no está disponible temporalmente. Por favor, inténtelo de nuevo más tarde.",
       "retryAction": "Reintentar",
       "continuationFallback": "No se pudo reanudar el checkpoint; se continuó como una nueva ejecución",
       "sessionHistoryLoadFailed": "No se pudo cargar el historial de la conversación.",
       "loadFailed": "Error al cargar chat de Lens.",
-      "assistantNotFound": "El asistente al que intenta acceder no existe. Por favor, contacte a su administrador para obtener un enlace válido.",
+      "loginRequired": "Inicia sesión para empezar a explorar.",
+      "assistantUnavailable": "Este asistente no está disponible o no tienes acceso. Contacta con tu administrador.",
+      "assistantNotFound": "Inicia sesión para empezar a explorar.",
       "sessionAccessDenied": "No tienes acceso a esta sesión, o ya no existe. Seleccione una de sus sesiones recientes o inicie una nueva.",
       "sessionTitle": "{name} consulta",
       "sessionCreated": "Sesión creada.",
@@ -429,6 +438,7 @@
         "clarificationRequired": "Introduzca más información primero.",
         "clarificationFailed": "Error al enviar la aclaración. Inténtalo de nuevo.",
         "outcomePartial": "Se devolvieron resultados parciales, pero la ejecución no se completó completamente. Revise los detalles de la ejecución para los elementos que faltan.",
+        "outcomePartialFlash": "Los resultados principales están listos; el modo Flash omitió los pasos opcionales.",
         "outcomeBlocked": "Esta solicitud no se completó. Revise los detalles en tiempo de ejecución y vuelva a intentarlo.",
         "activity": {
           "analyzingResults": "Analizando resultados recopilados",
