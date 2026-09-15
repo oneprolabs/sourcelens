@@ -117,7 +117,7 @@ export function formatDataSourcePolicyLine(syncPolicy) {
     const timezone = syncPolicy.timezone || 'UTC'
     return `Crontab: ${cron} - ${timezone}`
   }
-  const interval = syncPolicy?.interval_seconds || 3600
+  const interval = syncPolicy?.interval_seconds || 86400
   return `Interval: ${interval}s`
 }
 

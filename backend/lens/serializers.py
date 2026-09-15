@@ -12,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from .assistant_lifecycle import (
     AssistantNotRunnableError,
+    SmartCollaborationModelNotConfiguredError,
     create_assistant_session,
     create_smart_collaboration_session,
     fixed_collaboration_assistants,
@@ -26,6 +27,7 @@ from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
+    datasource_default_target_path,
     normalize_workspace_target_path,
     validate_datasource_lensnode,
 )
@@ -2038,19 +2040,22 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
-        if lensnode is not None:
+        if source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+            attrs.pop("target_path", None)
+        if lensnode is not None and source_type != DataSource.SourceType.UPLOAD:
             try:
                 validate_datasource_lensnode(lensnode)
-                attrs["target_path"] = normalize_workspace_target_path(
-                    target_path,
-                    lensnode.workspace_path,
-                )
-                _validate_unique_datasource_target_path(
-                    attrs["target_path"],
-                    lensnode,
-                    self.instance,
-                    source_type,
-                )
+                if source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+                    attrs["target_path"] = normalize_workspace_target_path(
+                        target_path,
+                        lensnode.workspace_path,
+                    )
+                    _validate_unique_datasource_target_path(
+                        attrs["target_path"],
+                        lensnode,
+                        self.instance,
+                        source_type,
+                    )
             except (DataSourcePathError, DataSourceDispatchError) as exc:
                 raise serializers.ValidationError({"target_path": str(exc)})
 
@@ -2076,7 +2081,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
         if (
             connection is None
             and plugin_key == "file_upload"
-            and source_type == DataSource.SourceType.MANAGED_WORKSPACE
+            and source_type == DataSource.SourceType.UPLOAD
         ):
             if credential is not None or config or datasource_config:
                 raise serializers.ValidationError(
@@ -2102,7 +2107,10 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 }
             )
         if connection is not None:
-            if source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+            if source_type in (
+                DataSource.SourceType.MANAGED_WORKSPACE,
+                DataSource.SourceType.UPLOAD,
+            ):
                 raise serializers.ValidationError(
                     {"connection_uuid": "Managed workspace does not use connections"}
                 )
@@ -2214,6 +2222,32 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 self.instance,
                 credential,
             )
+        elif connection is None and source_type == DataSource.SourceType.UPLOAD:
+            upload_plugin_key = plugin_key or getattr(
+                self.instance, "plugin_key", ""
+            )
+            if upload_plugin_key != "file_upload":
+                raise serializers.ValidationError(
+                    {
+                        "plugin_key": (
+                            "Manual upload requires the file_upload plugin"
+                        )
+                    }
+                )
+            if credential is not None or config or datasource_config:
+                raise serializers.ValidationError(
+                    {
+                        "plugin_key": (
+                            "File upload capability does not accept credentials "
+                            "or configuration"
+                        )
+                    }
+                )
+            attrs["plugin_key"] = "file_upload"
+            attrs["credential"] = None
+            attrs["config"] = {}
+            attrs["datasource_config"] = {}
+            attrs["sync_policy"] = {}
         elif connection is None:
             raise serializers.ValidationError(
                 {"source_type": "Unsupported datasource source_type"}
@@ -2296,6 +2330,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                     module__in=[
                         "lens_datasource",
                         "lens_datasource_conversion",
+                        "lens_datasource_upload",
                     ],
                     metadata__datasource_uuid=str(datasource.uuid),
                     status__in=[
@@ -2313,6 +2348,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "id": task.id,
             "task_id": task.task_id,
             "task_name": task.task_name,
+            "filename": (task.metadata or {}).get("filename", ""),
             "status": task.status,
             "started_at": task.started_at,
             "created_at": task.created_at,
@@ -2391,14 +2427,37 @@ class DataSourceSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Create a datasource bound to reusable credentials."""
+        """Create a datasource and pin its unified storage directory."""
 
-        return DataSource.objects.create(**validated_data)
+        datasource = DataSource.objects.create(**validated_data)
+        self._apply_default_target_path(datasource)
+        return datasource
 
     def update(self, instance, validated_data):
-        """Update datasource metadata and credential binding."""
+        """Update datasource metadata and repin its storage directory."""
 
-        return super().update(instance, validated_data)
+        datasource = super().update(instance, validated_data)
+        self._apply_default_target_path(datasource)
+        return datasource
+
+    @staticmethod
+    def _apply_default_target_path(datasource):
+        """Pin every non-managed datasource under /datasources/<uuid>."""
+
+        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+            return
+        if not datasource.lensnode_id:
+            return
+        try:
+            target_path = datasource_default_target_path(
+                datasource.lensnode,
+                datasource.uuid,
+            )
+        except DataSourcePathError:
+            return
+        if datasource.target_path != target_path:
+            datasource.target_path = target_path
+            datasource.save(update_fields=["target_path", "updated_at"])
 
     class Meta:
         model = DataSource
@@ -2839,9 +2898,9 @@ def _validate_sync_policy(sync_policy):
             )
         return
     interval = sync_policy.get("interval_seconds")
-    if interval is not None and (not isinstance(interval, int) or interval <= 0):
+    if interval is not None and (not isinstance(interval, int) or interval < 600):
         raise serializers.ValidationError(
-            {"sync_policy": "interval_seconds must be a positive integer"}
+            {"sync_policy": "interval_seconds must be an integer of at least 600"}
         )
 
 
@@ -4263,6 +4322,10 @@ class SessionCreateSerializer(serializers.Serializer):
                 validated_data["assistant_uuid"],
                 request.user,
                 validated_data.get("title", ""),
+            )
+        except SmartCollaborationModelNotConfiguredError:
+            raise PermissionDenied(
+                "SMART_COLLABORATION_MODEL_NOT_CONFIGURED"
             )
         except AssistantNotRunnableError:
             raise PermissionDenied("You do not have access to this assistant.")

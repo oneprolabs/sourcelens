@@ -357,6 +357,7 @@
       "errorVisionModelConfiguration": "La configuración del modelo de visión no es válida. Verifique sus parámetros y vuelva a intentarlo.",
       "errorModelNotVisionCapable": "No se confirma que el modelo seleccionado acepte entradas de imagen. Pida a un administrador que lo configure.",
       "errorVisionModelNotConfigured": "No se ha configurado ningún modelo de visión. Pida a un administrador que configure uno.",
+      "errorSmartCollaborationModelNotConfigured": "No hay ningún modelo LLM configurado, así que no se puede iniciar una sesión de Colaboración inteligente. Pida a un administrador que añada un modelo en la configuración de LLM.",
       "errorVisionProviderQuotaExceeded": "La cuota del proveedor de visión o el límite de velocidad se ha agotado. Por favor, inténtelo de nuevo más tarde o contacte a un administrador.",
       "errorVisionProviderUnavailable": "El proveedor de visión no está disponible temporalmente. Por favor, inténtelo de nuevo más tarde.",
       "retryAction": "Reintentar",

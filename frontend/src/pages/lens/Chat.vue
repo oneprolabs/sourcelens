@@ -444,10 +444,7 @@
               >
                 {{ assistantName }}
               </h1>
-              <p
-                v-if="assistantDescription"
-                class="mt-3 text-sm text-ink-500"
-              >
+              <p v-if="assistantDescription" class="mt-3 text-sm text-ink-500">
                 {{ assistantDescription }}
               </p>
               <p class="mt-6 text-base text-ink-500">
@@ -769,43 +766,13 @@
 
                 <div
                   v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(message._runtimeState).kind
-                    )
+                    runtimeOutcomeNotice(message._runtimeState).kind ===
+                    'blocked'
                   "
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(message._runtimeState).kind ===
-                    'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : activeAssistant?.agent_rounds === 'flash'
-                        ? t('lens.chat.runtime.outcomePartialFlash')
-                      : t('lens.chat.runtime.outcomePartial')
-                  }}
-                  <span
-                    v-if="
-                      message._runtimeState?.terminationDetail?.continuation_status ===
-                      'fallback_new_run'
-                    "
-                    class="runtime-fallback-reason"
-                  >
-                    {{ t('lens.chat.runtime.continuationFallback') }}
-                  </span>
-                  <button
-                    v-if="
-                      runtimeOutcomeNotice(message._runtimeState).kind ===
-                        'partial' &&
-                      activeAssistant?.agent_rounds !== 'flash' &&
-                      canRetryLastQuestion(message)
-                    "
-                    type="button"
-                    class="retry-hint-btn"
-                    @click="retryLastQuestion(message)"
-                  >
-                    {{ t('lens.chat.retryAction') }}
-                  </button>
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1553,21 +1520,11 @@
                 </div>
 
                 <div
-                  v-if="
-                    ['partial', 'blocked'].includes(
-                      runtimeOutcomeNotice(runtimeState).kind
-                    )
-                  "
+                  v-if="runtimeOutcomeNotice(runtimeState).kind === 'blocked'"
                   class="runtime-outcome-card"
                   role="status"
                 >
-                  {{
-                    runtimeOutcomeNotice(runtimeState).kind === 'blocked'
-                      ? t('lens.chat.runtime.outcomeBlocked')
-                      : activeAssistant?.agent_rounds === 'flash'
-                        ? t('lens.chat.runtime.outcomePartialFlash')
-                      : t('lens.chat.runtime.outcomePartial')
-                  }}
+                  {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
                 <div
@@ -1953,6 +1910,7 @@ import {
   isPreviewable
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
+import { extractErrorMessage } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
@@ -2061,7 +2019,11 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
-import { readRecentChat, saveRecentChat, pickRecentSession } from '@/utils/recentChat'
+import {
+  readRecentChat,
+  saveRecentChat,
+  pickRecentSession
+} from '@/utils/recentChat'
 
 const route = useRoute()
 const router = useRouter()
@@ -3446,10 +3408,14 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
-  const rememberedUuid = useRouteSession && !isSmartCollaborationRoute.value
-    ? pickRecentSession(sessions.value, readRecentChat(userStore.user),
-        selectedAssistant.value?.slug)
-    : ''
+  const rememberedUuid =
+    useRouteSession && !isSmartCollaborationRoute.value
+      ? pickRecentSession(
+          sessions.value,
+          readRecentChat(userStore.user),
+          selectedAssistant.value?.slug
+        )
+      : ''
   let targetUuid = requestedUuid || rememberedUuid || sessions.value[0]?.uuid
   if (
     requestedUuid &&
@@ -3501,6 +3467,14 @@ async function selectSearchedSession(session) {
   await selectSession(session)
 }
 
+function sessionCreateErrorMessage(error) {
+  const message = extractErrorMessage(error, '')
+  if (message.includes('SMART_COLLABORATION_MODEL_NOT_CONFIGURED')) {
+    return t('lens.chat.errorSmartCollaborationModelNotConfigured')
+  }
+  return t('lens.chat.sessionCreateFailed')
+}
+
 async function createNewSession(notify = true, allowedAssistantUuids = []) {
   if (!selectedAssistant.value && !isSmartCollaborationConversation.value) {
     return null
@@ -3523,8 +3497,8 @@ async function createNewSession(notify = true, allowedAssistantUuids = []) {
           }
         : { assistant_uuid: selectedAssistant.value.uuid, title: '' }
     )
-  } catch {
-    showError(t('lens.chat.sessionCreateFailed'))
+  } catch (error) {
+    showError(sessionCreateErrorMessage(error))
     return null
   }
 

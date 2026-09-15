@@ -35,7 +35,10 @@ def test_codegraph_plugin_contributes_stdio_server(monkeypatch, tmp_path):
     servers = collect_mcp_servers(
         _config(workspace_path=str(tmp_path)),
         [],
-        command={"task": "code_analysis"},
+        command={
+            "task": "code_analysis",
+            "target_dirs": [{"path": str(tmp_path)}],
+        },
     )
 
     assert [server["name"] for server in servers] == [CODEGRAPH_SERVER_NAME]
@@ -62,6 +65,131 @@ def test_codegraph_plugin_scopes_index_to_session_root(monkeypatch, tmp_path):
     CodeGraphPlugin().contribute_mcp_servers(config, command=command)
 
     assert captured["workspace"] == session
+
+
+def test_codegraph_plugin_indexes_selected_dir_outside_sessions(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("print('hi')")
+    captured = {}
+
+    def ensure(_config, workspace, emit_event=None):
+        captured["workspace"] = workspace
+        return True
+
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index", ensure
+    )
+    command = {"task": "code_analysis", "target_dirs": [{"path": str(repo)}]}
+
+    CodeGraphPlugin().contribute_mcp_servers(
+        _config(workspace_path=str(tmp_path)),
+        command=command,
+    )
+
+    assert captured["workspace"] == repo
+
+
+def test_codegraph_plugin_reads_through_datasource_symlink(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "datasources" / "source-version"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("print('hi')")
+    link = tmp_path / "sessions" / "session-1" / "sources" / "ds_source"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(source, target_is_directory=True)
+    captured = {}
+
+    def ensure(_config, workspace, emit_event=None):
+        captured["workspace"] = workspace
+        return True
+
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index", ensure
+    )
+    command = {"task": "code_analysis", "target_dirs": [{"path": str(link)}]}
+
+    CodeGraphPlugin().contribute_mcp_servers(
+        _config(workspace_path=str(tmp_path)),
+        command=command,
+    )
+
+    assert captured["workspace"] == source.resolve()
+
+
+def test_codegraph_plugin_prefers_reference_over_subject(
+    monkeypatch, tmp_path
+):
+    subject = tmp_path / "sessions" / "session-1" / "subject-documents"
+    subject.mkdir(parents=True)
+    repo = tmp_path / "sessions" / "session-1" / "sources" / "repo"
+    repo.mkdir(parents=True)
+    captured = {}
+
+    def ensure(_config, workspace, emit_event=None):
+        captured["workspace"] = workspace
+        return True
+
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index", ensure
+    )
+    command = {
+        "task": "code_analysis",
+        "target_dirs": [
+            {"path": str(subject), "material_role": "subject"},
+            {"path": str(repo)},
+        ],
+    }
+
+    CodeGraphPlugin().contribute_mcp_servers(
+        _config(workspace_path=str(tmp_path)),
+        command=command,
+    )
+
+    assert captured["workspace"] == repo
+
+
+def test_codegraph_plugin_skips_dir_outside_workspace(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "app.py").write_text("print('hi')")
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index",
+        lambda *_args, **_kwargs: True,
+    )
+    command = {
+        "task": "code_analysis",
+        "target_dirs": [{"path": str(outside)}],
+    }
+
+    servers = CodeGraphPlugin().contribute_mcp_servers(
+        _config(workspace_path=str(workspace)),
+        command=command,
+    )
+
+    assert servers == []
+
+
+def test_codegraph_plugin_skips_without_target_dirs(monkeypatch, tmp_path):
+    (tmp_path / "app.py").write_text("print('hi')")
+    checked = []
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph._ensure_codegraph_index",
+        lambda *_args, **_kwargs: checked.append(True) or True,
+    )
+
+    servers = CodeGraphPlugin().contribute_mcp_servers(
+        _config(workspace_path=str(tmp_path)),
+        command={"task": "code_analysis"},
+    )
+
+    assert servers == []
+    assert checked == []
 
 
 def test_codegraph_detects_code_through_datasource_symlink(tmp_path):

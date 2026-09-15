@@ -33,8 +33,20 @@ DATASOURCE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 DATASOURCE_UPLOAD_EXTENSIONS = {
     ".pdf",
     ".docx",
+    ".doc",
     ".pptx",
+    ".ppt",
     ".xlsx",
+    ".xls",
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".html",
+    ".htm",
+    ".xml",
+    ".rtf",
     ".png",
     ".jpg",
     ".jpeg",
@@ -84,6 +96,29 @@ def normalize_workspace_target_path(value, workspace_path=WORKSPACE_ROOT):
         raise DataSourcePathError("LENS_SOURCE_TARGET_PATH_INVALID")
 
     return f"{workspace}/{path.as_posix()}"
+
+
+def datasource_default_target_path(lensnode, datasource_uuid):
+    """Return the unified /datasources/<uuid> directory on a LensNode."""
+
+    workspace = str(
+        getattr(lensnode, "workspace_path", "") or ""
+    ).strip().rstrip("/")
+    if not workspace:
+        raise DataSourcePathError("LENS_SOURCE_WORKSPACE_PATH_INVALID")
+    return f"{workspace}/datasources/{datasource_uuid}"
+
+
+def datasource_storage_target_path(datasource, lensnode=None):
+    """Return the normalized storage directory backing a datasource."""
+
+    lensnode = lensnode or datasource.lensnode
+    if datasource.source_type == DataSource.SourceType.UPLOAD:
+        return datasource_default_target_path(lensnode, datasource.uuid)
+    return normalize_workspace_target_path(
+        datasource.target_path,
+        lensnode.workspace_path,
+    )
 
 
 def validate_datasource_lensnode(lensnode):
@@ -271,13 +306,11 @@ def list_datasource_files(datasource, page=1, page_size=20, **filters):
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
     )
-    target_path = normalize_workspace_target_path(
-        datasource.target_path,
-        datasource.lensnode.workspace_path,
-    )
+    lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
+    target_path = datasource_storage_target_path(datasource, lensnode)
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
-        datasource.lensnode,
+        lensnode,
         {
             "type": "datasource_list_files",
             "request_id": request_id,
@@ -293,6 +326,34 @@ def list_datasource_files(datasource, page=1, page_size=20, **filters):
     )
     return _wait_cache_result(
         f"lens:datasource_files:{request_id}",
+        timeout_s=15,
+    )
+
+
+def delete_datasource_upload(datasource, filename, version=1):
+    """Delete one uploaded file or extracted archive on LensNode."""
+
+    lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
+    raw_name = PurePosixPath(str(filename or "")).name
+    if not raw_name or raw_name in {".", ".."}:
+        raise DataSourceDispatchError("DATASOURCE_UPLOAD_FILE_INVALID")
+    try:
+        upload_version = int(version or 1)
+    except (TypeError, ValueError):
+        upload_version = 1
+    request_id = uuid.uuid4().hex
+    _send_lensnode_command(
+        lensnode,
+        {
+            "type": "datasource_upload_delete",
+            "request_id": request_id,
+            "datasource_uuid": str(datasource.uuid),
+            "filename": raw_name,
+            "upload_version": upload_version,
+        },
+    )
+    return _wait_cache_result(
+        f"lens:datasource_upload_delete:{request_id}",
         timeout_s=15,
     )
 
@@ -352,7 +413,10 @@ def dispatch_datasource_sync_async(
     ).get(
         pk=datasource.pk
     )
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         raise DataSourceDispatchError("DATASOURCE_SYNC_NOT_SUPPORTED")
     lensnode = lensnode or resolve_datasource_lensnode(datasource)
     validate_datasource_lensnode(lensnode)
@@ -428,16 +492,20 @@ def dispatch_datasource_conversion_async(
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
     )
-    if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type not in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         raise DataSourceDispatchError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
-    validate_datasource_lensnode(datasource.lensnode)
+    lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
+    validate_datasource_lensnode(lensnode)
     conversion = dict(conversion or {})
     for key, value in datasource_conversion_defaults().items():
         if value and not conversion.get(key):
             conversion[key] = value
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
-        datasource.lensnode,
+        lensnode,
         {
             "type": "datasource_convert",
             "request_id": request_id,
@@ -447,7 +515,7 @@ def dispatch_datasource_conversion_async(
             "name": datasource.name,
             "conversion": conversion,
             **_lensnode_gateway_config(),
-            "target_path": datasource.target_path,
+            "target_path": datasource_storage_target_path(datasource, lensnode),
             "force": bool(force),
             "max_workers": get_datasource_sync_max_workers(),
             "excluded_datasource_roots": excluded_datasource_roots(
@@ -469,15 +537,22 @@ def dispatch_datasource_upload_async(
     filename,
     content,
     conversion=None,
+    upload_version=1,
 ):
     """Dispatch one managed workspace upload to its LensNode."""
 
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
     )
-    if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+    if not (
+        datasource.source_type == DataSource.SourceType.UPLOAD
+        or (
+            datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE
+            and datasource.plugin_key == "file_upload"
+        )
+    ):
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
-    validate_datasource_lensnode(datasource.lensnode)
+    execution_node = resolve_datasource_lensnode(datasource)
     if len(content) > DATASOURCE_UPLOAD_MAX_BYTES:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_TOO_LARGE")
     upload_conversion = {"document": True, "image": True}
@@ -485,17 +560,22 @@ def dispatch_datasource_upload_async(
         datasource_conversion_policy(datasource.sync_policy)
     )
     upload_conversion.update(conversion or {})
+    upload_source_type = DataSource.SourceType.UPLOAD
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
-        datasource.lensnode,
+        execution_node,
         {
             "type": "datasource_upload",
+            "plugin_key": datasource.plugin_key,
             "request_id": request_id,
             "task_id": task_id,
             "datasource_uuid": str(datasource.uuid),
-            "source_type": datasource.source_type,
-            "target_path": datasource.target_path,
+            "source_type": upload_source_type,
+            "target_path": datasource_storage_target_path(
+                datasource, execution_node
+            ),
             "filename": filename,
+            "upload_version": upload_version,
             "content_base64": base64.b64encode(content).decode("ascii"),
             "conversion": upload_conversion,
             **_lensnode_gateway_config(),

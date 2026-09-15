@@ -5,10 +5,10 @@ function unwrap(response) {
 }
 
 export async function invokePluginRpc(pluginKey, method, params = {}) {
-  const response = await api.post(
-    `/lens/plugin-runtime/${pluginKey}/rpc/`,
-    { method, params }
-  )
+  const response = await api.post(`/lens/plugin-runtime/${pluginKey}/rpc/`, {
+    method,
+    params
+  })
   return unwrap(response)
 }
 

@@ -357,6 +357,7 @@
       "errorVisionModelConfiguration": "The vision model configuration is invalid. Check its parameters and retry.",
       "errorModelNotVisionCapable": "The selected model is not confirmed to accept image input. Ask an administrator to configure it.",
       "errorVisionModelNotConfigured": "No vision model is configured. Ask an administrator to configure one.",
+      "errorSmartCollaborationModelNotConfigured": "No LLM is configured, so a Smart Collaboration session cannot start. Ask an administrator to add a model under LLM Config.",
       "errorVisionProviderQuotaExceeded": "The vision provider quota or rate limit is exhausted. Please retry later or contact an administrator.",
       "errorVisionProviderUnavailable": "The vision provider is temporarily unavailable. Please retry later.",
       "retryAction": "Retry",

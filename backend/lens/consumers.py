@@ -52,23 +52,40 @@ DETAIL_ITEMS_LIMIT = 200
 def _ensure_file_upload_datasource(lensnode_uuid):
     """Create the connectionless file upload datasource once per node."""
 
-    lensnode = LensNode.objects.select_for_update().get(pk=lensnode_uuid)
-    target_path = str(lensnode.workspace_path or "").strip()
-    if not target_path:
-        return None
-    datasource, _ = DataSource.objects.get_or_create(
-        lensnode=lensnode,
-        plugin_key="file_upload",
-        source_type=DataSource.SourceType.MANAGED_WORKSPACE,
-        defaults={
-            "name": f"File uploads ({lensnode.name})",
-            "target_path": target_path,
-            "config": {},
-            "sync_policy": {},
-            "datasource_config": {},
-            "status": DataSource.Status.ACTIVE,
-        },
+    lensnode = (
+        LensNode.objects.select_for_update().filter(uuid=lensnode_uuid).first()
     )
+    if lensnode is None:
+        LOGGER.warning(
+            "Skipping file upload datasource setup for unknown LensNode %s",
+            lensnode_uuid,
+        )
+        return None
+    workspace_path = str(lensnode.workspace_path or "").strip().rstrip("/")
+    if not workspace_path:
+        return None
+    system_name = f"File uploads ({lensnode.name})"
+    datasource = (
+        DataSource.objects.filter(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+        )
+        .order_by("-name", "created_at")
+        .first()
+    )
+    if datasource is None:
+        datasource = DataSource.objects.create(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            name=system_name,
+            config={},
+            sync_policy={},
+            datasource_config={},
+            status=DataSource.Status.ACTIVE,
+        )
+    target_path = f"{workspace_path}/datasources/{datasource.uuid}"
     if datasource.target_path != target_path:
         datasource.target_path = target_path
         datasource.save(update_fields=["target_path", "updated_at"])
@@ -168,6 +185,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_datasource_path_result(content)
         elif frame_type == "datasource_files_result":
             await self._handle_datasource_files_result(content)
+        elif frame_type == "datasource_upload_delete_result":
+            cache.set(
+                f"lens:datasource_upload_delete:{content.get('request_id')}",
+                content.get("result") or {},
+                timeout=60,
+            )
         elif frame_type == "datasource_connection_result":
             await self._handle_datasource_connection_result(content)
         elif frame_type == "datasource_sync_event":
@@ -500,6 +523,16 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             citations=content.get("citations"),
             planned_evidence=content.get("planned_evidence"),
         )
+        if run is None:
+            # A redelivered terminal frame for an already-reaped Run: ack it
+            # so the LensNode stops retrying.
+            await self.send_json(
+                {
+                    "type": "run_done_ack",
+                    "run_uuid": str(run_uuid),
+                }
+            )
+            return
         parent_update = await database_sync_to_async(self._delegation_done_payload)(
             run.pk
         )

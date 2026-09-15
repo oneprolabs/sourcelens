@@ -31,11 +31,11 @@ class FileUploadDatasourceProvider(DatasourceProvider):
         return {}
 
     def validate_datasource_source_type(self, source_type):
-        """Require the managed workspace runtime."""
+        """Require the manual upload runtime."""
 
-        if source_type != "managed_workspace":
+        if source_type != "upload":
             raise DatasourceProviderError(
-                "file upload datasource must use managed_workspace"
+                "file upload datasource must use upload"
             )
         return source_type
 

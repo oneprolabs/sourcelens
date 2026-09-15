@@ -72,7 +72,10 @@ def build_initial_messages(history, question, image_data_urls=None):
             }
             for data_url in image_data_urls
         )
-    messages.append({"role": "user", "content": content})
+    messages.append({
+        "role": "user",
+        "content": content,
+    })
     return messages
 
 

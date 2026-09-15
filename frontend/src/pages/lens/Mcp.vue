@@ -263,8 +263,9 @@ const formError = ref('')
 const pluginConnections = computed(() =>
   connections.value.filter((connection) => {
     const tools = pluginManifests.value[connection.plugin_key]?.tools
-    return connection.status === 'active' &&
-      Array.isArray(tools) && tools.length > 0
+    return (
+      connection.status === 'active' && Array.isArray(tools) && tools.length > 0
+    )
   })
 )
 const selectedConnection = computed(() =>

@@ -15,8 +15,10 @@ from lens.datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
+    delete_datasource_upload,
     list_datasource_files,
     normalize_workspace_target_path,
+    resolve_datasource_lensnode,
 )
 from lens.models import (
     CredentialLease,
@@ -67,6 +69,55 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .base import BaseAdminViewSet
+
+
+def _finalize_datasource_cancellation(task, datasource, reason, user=None):
+    """Terminate a datasource task locally and immediately.
+
+    Cancellation must not wait for a LensNode stop confirmation: the node may
+    never have received the operation (it dropped before delivery), which used
+    to strand the task in CANCELLING while it kept its lock and capacity slot.
+    We finish the task now, release its resources, and send a best-effort
+    cancel so any real work on the node still stops. A late node callback is
+    ignored because the terminal completion paths are idempotent.
+    """
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+    from core.celery import app
+
+    metadata = dict(task.metadata or {})
+    celery_task_id = metadata.get("celery_task_id") or task.task_id
+    try:
+        app.control.revoke(celery_task_id, terminate=False)
+    except Exception:
+        pass
+    lensnode = datasource.lensnode
+    if lensnode is None:
+        try:
+            lensnode = resolve_datasource_lensnode(datasource)
+        except DataSourceDispatchError:
+            lensnode = None
+    if task.module == "lens_datasource_conversion":
+        cancel_datasource_conversion_on_lensnode(lensnode, task.task_id)
+    else:
+        cancel_datasource_sync_on_lensnode(lensnode, task.task_id)
+    metadata["manual_revoked_at"] = timezone.now().isoformat()
+    if user is not None:
+        metadata["manual_revoked_by"] = user.pk
+    metadata["cancellation_state"] = TaskStatus.REVOKED
+    metadata["completion_reason"] = reason
+    metadata["stop_confirmation_source"] = "manual_immediate"
+    release_datasource_lock(
+        str(datasource.uuid),
+        token=metadata.get("lock_token") or task.task_id,
+    )
+    return TaskTracker.update_task_status(
+        task.task_id,
+        TaskStatus.REVOKED,
+        error=reason,
+        metadata=metadata,
+    )
 
 
 class DataSourceViewSet(BaseAdminViewSet):
@@ -199,6 +250,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 module__in=[
                     "lens_datasource",
                     "lens_datasource_conversion",
+                    "lens_datasource_upload",
                 ],
                 metadata__datasource_uuid__in=datasource_uuids,
                 status__in=active_statuses,
@@ -440,7 +492,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         self._validate_plugin_datasource_access(serializer)
         datasource = serializer.save()
         ensure_datasource_periodic_task(datasource)
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return
         if datasource.status == DataSource.Status.DISABLED:
             return
@@ -506,7 +561,10 @@ class DataSourceViewSet(BaseAdminViewSet):
     def _enqueue_datasource_sync(datasource, task_id, trigger, user=None):
         """Register and enqueue one datasource sync task."""
 
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             raise ValueError("DATASOURCE_SYNC_NOT_SUPPORTED")
         if datasource.status == DataSource.Status.DISABLED:
             raise ValueError("DATASOURCE_DISABLED")
@@ -534,7 +592,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         """Enqueue datasource synchronization on its LensNode."""
 
         datasource = self.get_object()
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return Response(
                 {"detail": "DATASOURCE_SYNC_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -566,7 +627,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         """Enqueue explicit conversion for a managed workspace."""
 
         datasource = self.get_object()
-        if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type not in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return Response(
                 {"detail": "DATASOURCE_CONVERSION_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -619,10 +683,16 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["post"], url_path="upload")
     def upload(self, request, uuid=None):
-        """Queue one file upload into a Managed Workspace."""
+        """Queue one or more files as independent upload tasks."""
 
         datasource = self.get_object()
-        if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+        if not (
+            datasource.source_type == DataSource.SourceType.UPLOAD
+            or (
+                datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE
+                and datasource.plugin_key == "file_upload"
+            )
+        ):
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -632,53 +702,84 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_DISABLED"},
                 status=status.HTTP_409_CONFLICT,
             )
-        uploaded = request.FILES.get("file")
-        if uploaded is None:
+        uploads = request.FILES.getlist("files") or request.FILES.getlist(
+            "file"
+        )
+        if not uploads:
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if uploaded.size > get_datasource_upload_limits()["max_bytes"]:
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        limits = get_datasource_upload_limits()
+        from agentcore_task.adapters.django.models import TaskExecution
+        queued = []
+        for uploaded in uploads:
+            if uploaded.size > limits["max_bytes"]:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+            filename = os.path.basename(str(uploaded.name or "")).strip()
+            if not filename or filename in {".", ".."}:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            lowered_filename = filename.lower()
+            if not any(
+                lowered_filename.endswith(extension)
+                for extension in DATASOURCE_UPLOAD_EXTENSIONS
+            ):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            task_id = uuid_mod.uuid4().hex
+            previous = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).count()
+            previous_task = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).order_by("-created_at").first()
+            if previous_task is not None:
+                previous_metadata = dict(previous_task.metadata or {})
+                previous_metadata["is_latest_version"] = False
+                previous_task.metadata = previous_metadata
+                previous_task.save(update_fields=["metadata"])
+            storage_name = default_storage.save(
+                f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
+                ContentFile(uploaded.read()),
             )
-        filename = os.path.basename(str(uploaded.name or "")).strip()
-        if not filename or filename in {".", ".."}:
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
-                status=status.HTTP_400_BAD_REQUEST,
+            register_datasource_upload_task(
+                datasource,
+                task_id,
+                filename,
+                created_by=request.user,
+                byte_size=uploaded.size,
+                content_type=uploaded.content_type or "",
+                metadata={
+                    "storage_name": storage_name,
+                    "upload_version": previous + 1,
+                    "is_latest_version": True,
+                },
             )
-        lowered_filename = filename.lower()
-        if not any(
-            lowered_filename.endswith(extension)
-            for extension in DATASOURCE_UPLOAD_EXTENSIONS
-        ):
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
-                status=status.HTTP_400_BAD_REQUEST,
+            datasource_upload_task.apply_async(
+                args=[str(datasource.uuid), storage_name, filename],
+                task_id=task_id,
             )
-        task_id = uuid_mod.uuid4().hex
-        storage_name = default_storage.save(
-            f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
-            ContentFile(uploaded.read()),
-        )
-        register_datasource_upload_task(
-            datasource,
-            task_id,
-            filename,
-            created_by=request.user,
-            metadata={"storage_name": storage_name},
-        )
-        datasource_upload_task.apply_async(
-            args=[str(datasource.uuid), storage_name, filename],
-            task_id=task_id,
-        )
+            queued.append(
+                {"task_id": task_id, "filename": filename, "status": "PENDING"}
+            )
         return Response(
             {
                 "uuid": str(datasource.uuid),
-                "task_id": task_id,
-                "filename": filename,
+                "task_id": queued[0]["task_id"],
+                "filename": queued[0]["filename"],
+                "uploads": queued,
                 "status": "PENDING",
             },
             status=status.HTTP_202_ACCEPTED,
@@ -704,6 +805,48 @@ class DataSourceViewSet(BaseAdminViewSet):
             datasource.save(update_fields=["status", "updated_at"])
         ensure_datasource_periodic_task(datasource)
         return Response(DataSourceSerializer(datasource).data)
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"uploads/(?P<filename>[^/.]+(?:\.[^/.]+)*)",
+    )
+    def delete_upload(self, request, uuid=None, filename=None):
+        """Delete one uploaded file or extracted archive."""
+
+        datasource = self.get_object()
+        if (
+            datasource.plugin_key != "file_upload"
+            and datasource.source_type != DataSource.SourceType.UPLOAD
+        ):
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_NOT_SUPPORTED"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            from agentcore_task.adapters.django.models import TaskExecution
+
+            task = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).order_by("-created_at").first()
+            version = (
+                (task.metadata or {}).get("upload_version", 1) if task else 1
+            )
+            result = delete_datasource_upload(datasource, filename, version)
+            if task is not None:
+                metadata = dict(task.metadata or {})
+                metadata["is_latest_version"] = False
+                metadata["deleted"] = True
+                task.metadata = metadata
+                task.save(update_fields=["metadata"])
+        except DataSourceDispatchError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(result)
 
     @action(detail=True, methods=["post"], url_path="refresh-availability")
     def refresh_availability(self, request, uuid=None):
@@ -848,9 +991,17 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
+        module = (
+            "lens_datasource_upload"
+            if (
+                datasource.source_type == DataSource.SourceType.UPLOAD
+                or datasource.plugin_key == "file_upload"
+            )
+            else "lens_datasource"
+        )
         queryset = (
             TaskExecution.objects.filter(
-                module="lens_datasource",
+                module=module,
                 metadata__datasource_uuid=str(datasource.uuid),
             )
             .select_related("created_by")
@@ -912,7 +1063,6 @@ class DataSourceViewSet(BaseAdminViewSet):
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
-        from core.celery import app
 
         datasource = self.get_object()
         with transaction.atomic():
@@ -939,46 +1089,23 @@ class DataSourceViewSet(BaseAdminViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            metadata = dict(task.metadata or {})
-            celery_task_id = metadata.get("celery_task_id") or task.task_id
-            app.control.revoke(celery_task_id, terminate=False)
-            cancel_datasource_sync_on_lensnode(
-                datasource.lensnode,
-                task.task_id,
+            task = _finalize_datasource_cancellation(
+                task,
+                datasource,
+                "DATASOURCE_SYNC_CANCELLED",
+                request.user,
             )
-
-            metadata["manual_revoked_at"] = timezone.now().isoformat()
-            metadata["manual_revoked_by"] = request.user.pk
-            queued = metadata.get("admission_state") == "QUEUED"
-            dispatched = not queued and bool(
-                metadata.get("lock_token")
-                or metadata.get("datasource_sync_request_id")
-                or task.status in TaskStatus.get_running_statuses()
-            )
-            task.status = (
-                DATASOURCE_CANCELLING_STATUS
-                if dispatched
-                else TaskStatus.REVOKED
-            )
-            task.finished_at = None if dispatched else timezone.now()
-            task.error = "" if dispatched else "DATASOURCE_SYNC_CANCELLED"
-            metadata["cancellation_state"] = task.status
-            if not dispatched:
-                metadata["completion_reason"] = "DATASOURCE_SYNC_CANCELLED"
-                metadata["stop_confirmation_source"] = "queued_before_dispatch"
-            task.metadata = metadata
-            task.save(
-                update_fields=[
-                    "status",
-                    "finished_at",
-                    "error",
-                    "metadata",
-                ]
-            )
-            if queued:
-                release_datasource_lock(
-                    str(datasource.uuid),
-                    token=task.task_id,
+            record = ScheduledTask.objects.filter(
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=str(datasource.uuid),
+            ).first()
+            if record is not None:
+                record.last_status = ScheduledTask.Status.FAILED
+                record.last_error = "DATASOURCE_SYNC_CANCELLED"
+                record.last_run_at = timezone.now()
+                record.save(
+                    update_fields=["last_status", "last_error", "last_run_at"]
                 )
         return Response(
             {
@@ -995,7 +1122,6 @@ class DataSourceViewSet(BaseAdminViewSet):
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
-        from core.celery import app
 
         datasource = self.get_object()
         task = (
@@ -1016,42 +1142,14 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "No running datasource conversion task."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        metadata = dict(task.metadata or {})
-        celery_task_id = metadata.get("celery_task_id") or task.task_id
-        app.control.revoke(celery_task_id, terminate=False)
-        cancel_datasource_conversion_on_lensnode(
-            datasource.lensnode,
-            task.task_id,
+        task = _finalize_datasource_cancellation(
+            task,
+            datasource,
+            "DATASOURCE_CONVERSION_CANCELLED",
+            request.user,
         )
-        now = timezone.now()
-        metadata["manual_revoked_at"] = now.isoformat()
-        metadata["manual_revoked_by"] = request.user.pk
-        queued = metadata.get("admission_state") == "QUEUED"
-        task.status = TaskStatus.REVOKED if queued else DATASOURCE_CANCELLING_STATUS
-        task.finished_at = now if queued else None
-        task.error = "DATASOURCE_CONVERSION_CANCELLED" if queued else ""
-        metadata["cancellation_state"] = (
-            "REVOKED" if queued else DATASOURCE_CANCELLING_STATUS
-        )
-        if queued:
-            metadata["completion_reason"] = "DATASOURCE_CONVERSION_CANCELLED"
-            metadata["stop_confirmation_source"] = "queued_before_dispatch"
-        task.metadata = metadata
-        task.save(
-            update_fields=[
-                "status",
-                "finished_at",
-                "error",
-                "metadata",
-            ]
-        )
-        if queued:
-            release_datasource_lock(
-                str(datasource.uuid),
-                token=task.task_id,
-            )
         datasource.last_conversion_status = task.status
-        datasource.last_conversion_at = now if queued else None
+        datasource.last_conversion_at = timezone.now()
         datasource.save(
             update_fields=[
                 "last_conversion_status",

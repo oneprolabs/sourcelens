@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from channels.testing import WebsocketCommunicator
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import close_old_connections
 from django.core.management import call_command
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
@@ -76,6 +78,7 @@ from lens.services import (
 from lens.tasks import (
     _datasource_capacity_available,
     _datasource_capacity_slot_key,
+    _queue_datasource_task,
     acquire_datasource_lock,
     cleanup_stale_datasource_sync_tasks,
     complete_datasource_conversion_task,
@@ -388,6 +391,118 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(replay, second)
         self.assertIsNone(separate.retry_of_run)
         self.assertNotEqual(separate.session, first.session)
+
+    def test_terminal_parent_folds_delegated_children_into_parent_run(self):
+        """Delegated Runs fold into the parent and drop their Sessions."""
+
+        self.session.routing_mode = Session.RoutingMode.SMART
+        self.session.save(update_fields=["routing_mode"])
+        child = Assistant.objects.create(
+            name="Reaped Child",
+            slug="reaped-child",
+            lensnode=self.lensnode,
+            selected_task="knowledge_qa",
+            visibility=Assistant.Visibility.PUBLIC,
+        )
+        self.session.allowed_assistant_uuids = [str(child.uuid)]
+        self.session.save(update_fields=["allowed_assistant_uuids"])
+        parent = create_execution_run(
+            session=self.session,
+            question="Coordinate the work",
+            enqueue=False,
+        )
+        parent.status = Run.Status.RUNNING
+        parent.save(update_fields=["status"])
+        snapshot = dict(parent.execution.runtime_snapshot)
+        snapshot["subagents"] = [{"uuid": str(child.uuid)}]
+        parent.execution.runtime_snapshot = snapshot
+        parent.execution.save(update_fields=["runtime_snapshot"])
+
+        delegated = create_delegated_run(
+            parent,
+            child.uuid,
+            "Do the delegated work",
+            delegation_key="call-reap",
+        )
+        delegated.status = Run.Status.DONE
+        delegated.save(update_fields=["status"])
+        delegated.output_message.content = "Delegated answer"
+        delegated.output_message.save(update_fields=["content"])
+        child_session_id = delegated.session_id
+
+        finish_lensnode_run(
+            parent.uuid,
+            Run.Status.DONE,
+            final_content="Final answer",
+        )
+
+        self.assertFalse(
+            Session.objects.filter(pk=child_session_id).exists()
+        )
+        self.assertFalse(Run.objects.filter(pk=delegated.pk).exists())
+        parent = Run.objects.get(pk=parent.pk)
+        results = parent.execution.runtime_snapshot.get("delegated_results")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["assistant_uuid"], str(child.uuid))
+        self.assertEqual(results[0]["assistant_name"], "Reaped Child")
+        self.assertEqual(results[0]["answer"], "Delegated answer")
+        self.assertEqual(results[0]["status"], Run.Status.DONE)
+
+    def test_finish_lensnode_run_returns_none_for_missing_run(self):
+        """A redelivered terminal frame for a reaped Run must not raise."""
+
+        self.assertIsNone(
+            finish_lensnode_run(str(uuid4()), Run.Status.DONE)
+        )
+
+    def test_reap_sweeps_leftover_delegated_sessions(self):
+        """A child that outlived its parent is reaped by the sweep."""
+
+        from lens.tasks import _reap_terminal_delegated_sessions
+
+        self.session.routing_mode = Session.RoutingMode.SMART
+        self.session.save(update_fields=["routing_mode"])
+        child = Assistant.objects.create(
+            name="Leftover Child",
+            slug="leftover-child",
+            lensnode=self.lensnode,
+            selected_task="knowledge_qa",
+            visibility=Assistant.Visibility.PUBLIC,
+        )
+        self.session.allowed_assistant_uuids = [str(child.uuid)]
+        self.session.save(update_fields=["allowed_assistant_uuids"])
+        parent = create_execution_run(
+            session=self.session,
+            question="Coordinate the work",
+            enqueue=False,
+        )
+        parent.status = Run.Status.RUNNING
+        parent.save(update_fields=["status"])
+        snapshot = dict(parent.execution.runtime_snapshot)
+        snapshot["subagents"] = [{"uuid": str(child.uuid)}]
+        parent.execution.runtime_snapshot = snapshot
+        parent.execution.save(update_fields=["runtime_snapshot"])
+
+        delegated = create_delegated_run(
+            parent,
+            child.uuid,
+            "Leftover work",
+            delegation_key="call-leftover",
+        )
+        child_session_id = delegated.session_id
+        parent.status = Run.Status.DONE
+        parent.finished_at = timezone.now() - timedelta(hours=2)
+        parent.save(update_fields=["status", "finished_at"])
+        delegated.status = Run.Status.CANCELLED
+        delegated.finished_at = timezone.now() - timedelta(hours=2)
+        delegated.save(update_fields=["status", "finished_at"])
+
+        reaped = _reap_terminal_delegated_sessions()
+
+        self.assertEqual(reaped, 1)
+        self.assertFalse(
+            Session.objects.filter(pk=child_session_id).exists()
+        )
 
     def test_parent_sync_event_aggregates_named_child_progress(self):
         self.session.routing_mode = Session.RoutingMode.SMART
@@ -1472,6 +1587,10 @@ class LensServiceTests(TransactionTestCase):
 
         payload = sender.call_args.args[1]["payload"]
         self.assertEqual(payload["parent_run_uuid"], str(parent.uuid))
+        self.assertEqual(
+            payload["parent_session_uuid"],
+            str(self.session.uuid),
+        )
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
@@ -3190,6 +3309,63 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(task.error, "DATASOURCE_SYNC_ORPHANED")
         self.assertIsNone(cache.get(f"lens:datasource-sync:{self.datasource.uuid}"))
 
+    def test_reconcile_orphans_source_sync_without_connection_id(self):
+        """A dispatch that never recorded a connection id is still healed."""
+
+        task = register_datasource_sync_task(
+            self.datasource,
+            "orphaned-no-conn",
+            "manual",
+        )
+        task.status = "STARTED"
+        metadata = dict(task.metadata or {})
+        metadata.pop("lensnode_connection_id", None)
+        metadata.update(
+            {
+                "lock_token": task.task_id,
+                "admission_state": "DISPATCHED",
+            }
+        )
+        task.metadata = metadata
+        task.save(update_fields=["status", "metadata"])
+        acquire_datasource_lock(
+            self.datasource.uuid,
+            token=task.task_id,
+            ttl_s=60,
+        )
+
+        with patch(
+            "lens.tasks.confirm_orphaned_datasource_conversion.apply_async"
+        ) as confirm:
+            reconcile_orphaned_datasource_conversions(
+                self.lensnode.uuid,
+                "new-connection",
+                [],
+            )
+
+        confirm.assert_called_once()
+        task.refresh_from_db()
+        self.assertEqual(
+            task.metadata["datasource_orphan_confirmation_connection_id"],
+            "new-connection",
+        )
+
+    def test_source_sync_dispatch_records_lensnode_connection_id(self):
+        self.lensnode.connection_id = "conn-1"
+        self.lensnode.save(update_fields=["connection_id"])
+
+        with patch(
+            "lens.tasks.dispatch_datasource_sync_async",
+            return_value="req-1",
+        ):
+            source_sync_task(
+                str(self.datasource.uuid),
+                task_id="dispatch-conn",
+            )
+
+        task = TaskExecution.objects.get(task_id="dispatch-conn")
+        self.assertEqual(task.metadata["lensnode_connection_id"], "conn-1")
+
     def test_lensnode_websocket_rejects_revoked_token(self):
         token = issue_lensnode_token(self.lensnode)
         self.lensnode.token_revoked = True
@@ -3508,14 +3684,14 @@ class LensServiceTests(TransactionTestCase):
         self.assertNotIn("config", payload)
         self.assertNotIn("sync_policy", payload)
 
-    def test_managed_workspace_upload_dispatches_file_and_conversion_policy(
+    def test_upload_dispatches_file_and_conversion_policy(
         self,
     ):
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
             sync_policy={
                 "conversion": {
                     "vision_model_ref": "qwen-vision-ref",
@@ -3543,7 +3719,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertTrue(request_id)
         payload = send.call_args.args[1]
         self.assertEqual(payload["type"], "datasource_upload")
-        self.assertEqual(payload["source_type"], "managed_workspace")
+        self.assertEqual(payload["source_type"], "upload")
         self.assertEqual(payload["filename"], "package.zip")
         self.assertEqual(payload["content_base64"], "YXJjaGl2ZS1jb250ZW50")
         self.assertEqual(
@@ -3556,7 +3732,10 @@ class LensServiceTests(TransactionTestCase):
         )
         self.assertEqual(payload["ai_gateway_url"], "http://gateway.test")
         self.assertEqual(payload["lensnode_token"], "lensnode-token")
-        self.assertEqual(payload["target_path"], "/workspace/restores/finance")
+        self.assertEqual(
+            payload["target_path"],
+            f"/workspace/datasources/{datasource.uuid}",
+        )
 
     def test_datasource_command_targets_current_lensnode_connection(self):
         from lens.datasource.services import _send_lensnode_command
@@ -4229,6 +4408,7 @@ class LensServiceTests(TransactionTestCase):
             self.datasource,
             task_id=task_id,
             trigger="manual",
+            lensnode=self.lensnode,
         )
 
     def test_datasource_sync_task_metadata_includes_conversion_policy(self):
@@ -4315,6 +4495,7 @@ class LensServiceTests(TransactionTestCase):
                 "repository_summaries": [],
                 "failed_repositories": [],
                 "partial_success": False,
+                "storage_usage": {},
                 "target_path": self.datasource.target_path,
             },
         )
@@ -4550,13 +4731,11 @@ class LensServiceTests(TransactionTestCase):
         )
 
     def test_source_sync_task_rejects_concurrent_sync(self):
-        # Simulate a real in-flight sync: a running task owns the lock. The
-        # orphan-reclaim must keep its hands off an owned lock, so a second
-        # sync is rejected as busy. (A bare lock with no owning task is now
-        # treated as orphaned and reclaimable, so it would not be rejected.)
+        """Deduplicate a sync without disturbing the active execution."""
+
         owner_token = "owner-sync"
         acquire_datasource_lock(self.datasource.uuid, token=owner_token)
-        TaskExecution.objects.create(
+        owner = TaskExecution.objects.create(
             task_id=owner_token,
             task_name="datasource_sync:Repo Cache",
             module="lens_datasource",
@@ -4566,30 +4745,46 @@ class LensServiceTests(TransactionTestCase):
                 "lock_token": owner_token,
             },
         )
+        record, _ = ScheduledTask.objects.get_or_create(
+            task_type="source_sync",
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+        )
+        record.last_status = ScheduledTask.Status.RUNNING
+        record.last_run_at = timezone.now()
+        record.save(update_fields=["last_status", "last_run_at"])
+        original_record = ScheduledTask.objects.filter(pk=record.pk).values().get()
+        original_owner = TaskExecution.objects.filter(pk=owner.pk).values().get()
         try:
-            synced = source_sync_task(
-                str(self.datasource.uuid), task_id="rejected-sync"
+            with patch("lens.tasks.dispatch_datasource_sync_async") as dispatch:
+                synced = source_sync_task(
+                    str(self.datasource.uuid), task_id="rejected-sync"
+                )
+            dispatch.assert_not_called()
+            self.assertEqual(
+                cache.get(f"lens:datasource-sync:{self.datasource.uuid}"),
+                owner_token,
             )
         finally:
             release_datasource_lock(self.datasource.uuid, token=owner_token)
 
         self.datasource.refresh_from_db()
-        record = ScheduledTask.objects.get(
-            task_type="source_sync",
-            target_type="datasource",
-            target_id=self.datasource.uuid,
-        )
-        task = TaskExecution.objects.get(task_id="rejected-sync")
         self.assertEqual(synced, 0)
         self.assertEqual(self.datasource.status, "active")
-        self.assertEqual(record.last_status, "running")
-        self.assertEqual(record.last_error, "LENS_SOURCE_SYNC_BUSY")
-        self.assertEqual(task.status, "REVOKED")
-        self.assertEqual(task.error, "LENS_SOURCE_SYNC_BUSY")
-        self.assertEqual(task.metadata["progress_step"], "lock")
+        self.assertFalse(
+            TaskExecution.objects.filter(task_id="rejected-sync").exists()
+        )
         self.assertEqual(
-            task.metadata["progress_message"],
-            "LENS_SOURCE_SYNC_BUSY",
+            TaskExecution.objects.filter(module="lens_datasource").count(),
+            1,
+        )
+        self.assertEqual(
+            TaskExecution.objects.filter(pk=owner.pk).values().get(),
+            original_owner,
+        )
+        self.assertEqual(
+            ScheduledTask.objects.filter(pk=record.pk).values().get(),
+            original_record,
         )
 
     def test_source_sync_waits_for_lensnode_capacity_without_dispatching(self):
@@ -4616,10 +4811,7 @@ class LensServiceTests(TransactionTestCase):
             },
         )
 
-        with (
-            patch("lens.tasks.dispatch_datasource_sync_async") as dispatch,
-            patch("lens.tasks.source_sync_task.apply_async") as retry,
-        ):
+        with patch("lens.tasks.dispatch_datasource_sync_async") as dispatch:
             result = source_sync_task(
                 str(self.datasource.uuid),
                 task_id="queued-for-capacity",
@@ -4627,7 +4819,6 @@ class LensServiceTests(TransactionTestCase):
 
         self.assertEqual(result, 0)
         dispatch.assert_not_called()
-        retry.assert_called_once()
         task = TaskExecution.objects.get(task_id="queued-for-capacity")
         self.assertEqual(task.status, "PENDING")
         self.assertEqual(task.metadata["admission_state"], "QUEUED")
@@ -4636,12 +4827,22 @@ class LensServiceTests(TransactionTestCase):
             task.metadata["queue_reason"],
             "Waiting for LensNode datasource sync capacity.",
         )
+        self.assertIn("queue_heartbeat_at", task.metadata)
 
     def test_datasource_capacity_slots_are_atomic_and_idempotent(self):
         self.lensnode.labels = {"datasource_sync_capacity": 2}
         self.lensnode.save(update_fields=["labels"])
         for task_id in ["capacity-1", "capacity-2", "capacity-3"]:
-            register_datasource_sync_task(self.datasource, task_id, "manual")
+            TaskExecution.objects.create(
+                task_id=task_id,
+                task_name="datasource_sync:capacity",
+                module="lens_datasource",
+                status="PENDING",
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                },
+            )
 
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
@@ -4658,6 +4859,45 @@ class LensServiceTests(TransactionTestCase):
 
         release_datasource_lock(self.datasource.uuid, token="capacity-1")
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
+
+    def test_queue_capacity_is_bounded_under_concurrent_admission(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 1}
+        self.lensnode.save(update_fields=["labels"])
+        task_ids = [f"concurrent-queue-{index}" for index in range(8)]
+        for task_id in task_ids:
+            TaskExecution.objects.create(
+                task_id=task_id,
+                task_name="datasource_sync:concurrent",
+                module="lens_datasource",
+                status="PENDING",
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                },
+            )
+
+        def queue_task(task_id):
+            close_old_connections()
+            try:
+                return _queue_datasource_task(task_id, "capacity wait")
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=len(task_ids)) as executor:
+            results = list(executor.map(queue_task, task_ids))
+
+        queued = TaskExecution.objects.filter(
+            task_id__in=task_ids,
+            metadata__admission_state="QUEUED",
+        ).count()
+        failed = TaskExecution.objects.filter(
+            task_id__in=task_ids,
+            status="FAILURE",
+            error="DATASOURCE_QUEUE_FULL",
+        ).count()
+        self.assertEqual(queued, 4)
+        self.assertEqual(failed, 4)
+        self.assertEqual(sum(results), 4)
 
     def test_datasource_capacity_reclaims_revoked_task_slot(self):
         self.lensnode.labels = {"datasource_sync_capacity": 1}
@@ -4789,6 +5029,25 @@ class LensServiceTests(TransactionTestCase):
             ttl_s=60,
         )
         release_datasource_lock(self.datasource.uuid, token="new-sync")
+
+    def test_cleanup_legacy_running_datasource_task(self):
+        GlobalSetting.objects.create(
+            key="lens.datasource_sync.timeout_s", value="1"
+        )
+        task = TaskExecution.objects.create(
+            task_id="legacy-running-sync",
+            task_name="datasource_sync:legacy",
+            module="lens_datasource",
+            status="running",
+            started_at=timezone.now() - timedelta(seconds=2),
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
+        )
+        with patch("lens.services.cancel_datasource_sync_on_lensnode"):
+            result = cleanup_stale_datasource_sync_tasks()
+        task.refresh_from_db()
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "LENS_SOURCE_SYNC_TIMEOUT")
 
     def test_cleanup_stale_datasource_upload_marks_failure(self):
         GlobalSetting.objects.create(
@@ -4978,6 +5237,115 @@ class LensServiceTests(TransactionTestCase):
         )
         release_datasource_lock(self.datasource.uuid, token="new-sync")
 
+    def test_cleanup_requeues_stale_queued_upload(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "queued-upload",
+            "report.zip",
+            metadata={"storage_name": "datasource-uploads/x/report.zip"},
+        )
+        metadata = dict(task.metadata or {})
+        metadata.update(
+            {
+                "admission_state": "QUEUED",
+                "queue_state": "QUEUED",
+                "queue_heartbeat_at": (
+                    timezone.now() - timedelta(minutes=5)
+                ).isoformat(),
+            }
+        )
+        task.metadata = metadata
+        task.save(update_fields=["metadata"])
+
+        with patch("lens.tasks.datasource_upload_task.apply_async") as requeue:
+            result = cleanup_stale_datasource_sync_tasks()
+
+        requeue.assert_called_once_with(
+            args=[
+                str(self.datasource.uuid),
+                "datasource-uploads/x/report.zip",
+                "report.zip",
+            ],
+            kwargs={"task_id": "queued-upload"},
+        )
+        self.assertEqual(result["requeued"], 1)
+        task.refresh_from_db()
+        self.assertGreater(
+            task.metadata["queue_heartbeat_at"],
+            (timezone.now() - timedelta(minutes=1)).isoformat(),
+        )
+
+    def test_cleanup_fails_queued_task_for_missing_datasource(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "queued-missing-ds",
+            "report.zip",
+            metadata={"storage_name": "datasource-uploads/missing/report.zip"},
+        )
+        metadata = dict(task.metadata or {})
+        metadata.update(
+            {
+                "datasource_uuid": str(uuid4()),
+                "admission_state": "QUEUED",
+                "queue_heartbeat_at": (
+                    timezone.now() - timedelta(minutes=5)
+                ).isoformat(),
+            }
+        )
+        task.metadata = metadata
+        task.save(update_fields=["metadata"])
+
+        with patch("lens.tasks.datasource_upload_task.apply_async") as requeue:
+            cleanup_stale_datasource_sync_tasks()
+
+        requeue.assert_not_called()
+        task.refresh_from_db()
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "DATASOURCE_NOT_FOUND")
+
+    def test_cleanup_finalizes_stuck_cancelling_task(self):
+        task = register_datasource_sync_task(
+            self.datasource,
+            "stuck-cancel",
+            "manual",
+        )
+        task.status = "CANCELLING"
+        metadata = dict(task.metadata or {})
+        metadata.update(
+            {
+                "lock_token": task.task_id,
+                "admission_state": "DISPATCHED",
+                "manual_revoked_at": (
+                    timezone.now() - timedelta(minutes=5)
+                ).isoformat(),
+            }
+        )
+        task.metadata = metadata
+        task.save(update_fields=["status", "metadata"])
+        acquire_datasource_lock(
+            self.datasource.uuid,
+            token=task.task_id,
+            ttl_s=60,
+        )
+
+        with patch(
+            "lens.services.cancel_datasource_sync_on_lensnode"
+        ) as cancel:
+            result = cleanup_stale_datasource_sync_tasks()
+
+        task.refresh_from_db()
+        self.assertEqual(result["cancel_confirmed"], 1)
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_SYNC_CANCELLED")
+        self.assertEqual(
+            task.metadata["stop_confirmation_source"],
+            "cancel_grace_expired",
+        )
+        self.assertIsNone(
+            cache.get(f"lens:datasource-sync:{self.datasource.uuid}")
+        )
+        cancel.assert_called_once_with(self.lensnode, "stuck-cancel")
+
     def test_acquire_datasource_lock_recovers_completed_owner_lock(self):
         TaskExecution.objects.create(
             task_id="completed-sync",
@@ -5103,14 +5471,14 @@ class LensServiceTests(TransactionTestCase):
         task.enabled = False
         task.save(update_fields=["enabled"])
 
-        self.datasource.sync_policy = {"interval_seconds": 120}
+        self.datasource.sync_policy = {"interval_seconds": 600}
         self.datasource.save(update_fields=["sync_policy", "updated_at"])
 
         ensure_datasource_periodic_task(self.datasource)
 
         task.refresh_from_db()
         self.assertTrue(task.enabled)
-        self.assertEqual(task.interval.every, 120)
+        self.assertEqual(task.interval.every, 600)
         self.assertEqual(task.interval.period, "seconds")
         self.assertEqual(task.task, "lens.source_sync")
         self.assertEqual(task.args, f'["{self.datasource.uuid}"]')
@@ -5138,14 +5506,14 @@ class LensServiceTests(TransactionTestCase):
         task = PeriodicTask.objects.get(pk=record.periodic_task_ref)
         task.enabled = False
         task.save(update_fields=["enabled"])
-        self.datasource.sync_policy = {"interval_seconds": 120}
+        self.datasource.sync_policy = {"interval_seconds": 600}
         self.datasource.save(update_fields=["sync_policy", "updated_at"])
 
         discover_and_register()
 
         task.refresh_from_db()
         self.assertTrue(task.enabled)
-        self.assertEqual(task.interval.every, 120)
+        self.assertEqual(task.interval.every, 600)
 
     def test_discover_and_register_backfills_periodic_task_refs(self):
         discover_and_register()

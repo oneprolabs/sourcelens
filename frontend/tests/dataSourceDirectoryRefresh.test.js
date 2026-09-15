@@ -27,7 +27,7 @@ test('data source wizard renders an icon-only directory refresh control', async 
   )
   assert.match(
     contents,
-    /:title="t\('lensAdmin\.datasourceWizard\.refreshDirectories'\)"/
+    /:title="\s*t\('lensAdmin\.datasourceWizard\.refreshDirectories'\)\s*"/
   )
   assert.match(
     contents,

@@ -1,0 +1,4 @@
+type: feature
+audience: user
+en: Upload multiple ZIP archives to a file-upload datasource from the admin console, store each upload in its own LensNode directory, and review per-file upload history and processing status.
+zh-CN: 支持在管理台向文件上传数据源一次上传多个 ZIP 压缩包，每次上传在 LensNode 上存放到独立目录，并可查看逐文件的上传记录与处理状态。

@@ -617,14 +617,15 @@ function lensNodeName(value) {
   )
 }
 
-
 function assistantIcon(row) {
   if ((row.mode || row.routing_mode) === 'smart') return UsersRound
-  return {
-    general_chat: MessageCircle,
-    knowledge_qa: BookOpen,
-    code_analysis: Code2
-  }[row.capability] || Bot
+  return (
+    {
+      general_chat: MessageCircle,
+      knowledge_qa: BookOpen,
+      code_analysis: Code2
+    }[row.capability] || Bot
+  )
 }
 
 function assistantTypeLabel(value) {

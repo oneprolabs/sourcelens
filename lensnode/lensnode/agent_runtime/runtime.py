@@ -275,17 +275,20 @@ def _virtual_skill_path(resources, path):
         try:
             candidate = candidate.relative_to(resources.root)
         except ValueError:
-            # Session-shared skills and MCP files live beside the per-Run
-            # directory and are intentionally addressed by absolute paths.
-            workspace_root = next(
-                (
-                    parent
-                    for parent in (resources.root, *resources.root.parents)
-                    if (parent / "sessions").is_dir()
-                ),
-                resources.root.parent.parent,
-            )
-            candidate = candidate.relative_to(workspace_root)
+            # Session-shared resources are symlinked into the run root.
+            # Expose them through that virtual mount instead of leaking the
+            # session workspace path to the sandbox root validator.
+            for resource_name in ("skills", "mcp"):
+                marker = f"/{resource_name}/"
+                text = candidate.as_posix()
+                if marker in text:
+                    candidate = Path(
+                        resource_name,
+                        text.split(marker, 1)[1],
+                    )
+                    break
+            else:
+                candidate = candidate.relative_to(resources.root.parent)
     if candidate.is_absolute() or ".." in candidate.parts:
         raise ValueError("Skill path must remain inside the run scratch root")
     return candidate.as_posix()
@@ -1200,7 +1203,10 @@ class LensDeepAgentRuntime:
             "name": f"lensnode-{state.command.get('task') or 'agent'}",
         }
         if state.resources.skill_paths and use_subagents:
-            state.kwargs["skills"] = state.resources.skill_paths
+            state.kwargs["skills"] = [
+                _virtual_skill_path(state.resources, path)
+                for path in state.resources.skill_paths
+            ]
 
         state.summarizer = _build_summarization_middleware(
             self.config,

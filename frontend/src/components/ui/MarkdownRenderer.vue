@@ -375,7 +375,12 @@ function handleMindmapPointerDown(event) {
     canvas.dataset.pinchDistance = String(Math.hypot(a.x - b.x, a.y - b.y))
     return
   }
-  mindmapState.set(canvas, { x: event.clientX, y: event.clientY, left: canvas.scrollLeft, top: canvas.scrollTop })
+  mindmapState.set(canvas, {
+    x: event.clientX,
+    y: event.clientY,
+    left: canvas.scrollLeft,
+    top: canvas.scrollTop
+  })
   canvas.dataset.dragging = 'true'
   canvas.dataset.dragX = String(event.clientX)
   canvas.dataset.dragY = String(event.clientY)
@@ -388,14 +393,20 @@ function handleMindmapPointerMove(event) {
   const canvas = event.target.closest('.mindmap-canvas')
   if (!canvas) return
   const pointers = mindmapPointers.get(canvas)
-  if (pointers?.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  if (pointers?.has(event.pointerId))
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
   if (pointers?.size === 2) {
     const [a, b] = [...pointers.values()]
     const distance = Math.hypot(a.x - b.x, a.y - b.y)
     const previous = Number(canvas.dataset.pinchDistance || distance)
     const mindmap = canvas.closest('[data-mindmap-root]')
     const rect = canvas.getBoundingClientRect()
-    setMindmapZoom(mindmap, Number(mindmap.dataset.mindmapZoom || 1) * distance / previous, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top)
+    setMindmapZoom(
+      mindmap,
+      (Number(mindmap.dataset.mindmapZoom || 1) * distance) / previous,
+      (a.x + b.x) / 2 - rect.left,
+      (a.y + b.y) / 2 - rect.top
+    )
     canvas.dataset.pinchDistance = String(distance)
     return
   }
@@ -543,8 +554,10 @@ function setMindmapZoom(mindmap, zoom, focusX, focusY) {
   svg.style.width = `${Math.max(viewportWidth, baseWidth * normalizedZoom)}px`
   svg.style.height = `${Math.max(180, baseHeight * normalizedZoom)}px`
   if (focusX != null) {
-    canvas.scrollLeft = (canvas.scrollLeft + focusX) * normalizedZoom / currentZoom - focusX
-    canvas.scrollTop = (canvas.scrollTop + focusY) * normalizedZoom / currentZoom - focusY
+    canvas.scrollLeft =
+      ((canvas.scrollLeft + focusX) * normalizedZoom) / currentZoom - focusX
+    canvas.scrollTop =
+      ((canvas.scrollTop + focusY) * normalizedZoom) / currentZoom - focusY
   }
 }
 </script>

@@ -50,6 +50,34 @@ def test_materialize_datasource_uses_local_uuid_directory(tmp_path):
     }]
 
 
+def test_delegated_datasource_links_stay_out_of_session_tree(tmp_path):
+    """Delegated runs link sources under runtime scratch, not sessions."""
+
+    workspace = tmp_path / "workspace"
+    datasource_uuid = uuid.uuid4()
+    source = workspace / "datasources" / f"{datasource_uuid}-abc123"
+    source.mkdir(parents=True)
+    (source / "README.md").write_text("ready", encoding="utf-8")
+    runtime = (
+        workspace / ".sourcelens" / "runtime" / "runs" / "delegated-run"
+    )
+    runtime.mkdir(parents=True)
+    command = _command(datasource_uuid)
+    command["session_uuid"] = str(uuid.uuid4())
+    command["parent_run_uuid"] = str(uuid.uuid4())
+    config = SimpleNamespace(
+        workspace_path=str(workspace), runtime_path=str(workspace),
+    )
+
+    materialize_datasources(config, command, runtime)
+
+    link = runtime / "sources" / "source"
+    assert link.is_symlink()
+    assert link.resolve() == source.resolve()
+    assert command["target_dirs"] == [{"name": "source", "path": str(link)}]
+    assert not (workspace / "sessions").exists()
+
+
 def test_materialize_datasource_rejects_missing_local_directory(tmp_path):
     workspace = tmp_path / "workspace"
     runtime = tmp_path / "runtime"

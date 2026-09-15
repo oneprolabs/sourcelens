@@ -233,25 +233,15 @@ def _run_agent_with_turn_limit(
         raise EmptyAgentResponseError(
             "Agent returned no answer after one recovery attempt."
         )
-    if truncated and answer.strip():
-        if truncation_reason == "soft_deadline":
-            answer += _pick_text(
-                "\n\n---\n*即将达到硬截止时间，以上回答由当前已有证据"
-                "综合生成，调查可能尚未完全完成。*",
-                "\n\n---\n*Approaching the hard deadline, this answer was "
-                "synthesized from the evidence already collected and the "
-                "investigation may be incomplete.*",
-                answer_language,
-            )
-        else:
-            answer += _pick_text(
-                "\n\n---\n*已达到当前执行安全边界，本次调查未完全完成。"
-                "可从已保存的检查点继续执行。*",
-                "\n\n---\n*Reached the current execution safety boundary before "
-                "the investigation fully completed. Retry to continue "
-                "from the saved checkpoint.*",
-                answer_language,
-            )
+    if truncated and answer.strip() and truncation_reason == "soft_deadline":
+        answer += _pick_text(
+            "\n\n---\n*即将达到硬截止时间，以上回答由当前已有证据"
+            "综合生成，调查可能尚未完全完成。*",
+            "\n\n---\n*Approaching the hard deadline, this answer was "
+            "synthesized from the evidence already collected and the "
+            "investigation may be incomplete.*",
+            answer_language,
+        )
     termination_reason = truncation_reason
     if termination_reason is None and model is not None:
         model_reason = getattr(model, "stop_reason", None)

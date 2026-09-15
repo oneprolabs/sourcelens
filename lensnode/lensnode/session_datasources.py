@@ -19,7 +19,7 @@ def materialize_datasources(
     if not snapshots:
         return
     workspace_root = Path(config.workspace_path)
-    target = _session_workspace_target(command, config)
+    target = _session_workspace_target(command, config, runtime_root)
     directories = []
     names = set()
 
@@ -31,9 +31,11 @@ def materialize_datasources(
         if on_activity is not None:
             on_activity()
 
+    # Delegated Runs are transient scratch and own no Session workspace, so
+    # they must not take (or create) a Session lock.
     lock_context = (
         session_lock(config, command["session_uuid"])
-        if command.get("session_uuid")
+        if command.get("session_uuid") and not command.get("parent_run_uuid")
         else nullcontext()
     )
     with lock_context:
@@ -96,9 +98,15 @@ def materialize_datasources(
     command["workspace_path"] = str(target)
 
 
-def _session_workspace_target(command, config):
-    """Return the validated Session root supplied by the control plane."""
+def _session_workspace_target(command, config, runtime_root):
+    """Return the validated workspace that receives datasource links.
 
+    Delegated Runs are transient scratch, so their datasource links live
+    inside the Run's runtime directory rather than a Session workspace.
+    """
+
+    if command.get("parent_run_uuid"):
+        return Path(runtime_root)
     session_uuid = command.get("session_uuid")
     if session_uuid:
         return session_root(config, session_uuid)

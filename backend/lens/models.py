@@ -556,6 +556,7 @@ class DataSource(TimestampedUUIDModel):
         FEISHU = "feishu", "Feishu"
         JIRA = "jira", "Jira"
         MANAGED_WORKSPACE = "managed_workspace", "Managed Workspace"
+        UPLOAD = "upload", "Manual Upload"
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
