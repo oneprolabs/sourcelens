@@ -22,14 +22,14 @@ def test_load_config_reads_runtime_version(monkeypatch):
     assert config.agent_version == "2026.08.27"
 
 
-def test_load_config_separates_runtime_path_from_workspace(monkeypatch):
+def test_load_config_uses_workspace_path_for_runtime(monkeypatch):
     monkeypatch.setenv("LENSNODE_WORKSPACE_PATH", "/data/workspace")
     monkeypatch.setenv("LENSNODE_RUNTIME_PATH", "/data/runtime")
 
     config = load_config()
 
     assert config.workspace_path == "/data/workspace"
-    assert config.runtime_path == "/data/runtime"
+    assert config.runtime_path == "/data/workspace"
 
 
 def test_load_config_keeps_runtime_path_compatible_by_default(monkeypatch):

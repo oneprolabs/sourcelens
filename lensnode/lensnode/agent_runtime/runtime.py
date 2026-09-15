@@ -272,7 +272,20 @@ def _virtual_skill_path(resources, path):
 
     candidate = Path(path)
     if candidate.is_absolute():
-        candidate = candidate.relative_to(resources.root)
+        try:
+            candidate = candidate.relative_to(resources.root)
+        except ValueError:
+            # Session-shared skills and MCP files live beside the per-Run
+            # directory and are intentionally addressed by absolute paths.
+            workspace_root = next(
+                (
+                    parent
+                    for parent in (resources.root, *resources.root.parents)
+                    if (parent / "sessions").is_dir()
+                ),
+                resources.root.parent.parent,
+            )
+            candidate = candidate.relative_to(workspace_root)
     if candidate.is_absolute() or ".." in candidate.parts:
         raise ValueError("Skill path must remain inside the run scratch root")
     return candidate.as_posix()

@@ -209,6 +209,14 @@ def _run_agent_with_turn_limit(
             (last_state or {}).get("messages", []),
             answer_language,
             emit_event,
+            current_question=next(
+                (
+                    str(item.get("content") or "")
+                    for item in reversed(messages)
+                    if item.get("role") == "user"
+                ),
+                "",
+            ),
             reason=truncation_reason or "limit",
         )
         if synthesis:
@@ -545,6 +553,7 @@ def _synthesize_wrapup_answer(
     current,
     answer_language,
     emit_event,
+    current_question="",
     reason="limit",
 ):
     """Ask once for a tool-free answer after cutoff or an empty terminal.
@@ -604,8 +613,17 @@ def _synthesize_wrapup_answer(
             "any part of the investigation you were not able to confirm.",
             answer_language,
         )
+    current_question_hint = ""
+    if current_question:
+        current_question_hint = _pick_text(
+            f"当前需要回答的问题是：{current_question}",
+            f"The question to answer now is: {current_question}",
+            answer_language,
+        )
+        current_question_hint += "\n\n"
     instruction = (
         f"{instruction}\n\n"
+        f"{current_question_hint}"
         f"{_answer_language_requirement(answer_language)}"
     )
     wrapup_history = _strip_dangling_tool_call(current)
