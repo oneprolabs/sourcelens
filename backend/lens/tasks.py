@@ -129,6 +129,7 @@ DATASOURCE_QUEUE_PRIORITIES = {
     "retry": 20,
 }
 DATASOURCE_QUEUE_BACKOFF_SECONDS = (60, 300, 900, 1800)
+DATASOURCE_FAILURE_BACKOFF_SECONDS = (60, 300, 900, 1800)
 DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
 DATASOURCE_ADMISSION_STATE = "admission_state"
 DATASOURCE_ADMITTED = "DISPATCHED"
@@ -655,6 +656,7 @@ def _refresh_datasource_lock(datasource_uuid, token, ttl_s):
     return cache.touch(key, timeout=ttl_s)
 
 
+@transaction.atomic
 def _queue_datasource_task(task_id, message):
     """Keep a datasource task pending while it waits for node capacity.
 
@@ -671,18 +673,20 @@ def _queue_datasource_task(task_id, message):
     metadata = dict(task.metadata or {}) if task is not None else {}
     lensnode_uuid = str(metadata.get("lensnode_uuid") or "")
     if lensnode_uuid:
-        capacity = _datasource_capacity(
-            LensNode.objects.filter(uuid=lensnode_uuid).first()
-        )
-        queued_count = TaskExecution.objects.filter(
-            module__in=DATASOURCE_OPERATION_MODULES,
-            status=TaskStatus.PENDING,
-            metadata__lensnode_uuid=lensnode_uuid,
-            metadata__admission_state=DATASOURCE_QUEUED,
-        ).exclude(task_id=task_id).count()
-        if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
-            _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
-            return False
+        with transaction.atomic():
+            node = LensNode.objects.select_for_update().filter(
+                uuid=lensnode_uuid
+            ).first()
+            capacity = _datasource_capacity(node)
+            queued_count = TaskExecution.objects.filter(
+                module__in=DATASOURCE_OPERATION_MODULES,
+                status__in=[TaskStatus.PENDING, *LEGACY_DATASOURCE_ACTIVE_STATUSES],
+                metadata__lensnode_uuid=lensnode_uuid,
+                metadata__admission_state=DATASOURCE_QUEUED,
+            ).exclude(task_id=task_id).count()
+            if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
+                _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
+                return False
 
     TaskTracker.update_task_status(
         task_id,
@@ -784,7 +788,18 @@ def _requeue_stale_queued_datasource_tasks(now):
     tasks = sorted(
         tasks,
         key=lambda item: (
-            -int((item.metadata or {}).get("queue_priority", 50)),
+            -(
+                int((item.metadata or {}).get("queue_priority", 50))
+                + max(
+                    0,
+                    int(
+                        (
+                            now - (item.created_at or now)
+                        ).total_seconds()
+                    )
+                    // 300 * 20
+                )
+            ),
             item.created_at,
         ),
     )
@@ -904,6 +919,19 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                 record.enabled = False
                 record.save(update_fields=["enabled"])
             return 0
+        if trigger == "scheduled":
+            previous_failure = TaskExecution.objects.filter(
+                module="lens_datasource",
+                status__in=[TaskStatus.FAILURE, "failed", "failure"],
+                metadata__datasource_uuid=str(datasource.uuid),
+            ).exclude(task_id=task_id).order_by("-finished_at").first()
+            retry_at = _parse_iso_datetime(
+                (previous_failure.metadata or {}).get("failure_next_retry_at")
+                if previous_failure
+                else None
+            )
+            if retry_at and retry_at > timezone.now():
+                return 0
 
         task_execution = register_datasource_sync_task(
             datasource,
@@ -1781,16 +1809,29 @@ def complete_datasource_sync_task(task_id, result):
             },
         )
 
+    failure_attempts = int(metadata.get("failure_retry_attempts") or 0) + 1
+    failure_backoff = DATASOURCE_FAILURE_BACKOFF_SECONDS[
+        min(failure_attempts - 1, len(DATASOURCE_FAILURE_BACKOFF_SECONDS) - 1)
+    ]
+    failure_metadata = _datasource_step_metadata(
+        task_id,
+        "failed",
+        "failed",
+        error,
+    )
+    failure_metadata.update(
+        {
+            "failure_retry_attempts": failure_attempts,
+            "failure_next_retry_at": (
+                timezone.now() + timedelta(seconds=failure_backoff)
+            ).isoformat(),
+        }
+    )
     return TaskTracker.update_task_status(
         task_id,
         TaskStatus.FAILURE,
         error=error,
-        metadata=_datasource_step_metadata(
-            task_id,
-            "failed",
-            "failed",
-            error,
-        ),
+        metadata=failure_metadata,
     )
 
 
