@@ -3045,6 +3045,11 @@ def dispatch_run_to_lensnode(
                 "parent_run_uuid": (
                     str(run.parent_run.uuid) if run.parent_run_id else ""
                 ),
+                "parent_session_uuid": (
+                    str(run.parent_run.session.uuid)
+                    if run.parent_run_id
+                    else ""
+                ),
                 "dispatch_id": str(dispatch_id) if dispatch_id else None,
                 "task": execution.task,
                 "features": features_payload,
@@ -3677,7 +3682,10 @@ def _finalize_delegated_children(run):
     """
 
     children = list(
-        Run.objects.filter(parent_run=run).select_related(
+        Run.objects.filter(
+            parent_run=run,
+            status__in=TERMINAL_RUN_STATUSES,
+        ).select_related(
             "session",
             "session__assistant",
             "input_message",

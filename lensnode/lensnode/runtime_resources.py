@@ -117,13 +117,22 @@ def prepare_runtime_resources(
     runtime_instance_id = (
         command.get("runtime_instance_id") or command["run_uuid"]
     )
-    # A delegated Run is transient scratch: render its resources under the
-    # runtime area and never create or share a Session workspace under
-    # ``sessions/``, so delegated work cannot inflate the Session tree.
+    # A delegated Run is transient: it renders under its parent Run's
+    # ``delegations/<run>`` directory (never as a Session of its own) so the
+    # work stays attributable to the parent conversation while still being
+    # disposable. Without a parent Session id it falls back to run scratch.
     delegated = bool(command.get("parent_run_uuid"))
     session_id = None if delegated else command.get("session_uuid")
     runtime_root = _run_runtime_path(
-        runtime_base, runtime_instance_id, session_id=session_id,
+        runtime_base,
+        runtime_instance_id,
+        session_id=session_id,
+        parent_session_id=(
+            command.get("parent_session_uuid") if delegated else None
+        ),
+        parent_run_uuid=(
+            command.get("parent_run_uuid") if delegated else None
+        ),
     )
     shared_root = (
         session_root(config, session_id) if session_id else runtime_root
@@ -717,6 +726,10 @@ def cleanup_runtime_resources(resources):
 
     root = Path(resources.root)
     parts = root.parts
+    # Delegated Runs are transient even though they live under ``sessions/``.
+    if "delegations" in parts:
+        shutil.rmtree(root, ignore_errors=True)
+        return
     if "sessions" in parts and "runs" in parts:
         return
     shutil.rmtree(root, ignore_errors=True)
@@ -769,15 +782,42 @@ def delete_skill_cache(workspace_path, skill_uuid):
     return not skill_root.exists()
 
 
-def _run_runtime_path(workspace_path, run_uuid, session_id=None):
-    """Return a contained runtime path for one validated Run identifier."""
+def _run_runtime_path(
+    workspace_path,
+    run_uuid,
+    session_id=None,
+    parent_session_id=None,
+    parent_run_uuid=None,
+):
+    """Return a contained runtime path for one validated Run identifier.
+
+    A delegated Run is nested under its parent Run as
+    ``sessions/<parent_session>/runs/<parent_run>/delegations/<run>`` so it
+    remains attributable to the parent conversation.
+    """
 
     identifier = str(run_uuid).strip()
     if not RUN_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError("Invalid Run identifier")
 
     workspace_root = Path(workspace_path).resolve()
-    if session_id:
+    if parent_run_uuid and parent_session_id:
+        try:
+            session_identifier = str(uuid.UUID(str(parent_session_id)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("Invalid Session identifier") from exc
+        parent_identifier = str(parent_run_uuid).strip()
+        if not RUN_IDENTIFIER_PATTERN.fullmatch(parent_identifier):
+            raise ValueError("Invalid Run identifier")
+        runs_root = (
+            workspace_root
+            / "sessions"
+            / session_identifier
+            / "runs"
+            / parent_identifier
+            / "delegations"
+        )
+    elif session_id:
         try:
             session_identifier = str(uuid.UUID(str(session_id)))
         except (ValueError, AttributeError, TypeError) as exc:
@@ -810,9 +850,8 @@ def cleanup_stale_runtime_resources(
     """Remove abandoned per-Run directories older than the safety window."""
 
     runs_root = Path(workspace_path) / ".sourcelens" / "runtime" / "runs"
-    session_runs = list(
-        (Path(workspace_path) / "sessions").glob("*/runs/*")
-    )
+    sessions = Path(workspace_path) / "sessions"
+    session_runs = list(sessions.glob("*/runs/*"))
     cutoff = float(time.time() if now is None else now) - max(
         0,
         int(max_age_s),
@@ -829,6 +868,16 @@ def cleanup_stale_runtime_resources(
                 continue
             if path.stat().st_mtime > cutoff:
                 continue
+            # A parent Run directory contains delegated child directories.
+            # Keep it while any descendant was recently active.
+            if (path / "delegations").is_dir():
+                descendant_mtimes = [
+                    item.stat().st_mtime
+                    for item in (path / "delegations").rglob("*")
+                    if not item.is_symlink()
+                ]
+                if descendant_mtimes and max(descendant_mtimes) > cutoff:
+                    continue
         except (FileNotFoundError, OSError):
             continue
         shutil.rmtree(path, ignore_errors=True)

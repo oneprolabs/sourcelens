@@ -1179,14 +1179,44 @@ def test_mcp_environment_preserves_legacy_placeholder_literals(tmp_path):
         cleanup_runtime_resources(resources)
 
 
-def test_delegated_run_renders_resources_under_runtime_scratch(tmp_path):
-    """A delegated run must never create a workspace under ``sessions/``."""
+def test_delegated_run_nests_under_parent_run(tmp_path):
+    """A delegated run renders under its parent Run's delegations dir."""
 
     config = type("Config", (), {"workspace_path": str(tmp_path)})()
-    session_uuid = "11111111-1111-1111-1111-111111111111"
+    parent_session = "11111111-1111-1111-1111-111111111111"
+    parent_run = "22222222-2222-2222-2222-222222222222"
     command = {
         "run_uuid": "delegated-child-run",
-        "session_uuid": session_uuid,
+        "session_uuid": "33333333-3333-3333-3333-333333333333",
+        "parent_run_uuid": parent_run,
+        "parent_session_uuid": parent_session,
+        "loaded_skills": [],
+        "loaded_mcps": [],
+    }
+
+    resources = prepare_runtime_resources(config, command)
+
+    try:
+        assert resources.root == (
+            tmp_path / "sessions" / parent_session / "runs" / parent_run
+            / "delegations" / "delegated-child-run"
+        )
+        # The child must not create a Session workspace of its own.
+        assert not (
+            tmp_path / "sessions" / command["session_uuid"]
+        ).exists()
+    finally:
+        cleanup_runtime_resources(resources)
+        assert not resources.root.exists()
+
+
+def test_delegated_run_without_parent_session_falls_back_to_scratch(tmp_path):
+    """Older delegations without a parent Session id use run scratch."""
+
+    config = type("Config", (), {"workspace_path": str(tmp_path)})()
+    command = {
+        "run_uuid": "delegated-child-run",
+        "session_uuid": "33333333-3333-3333-3333-333333333333",
         "parent_run_uuid": "22222222-2222-2222-2222-222222222222",
         "loaded_skills": [],
         "loaded_mcps": [],
@@ -1199,7 +1229,6 @@ def test_delegated_run_renders_resources_under_runtime_scratch(tmp_path):
             tmp_path / ".sourcelens" / "runtime" / "runs"
             / "delegated-child-run"
         )
-        assert not (tmp_path / "sessions").exists()
     finally:
         cleanup_runtime_resources(resources)
 

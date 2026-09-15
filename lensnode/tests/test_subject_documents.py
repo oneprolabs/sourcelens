@@ -511,6 +511,23 @@ def test_cleanup_stale_runtime_resources_keeps_recent_runs(tmp_path):
     assert recent.exists()
 
 
+def test_cleanup_stale_runtime_resources_keeps_stale_parent_with_recent_delegation(
+    tmp_path,
+):
+    sessions_root = tmp_path / "sessions" / "session" / "runs"
+    parent = sessions_root / "parent"
+    delegation = parent / "delegations" / "child"
+    delegation.mkdir(parents=True)
+    now = time.time()
+    os.utime(parent, (now - 90000, now - 90000))
+    os.utime(delegation, (now - 60, now - 60))
+
+    removed = cleanup_stale_runtime_resources(tmp_path, now=now)
+
+    assert removed == 0
+    assert delegation.exists()
+
+
 def test_cleanup_run_runtime_resources_rejects_parent_traversal(tmp_path):
     runs_root = tmp_path / ".sourcelens" / "runtime" / "runs"
     victim = tmp_path / ".sourcelens" / "victim"

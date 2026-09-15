@@ -1584,6 +1584,10 @@ class LensServiceTests(TransactionTestCase):
 
         payload = sender.call_args.args[1]["payload"]
         self.assertEqual(payload["parent_run_uuid"], str(parent.uuid))
+        self.assertEqual(
+            payload["parent_session_uuid"],
+            str(self.session.uuid),
+        )
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
