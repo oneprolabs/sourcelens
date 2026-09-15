@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Record the manual upload datasource type in migrations and remove obsolete QA reports.
+zh-CN: 补齐手动上传数据源类型的迁移记录，并清理过期的验收报告。
