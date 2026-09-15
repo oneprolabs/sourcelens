@@ -26,6 +26,7 @@ from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
+    datasource_default_target_path,
     normalize_workspace_target_path,
     validate_datasource_lensnode,
 )
@@ -2038,19 +2039,22 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
+        if source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+            attrs.pop("target_path", None)
         if lensnode is not None and source_type != DataSource.SourceType.UPLOAD:
             try:
                 validate_datasource_lensnode(lensnode)
-                attrs["target_path"] = normalize_workspace_target_path(
-                    target_path,
-                    lensnode.workspace_path,
-                )
-                _validate_unique_datasource_target_path(
-                    attrs["target_path"],
-                    lensnode,
-                    self.instance,
-                    source_type,
-                )
+                if source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+                    attrs["target_path"] = normalize_workspace_target_path(
+                        target_path,
+                        lensnode.workspace_path,
+                    )
+                    _validate_unique_datasource_target_path(
+                        attrs["target_path"],
+                        lensnode,
+                        self.instance,
+                        source_type,
+                    )
             except (DataSourcePathError, DataSourceDispatchError) as exc:
                 raise serializers.ValidationError({"target_path": str(exc)})
 
@@ -2422,27 +2426,37 @@ class DataSourceSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Create a datasource bound to reusable credentials."""
+        """Create a datasource and pin its unified storage directory."""
 
         datasource = DataSource.objects.create(**validated_data)
-        if (
-            datasource.source_type == DataSource.SourceType.UPLOAD
-            and datasource.lensnode_id
-        ):
-            workspace_path = str(
-                datasource.lensnode.workspace_path or ""
-            ).strip().rstrip("/")
-            if workspace_path:
-                datasource.target_path = (
-                    f"{workspace_path}/datasources/{datasource.uuid}"
-                )
-                datasource.save(update_fields=["target_path", "updated_at"])
+        self._apply_default_target_path(datasource)
         return datasource
 
     def update(self, instance, validated_data):
-        """Update datasource metadata and credential binding."""
+        """Update datasource metadata and repin its storage directory."""
 
-        return super().update(instance, validated_data)
+        datasource = super().update(instance, validated_data)
+        self._apply_default_target_path(datasource)
+        return datasource
+
+    @staticmethod
+    def _apply_default_target_path(datasource):
+        """Pin every non-managed datasource under /datasources/<uuid>."""
+
+        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+            return
+        if not datasource.lensnode_id:
+            return
+        try:
+            target_path = datasource_default_target_path(
+                datasource.lensnode,
+                datasource.uuid,
+            )
+        except DataSourcePathError:
+            return
+        if datasource.target_path != target_path:
+            datasource.target_path = target_path
+            datasource.save(update_fields=["target_path", "updated_at"])
 
     class Meta:
         model = DataSource

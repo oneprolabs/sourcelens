@@ -18,7 +18,16 @@ from .path_rules import sidecar_path
 from .path_rules import source_sha256
 
 OFFICE_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx"}
-PLAIN_TEXT_EXTENSIONS = {".txt", ".md"}
+PLAIN_TEXT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".html",
+    ".htm",
+    ".xml",
+}
 DOCUMENT_EXTENSIONS = OFFICE_DOCUMENT_EXTENSIONS | PLAIN_TEXT_EXTENSIONS
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 EMBEDDED_IMAGE_PREFIXES = {
@@ -2591,6 +2600,50 @@ def write_meta(target, path, item, context, conversion):
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def ensure_source_metadata(target, path, context, item=None):
+    """Record source attributes so every workspace file is tracked.
+
+    Conversion writes a sidecar only for the files a converter handles.
+    This fills the gap for the rest (unsupported types, unextracted
+    archives) so change detection covers the whole workspace: the stored
+    content hash marks whether the file changed since the last run.
+    """
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    previous = read_json(sidecar_path(path) / "meta.json")
+    source = previous.get("source") or {}
+    mtime = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime))
+    if (
+        previous.get("schema_version")
+        and source.get("sha256")
+        and str(source.get("size")) == str(stat.st_size)
+        and source.get("mtime") == mtime
+    ):
+        return False
+
+    digest = source_sha256(path)
+    if source.get("sha256") == digest:
+        return False
+    write_meta(
+        target,
+        path,
+        item or {},
+        context,
+        {
+            "status": "not_converted",
+            "error": "",
+            "fingerprint": "",
+            "stats": {},
+            "attempts": 0,
+            "source_sha256": digest,
+        },
+    )
+    return True
 
 
 def read_json(path):

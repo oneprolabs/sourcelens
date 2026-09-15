@@ -41,6 +41,7 @@ from lensnode.datasource_sync import (
     _sync_git_submodules,
     _sync_feishu_folder,
     sync_datasource,
+    delete_datasource_upload,
     upload_managed_workspace,
 )
 from lensnode.path_rules import source_sha256
@@ -438,14 +439,12 @@ def test_managed_workspace_rejects_symlink_outside_workspace(tmp_path):
         )
 
 
-def test_managed_workspace_upload_extracts_archive_and_converts(
+def test_managed_workspace_upload_extracts_archive_into_named_directory(
     tmp_path,
     monkeypatch,
 ):
-    """Managed uploads safely extract archives before conversion."""
+    """Archive uploads are extracted into a directory named after the file."""
 
-    target = tmp_path / "documents"
-    target.mkdir()
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as package:
         package.writestr("nested/guide.pdf", b"pdf")
@@ -459,23 +458,70 @@ def test_managed_workspace_upload_extracts_archive_and_converts(
 
     result = upload_managed_workspace(
         {
-            "target_path": str(target),
+            "datasource_uuid": "uuid-1",
             "filename": "package.zip",
             "content_base64": base64.b64encode(archive.getvalue()).decode(),
         },
         workspace_path=tmp_path,
     )
 
+    root = tmp_path / "datasources" / "uuid-1"
     assert result["uploaded"] == "package.zip"
-    assert not (target / "package.zip").exists()
-    assert (target / "nested" / "guide.pdf").read_bytes() == b"pdf"
+    assert not (root / "package.zip").exists()
+    assert (root / "package" / "nested" / "guide.pdf").read_bytes() == b"pdf"
+
+
+def test_managed_workspace_upload_stores_single_document(tmp_path, monkeypatch):
+    """A lone document is stored directly under the datasource root."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+
+    result = upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(b"%PDF-1.4").decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-1"
+    assert result["uploaded"] == "report.pdf"
+    assert (root / "report.pdf").read_bytes() == b"%PDF-1.4"
+
+
+def test_managed_workspace_upload_records_source_metadata(tmp_path):
+    """Every uploaded file gets a sidecar even without a converter."""
+
+    content = b"legacy binary"
+    upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "legacy.doc",
+            "content_base64": base64.b64encode(content).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-1"
+    stored = root / "legacy.doc"
+    meta = json.loads(
+        (root / "legacy.doc.sourcelens" / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert meta["source"]["name"] == "legacy.doc"
+    assert meta["source"]["size"] == len(content)
+    assert meta["source"]["sha256"] == source_sha256(stored)
+    assert meta["conversion"]["status"] == "not_converted"
 
 
 def test_managed_workspace_upload_rejects_archive_path_traversal(tmp_path):
     """Managed uploads reject archive members escaping the workspace."""
 
-    target = tmp_path / "documents"
-    target.mkdir()
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as package:
         package.writestr("../outside.txt", b"unsafe")
@@ -486,7 +532,7 @@ def test_managed_workspace_upload_rejects_archive_path_traversal(tmp_path):
     ):
         upload_managed_workspace(
             {
-                "target_path": str(target),
+                "datasource_uuid": "uuid-1",
                 "filename": "package.zip",
                 "content_base64": base64.b64encode(
                     archive.getvalue()
@@ -498,11 +544,7 @@ def test_managed_workspace_upload_rejects_archive_path_traversal(tmp_path):
 
 
 def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
-    """Replacement uploads remove stale files and preserve external files."""
-
-    target = tmp_path / "documents"
-    target.mkdir()
-    (target / "external.txt").write_text("keep", encoding="utf-8")
+    """Replacement archive uploads remove stale files and keep the rest."""
 
     def archive_bytes(entries):
         archive = io.BytesIO()
@@ -522,7 +564,7 @@ def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
     try:
         upload_managed_workspace(
             {
-                "target_path": str(target),
+                "datasource_uuid": "uuid-1",
                 "filename": "package.zip",
                 "content_base64": archive_bytes(
                     {"old.txt": b"old", "same.txt": b"before"}
@@ -532,7 +574,7 @@ def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
         )
         upload_managed_workspace(
             {
-                "target_path": str(target),
+                "datasource_uuid": "uuid-1",
                 "filename": "package.zip",
                 "content_base64": archive_bytes(
                     {"new.txt": b"new", "same.txt": b"after"}
@@ -543,10 +585,86 @@ def test_managed_workspace_upload_replaces_previous_archive_dataset(tmp_path):
     finally:
         monkeypatch.undo()
 
-    assert not (target / "old.txt").exists()
-    assert (target / "new.txt").read_bytes() == b"new"
-    assert (target / "same.txt").read_bytes() == b"after"
-    assert (target / "external.txt").read_text(encoding="utf-8") == "keep"
+    root = tmp_path / "datasources" / "uuid-1" / "package"
+    assert not (root / "old.txt").exists()
+    assert (root / "new.txt").read_bytes() == b"new"
+    assert (root / "same.txt").read_bytes() == b"after"
+
+
+def test_delete_datasource_upload_removes_file_and_metadata(tmp_path):
+    """Deleting a plain upload removes the file and its sidecar."""
+
+    root = tmp_path / "datasources" / "uuid-1"
+    root.mkdir(parents=True)
+    (root / "report.pdf").write_bytes(b"pdf")
+    sidecar = root / "report.pdf.sourcelens"
+    sidecar.mkdir()
+    (sidecar / "meta.json").write_text("{}", encoding="utf-8")
+
+    result = delete_datasource_upload(
+        {"datasource_uuid": "uuid-1", "filename": "report.pdf"},
+        workspace_path=tmp_path,
+    )
+
+    assert result["deleted"] == "report.pdf"
+    assert not (root / "report.pdf").exists()
+    assert not sidecar.exists()
+
+
+def test_delete_datasource_upload_removes_archive_directory(tmp_path):
+    """Deleting an archive upload removes its extracted directory."""
+
+    root = tmp_path / "datasources" / "uuid-1"
+    (root / "package" / "nested").mkdir(parents=True)
+    (root / "package" / "nested" / "guide.pdf").write_bytes(b"pdf")
+
+    result = delete_datasource_upload(
+        {"datasource_uuid": "uuid-1", "filename": "package.zip"},
+        workspace_path=tmp_path,
+    )
+
+    assert result["deleted"] == "package"
+    assert not (root / "package").exists()
+
+
+def test_delete_datasource_upload_ignores_same_stem_directory(tmp_path):
+    """Deleting a plain file never removes a directory with its stem."""
+
+    root = tmp_path / "datasources" / "uuid-1"
+    (root / "report").mkdir(parents=True)
+    (root / "report" / "keep.txt").write_bytes(b"keep")
+    (root / "report.pdf").write_bytes(b"pdf")
+
+    result = delete_datasource_upload(
+        {"datasource_uuid": "uuid-1", "filename": "report.pdf"},
+        workspace_path=tmp_path,
+    )
+
+    assert result["deleted"] == "report.pdf"
+    assert not (root / "report.pdf").exists()
+    assert (root / "report" / "keep.txt").read_bytes() == b"keep"
+
+
+def test_delete_datasource_upload_removes_all_archive_versions(tmp_path):
+    """Deleting a versioned archive upload removes every version."""
+
+    root = tmp_path / "datasources" / "uuid-1"
+    for name in ("package", "package.v2"):
+        (root / name).mkdir(parents=True)
+        (root / name / "data.txt").write_bytes(name.encode())
+
+    result = delete_datasource_upload(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "package.zip",
+            "upload_version": 2,
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert result["deleted"]
+    assert not (root / "package").exists()
+    assert not (root / "package.v2").exists()
 
 
 def test_git_auth_environment_keeps_token_out_of_repository_url():
@@ -1873,7 +1991,6 @@ def test_file_upload_initializes_directory_and_keeps_multiple_archives(
     tmp_path, monkeypatch,
 ):
     """File upload initializes storage and retains earlier uploaded files."""
-    target = tmp_path / "file_uploads"
     monkeypatch.setattr(
         "lensnode.datasource_sync.convert_managed_workspace",
         lambda command, workspace_path: {"status": "success"},
@@ -1886,7 +2003,6 @@ def test_file_upload_initializes_directory_and_keeps_multiple_archives(
             {
                 "plugin_key": "file_upload",
                 "datasource_uuid": "datasource-123",
-                "target_path": str(target),
                 "filename": f"{name}.zip",
                 "content_base64": base64.b64encode(
                     archive.getvalue()
@@ -1895,12 +2011,6 @@ def test_file_upload_initializes_directory_and_keeps_multiple_archives(
             workspace_path=tmp_path,
         )
         assert result["status"] == "success"
+    root = tmp_path / "datasources" / "datasource-123"
     for name in ("first", "second"):
-        assert not (target / f"{name}.zip").exists()
-        assert (
-            target.parent
-            / "datasource"
-            / "datasource-123"
-            / name
-            / f"{name}.txt"
-        ).read_text() == name
+        assert (root / name / f"{name}.txt").read_text() == name

@@ -386,7 +386,7 @@
         type="file"
         class="hidden"
         multiple
-        accept=".zip,application/zip"
+        :accept="DATASOURCE_UPLOAD_ACCEPT"
         @change="handleDirectUpload"
       />
 
@@ -414,6 +414,7 @@ import { onBeforeRouteLeave, useRoute } from 'vue-router'
 
 import { createFeishuResourceValidation } from './feishuResourceValidation'
 import { extractErrorMessage } from '@/utils/api'
+import { DATASOURCE_UPLOAD_ACCEPT, isSupportedUploadFile } from '@/utils/lens'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
@@ -1489,8 +1490,8 @@ async function save() {
       if (created) {
         const limits = await getDataSourceUploadLimits()
         for (const file of filesToUpload) {
-          if (!file.name.toLowerCase().endsWith('.zip')) {
-            throw new Error(t('lensAdmin.messages.uploadZipOnly'))
+          if (!isSupportedUploadFile(file.name)) {
+            throw new Error(t('lensAdmin.messages.uploadUnsupportedType'))
           }
           if (file.size > limits.max_bytes) {
             throw new Error(
@@ -2346,8 +2347,8 @@ async function handleDirectUpload(event) {
   try {
     const limits = await getDataSourceUploadLimits()
     for (const file of files) {
-      if (!file.name.toLowerCase().endsWith('.zip')) {
-        throw new Error(t('lensAdmin.messages.uploadZipOnly'))
+      if (!isSupportedUploadFile(file.name)) {
+        throw new Error(t('lensAdmin.messages.uploadUnsupportedType'))
       }
       if (file.size > limits.max_bytes) {
         throw new Error(

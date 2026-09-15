@@ -21,7 +21,7 @@
                 'datasource-wizard-step-complete': i + 1 < wizardStep
               }"
               :aria-current="i + 1 === wizardStep ? 'step' : undefined"
-              :disabled="i + 1 > wizardStep"
+              :disabled="mode !== 'edit' && i + 1 > wizardStep"
               @click="goToWizardStep(i + 1)"
             >
               <span class="datasource-wizard-number">
@@ -349,7 +349,7 @@
                 type="file"
                 class="hidden"
                 multiple
-                accept=".zip,application/zip"
+                :accept="DATASOURCE_UPLOAD_ACCEPT"
                 @change="handleFileUploadChange"
               />
               <ul
@@ -682,7 +682,7 @@
             {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
           </div>
           <FormRow
-            v-if="isManagedWorkspace"
+            v-if="showTargetPath"
             :label="t('lensAdmin.fields.targetPath')"
             required
           >
@@ -1482,7 +1482,7 @@
             @click="$emit('save')"
           >
             {{
-              isFileUpload && mode === 'create'
+              isFileUpload && mode === 'create' && uploadFiles.length
                 ? t('lensAdmin.actions.uploadFile')
                 : mode === 'create'
                   ? t('lensAdmin.wizard.finish')
@@ -1519,6 +1519,7 @@ import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PluginIcon from '@/components/ui/PluginIcon.vue'
 import ManifestSchemaForm from '@/components/lens/ManifestSchemaForm.vue'
+import { DATASOURCE_UPLOAD_ACCEPT } from '@/utils/lens'
 import { localizePluginManifest } from '@/utils/pluginI18n'
 
 import { formatLLMConfigLabel } from './adminHelpers'
@@ -1815,6 +1816,13 @@ const isManagedWorkspace = computed(
     )
 )
 
+const showTargetPath = computed(
+  () =>
+    props.form.source_type === 'managed_workspace' ||
+    localizedPluginManifest.value?.datasource_source_type ===
+      'managed_workspace'
+)
+
 const isFileUpload = computed(() => props.form.plugin_key === 'file_upload')
 
 const wizardStepsMeta = computed(() => {
@@ -1846,7 +1854,8 @@ const activeStepKey = computed(
 )
 
 function goToWizardStep(step) {
-  if (step < 1 || step > wizardStep.value) return
+  if (step < 1 || step > wizardStepCount.value) return
+  if (props.mode !== 'edit' && step > wizardStep.value) return
   wizardStep.value = step
 }
 
@@ -1986,11 +1995,8 @@ const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'connection') {
     if (isManagedWorkspace.value) {
       if (isFileUpload.value) {
-        return (
-          props.uploadFiles.length > 0 &&
-          onlineLensNodes.value.some(
-            (node) => node.uuid === props.form.lensnode_uuid
-          )
+        return onlineLensNodes.value.some(
+          (node) => node.uuid === props.form.lensnode_uuid
         )
       }
       return onlineLensNodes.value.some(
@@ -2380,7 +2386,7 @@ function cancelCreateTargetDirectory() {
 }
 
 function checkCurrentPathIfNeeded() {
-  if (!props.show || activeStepKey.value !== 'sync') {
+  if (!props.show || activeStepKey.value !== 'sync' || !showTargetPath.value) {
     return
   }
   if (

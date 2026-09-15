@@ -1,4 +1,50 @@
 /**
+ * File extensions a manual upload datasource accepts.
+ *
+ * Mirrors the control-plane allowlist so the picker, the drag-and-drop
+ * guard, and the server all agree on the same set.
+ */
+export const DATASOURCE_UPLOAD_EXTENSIONS = [
+  '.pdf',
+  '.docx',
+  '.doc',
+  '.pptx',
+  '.ppt',
+  '.xlsx',
+  '.xls',
+  '.txt',
+  '.md',
+  '.csv',
+  '.tsv',
+  '.json',
+  '.html',
+  '.htm',
+  '.xml',
+  '.rtf',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.tgz'
+]
+
+/** Comma-separated accept list for a file input element. */
+export const DATASOURCE_UPLOAD_ACCEPT = DATASOURCE_UPLOAD_EXTENSIONS.join(',')
+
+/** Return whether a filename has a supported manual upload extension. */
+export function isSupportedUploadFile(name) {
+  const lower = String(name || '').toLowerCase()
+  return DATASOURCE_UPLOAD_EXTENSIONS.some((extension) =>
+    lower.endsWith(extension)
+  )
+}
+
+/**
  * Build the public base URL for shareable links.
  *
  * Prefers the `public_base_url` GlobalSetting when it has been loaded

@@ -33,8 +33,20 @@ DATASOURCE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 DATASOURCE_UPLOAD_EXTENSIONS = {
     ".pdf",
     ".docx",
+    ".doc",
     ".pptx",
+    ".ppt",
     ".xlsx",
+    ".xls",
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".html",
+    ".htm",
+    ".xml",
+    ".rtf",
     ".png",
     ".jpg",
     ".jpeg",
@@ -86,17 +98,23 @@ def normalize_workspace_target_path(value, workspace_path=WORKSPACE_ROOT):
     return f"{workspace}/{path.as_posix()}"
 
 
+def datasource_default_target_path(lensnode, datasource_uuid):
+    """Return the unified /datasources/<uuid> directory on a LensNode."""
+
+    workspace = str(
+        getattr(lensnode, "workspace_path", "") or ""
+    ).strip().rstrip("/")
+    if not workspace:
+        raise DataSourcePathError("LENS_SOURCE_WORKSPACE_PATH_INVALID")
+    return f"{workspace}/datasources/{datasource_uuid}"
+
+
 def datasource_storage_target_path(datasource, lensnode=None):
     """Return the normalized storage directory backing a datasource."""
 
     lensnode = lensnode or datasource.lensnode
     if datasource.source_type == DataSource.SourceType.UPLOAD:
-        workspace = str(
-            getattr(lensnode, "workspace_path", "") or ""
-        ).rstrip("/")
-        if not workspace:
-            raise DataSourcePathError("LENS_SOURCE_WORKSPACE_PATH_INVALID")
-        return f"{workspace}/datasources/{datasource.uuid}"
+        return datasource_default_target_path(lensnode, datasource.uuid)
     return normalize_workspace_target_path(
         datasource.target_path,
         lensnode.workspace_path,
@@ -312,19 +330,17 @@ def list_datasource_files(datasource, page=1, page_size=20, **filters):
     )
 
 
-def delete_datasource_upload(datasource, filename):
-    """Delete one uploaded archive and its extracted contents on LensNode."""
+def delete_datasource_upload(datasource, filename, version=1):
+    """Delete one uploaded file or extracted archive on LensNode."""
 
     lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
     raw_name = PurePosixPath(str(filename or "")).name
-    suffix = raw_name.rsplit(".", 1)[-1]
-    archive_name = (
-        raw_name
-        if suffix.startswith("v") and suffix[1:].isdigit()
-        else PurePosixPath(raw_name).stem
-    )
-    if not archive_name or archive_name in {".", ".."}:
+    if not raw_name or raw_name in {".", ".."}:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_FILE_INVALID")
+    try:
+        upload_version = int(version or 1)
+    except (TypeError, ValueError):
+        upload_version = 1
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         lensnode,
@@ -332,7 +348,8 @@ def delete_datasource_upload(datasource, filename):
             "type": "datasource_upload_delete",
             "request_id": request_id,
             "datasource_uuid": str(datasource.uuid),
-            "archive_name": archive_name,
+            "filename": raw_name,
+            "upload_version": upload_version,
         },
     )
     return _wait_cache_result(

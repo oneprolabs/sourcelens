@@ -103,41 +103,6 @@
         </DrawerSection>
 
         <section
-          v-if="isUploadDatasource && originalUploadFiles.length"
-          class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
-        >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.originalFiles') }}
-          </h3>
-          <div class="mt-3 overflow-hidden rounded-lg border border-line">
-            <div
-              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
-            >
-              <span>{{ t('lensAdmin.datasourceDetail.fileName') }}</span>
-              <span>{{ t('lensAdmin.datasourceDetail.uploadedAt') }}</span>
-              <span class="text-right">{{
-                t('lensAdmin.datasourceDetail.fileSize')
-              }}</span>
-            </div>
-            <div
-              v-for="file in originalUploadFiles"
-              :key="file.name"
-              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 border-t border-line px-3 py-2 text-sm"
-            >
-              <span class="min-w-0 truncate text-ink-800" :title="file.name">{{
-                file.name
-              }}</span>
-              <span class="text-xs text-ink-500">{{
-                formatDate(file.uploadedAt)
-              }}</span>
-              <span class="text-right text-xs text-ink-500">{{
-                formatFileSize(file.size)
-              }}</span>
-            </div>
-          </div>
-        </section>
-
-        <section
           v-if="
             !isUploadDatasource &&
             (datasourceResourceDetails.length ||
@@ -722,30 +687,6 @@ const isUploadDatasource = computed(
     props.datasource?.source_type === 'upload' ||
     props.datasource?.plugin_key === 'file_upload'
 )
-const originalUploadFiles = computed(() => {
-  const latest = new Map()
-  tasks.value.forEach((task) => {
-    const metadata = task?.metadata || {}
-    if (
-      !metadata.filename ||
-      metadata.deleted ||
-      metadata.is_latest_version === false
-    )
-      return
-    if (!latest.has(metadata.filename))
-      latest.set(metadata.filename, {
-        name: metadata.filename,
-        size: Number(metadata.byte_size) || 0,
-        uploadedAt: task.created_at
-      })
-  })
-  return [...latest.values()]
-})
-
-function formatFileSize(bytes) {
-  if (!bytes) return '-'
-  return `${new Intl.NumberFormat().format(Math.ceil(bytes / 1024))} KB`
-}
 
 const tasks = ref([])
 const tasksLoading = ref(false)
@@ -1288,20 +1229,34 @@ const datasourceOverviewDetails = computed(() => {
   return [
     detailItem(t('lensAdmin.fields.name'), row.name),
     detailItem(t('lensAdmin.fields.type'), formatSourceType(row)),
-    detailItem(
-      t('lensAdmin.datasourceDetail.connection'),
-      row.connection_name ||
-        (row.connection
-          ? compactUuid(
-              typeof row.connection === 'object'
-                ? row.connection.uuid
-                : row.connection
-            )
-          : t('lensAdmin.datasourceDetail.legacyConnection'))
-    ),
+    isUploadDatasource.value
+      ? detailItem(
+          t('lensAdmin.datasourceDetail.nodeInfo'),
+          datasourceLensNodeName(row)
+        )
+      : detailItem(
+          t('lensAdmin.datasourceDetail.connection'),
+          row.connection_name ||
+            (row.connection
+              ? compactUuid(
+                  typeof row.connection === 'object'
+                    ? row.connection.uuid
+                    : row.connection
+                )
+              : t('lensAdmin.datasourceDetail.legacyConnection'))
+        ),
     detailItem('UUID', row.uuid, true)
   ]
 })
+
+function datasourceLensNodeName(row) {
+  if (row.lensnode_name) return row.lensnode_name
+  const uuid =
+    (typeof row.lensnode === 'object' ? row.lensnode?.uuid : row.lensnode) ||
+    row.lensnode_uuid
+  const found = props.lensnodes.find((node) => node.uuid === uuid)
+  return found?.name || uuid || emptyValue
+}
 
 const datasourceResourceDetails = computed(() => {
   const row = props.datasource

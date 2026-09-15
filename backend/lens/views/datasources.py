@@ -18,6 +18,7 @@ from lens.datasource.services import (
     delete_datasource_upload,
     list_datasource_files,
     normalize_workspace_target_path,
+    resolve_datasource_lensnode,
 )
 from lens.models import (
     CredentialLease,
@@ -68,6 +69,55 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .base import BaseAdminViewSet
+
+
+def _finalize_datasource_cancellation(task, datasource, reason, user=None):
+    """Terminate a datasource task locally and immediately.
+
+    Cancellation must not wait for a LensNode stop confirmation: the node may
+    never have received the operation (it dropped before delivery), which used
+    to strand the task in CANCELLING while it kept its lock and capacity slot.
+    We finish the task now, release its resources, and send a best-effort
+    cancel so any real work on the node still stops. A late node callback is
+    ignored because the terminal completion paths are idempotent.
+    """
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+    from core.celery import app
+
+    metadata = dict(task.metadata or {})
+    celery_task_id = metadata.get("celery_task_id") or task.task_id
+    try:
+        app.control.revoke(celery_task_id, terminate=False)
+    except Exception:
+        pass
+    lensnode = datasource.lensnode
+    if lensnode is None:
+        try:
+            lensnode = resolve_datasource_lensnode(datasource)
+        except DataSourceDispatchError:
+            lensnode = None
+    if task.module == "lens_datasource_conversion":
+        cancel_datasource_conversion_on_lensnode(lensnode, task.task_id)
+    else:
+        cancel_datasource_sync_on_lensnode(lensnode, task.task_id)
+    metadata["manual_revoked_at"] = timezone.now().isoformat()
+    if user is not None:
+        metadata["manual_revoked_by"] = user.pk
+    metadata["cancellation_state"] = TaskStatus.REVOKED
+    metadata["completion_reason"] = reason
+    metadata["stop_confirmation_source"] = "manual_immediate"
+    release_datasource_lock(
+        str(datasource.uuid),
+        token=metadata.get("lock_token") or task.task_id,
+    )
+    return TaskTracker.update_task_status(
+        task.task_id,
+        TaskStatus.REVOKED,
+        error=reason,
+        metadata=metadata,
+    )
 
 
 class DataSourceViewSet(BaseAdminViewSet):
@@ -762,7 +812,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         url_path=r"uploads/(?P<filename>[^/.]+(?:\.[^/.]+)*)",
     )
     def delete_upload(self, request, uuid=None, filename=None):
-        """Delete one uploaded archive and its extracted contents."""
+        """Delete one uploaded file or extracted archive."""
 
         datasource = self.get_object()
         if (
@@ -784,10 +834,7 @@ class DataSourceViewSet(BaseAdminViewSet):
             version = (
                 (task.metadata or {}).get("upload_version", 1) if task else 1
             )
-            archive_name = os.path.splitext(filename)[0]
-            if int(version) > 1:
-                archive_name = f"{archive_name}.v{int(version)}"
-            result = delete_datasource_upload(datasource, archive_name)
+            result = delete_datasource_upload(datasource, filename, version)
             if task is not None:
                 metadata = dict(task.metadata or {})
                 metadata["is_latest_version"] = False
@@ -1016,7 +1063,6 @@ class DataSourceViewSet(BaseAdminViewSet):
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
-        from core.celery import app
 
         datasource = self.get_object()
         with transaction.atomic():
@@ -1043,46 +1089,23 @@ class DataSourceViewSet(BaseAdminViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            metadata = dict(task.metadata or {})
-            celery_task_id = metadata.get("celery_task_id") or task.task_id
-            app.control.revoke(celery_task_id, terminate=False)
-            cancel_datasource_sync_on_lensnode(
-                datasource.lensnode,
-                task.task_id,
+            task = _finalize_datasource_cancellation(
+                task,
+                datasource,
+                "DATASOURCE_SYNC_CANCELLED",
+                request.user,
             )
-
-            metadata["manual_revoked_at"] = timezone.now().isoformat()
-            metadata["manual_revoked_by"] = request.user.pk
-            queued = metadata.get("admission_state") == "QUEUED"
-            dispatched = not queued and bool(
-                metadata.get("lock_token")
-                or metadata.get("datasource_sync_request_id")
-                or task.status in TaskStatus.get_running_statuses()
-            )
-            task.status = (
-                DATASOURCE_CANCELLING_STATUS
-                if dispatched
-                else TaskStatus.REVOKED
-            )
-            task.finished_at = None if dispatched else timezone.now()
-            task.error = "" if dispatched else "DATASOURCE_SYNC_CANCELLED"
-            metadata["cancellation_state"] = task.status
-            if not dispatched:
-                metadata["completion_reason"] = "DATASOURCE_SYNC_CANCELLED"
-                metadata["stop_confirmation_source"] = "queued_before_dispatch"
-            task.metadata = metadata
-            task.save(
-                update_fields=[
-                    "status",
-                    "finished_at",
-                    "error",
-                    "metadata",
-                ]
-            )
-            if queued:
-                release_datasource_lock(
-                    str(datasource.uuid),
-                    token=task.task_id,
+            record = ScheduledTask.objects.filter(
+                task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+                target_type="datasource",
+                target_id=str(datasource.uuid),
+            ).first()
+            if record is not None:
+                record.last_status = ScheduledTask.Status.FAILED
+                record.last_error = "DATASOURCE_SYNC_CANCELLED"
+                record.last_run_at = timezone.now()
+                record.save(
+                    update_fields=["last_status", "last_error", "last_run_at"]
                 )
         return Response(
             {
@@ -1099,7 +1122,6 @@ class DataSourceViewSet(BaseAdminViewSet):
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
-        from core.celery import app
 
         datasource = self.get_object()
         task = (
@@ -1120,42 +1142,14 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "No running datasource conversion task."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        metadata = dict(task.metadata or {})
-        celery_task_id = metadata.get("celery_task_id") or task.task_id
-        app.control.revoke(celery_task_id, terminate=False)
-        cancel_datasource_conversion_on_lensnode(
-            datasource.lensnode,
-            task.task_id,
+        task = _finalize_datasource_cancellation(
+            task,
+            datasource,
+            "DATASOURCE_CONVERSION_CANCELLED",
+            request.user,
         )
-        now = timezone.now()
-        metadata["manual_revoked_at"] = now.isoformat()
-        metadata["manual_revoked_by"] = request.user.pk
-        queued = metadata.get("admission_state") == "QUEUED"
-        task.status = TaskStatus.REVOKED if queued else DATASOURCE_CANCELLING_STATUS
-        task.finished_at = now if queued else None
-        task.error = "DATASOURCE_CONVERSION_CANCELLED" if queued else ""
-        metadata["cancellation_state"] = (
-            "REVOKED" if queued else DATASOURCE_CANCELLING_STATUS
-        )
-        if queued:
-            metadata["completion_reason"] = "DATASOURCE_CONVERSION_CANCELLED"
-            metadata["stop_confirmation_source"] = "queued_before_dispatch"
-        task.metadata = metadata
-        task.save(
-            update_fields=[
-                "status",
-                "finished_at",
-                "error",
-                "metadata",
-            ]
-        )
-        if queued:
-            release_datasource_lock(
-                str(datasource.uuid),
-                token=task.task_id,
-            )
         datasource.last_conversion_status = task.status
-        datasource.last_conversion_at = now if queued else None
+        datasource.last_conversion_at = timezone.now()
         datasource.save(
             update_fields=[
                 "last_conversion_status",

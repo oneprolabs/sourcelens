@@ -81,7 +81,6 @@ from lens.services import (
 )
 from lens.skill_packages import package_zip_bytes
 from lens.tasks import (
-    SourceSyncBusy,
     acquire_datasource_lock,
     complete_datasource_sync_task,
     release_datasource_lock,
@@ -5487,7 +5486,7 @@ class LensApiTests(TestCase):
         # status event is only emitted when the run status actually changes.
         self.assertNotIn('"type": "status"', body)
 
-    def test_datasource_create_uses_target_path(self):
+    def test_datasource_create_uses_unified_target_path(self):
         payload = {
             "name": "Scheduled Repo",
             "source_type": "git",
@@ -5506,7 +5505,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(
             response.data["target_path"],
-            "/workspace/scheduled",
+            f"/workspace/datasources/{response.data['uuid']}",
         )
 
     def test_datasource_list_filters_by_plugin_key(self):
@@ -6020,9 +6019,9 @@ class LensApiTests(TestCase):
 
     def test_datasource_upload_rejects_unsupported_source_and_file(self):
         unsupported = SimpleUploadedFile(
-            "notes.txt",
+            "installer.exe",
             b"not supported",
-            content_type="text/plain",
+            content_type="application/octet-stream",
         )
 
         response = self.client.post(
@@ -6179,7 +6178,7 @@ class LensApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_cancel_managed_workspace_conversion_waits_for_callback(self):
+    def test_cancel_managed_workspace_conversion_finishes_immediately(self):
         datasource = DataSource.objects.create(
             name="Managed Snapshot",
             source_type=DataSource.SourceType.MANAGED_WORKSPACE,
@@ -6221,19 +6220,19 @@ class LensApiTests(TestCase):
         cancel.assert_called_once_with(self.lensnode, "running-conversion")
         task.refresh_from_db()
         datasource.refresh_from_db()
-        self.assertEqual(task.status, "CANCELLING")
-        self.assertEqual(datasource.last_conversion_status, "CANCELLING")
-        self.assertIsNone(datasource.last_conversion_at)
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_CONVERSION_CANCELLED")
+        self.assertEqual(datasource.last_conversion_status, "REVOKED")
+        self.assertIsNotNone(datasource.last_conversion_at)
 
-        with self.assertRaises(SourceSyncBusy):
-            acquire_datasource_lock(
-                datasource.uuid,
-                token="new-conversion",
-                ttl_s=60,
-            )
+        acquire_datasource_lock(
+            datasource.uuid,
+            token="new-conversion",
+            ttl_s=60,
+        )
         release_datasource_lock(
             datasource.uuid,
-            token="running-conversion",
+            token="new-conversion",
         )
 
     @patch("lens.views.datasources.check_datasource_path")
@@ -6487,7 +6486,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["detail"], "DATASOURCE_DISABLED")
         apply_async.assert_not_called()
 
-    def test_cancel_datasource_sync_waits_for_stop_confirmation(self):
+    def test_cancel_datasource_sync_finishes_immediately(self):
         task = TaskExecution.objects.create(
             task_id="running-sync",
             task_name="datasource_sync:Repo Cache",
@@ -6525,19 +6524,15 @@ class LensApiTests(TestCase):
         )
         cancel.assert_called_once_with(self.lensnode, "running-sync")
         task.refresh_from_db()
-        self.assertEqual(task.status, "CANCELLING")
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_SYNC_CANCELLED")
 
-        delete_response = self.client.delete(
-            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
+        acquire_datasource_lock(
+            self.datasource.uuid,
+            token="new-sync",
+            ttl_s=60,
         )
-        self.assertEqual(delete_response.status_code, 409)
-
-        with self.assertRaises(SourceSyncBusy):
-            acquire_datasource_lock(
-                self.datasource.uuid,
-                token="new-sync",
-                ttl_s=60,
-            )
+        release_datasource_lock(self.datasource.uuid, token="new-sync")
 
         complete_datasource_sync_task(
             task.task_id,
@@ -6549,12 +6544,11 @@ class LensApiTests(TestCase):
 
         task.refresh_from_db()
         self.assertEqual(task.status, "REVOKED")
-        acquire_datasource_lock(
-            self.datasource.uuid,
-            token="new-sync",
-            ttl_s=60,
+
+        delete_response = self.client.delete(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/"
         )
-        release_datasource_lock(self.datasource.uuid, token="new-sync")
+        self.assertEqual(delete_response.status_code, 204)
 
     def test_datasource_create_uses_lensnode_workspace_path(self):
         self.lensnode.workspace_path = "/data/lens-workspace"
@@ -6576,10 +6570,10 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(
             response.data["target_path"],
-            "/data/lens-workspace/repos/custom",
+            f"/data/lens-workspace/datasources/{response.data['uuid']}",
         )
 
-    def test_datasource_create_rejects_path_outside_lensnode_workspace(self):
+    def test_datasource_create_ignores_path_outside_lensnode_workspace(self):
         self.lensnode.workspace_path = "/data/lens-workspace"
         self.lensnode.save(update_fields=["workspace_path", "updated_at"])
         payload = {
@@ -6596,8 +6590,11 @@ class LensApiTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("LENS_SOURCE_TARGET_PATH_INVALID", str(response.data))
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.data["target_path"],
+            f"/data/lens-workspace/datasources/{response.data['uuid']}",
+        )
 
     def test_datasource_rejects_inline_credentials(self):
         payload = {

@@ -18,11 +18,13 @@ from . import datasource_manifest as manifest_store
 from .datasource_adapters import DataSourceAdapterRegistry
 from .datasource_adapters import FunctionDataSourceAdapter
 from .document_convert import empty_cost_stats
+from .document_convert import ensure_source_metadata
 from .document_convert import is_convertible, post_process_documents
 from .document_convert import merge_cost_stats
 from .path_rules import is_excluded_path
 from .path_rules import normalize_excluded_roots
 from .path_rules import relative_path
+from .path_rules import remove_sidecar
 from .path_rules import safe_filename
 from .path_rules import sidecar_path
 from .path_rules import source_sha256
@@ -519,6 +521,8 @@ def convert_managed_workspace(
 
     context = _sync_context(command, target)
     context["managed_conversion_progress"] = True
+    if context.get("source_type") == "upload":
+        _ensure_upload_metadata(target, context)
     conversion = context["conversion"]
     _emit_managed_conversion_event(
         emit,
@@ -694,7 +698,13 @@ def convert_managed_workspace(
 
 
 def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
-    """Write one manual upload into a datasource workspace and convert it."""
+    """Write one manual upload into a datasource workspace and convert it.
+
+    Archives are extracted into a directory named after the archive; a
+    plain file is stored directly under the datasource root. Both paths
+    end in the same conversion pipeline, and every stored file is given
+    a sidecar so its content hash tracks later changes.
+    """
 
     if command.get("source_type", "upload") != "upload":
         raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
@@ -721,37 +731,52 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         max_bytes = 50 * 1024 * 1024
     if len(content) > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
-    version = command.get("upload_version") or 1
-    archive_name = Path(filename).stem
-    if int(version) > 1:
-        archive_name = f"{archive_name}.v{int(version)}"
-    target = datasource_root / safe_filename(archive_name)
+    version = int(command.get("upload_version") or 1)
+    is_archive = _is_upload_archive(filename)
+    if is_archive:
+        archive_name = Path(filename).stem
+        if version > 1:
+            archive_name = f"{archive_name}.v{version}"
+        target = datasource_root / safe_filename(archive_name)
+    else:
+        target = datasource_root
     target.mkdir(parents=True, exist_ok=True)
-    staging = target / ".sourcelens-upload-staging.sourcelens"
+    staging = datasource_root / ".sourcelens-upload-staging.sourcelens"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()
-    staged_archive = staging / filename
-    staged_archive.write_bytes(content)
+    staged_upload = staging / filename
+    staged_upload.write_bytes(content)
     extracted = []
     try:
-        if filename.lower().endswith(".zip"):
-            extracted = _extract_zip_archive(staged_archive, staging, limits)
-        elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
-            extracted = _extract_tar_archive(staged_archive, staging, limits)
-        previous = target / ".sourcelens-uploaded.sourcelens"
-        if previous.exists():
-            for path in previous.read_text(encoding="utf-8").splitlines():
-                candidate = (target / path).resolve()
-                if candidate.is_file():
-                    candidate.unlink()
-        members = [path.relative_to(staging).as_posix() for path in extracted]
-        for member in members:
-            source = staging / member
-            destination = target / member
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(destination)
-        previous.write_text("\n".join(members), encoding="utf-8")
+        if is_archive:
+            if filename.lower().endswith(".zip"):
+                extracted = _extract_zip_archive(
+                    staged_upload, staging, limits
+                )
+            else:
+                extracted = _extract_tar_archive(
+                    staged_upload, staging, limits
+                )
+            previous = target / ".sourcelens-uploaded.sourcelens"
+            if previous.exists():
+                for path in previous.read_text(encoding="utf-8").splitlines():
+                    candidate = (target / path).resolve()
+                    if candidate.is_file():
+                        candidate.unlink()
+            members = [
+                path.relative_to(staging).as_posix() for path in extracted
+            ]
+            for member in members:
+                source = staging / member
+                destination = target / member
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.replace(destination)
+            previous.write_text("\n".join(members), encoding="utf-8")
+        else:
+            destination = target / filename
+            staged_upload.replace(destination)
+            extracted = [destination]
         result = convert_managed_workspace(
             {
                 **command,
@@ -772,24 +797,61 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     return result
 
 
+def _is_upload_archive(filename):
+    """Return whether an uploaded filename is an extractable archive."""
+
+    lower = str(filename or "").lower()
+    return lower.endswith((".zip", ".tar", ".tar.gz", ".tgz"))
+
+
 def delete_datasource_upload(command, workspace_path=WORKSPACE_ROOT):
-    """Remove one uploaded archive directory and all extracted contents."""
+    """Remove one uploaded file or extracted archive directory.
+
+    Decide by the uploaded filename: an archive became a directory named
+    after the archive (versioned directories included), while a plain
+    file lives directly under the datasource root. A directory that
+    merely shares a plain file's stem is never touched.
+    """
 
     datasource_uuid = safe_filename(command.get("datasource_uuid"))
-    archive_name = safe_filename(command.get("archive_name"))
-    if not datasource_uuid or not archive_name:
+    filename = str(command.get("filename") or "").strip()
+    if not datasource_uuid or not filename:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID")
+    try:
+        version = int(command.get("upload_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
     root = (
         Path(workspace_path).resolve() / "datasources" / datasource_uuid
     ).resolve()
-    target = (root / archive_name).resolve()
+    deleted = ""
+    if _is_upload_archive(filename):
+        stem = Path(filename).stem
+        directory_names = [stem]
+        if version > 1:
+            directory_names.append(f"{stem}.v{version}")
+        for name in directory_names:
+            target = (root / safe_filename(name)).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            if target.is_dir():
+                shutil.rmtree(target)
+                deleted = deleted or target.name
+        if not deleted:
+            return {"status": "success", "deleted": ""}
+        return {"status": "success", "deleted": deleted}
+    file_path = (root / safe_filename(filename)).resolve()
     try:
-        target.relative_to(root)
+        file_path.relative_to(root)
     except ValueError as exc:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID") from exc
-    if target.exists():
-        shutil.rmtree(target)
-    return {"status": "success", "deleted": archive_name}
+    if file_path.is_file():
+        file_path.unlink()
+        remove_sidecar(file_path)
+        return {"status": "success", "deleted": file_path.name}
+    return {"status": "success", "deleted": ""}
 
 
 def _archive_member_path(root, name):
@@ -881,6 +943,25 @@ def _extract_tar_archive(archive_path, root, limits=None):
                 shutil.copyfileobj(source, target, length=1024 * 1024)
             extracted.append(path)
     return extracted
+
+
+def _ensure_upload_metadata(target, context):
+    """Give every file under an upload datasource change-tracking metadata.
+
+    Convertible files also get a conversion sidecar later; this records
+    source attributes for the rest so the whole upload tree is covered.
+    """
+
+    for item in _managed_workspace_conversion_items(
+        target,
+        context["excluded_datasource_roots"],
+    ):
+        ensure_source_metadata(
+            target,
+            target / item.local_path,
+            context,
+            item,
+        )
 
 
 def _managed_workspace_conversion_items(target, excluded_roots):
