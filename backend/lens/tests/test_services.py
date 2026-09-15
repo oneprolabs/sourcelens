@@ -4814,7 +4814,16 @@ class LensServiceTests(TransactionTestCase):
         self.lensnode.labels = {"datasource_sync_capacity": 2}
         self.lensnode.save(update_fields=["labels"])
         for task_id in ["capacity-1", "capacity-2", "capacity-3"]:
-            register_datasource_sync_task(self.datasource, task_id, "manual")
+            TaskExecution.objects.create(
+                task_id=task_id,
+                task_name="datasource_sync:capacity",
+                module="lens_datasource",
+                status="PENDING",
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                },
+            )
 
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-1"))
