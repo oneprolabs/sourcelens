@@ -120,6 +120,7 @@ SESSION_TITLE_TASK_EXPIRY_SECONDS = 900
 SESSION_TITLE_TASK_NAME = "lens.generate_session_title.v2"
 DATASOURCE_CANCELLING_STATUS = "CANCELLING"
 DATASOURCE_QUEUE_HEARTBEAT_SECONDS = 30
+DATASOURCE_QUEUE_TIMEOUT_SECONDS = 30 * 60
 DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
 DATASOURCE_ADMISSION_STATE = "admission_state"
 DATASOURCE_ADMITTED = "DISPATCHED"
@@ -2018,6 +2019,9 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
     conversion_cutoff = now - timedelta(seconds=get_datasource_conversion_timeout_s())
     upload_cutoff = now - timedelta(seconds=get_datasource_upload_timeout_s())
     cutoff = now - timedelta(seconds=timeout_s)
+    queue_cutoff = now - timedelta(
+        seconds=DATASOURCE_QUEUE_TIMEOUT_SECONDS
+    )
     running_statuses = _datasource_active_statuses(TaskStatus)
     executing_statuses = [
         status for status in running_statuses if status != TaskStatus.PENDING
@@ -2050,7 +2054,8 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
         )
         | Q(
             status=TaskStatus.PENDING,
-            created_at__lt=cutoff,
+            metadata__admission_state=DATASOURCE_QUEUED,
+            created_at__lt=queue_cutoff,
         )
     )
 
@@ -2061,14 +2066,28 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
         datasource = DataSource.objects.filter(uuid=datasource_uuid).first()
         is_conversion = task.module == "lens_datasource_conversion"
         is_upload = task.module == "lens_datasource_upload"
+        queued_timeout = (
+            task.status == TaskStatus.PENDING
+            and metadata.get(DATASOURCE_ADMISSION_STATE) == DATASOURCE_QUEUED
+        )
         error = (
-            "DATASOURCE_CONVERSION_TIMEOUT"
-            if is_conversion
+            "DATASOURCE_QUEUE_TIMEOUT"
+            if queued_timeout
             else (
-                "DATASOURCE_UPLOAD_TIMEOUT" if is_upload else "LENS_SOURCE_SYNC_TIMEOUT"
+                "DATASOURCE_CONVERSION_TIMEOUT"
+                if is_conversion
+                else (
+                    "DATASOURCE_UPLOAD_TIMEOUT"
+                    if is_upload
+                    else "LENS_SOURCE_SYNC_TIMEOUT"
+                )
             )
         )
-        if is_conversion and task.status != DATASOURCE_CANCELLING_STATUS:
+        if (
+            is_conversion
+            and not queued_timeout
+            and task.status != DATASOURCE_CANCELLING_STATUS
+        ):
             if datasource is not None:
                 datasource.last_conversion_status = DATASOURCE_CANCELLING_STATUS
                 datasource.save(update_fields=["last_conversion_status", "updated_at"])
