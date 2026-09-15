@@ -1646,6 +1646,7 @@
       "connectionManaged": "由 Connection 托管",
       "legacyConnection": "旧版配置",
       "nodeInfo": "节点信息",
+      "managedDirectory": "托管目录",
       "repositories": "仓库列表",
       "sync": "同步信息",
       "retrieval": "检索增强",

@@ -117,7 +117,11 @@ def prepare_runtime_resources(
     runtime_instance_id = (
         command.get("runtime_instance_id") or command["run_uuid"]
     )
-    session_id = command.get("session_uuid")
+    # A delegated Run is transient scratch: render its resources under the
+    # runtime area and never create or share a Session workspace under
+    # ``sessions/``, so delegated work cannot inflate the Session tree.
+    delegated = bool(command.get("parent_run_uuid"))
+    session_id = None if delegated else command.get("session_uuid")
     runtime_root = _run_runtime_path(
         runtime_base, runtime_instance_id, session_id=session_id,
     )

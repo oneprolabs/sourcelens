@@ -1648,6 +1648,7 @@
       "connectionManaged": "Managed by Connection",
       "legacyConnection": "Legacy configuration",
       "nodeInfo": "Node information",
+      "managedDirectory": "Managed directory",
       "repositories": "Repositories",
       "sync": "Sync",
       "retrieval": "Retrieval enhancement",

@@ -1648,6 +1648,7 @@
       "connectionManaged": "Gestionado por la conexión",
       "legacyConnection": "Configuración heredada",
       "nodeInfo": "Información del nodo",
+      "managedDirectory": "Directorio gestionado",
       "repositories": "Repositorios",
       "sync": "Sincronizar",
       "retrieval": "Mejora de recuperación",

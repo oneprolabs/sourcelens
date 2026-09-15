@@ -1284,30 +1284,41 @@ function modelLabel(modelRef) {
   })
 }
 
+const isManagedWorkspaceDatasource = computed(
+  () => props.datasource?.source_type === 'managed_workspace'
+)
+
 const datasourceOverviewDetails = computed(() => {
   const row = props.datasource
   if (!row) return []
-  return [
+  const items = [
     detailItem(t('lensAdmin.fields.name'), row.name),
-    detailItem(t('lensAdmin.fields.type'), formatSourceType(row)),
-    isUploadDatasource.value
-      ? detailItem(
-          t('lensAdmin.datasourceDetail.nodeInfo'),
-          datasourceLensNodeName(row)
-        )
-      : detailItem(
-          t('lensAdmin.datasourceDetail.connection'),
-          row.connection_name ||
-            (row.connection
-              ? compactUuid(
-                  typeof row.connection === 'object'
-                    ? row.connection.uuid
-                    : row.connection
-                )
-              : t('lensAdmin.datasourceDetail.legacyConnection'))
-        ),
-    detailItem('UUID', row.uuid, true)
+    detailItem(t('lensAdmin.fields.type'), formatSourceType(row))
   ]
+  if (isUploadDatasource.value || isManagedWorkspaceDatasource.value) {
+    items.push(
+      detailItem(
+        t('lensAdmin.datasourceDetail.nodeInfo'),
+        datasourceLensNodeName(row)
+      )
+    )
+  } else {
+    items.push(
+      detailItem(
+        t('lensAdmin.datasourceDetail.connection'),
+        row.connection_name ||
+          (row.connection
+            ? compactUuid(
+                typeof row.connection === 'object'
+                  ? row.connection.uuid
+                  : row.connection
+              )
+            : t('lensAdmin.datasourceDetail.legacyConnection'))
+      )
+    )
+  }
+  items.push(detailItem('UUID', row.uuid, true))
+  return items
 })
 
 function datasourceLensNodeName(row) {
@@ -1323,20 +1334,12 @@ const datasourceResourceDetails = computed(() => {
   const row = props.datasource
   if (!row) return []
   const config = row.config || {}
-  if (row.source_type === 'managed_workspace') {
+  if (isManagedWorkspaceDatasource.value) {
     return [
       detailItem(
-        t('lensAdmin.availability.title'),
-        t(`lensAdmin.availability.${row.availability_status || 'unknown'}`)
-      ),
-      detailItem(
-        t('lensAdmin.availability.checkedAt'),
-        formatDateTime(row.availability_checked_at)
-      ),
-      detailItem(
-        t('lensAdmin.availability.message'),
-        row.availability_message,
-        false,
+        t('lensAdmin.datasourceDetail.managedDirectory'),
+        row.target_path,
+        true,
         { wide: true }
       )
     ]

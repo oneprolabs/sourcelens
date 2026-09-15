@@ -523,6 +523,16 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             citations=content.get("citations"),
             planned_evidence=content.get("planned_evidence"),
         )
+        if run is None:
+            # A redelivered terminal frame for an already-reaped Run: ack it
+            # so the LensNode stops retrying.
+            await self.send_json(
+                {
+                    "type": "run_done_ack",
+                    "run_uuid": str(run_uuid),
+                }
+            )
+            return
         parent_update = await database_sync_to_async(self._delegation_done_payload)(
             run.pk
         )

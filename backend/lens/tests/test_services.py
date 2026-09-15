@@ -389,6 +389,118 @@ class LensServiceTests(TransactionTestCase):
         self.assertIsNone(separate.retry_of_run)
         self.assertNotEqual(separate.session, first.session)
 
+    def test_terminal_parent_folds_delegated_children_into_parent_run(self):
+        """Delegated Runs fold into the parent and drop their Sessions."""
+
+        self.session.routing_mode = Session.RoutingMode.SMART
+        self.session.save(update_fields=["routing_mode"])
+        child = Assistant.objects.create(
+            name="Reaped Child",
+            slug="reaped-child",
+            lensnode=self.lensnode,
+            selected_task="knowledge_qa",
+            visibility=Assistant.Visibility.PUBLIC,
+        )
+        self.session.allowed_assistant_uuids = [str(child.uuid)]
+        self.session.save(update_fields=["allowed_assistant_uuids"])
+        parent = create_execution_run(
+            session=self.session,
+            question="Coordinate the work",
+            enqueue=False,
+        )
+        parent.status = Run.Status.RUNNING
+        parent.save(update_fields=["status"])
+        snapshot = dict(parent.execution.runtime_snapshot)
+        snapshot["subagents"] = [{"uuid": str(child.uuid)}]
+        parent.execution.runtime_snapshot = snapshot
+        parent.execution.save(update_fields=["runtime_snapshot"])
+
+        delegated = create_delegated_run(
+            parent,
+            child.uuid,
+            "Do the delegated work",
+            delegation_key="call-reap",
+        )
+        delegated.status = Run.Status.DONE
+        delegated.save(update_fields=["status"])
+        delegated.output_message.content = "Delegated answer"
+        delegated.output_message.save(update_fields=["content"])
+        child_session_id = delegated.session_id
+
+        finish_lensnode_run(
+            parent.uuid,
+            Run.Status.DONE,
+            final_content="Final answer",
+        )
+
+        self.assertFalse(
+            Session.objects.filter(pk=child_session_id).exists()
+        )
+        self.assertFalse(Run.objects.filter(pk=delegated.pk).exists())
+        parent = Run.objects.get(pk=parent.pk)
+        results = parent.execution.runtime_snapshot.get("delegated_results")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["assistant_uuid"], str(child.uuid))
+        self.assertEqual(results[0]["assistant_name"], "Reaped Child")
+        self.assertEqual(results[0]["answer"], "Delegated answer")
+        self.assertEqual(results[0]["status"], Run.Status.DONE)
+
+    def test_finish_lensnode_run_returns_none_for_missing_run(self):
+        """A redelivered terminal frame for a reaped Run must not raise."""
+
+        self.assertIsNone(
+            finish_lensnode_run(str(uuid4()), Run.Status.DONE)
+        )
+
+    def test_reap_sweeps_leftover_delegated_sessions(self):
+        """A child that outlived its parent is reaped by the sweep."""
+
+        from lens.tasks import _reap_terminal_delegated_sessions
+
+        self.session.routing_mode = Session.RoutingMode.SMART
+        self.session.save(update_fields=["routing_mode"])
+        child = Assistant.objects.create(
+            name="Leftover Child",
+            slug="leftover-child",
+            lensnode=self.lensnode,
+            selected_task="knowledge_qa",
+            visibility=Assistant.Visibility.PUBLIC,
+        )
+        self.session.allowed_assistant_uuids = [str(child.uuid)]
+        self.session.save(update_fields=["allowed_assistant_uuids"])
+        parent = create_execution_run(
+            session=self.session,
+            question="Coordinate the work",
+            enqueue=False,
+        )
+        parent.status = Run.Status.RUNNING
+        parent.save(update_fields=["status"])
+        snapshot = dict(parent.execution.runtime_snapshot)
+        snapshot["subagents"] = [{"uuid": str(child.uuid)}]
+        parent.execution.runtime_snapshot = snapshot
+        parent.execution.save(update_fields=["runtime_snapshot"])
+
+        delegated = create_delegated_run(
+            parent,
+            child.uuid,
+            "Leftover work",
+            delegation_key="call-leftover",
+        )
+        child_session_id = delegated.session_id
+        parent.status = Run.Status.DONE
+        parent.finished_at = timezone.now() - timedelta(hours=2)
+        parent.save(update_fields=["status", "finished_at"])
+        delegated.status = Run.Status.CANCELLED
+        delegated.finished_at = timezone.now() - timedelta(hours=2)
+        delegated.save(update_fields=["status", "finished_at"])
+
+        reaped = _reap_terminal_delegated_sessions()
+
+        self.assertEqual(reaped, 1)
+        self.assertFalse(
+            Session.objects.filter(pk=child_session_id).exists()
+        )
+
     def test_parent_sync_event_aggregates_named_child_progress(self):
         self.session.routing_mode = Session.RoutingMode.SMART
         self.session.save(update_fields=["routing_mode"])

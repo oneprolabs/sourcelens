@@ -2779,6 +2779,49 @@ def lensnode_cleanup_task():
     return count
 
 
+DELEGATED_SESSION_REAP_GRACE = timedelta(hours=1)
+
+
+def _reap_terminal_delegated_sessions(now=None):
+    """Delete coordinating Sessions of already-terminal delegated Runs.
+
+    Delegated Runs are transient. Their child Sessions are normally removed
+    when the parent Run finishes; this sweeps children that were still active
+    at that moment (cancelled, then finished later) once a short grace window
+    has elapsed and every Run they own is terminal.
+    """
+
+    now = now or timezone.now()
+    cutoff = now - DELEGATED_SESSION_REAP_GRACE
+    terminal_statuses = [
+        Run.Status.AWAITING_USER_INPUT,
+        Run.Status.DONE,
+        Run.Status.FAILED,
+        Run.Status.CANCELLED,
+    ]
+    candidate_session_ids = set(
+        Run.objects.filter(
+            parent_run__isnull=False,
+            parent_run__status__in=terminal_statuses,
+            parent_run__finished_at__lt=cutoff,
+        ).values_list("session_id", flat=True)
+    )
+    if not candidate_session_ids:
+        return 0
+    active_session_ids = set(
+        Run.objects.filter(session_id__in=candidate_session_ids)
+        .exclude(status__in=terminal_statuses)
+        .values_list("session_id", flat=True)
+    )
+    reaped_session_ids = candidate_session_ids - active_session_ids
+    if reaped_session_ids:
+        # Runs first: ``Run.input_message`` PROTECTs the Messages that a
+        # Session delete would otherwise cascade into.
+        Run.objects.filter(session_id__in=reaped_session_ids).delete()
+        Session.objects.filter(pk__in=reaped_session_ids).delete()
+    return len(reaped_session_ids)
+
+
 @shared_task(name="lens.run_retention", queue="lens")
 def run_retention_task():
     """Celery entrypoint for deleting old terminal runs."""
@@ -2795,6 +2838,8 @@ def run_retention_task():
     setting = GlobalSetting.objects.filter(key="retention.run_days").first()
     retention_days = setting.value if setting else 30
     cutoff = timezone.now() - timedelta(days=int(retention_days))
+
+    reaped_delegated = _reap_terminal_delegated_sessions(now=timezone.now())
 
     terminal_runs = Run.objects.filter(
         status__in=[
@@ -2831,6 +2876,7 @@ def run_retention_task():
         "deleted": deleted,
         "plugin_snapshots_deleted": len(snapshot_ids),
         "retention_days": retention_days,
+        "delegated_sessions_reaped": reaped_delegated,
     }
     record.last_run_at = timezone.now()
     record.save(update_fields=["last_status", "last_metrics", "last_run_at"])

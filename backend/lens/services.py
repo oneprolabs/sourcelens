@@ -3472,17 +3472,22 @@ def finish_lensnode_run(
 ):
     """Mark a LensNode-dispatched run finished."""
 
-    run = (
-        Run.objects.select_related(
-            "input_message",
-            "output_message",
-            "session",
-            "session__assistant",
-            "session__user",
+    try:
+        run = (
+            Run.objects.select_related(
+                "input_message",
+                "output_message",
+                "session",
+                "session__assistant",
+                "session__user",
+            )
+            .select_for_update(of=("self",))
+            .get(uuid=run_uuid)
         )
-        .select_for_update(of=("self",))
-        .get(uuid=run_uuid)
-    )
+    except Run.DoesNotExist:
+        # A terminal frame can be redelivered at-least-once after the Run
+        # (e.g. a reaped transient delegated child) has already been removed.
+        return None
     if run.status in TERMINAL_RUN_STATUSES:
         return run
     now = timezone.now()
@@ -3654,8 +3659,78 @@ def finish_lensnode_run(
             lambda export_uuid=trace_export.uuid: _enqueue_trace_export(export_uuid)
         )
 
+    if run.parent_run_id is None:
+        _finalize_delegated_children(run)
+
     _promote_next_queued_run(run.session.assistant)
     return run
+
+
+def _finalize_delegated_children(run):
+    """Fold a parent Run's terminal delegated children into the parent.
+
+    Delegated Runs are transient: instead of persisting their own Sessions,
+    their results are summarized onto the parent Run and the coordinating
+    child Sessions are removed once every Run they own has reached a
+    terminal state. Children still active are cancelled by
+    ``cancel_descendant_runs`` and reaped by the retention sweep.
+    """
+
+    children = list(
+        Run.objects.filter(parent_run=run).select_related(
+            "session",
+            "session__assistant",
+            "input_message",
+            "output_message",
+        )
+    )
+    if not children:
+        return
+
+    results = []
+    candidate_session_ids = set()
+    for child in children:
+        assistant = child.session.assistant
+        results.append(
+            {
+                "assistant_uuid": str(assistant.uuid),
+                "assistant_name": assistant.name[:160],
+                "question": (
+                    str(child.input_message.content or "")[:2000]
+                    if child.input_message_id
+                    else ""
+                ),
+                "answer": (
+                    str(child.output_message.content or "")[:8000]
+                    if child.output_message_id
+                    else ""
+                ),
+                "status": child.status,
+            }
+        )
+        candidate_session_ids.add(child.session_id)
+
+    execution = getattr(run, "execution", None)
+    if execution is not None:
+        runtime_snapshot = dict(execution.runtime_snapshot or {})
+        runtime_snapshot["delegated_results"] = results
+        execution.runtime_snapshot = runtime_snapshot
+        execution.save(update_fields=["runtime_snapshot"])
+
+    reaped_session_ids = [
+        session_id
+        for session_id in candidate_session_ids
+        if not (
+            Run.objects.filter(session_id=session_id)
+            .exclude(status__in=TERMINAL_RUN_STATUSES)
+            .exists()
+        )
+    ]
+    if reaped_session_ids:
+        # Runs first: ``Run.input_message`` PROTECTs the Messages that a
+        # Session delete would otherwise cascade into.
+        Run.objects.filter(session_id__in=reaped_session_ids).delete()
+        Session.objects.filter(pk__in=reaped_session_ids).delete()
 
 
 def _enqueue_trace_export(export_uuid):

@@ -1179,6 +1179,31 @@ def test_mcp_environment_preserves_legacy_placeholder_literals(tmp_path):
         cleanup_runtime_resources(resources)
 
 
+def test_delegated_run_renders_resources_under_runtime_scratch(tmp_path):
+    """A delegated run must never create a workspace under ``sessions/``."""
+
+    config = type("Config", (), {"workspace_path": str(tmp_path)})()
+    session_uuid = "11111111-1111-1111-1111-111111111111"
+    command = {
+        "run_uuid": "delegated-child-run",
+        "session_uuid": session_uuid,
+        "parent_run_uuid": "22222222-2222-2222-2222-222222222222",
+        "loaded_skills": [],
+        "loaded_mcps": [],
+    }
+
+    resources = prepare_runtime_resources(config, command)
+
+    try:
+        assert resources.root == (
+            tmp_path / ".sourcelens" / "runtime" / "runs"
+            / "delegated-child-run"
+        )
+        assert not (tmp_path / "sessions").exists()
+    finally:
+        cleanup_runtime_resources(resources)
+
+
 def test_system_prompt_keeps_internal_locators_out_of_context_skill_prompt():
     prompt = _system_prompt(
         {
