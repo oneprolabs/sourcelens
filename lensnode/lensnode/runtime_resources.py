@@ -135,21 +135,12 @@ def prepare_runtime_resources(
                 "workspace_guide": command.get("workspace_guide", ""),
             },
         )
-    skills_root = shared_root / "skills"
-    mcp_root = shared_root / "mcp"
+    skills_root = runtime_root / "skills"
+    mcp_root = runtime_root / "mcp"
 
     skills_root.mkdir(parents=True, exist_ok=True)
     mcp_root.mkdir(parents=True, exist_ok=True)
-    if shared_root != runtime_root:
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        for name, target in (("skills", skills_root), ("mcp", mcp_root)):
-            alias = runtime_root / name
-            if alias.exists() or alias.is_symlink():
-                if alias.is_symlink():
-                    alias.unlink()
-                elif alias.is_dir():
-                    shutil.rmtree(alias)
-            alias.symlink_to(target, target_is_directory=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
 
     try:
         materialize_datasources(
