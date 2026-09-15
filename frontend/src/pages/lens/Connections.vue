@@ -805,10 +805,8 @@ function connectionUsageLabels(row) {
   const manifest = pluginManifests.value[row.plugin_key] || {}
   const labels = []
   const hasDatasource =
-    Boolean(manifest.datasource) ||
-    Boolean(manifest.datasource_source_type)
-  const hasTool =
-    Array.isArray(manifest.tools) && manifest.tools.length > 0
+    Boolean(manifest.datasource) || Boolean(manifest.datasource_source_type)
+  const hasTool = Array.isArray(manifest.tools) && manifest.tools.length > 0
   if (hasDatasource) {
     labels.push({
       key: 'datasource',

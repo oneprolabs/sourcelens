@@ -12,9 +12,7 @@ export function createFeishuResourceValidation(onChange, delay = 350) {
       return {
         url,
         status: duplicate ? 'failed' : entries.get(url)?.status || '',
-        message: duplicate
-          ? duplicateMessage
-          : entries.get(url)?.message || ''
+        message: duplicate ? duplicateMessage : entries.get(url)?.message || ''
       }
     })
     onChange({

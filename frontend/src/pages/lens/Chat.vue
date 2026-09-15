@@ -444,10 +444,7 @@
               >
                 {{ assistantName }}
               </h1>
-              <p
-                v-if="assistantDescription"
-                class="mt-3 text-sm text-ink-500"
-              >
+              <p v-if="assistantDescription" class="mt-3 text-sm text-ink-500">
                 {{ assistantDescription }}
               </p>
               <p class="mt-6 text-base text-ink-500">
@@ -782,12 +779,12 @@
                       ? t('lens.chat.runtime.outcomeBlocked')
                       : activeAssistant?.agent_rounds === 'flash'
                         ? t('lens.chat.runtime.outcomePartialFlash')
-                      : t('lens.chat.runtime.outcomePartial')
+                        : t('lens.chat.runtime.outcomePartial')
                   }}
                   <span
                     v-if="
-                      message._runtimeState?.terminationDetail?.continuation_status ===
-                      'fallback_new_run'
+                      message._runtimeState?.terminationDetail
+                        ?.continuation_status === 'fallback_new_run'
                     "
                     class="runtime-fallback-reason"
                   >
@@ -1566,7 +1563,7 @@
                       ? t('lens.chat.runtime.outcomeBlocked')
                       : activeAssistant?.agent_rounds === 'flash'
                         ? t('lens.chat.runtime.outcomePartialFlash')
-                      : t('lens.chat.runtime.outcomePartial')
+                        : t('lens.chat.runtime.outcomePartial')
                   }}
                 </div>
 
@@ -2061,7 +2058,11 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
-import { readRecentChat, saveRecentChat, pickRecentSession } from '@/utils/recentChat'
+import {
+  readRecentChat,
+  saveRecentChat,
+  pickRecentSession
+} from '@/utils/recentChat'
 
 const route = useRoute()
 const router = useRouter()
@@ -3449,10 +3450,14 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
-  const rememberedUuid = useRouteSession && !isSmartCollaborationRoute.value
-    ? pickRecentSession(sessions.value, readRecentChat(userStore.user),
-        selectedAssistant.value?.slug)
-    : ''
+  const rememberedUuid =
+    useRouteSession && !isSmartCollaborationRoute.value
+      ? pickRecentSession(
+          sessions.value,
+          readRecentChat(userStore.user),
+          selectedAssistant.value?.slug
+        )
+      : ''
   let targetUuid = requestedUuid || rememberedUuid || sessions.value[0]?.uuid
   if (
     requestedUuid &&
