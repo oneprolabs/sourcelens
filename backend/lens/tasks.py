@@ -673,20 +673,19 @@ def _queue_datasource_task(task_id, message):
     metadata = dict(task.metadata or {}) if task is not None else {}
     lensnode_uuid = str(metadata.get("lensnode_uuid") or "")
     if lensnode_uuid:
-        with transaction.atomic():
-            node = LensNode.objects.select_for_update().filter(
-                uuid=lensnode_uuid
-            ).first()
-            capacity = _datasource_capacity(node)
-            queued_count = TaskExecution.objects.filter(
-                module__in=DATASOURCE_OPERATION_MODULES,
-                status__in=[TaskStatus.PENDING, *LEGACY_DATASOURCE_ACTIVE_STATUSES],
-                metadata__lensnode_uuid=lensnode_uuid,
-                metadata__admission_state=DATASOURCE_QUEUED,
-            ).exclude(task_id=task_id).count()
-            if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
-                _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
-                return False
+        node = LensNode.objects.select_for_update().filter(
+            uuid=lensnode_uuid
+        ).first()
+        capacity = _datasource_capacity(node)
+        queued_count = TaskExecution.objects.filter(
+            module__in=DATASOURCE_OPERATION_MODULES,
+            status__in=[TaskStatus.PENDING, *LEGACY_DATASOURCE_ACTIVE_STATUSES],
+            metadata__lensnode_uuid=lensnode_uuid,
+            metadata__admission_state=DATASOURCE_QUEUED,
+        ).exclude(task_id=task_id).count()
+        if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
+            _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
+            return False
 
     TaskTracker.update_task_status(
         task_id,
@@ -919,12 +918,19 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                 record.enabled = False
                 record.save(update_fields=["enabled"])
             return 0
+        failure_retry_attempts = 0
         if trigger == "scheduled":
-            previous_failure = TaskExecution.objects.filter(
+            previous_task = TaskExecution.objects.filter(
                 module="lens_datasource",
-                status__in=[TaskStatus.FAILURE, "failed", "failure"],
                 metadata__datasource_uuid=str(datasource.uuid),
-            ).exclude(task_id=task_id).order_by("-finished_at").first()
+            ).exclude(task_id=task_id).order_by("-created_at").first()
+            previous_failure = (
+                previous_task
+                if previous_task
+                and previous_task.status
+                in [TaskStatus.FAILURE, "failed", "failure"]
+                else None
+            )
             retry_at = _parse_iso_datetime(
                 (previous_failure.metadata or {}).get("failure_next_retry_at")
                 if previous_failure
@@ -932,11 +938,24 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             )
             if retry_at and retry_at > timezone.now():
                 return 0
+            if previous_failure:
+                try:
+                    failure_retry_attempts = int(
+                        (previous_failure.metadata or {}).get(
+                            "failure_retry_attempts"
+                        )
+                        or 0
+                    )
+                except (TypeError, ValueError):
+                    failure_retry_attempts = 0
 
         task_execution = register_datasource_sync_task(
             datasource,
             task_id,
             trigger,
+            metadata={
+                "failure_retry_attempts": failure_retry_attempts,
+            },
         )
         if task_execution.task_id != task_id:
             return 0
