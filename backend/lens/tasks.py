@@ -2226,12 +2226,31 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
     requeued_count = _requeue_stale_queued_datasource_tasks(now)
     cancel_confirmed_count = _finalize_stale_cancelling_datasource_tasks(now)
 
+    queued_tasks = TaskExecution.objects.filter(
+        module__in=DATASOURCE_OPERATION_MODULES,
+        status=TaskStatus.PENDING,
+        metadata__admission_state=DATASOURCE_QUEUED,
+    ).order_by("created_at")
+    oldest_queued = queued_tasks.first()
+    oldest_age = (
+        max(0, int((now - oldest_queued.created_at).total_seconds()))
+        if oldest_queued and oldest_queued.created_at
+        else 0
+    )
+    queue_metrics = {
+        "queued": queued_tasks.count(),
+        "oldest_age_seconds": oldest_age,
+        "queue_timeout_seconds": DATASOURCE_QUEUE_TIMEOUT_SECONDS,
+        "queue_capacity_multiplier": DATASOURCE_QUEUE_CAPACITY_MULTIPLIER,
+    }
+
     return {
         "failed": failed_count,
         "locks_released": released_count,
         "orphaned": orphaned_count,
         "requeued": requeued_count,
         "cancel_confirmed": cancel_confirmed_count,
+        "queue": queue_metrics,
         "timeout_s": timeout_s,
         "startup": startup,
     }
