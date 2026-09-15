@@ -4408,6 +4408,7 @@ class LensServiceTests(TransactionTestCase):
             self.datasource,
             task_id=task_id,
             trigger="manual",
+            lensnode=self.lensnode,
         )
 
     def test_datasource_sync_task_metadata_includes_conversion_policy(self):
@@ -4494,6 +4495,7 @@ class LensServiceTests(TransactionTestCase):
                 "repository_summaries": [],
                 "failed_repositories": [],
                 "partial_success": False,
+                "storage_usage": {},
                 "target_path": self.datasource.target_path,
             },
         )
@@ -4729,13 +4731,11 @@ class LensServiceTests(TransactionTestCase):
         )
 
     def test_source_sync_task_rejects_concurrent_sync(self):
-        # Simulate a real in-flight sync: a running task owns the lock. The
-        # orphan-reclaim must keep its hands off an owned lock, so a second
-        # sync is rejected as busy. (A bare lock with no owning task is now
-        # treated as orphaned and reclaimable, so it would not be rejected.)
+        """Deduplicate a sync without disturbing the active execution."""
+
         owner_token = "owner-sync"
         acquire_datasource_lock(self.datasource.uuid, token=owner_token)
-        TaskExecution.objects.create(
+        owner = TaskExecution.objects.create(
             task_id=owner_token,
             task_name="datasource_sync:Repo Cache",
             module="lens_datasource",
@@ -4745,30 +4745,46 @@ class LensServiceTests(TransactionTestCase):
                 "lock_token": owner_token,
             },
         )
+        record, _ = ScheduledTask.objects.get_or_create(
+            task_type="source_sync",
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+        )
+        record.last_status = ScheduledTask.Status.RUNNING
+        record.last_run_at = timezone.now()
+        record.save(update_fields=["last_status", "last_run_at"])
+        original_record = ScheduledTask.objects.filter(pk=record.pk).values().get()
+        original_owner = TaskExecution.objects.filter(pk=owner.pk).values().get()
         try:
-            synced = source_sync_task(
-                str(self.datasource.uuid), task_id="rejected-sync"
+            with patch("lens.tasks.dispatch_datasource_sync_async") as dispatch:
+                synced = source_sync_task(
+                    str(self.datasource.uuid), task_id="rejected-sync"
+                )
+            dispatch.assert_not_called()
+            self.assertEqual(
+                cache.get(f"lens:datasource-sync:{self.datasource.uuid}"),
+                owner_token,
             )
         finally:
             release_datasource_lock(self.datasource.uuid, token=owner_token)
 
         self.datasource.refresh_from_db()
-        record = ScheduledTask.objects.get(
-            task_type="source_sync",
-            target_type="datasource",
-            target_id=self.datasource.uuid,
-        )
-        task = TaskExecution.objects.get(task_id="rejected-sync")
         self.assertEqual(synced, 0)
         self.assertEqual(self.datasource.status, "active")
-        self.assertEqual(record.last_status, "running")
-        self.assertEqual(record.last_error, "LENS_SOURCE_SYNC_BUSY")
-        self.assertEqual(task.status, "REVOKED")
-        self.assertEqual(task.error, "LENS_SOURCE_SYNC_BUSY")
-        self.assertEqual(task.metadata["progress_step"], "lock")
+        self.assertFalse(
+            TaskExecution.objects.filter(task_id="rejected-sync").exists()
+        )
         self.assertEqual(
-            task.metadata["progress_message"],
-            "LENS_SOURCE_SYNC_BUSY",
+            TaskExecution.objects.filter(module="lens_datasource").count(),
+            1,
+        )
+        self.assertEqual(
+            TaskExecution.objects.filter(pk=owner.pk).values().get(),
+            original_owner,
+        )
+        self.assertEqual(
+            ScheduledTask.objects.filter(pk=record.pk).values().get(),
+            original_record,
         )
 
     def test_source_sync_waits_for_lensnode_capacity_without_dispatching(self):
