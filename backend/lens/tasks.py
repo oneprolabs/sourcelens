@@ -128,6 +128,7 @@ DATASOURCE_QUEUE_PRIORITIES = {
     "scheduled": 50,
     "retry": 20,
 }
+DATASOURCE_QUEUE_BACKOFF_SECONDS = (60, 300, 900, 1800)
 DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
 DATASOURCE_ADMISSION_STATE = "admission_state"
 DATASOURCE_ADMITTED = "DISPATCHED"
@@ -792,6 +793,9 @@ def _requeue_stale_queued_datasource_tasks(now):
             heartbeat = task.created_at
         if heartbeat is not None and heartbeat > cutoff:
             continue
+        next_retry = _parse_iso_datetime(metadata.get("queue_next_retry_at"))
+        if next_retry is not None and next_retry > now:
+            continue
         datasource_uuid = str(metadata.get("datasource_uuid") or "")
         datasource = (
             DataSource.objects.filter(uuid=datasource_uuid).first()
@@ -810,7 +814,15 @@ def _requeue_stale_queued_datasource_tasks(now):
             continue
         if not _requeue_datasource_task(task):
             continue
+        attempts = int(metadata.get("queue_retry_attempts") or 0) + 1
+        backoff = DATASOURCE_QUEUE_BACKOFF_SECONDS[
+            min(attempts - 1, len(DATASOURCE_QUEUE_BACKOFF_SECONDS) - 1)
+        ]
         metadata["queue_heartbeat_at"] = now.isoformat()
+        metadata["queue_retry_attempts"] = attempts
+        metadata["queue_next_retry_at"] = (
+            now + timedelta(seconds=backoff)
+        ).isoformat()
         task.metadata = metadata
         task.save(update_fields=["metadata"])
         requeued += 1
