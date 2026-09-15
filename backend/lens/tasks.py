@@ -122,6 +122,12 @@ DATASOURCE_CANCELLING_STATUS = "CANCELLING"
 DATASOURCE_QUEUE_HEARTBEAT_SECONDS = 30
 DATASOURCE_QUEUE_TIMEOUT_SECONDS = 30 * 60
 DATASOURCE_QUEUE_CAPACITY_MULTIPLIER = 4
+DATASOURCE_QUEUE_PRIORITIES = {
+    "manual": 100,
+    "initial": 80,
+    "scheduled": 50,
+    "retry": 20,
+}
 DATASOURCE_CAPACITY_LEASE_GRACE_SECONDS = 60
 DATASOURCE_ADMISSION_STATE = "admission_state"
 DATASOURCE_ADMITTED = "DISPATCHED"
@@ -770,6 +776,13 @@ def _requeue_stale_queued_datasource_tasks(now):
         module__in=DATASOURCE_OPERATION_MODULES,
         status=TaskStatus.PENDING,
         metadata__admission_state=DATASOURCE_QUEUED,
+    ).order_by("created_at")
+    tasks = sorted(
+        tasks,
+        key=lambda item: (
+            -int((item.metadata or {}).get("queue_priority", 50)),
+            item.created_at,
+        ),
     )
     requeued = 0
     for task in tasks:
@@ -2315,6 +2328,7 @@ def _datasource_task_metadata(datasource, trigger):
     return {
         "type": "datasource",
         "trigger": trigger,
+        "queue_priority": DATASOURCE_QUEUE_PRIORITIES.get(trigger, 50),
         "datasource_uuid": str(datasource.uuid),
         "datasource_name": datasource.name,
         "source_type": datasource.source_type,
