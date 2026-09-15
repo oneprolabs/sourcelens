@@ -12,7 +12,12 @@
     "display_name": "File upload",
     "description": "Local LensNode file upload datasource.",
     "source_type": "managed_workspace",
-    "resources": []
+    "resources": [],
+    "runtime": {
+      "supports_incremental": false,
+      "supports_cancel": true,
+      "output": "workspace"
+    }
   },
   "handlers": {
     "control": "python_v1",
