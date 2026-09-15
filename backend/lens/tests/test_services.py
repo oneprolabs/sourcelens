@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from channels.testing import WebsocketCommunicator
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import close_old_connections
 from django.core.management import call_command
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
@@ -76,6 +78,7 @@ from lens.services import (
 from lens.tasks import (
     _datasource_capacity_available,
     _datasource_capacity_slot_key,
+    _queue_datasource_task,
     acquire_datasource_lock,
     cleanup_stale_datasource_sync_tasks,
     complete_datasource_conversion_task,
@@ -4840,6 +4843,45 @@ class LensServiceTests(TransactionTestCase):
 
         release_datasource_lock(self.datasource.uuid, token="capacity-1")
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
+
+    def test_queue_capacity_is_bounded_under_concurrent_admission(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 1}
+        self.lensnode.save(update_fields=["labels"])
+        task_ids = [f"concurrent-queue-{index}" for index in range(8)]
+        for task_id in task_ids:
+            TaskExecution.objects.create(
+                task_id=task_id,
+                task_name="datasource_sync:concurrent",
+                module="lens_datasource",
+                status="PENDING",
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                },
+            )
+
+        def queue_task(task_id):
+            close_old_connections()
+            try:
+                return _queue_datasource_task(task_id, "capacity wait")
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=len(task_ids)) as executor:
+            results = list(executor.map(queue_task, task_ids))
+
+        queued = TaskExecution.objects.filter(
+            task_id__in=task_ids,
+            metadata__admission_state="QUEUED",
+        ).count()
+        failed = TaskExecution.objects.filter(
+            task_id__in=task_ids,
+            status="FAILURE",
+            error="DATASOURCE_QUEUE_FULL",
+        ).count()
+        self.assertEqual(queued, 4)
+        self.assertEqual(failed, 4)
+        self.assertEqual(sum(results), 4)
 
     def test_datasource_capacity_reclaims_revoked_task_slot(self):
         self.lensnode.labels = {"datasource_sync_capacity": 1}
