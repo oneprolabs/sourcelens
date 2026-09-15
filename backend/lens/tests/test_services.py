@@ -4963,6 +4963,25 @@ class LensServiceTests(TransactionTestCase):
         )
         release_datasource_lock(self.datasource.uuid, token="new-sync")
 
+    def test_cleanup_legacy_running_datasource_task(self):
+        GlobalSetting.objects.create(
+            key="lens.datasource_sync.timeout_s", value="1"
+        )
+        task = TaskExecution.objects.create(
+            task_id="legacy-running-sync",
+            task_name="datasource_sync:legacy",
+            module="lens_datasource",
+            status="running",
+            started_at=timezone.now() - timedelta(seconds=2),
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
+        )
+        with patch("lens.services.cancel_datasource_sync_on_lensnode"):
+            result = cleanup_stale_datasource_sync_tasks()
+        task.refresh_from_db()
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "LENS_SOURCE_SYNC_TIMEOUT")
+
     def test_cleanup_stale_datasource_upload_marks_failure(self):
         GlobalSetting.objects.create(
             key="lens.datasource_upload.timeout_s",

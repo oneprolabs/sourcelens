@@ -138,6 +138,8 @@ DATASOURCE_OPERATION_MODULES = [
     "lens_datasource_conversion",
     "lens_datasource_upload",
 ]
+LEGACY_DATASOURCE_ACTIVE_STATUSES = ("pending", "running", "started", "retry")
+LEGACY_DATASOURCE_COMPLETED_STATUSES = ("success", "failed", "failure", "revoked")
 
 
 @shared_task(name="lens.execute_run_diagnostic", queue="lens")
@@ -500,6 +502,7 @@ def _datasource_active_statuses(task_status):
         task_status.PENDING,
         *task_status.get_running_statuses(),
         DATASOURCE_CANCELLING_STATUS,
+        *LEGACY_DATASOURCE_ACTIVE_STATUSES,
     ]
 
 
@@ -2120,7 +2123,7 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
         is_conversion = task.module == "lens_datasource_conversion"
         is_upload = task.module == "lens_datasource_upload"
         queued_timeout = (
-            task.status == TaskStatus.PENDING
+            task.status in (TaskStatus.PENDING, *LEGACY_DATASOURCE_ACTIVE_STATUSES)
             and metadata.get(DATASOURCE_ADMISSION_STATE) == DATASOURCE_QUEUED
         )
         error = (
@@ -2198,7 +2201,10 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
             "lens_datasource_conversion",
             "lens_datasource_upload",
         ],
-        status__in=TaskStatus.get_completed_statuses(),
+        status__in=[
+            *TaskStatus.get_completed_statuses(),
+            *LEGACY_DATASOURCE_COMPLETED_STATUSES,
+        ],
         metadata__datasource_uuid__isnull=False,
         metadata__lock_token__isnull=False,
         finished_at__gte=cutoff,
