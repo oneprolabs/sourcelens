@@ -1306,7 +1306,7 @@
     },
     "plugins": {
       "file_upload": {
-        "displayName": "File upload",
+        "displayName": "Manual upload",
         "description": "Upload files or archives to a LensNode workspace and process them through the standard datasource pipeline."
       },
       "feishu": {

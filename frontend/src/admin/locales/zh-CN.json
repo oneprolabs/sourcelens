@@ -1304,7 +1304,7 @@
     },
     "plugins": {
       "file_upload": {
-        "displayName": "文件上传",
+        "displayName": "手动上传",
         "description": "将 ZIP 文件上传到 LensNode 工作区。"
       },
       "feishu": {

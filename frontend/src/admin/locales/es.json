@@ -1306,7 +1306,7 @@
     },
     "plugins": {
       "file_upload": {
-        "displayName": "Carga de archivos",
+        "displayName": "Carga manual",
         "description": "Sube archivos ZIP al espacio de trabajo de un LensNode."
       },
       "feishu": {
