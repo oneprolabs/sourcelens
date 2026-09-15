@@ -1617,6 +1617,10 @@
       "empty": "Seleccionar una fuente de datos",
       "selectHint": "Haz clic en una fuente de datos a la izquierda para ver detalles.",
       "basicInfo": "Información básica",
+      "originalFiles": "Archivos subidos",
+      "fileName": "Nombre del archivo",
+      "uploadedAt": "Subido el",
+      "fileSize": "Tamaño",
       "tabs": {
         "basic": "Información básica",
         "details": "Historial de sincronización",

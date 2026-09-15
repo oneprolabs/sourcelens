@@ -3508,14 +3508,14 @@ class LensServiceTests(TransactionTestCase):
         self.assertNotIn("config", payload)
         self.assertNotIn("sync_policy", payload)
 
-    def test_managed_workspace_upload_dispatches_file_and_conversion_policy(
+    def test_upload_dispatches_file_and_conversion_policy(
         self,
     ):
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
             sync_policy={
                 "conversion": {
                     "vision_model_ref": "qwen-vision-ref",
@@ -3543,7 +3543,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertTrue(request_id)
         payload = send.call_args.args[1]
         self.assertEqual(payload["type"], "datasource_upload")
-        self.assertEqual(payload["source_type"], "managed_workspace")
+        self.assertEqual(payload["source_type"], "upload")
         self.assertEqual(payload["filename"], "package.zip")
         self.assertEqual(payload["content_base64"], "YXJjaGl2ZS1jb250ZW50")
         self.assertEqual(
@@ -3556,7 +3556,10 @@ class LensServiceTests(TransactionTestCase):
         )
         self.assertEqual(payload["ai_gateway_url"], "http://gateway.test")
         self.assertEqual(payload["lensnode_token"], "lensnode-token")
-        self.assertEqual(payload["target_path"], "/workspace/restores/finance")
+        self.assertEqual(
+            payload["target_path"],
+            f"/workspace/datasources/{datasource.uuid}",
+        )
 
     def test_datasource_command_targets_current_lensnode_connection(self):
         from lens.datasource.services import _send_lensnode_command

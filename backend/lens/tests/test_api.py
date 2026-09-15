@@ -5922,12 +5922,13 @@ class LensApiTests(TestCase):
         )
         apply_async.assert_not_called()
 
-    def test_managed_workspace_upload_registers_and_queues_task(self):
+    def test_upload_datasource_registers_and_queues_task(self):
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
+            target_path="/workspace/datasources/manual-upload",
         )
         uploaded = SimpleUploadedFile(
             "requirements.pdf",
@@ -5973,9 +5974,9 @@ class LensApiTests(TestCase):
         datasource = DataSource.objects.create(
             name="Upload history",
             plugin_key="file_upload",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/file_uploads",
+            target_path="/workspace/datasources/upload-history",
         )
         with (
             patch(
@@ -6037,10 +6038,11 @@ class LensApiTests(TestCase):
         )
 
         datasource = DataSource.objects.create(
-            name="Managed Snapshot",
-            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
-            target_path="/workspace/restores/finance",
+            target_path="/workspace/datasources/manual-upload",
         )
         response = self.client.post(
             f"/api/lens/admin/datasources/{datasource.uuid}/upload/",

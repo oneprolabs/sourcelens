@@ -64,20 +64,28 @@ def _ensure_file_upload_datasource(lensnode_uuid):
     workspace_path = str(lensnode.workspace_path or "").strip().rstrip("/")
     if not workspace_path:
         return None
-    target_path = f"{workspace_path}/file_uploads"
-    datasource, _ = DataSource.objects.get_or_create(
-        lensnode=lensnode,
-        plugin_key="file_upload",
-        source_type=DataSource.SourceType.MANAGED_WORKSPACE,
-        defaults={
-            "name": f"File uploads ({lensnode.name})",
-            "target_path": target_path,
-            "config": {},
-            "sync_policy": {},
-            "datasource_config": {},
-            "status": DataSource.Status.ACTIVE,
-        },
+    system_name = f"File uploads ({lensnode.name})"
+    datasource = (
+        DataSource.objects.filter(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+        )
+        .order_by("-name", "created_at")
+        .first()
     )
+    if datasource is None:
+        datasource = DataSource.objects.create(
+            lensnode=lensnode,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            name=system_name,
+            config={},
+            sync_policy={},
+            datasource_config={},
+            status=DataSource.Status.ACTIVE,
+        )
+    target_path = f"{workspace_path}/datasources/{datasource.uuid}"
     if datasource.target_path != target_path:
         datasource.target_path = target_path
         datasource.save(update_fields=["target_path", "updated_at"])
@@ -177,6 +185,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_datasource_path_result(content)
         elif frame_type == "datasource_files_result":
             await self._handle_datasource_files_result(content)
+        elif frame_type == "datasource_upload_delete_result":
+            cache.set(
+                f"lens:datasource_upload_delete:{content.get('request_id')}",
+                content.get("result") or {},
+                timeout=60,
+            )
         elif frame_type == "datasource_connection_result":
             await self._handle_datasource_connection_result(content)
         elif frame_type == "datasource_sync_event":

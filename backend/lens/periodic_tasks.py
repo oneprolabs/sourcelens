@@ -105,7 +105,10 @@ def _ensure_source_scheduled_task(datasource):
 def ensure_datasource_periodic_task(datasource):
     """Create missing Celery Beat and UI rows for a datasource sync."""
 
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         _disable_datasource_periodic_task(datasource)
         return None
     if datasource.status == DataSource.Status.DISABLED:
@@ -166,7 +169,10 @@ def ensure_datasource_periodic_task(datasource):
 def estimate_datasource_next_run(datasource, record=None):
     """Return a best-effort next run time for datasource sync."""
 
-    if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         return None
     if datasource.status == DataSource.Status.DISABLED:
         return None
@@ -318,7 +324,12 @@ def register_periodic_tasks():
 
     datasources = DataSource.objects.filter(
         status=DataSource.Status.ACTIVE,
-    ).exclude(source_type=DataSource.SourceType.MANAGED_WORKSPACE)
+    ).exclude(
+        source_type__in=[
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ],
+    )
     for datasource in datasources:
         interval = datasource.sync_policy.get("interval_seconds", 3600)
         _ensure_source_scheduled_task(datasource)

@@ -634,11 +634,31 @@ export async function refreshDataSourceAvailability(uuid) {
 
 export async function uploadDataSourceFile(uuid, file) {
   const formData = new FormData()
-  formData.append('file', file)
+  const files = Array.isArray(file) ? file : [file]
+  files.forEach((item) => {
+    formData.append(files.length > 1 ? 'files' : 'file', item)
+  })
   const response = await api.post(
     `/lens/admin/datasources/${uuid}/upload/`,
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } }
+  )
+  return unwrapResponse(response)
+}
+
+export async function listDataSourceSyncTasks(uuid) {
+  const response = await api.get(
+    `/lens/admin/datasources/${uuid}/sync-tasks/`,
+    {
+      params: { page_size: 100 }
+    }
+  )
+  return unwrapList(unwrapResponse(response))
+}
+
+export async function deleteDataSourceUpload(uuid, filename) {
+  const response = await api.delete(
+    `/lens/admin/datasources/${uuid}/uploads/${encodeURIComponent(filename)}/`
   )
   return unwrapResponse(response)
 }

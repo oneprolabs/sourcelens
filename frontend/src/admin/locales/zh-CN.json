@@ -1615,6 +1615,10 @@
       "empty": "请选择数据源",
       "selectHint": "点击左侧数据源查看详情。",
       "basicInfo": "基本信息",
+      "originalFiles": "原始上传文件",
+      "fileName": "文件名称",
+      "uploadedAt": "上传时间",
+      "fileSize": "大小",
       "tabs": {
         "basic": "基本信息",
         "details": "同步记录",

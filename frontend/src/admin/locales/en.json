@@ -1617,6 +1617,10 @@
       "empty": "Select a data source",
       "selectHint": "Click a data source on the left to view details.",
       "basicInfo": "Basic Information",
+      "originalFiles": "Uploaded Files",
+      "fileName": "File name",
+      "uploadedAt": "Uploaded at",
+      "fileSize": "Size",
       "tabs": {
         "basic": "Basic Information",
         "details": "Sync history",

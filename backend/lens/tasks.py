@@ -746,7 +746,10 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
         ).first()
         if datasource is None:
             return 0
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return 0
         record = _get_or_create_source_sync_record(datasource)
         if datasource.status == DataSource.Status.DISABLED:
@@ -921,7 +924,10 @@ def datasource_conversion_task(
     del self
     task_id = task_id or uuid.uuid4().hex
     datasource = DataSource.objects.select_related("lensnode").get(uuid=datasource_uuid)
-    if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+    if datasource.source_type not in (
+        DataSource.SourceType.MANAGED_WORKSPACE,
+        DataSource.SourceType.UPLOAD,
+    ):
         return 0
     task_execution = register_datasource_conversion_task(
         datasource,
@@ -1124,15 +1130,20 @@ def datasource_upload_task(
     task = TaskExecution.objects.get(task_id=task_id)
     if task.status in TaskStatus.get_completed_statuses():
         return 0
-    if datasource.lensnode is None:
+    try:
+        execution_node = resolve_datasource_lensnode(datasource)
+    except DataSourceDispatchError as exc:
         TaskTracker.update_task_status(
             task_id,
             TaskStatus.FAILURE,
-            error="LENSNODE_REQUIRED",
+            error=str(exc) or "LENSNODE_REQUIRED",
         )
         if default_storage.exists(storage_name):
             default_storage.delete(storage_name)
         return 0
+    if datasource.lensnode_id != execution_node.uuid:
+        datasource.lensnode = execution_node
+        datasource.save(update_fields=["lensnode", "updated_at"])
     task_metadata = dict(task.metadata or {})
     try:
         lock_key = f"lens:datasource-sync:{datasource.uuid}"
@@ -1151,7 +1162,7 @@ def datasource_upload_task(
             task_id,
         )
         return 0
-    if not _datasource_capacity_available(datasource.lensnode, task_id):
+    if not _datasource_capacity_available(execution_node, task_id):
         _queue_datasource_task(
             task_id,
             "Waiting for LensNode datasource sync capacity.",
@@ -1172,19 +1183,26 @@ def datasource_upload_task(
     try:
         with default_storage.open(storage_name, "rb") as stream:
             content = stream.read()
+        task_metadata.update(
+            {
+                "lensnode_uuid": str(execution_node.uuid),
+                "lensnode_name": execution_node.name,
+                "lensnode_connection_id": execution_node.connection_id,
+                "lock_token": task_id,
+                "progress_message": "Uploading file to LensNode.",
+            }
+        )
         TaskTracker.update_task_status(
             task_id,
             TaskStatus.STARTED,
-            metadata={
-                "lock_token": task_id,
-                "progress_message": "Uploading file to LensNode.",
-            },
+            metadata=task_metadata,
         )
         request_id = dispatch_datasource_upload_async(
             datasource,
             task_id,
             filename,
             content,
+            upload_version=task_metadata.get("upload_version", 1),
         )
         TaskTracker.update_task_status(
             task_id,
@@ -2464,10 +2482,13 @@ def lensnode_health_task():
             updated += 1
             schedule_lensnode_disconnect_grace_check(node.uuid, now)
 
+    datasource_sync_metrics = cleanup_stale_datasource_sync_tasks()
+
     record.last_status = ScheduledTask.Status.SUCCESS
     record.last_metrics = {
         "offline": updated,
         "threshold_s": threshold_s,
+        "datasource_sync": datasource_sync_metrics,
     }
     record.last_run_at = timezone.now()
     record.save(update_fields=["last_status", "last_metrics", "last_run_at"])

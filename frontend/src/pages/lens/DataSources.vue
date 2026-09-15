@@ -221,18 +221,33 @@
                 </div>
               </div>
 
-              <div class="mt-3 min-w-0 rounded-lg bg-surface-sunken px-3">
+              <div
+                v-if="row.source_type !== 'managed_workspace'"
+                class="mt-3 min-w-0 rounded-lg bg-surface-sunken px-3"
+              >
                 <div
                   class="datasource-source-summary flex min-w-0 items-center gap-2 py-2"
                 >
-                  <span class="w-14 shrink-0 text-xs text-ink-500">{{
-                    t('lensAdmin.datasourceCard.resource')
-                  }}</span>
+                  <span class="w-14 shrink-0 text-xs text-ink-500">
+                    {{
+                      isManualUpload(row)
+                        ? t('lensAdmin.fields.lensnode')
+                        : t('lensAdmin.datasourceCard.resource')
+                    }}
+                  </span>
                   <p
                     class="min-w-0 flex-1 truncate font-mono text-xs font-medium text-ink-800"
-                    :title="dataSourceRepository(row)"
+                    :title="
+                      isManualUpload(row)
+                        ? datasourceLensNodeName(row)
+                        : dataSourceRepository(row)
+                    "
                   >
-                    {{ dataSourceRepository(row) }}
+                    {{
+                      isManualUpload(row)
+                        ? datasourceLensNodeName(row)
+                        : dataSourceRepository(row)
+                    }}
                   </p>
                   <span
                     v-if="
@@ -258,23 +273,23 @@
               >
                 <div class="min-w-0 text-xs text-ink-500">
                   <p v-if="isDataSourceSyncing(row)" class="truncate">
-                    {{
-                      row.current_sync?.progress_message ||
-                      row.current_sync?.progress_step ||
-                      t('lensAdmin.table.syncRunning')
-                    }}
+                    {{ datasourceProgressLabel(row) }}
                   </p>
-                  <p v-else-if="row.source_type !== 'managed_workspace'">
+                  <p v-else-if="isSyncableSourceType(row.source_type)">
                     {{ t('lensAdmin.table.lastSync') }}:
                     {{ formatDateTime(row.last_synced_at) }}
                   </p>
-                  <p v-else>
+                  <p v-else-if="row.source_type === 'managed_workspace'">
                     {{ t('lensAdmin.availability.title') }}:
                     {{ formatDateTime(row.availability_checked_at) }}
                   </p>
+                  <p v-else-if="!isManualUpload(row)">
+                    {{ t('lensAdmin.columns.targetPath') }}:
+                    {{ row.target_path || emptyValue }}
+                  </p>
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
-                  <template v-if="row.source_type !== 'managed_workspace'">
+                  <template v-if="isSyncableSourceType(row.source_type)">
                     <BaseButton
                       v-if="!isDataSourceSyncing(row)"
                       size="sm"
@@ -297,7 +312,7 @@
                     </BaseButton>
                   </template>
                   <BaseButton
-                    v-else
+                    v-else-if="row.source_type === 'managed_workspace'"
                     size="sm"
                     variant="outline"
                     @click="refreshAvailability(row)"
@@ -305,7 +320,7 @@
                     {{ t('lensAdmin.actions.refreshAvailability') }}
                   </BaseButton>
                   <BaseButton
-                    v-if="row.source_type === 'managed_workspace'"
+                    v-if="row.source_type === 'upload'"
                     size="sm"
                     variant="outline"
                     @click.stop="openUpload(row)"
@@ -353,9 +368,11 @@
         :refreshing-directories="refreshingDirectories"
         :saving="saving"
         :form-error="formError"
+        :upload-files="pendingUploadFiles"
         @close="closeDrawer"
         @save="save"
-        @upload="openUploadFromForm"
+        @upload-files="handleSelectedUploadFiles"
+        @remove-upload-file="removeSelectedUploadFile"
         @type-change="handleDatasourceTypeChange"
         @check-path="checkDatasourcePath"
         @test-connection="testDatasourceConnection"
@@ -363,6 +380,14 @@
         @refresh-credentials="refreshCredentials"
         @refresh-dirs="refreshDirectories"
         @request-resource-options="loadPluginResourceOptions"
+      />
+      <input
+        ref="uploadFileInput"
+        type="file"
+        class="hidden"
+        multiple
+        accept=".zip,application/zip"
+        @change="handleDirectUpload"
       />
 
       <DataSourceDetailDrawer
@@ -376,12 +401,6 @@
         @sync="sync"
         @toggle-enabled="toggleDataSourceEnabled"
         @upload="openUpload"
-      />
-      <DataSourceUploadModal
-        :show="showUploadModal"
-        :datasource="uploadTarget"
-        @close="closeUploadModal"
-        @uploaded="handleUploaded"
       />
     </div>
   </AdminLayout>
@@ -410,6 +429,7 @@ import {
   listConnections,
   listDataSources,
   listDataSourceSyncStatuses,
+  listDataSourceSyncTasks,
   listLensNodes,
   listPlugins,
   scanLensNodeDirs,
@@ -418,7 +438,10 @@ import {
   syncDataSource,
   testLensNodeDataSourceConnection,
   updateDataSource,
-  validateConnectionDatasource
+  validateConnectionDatasource,
+  getDataSourceUploadLimits,
+  uploadDataSourceFile,
+  deleteDataSourceUpload
 } from '@/api/lens'
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -429,7 +452,6 @@ import { pluginDisplayName } from '@/utils/pluginI18n'
 
 import DataSourceDetailDrawer from './DataSourceDetailDrawer.vue'
 import DataSourceFormDrawer from './DataSourceFormDrawer.vue'
-import DataSourceUploadModal from './DataSourceUploadModal.vue'
 import RowActions from './components/RowActions.vue'
 import { EMPTY_VALUE as emptyValue, normalizeList } from './adminHelpers'
 import {
@@ -484,8 +506,10 @@ const pluginManifests = ref({})
 const pluginIconUrls = ref({})
 const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
-const showUploadModal = ref(false)
 const uploadTarget = ref(null)
+const pendingUploadFiles = ref([])
+const uploadBaselineNames = ref([])
+const uploadFileInput = ref(null)
 
 const datasourceConfig = ref({})
 const datasourcePathResult = ref(null)
@@ -525,7 +549,8 @@ const datasourcePlugins = computed(() =>
     (plugin) =>
       plugin.datasource &&
       plugin.datasource_source_type &&
-      plugin.datasource_source_type !== 'managed_workspace'
+      (plugin.datasource_source_type !== 'managed_workspace' ||
+        plugin.key === 'file_upload')
   )
 )
 
@@ -731,6 +756,9 @@ function datasourceSyncTags(row) {
     })
     return tags
   }
+  if (row.source_type === 'upload') {
+    return tags
+  }
   if (!isDataSourceEnabled(row)) {
     return tags
   }
@@ -771,9 +799,13 @@ function closeDataSourceDetail() {
 }
 
 function formatSourceType(rowOrType) {
-  const sourceType = typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
+  const sourceType =
+    typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
   const pluginKey = typeof rowOrType === 'string' ? '' : rowOrType?.plugin_key
   if (pluginKey) {
+    if (pluginKey === 'file_upload') {
+      return t('lensAdmin.datasourceWizard.fileUploadTitle')
+    }
     const plugin = plugins.value.find((item) => item.key === pluginKey)
     return pluginDisplayName(plugin, t, te) || pluginKey
   }
@@ -793,10 +825,38 @@ function formatSourceType(rowOrType) {
   if (sourceType === 'feishu') {
     return t('lensAdmin.datasourceWizard.feishu')
   }
+  if (sourceType === 'upload') {
+    return t('lensAdmin.datasourceWizard.fileUploadTitle')
+  }
   if (sourceType === 'managed_workspace') {
     return t('lensAdmin.datasourceWizard.managedWorkspace')
   }
   return sourceType || emptyValue
+}
+
+function isSyncableSourceType(sourceType) {
+  return !['managed_workspace', 'upload'].includes(sourceType)
+}
+
+function isManualUpload(rowOrType) {
+  const sourceType =
+    typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
+  return sourceType === 'upload'
+}
+
+function datasourceLensNodeName(row) {
+  return row.lensnode_name || row.lensnode?.name || row.lensnode || emptyValue
+}
+
+function datasourceProgressLabel(row) {
+  const task = row.current_sync || {}
+  const progress =
+    task.progress_message ||
+    task.progress_step ||
+    t('lensAdmin.table.syncRunning')
+  return isManualUpload(row) && task.filename
+    ? `${task.filename} · ${progress}`
+    : progress
 }
 
 function isGitSourceType(sourceType) {
@@ -1080,12 +1140,14 @@ function startCreate() {
   datasourceConfig.value = {}
   datasourcePathResult.value = null
   datasourceConnectionResult.value = null
+  pendingUploadFiles.value = []
+  uploadBaselineNames.value = []
   syncIntervalSeconds.value = 3600
   form.value = defaultForm()
   showDrawer.value = true
 }
 
-function startEdit(row) {
+async function startEdit(row) {
   feishuValidation.reset()
   showDatasourceDetailDrawer.value = false
   mode.value = 'edit'
@@ -1094,6 +1156,34 @@ function startEdit(row) {
   datasourcePathResult.value = null
   syncIntervalSeconds.value = row.sync_policy?.interval_seconds || 3600
   form.value = formFromRow(row)
+  pendingUploadFiles.value = []
+  uploadBaselineNames.value = []
+  if (row?.plugin_key === 'file_upload' && row.uuid) {
+    try {
+      const tasks = await listDataSourceSyncTasks(row.uuid)
+      const latestFiles = new Map()
+      tasks
+        .filter((task) => task?.metadata?.is_latest_version !== false)
+        .forEach((task) => {
+          const metadata = task.metadata || {}
+          const name = metadata.filename
+          if (name && !latestFiles.has(name)) {
+            latestFiles.set(name, metadata)
+          }
+        })
+      uploadBaselineNames.value = [...latestFiles.keys()]
+      pendingUploadFiles.value = [...latestFiles.entries()].map(
+        ([name, metadata]) => ({
+          name,
+          size: Number(metadata.byte_size) || 0,
+          lastModified: 0,
+          existing: true
+        })
+      )
+    } catch {
+      // Keep the editor usable when task history is unavailable.
+    }
+  }
   datasourceConnectionResult.value = cachedDatasourceConnectionResult(row)
   showDrawer.value = true
 }
@@ -1106,6 +1196,8 @@ function closeDrawer() {
   form.value = {}
   formError.value = ''
   datasourcePathResult.value = null
+  pendingUploadFiles.value = []
+  uploadBaselineNames.value = []
   datasourceConnectionResult.value = null
   resetDatasourceSyncPolicy()
 }
@@ -1289,21 +1381,35 @@ function handleDatasourceTypeChange(seed = null) {
     form.value.plugin_key = ''
   }
   const sourceType = seed?.source_type || form.value.source_type
-  if (isPluginSourceType(sourceType)) {
-    const pluginKey = pluginKeyFromSourceType(sourceType)
-    datasourceConfig.value = datasourceSchemaDefaults(
-      pluginManifests.value[pluginKey]?.datasource_schema
-    )
-    if (seed) seed.plugin_key = pluginKey
-    else form.value.plugin_key = pluginKey
-  } else if (isGitSourceType(sourceType)) {
-    datasourceConfig.value = {
-      repo_url: '',
-      branch: '',
-      auth_scheme: 'token'
+  const strategy = datasourceTypeStrategies.find((item) =>
+    item.matches(sourceType)
+  )
+  datasourceConfig.value = strategy?.config(sourceType) || {}
+  strategy?.apply?.(sourceType, seed)
+}
+
+const datasourceTypeStrategies = [
+  {
+    matches: isPluginSourceType,
+    config: (sourceType) => {
+      const pluginKey = pluginKeyFromSourceType(sourceType)
+      return datasourceSchemaDefaults(
+        pluginManifests.value[pluginKey]?.datasource_schema
+      )
+    },
+    apply: (sourceType, seed) => {
+      const pluginKey = pluginKeyFromSourceType(sourceType)
+      if (seed) seed.plugin_key = pluginKey
+      else form.value.plugin_key = pluginKey
     }
-  } else if (sourceType === 'feishu') {
-    datasourceConfig.value = {
+  },
+  {
+    matches: isGitSourceType,
+    config: () => ({ repo_url: '', branch: '', auth_scheme: 'token' })
+  },
+  {
+    matches: (sourceType) => sourceType === 'feishu',
+    config: () => ({
       sync_mode: 'drive_folder',
       document_url: '',
       doc_ids_text: '',
@@ -1313,11 +1419,9 @@ function handleDatasourceTypeChange(seed = null) {
       max_depth: 10,
       feishu_incremental: true,
       feishu_delete_missing: false
-    }
-  } else {
-    datasourceConfig.value = {}
+    })
   }
-}
+]
 
 function resetDatasourceSyncPolicy() {
   syncPolicyMode.value = 'interval'
@@ -1342,8 +1446,16 @@ function hydrateDatasourceSyncPolicy(syncPolicy) {
 async function save() {
   saving.value = true
   formError.value = ''
+  const datasourceName = form.value.name
+  const filesToUpload = pendingUploadFiles.value.filter(
+    (file) => !file.existing
+  )
+  const shouldOpenUpload =
+    mode.value === 'create' && form.value.plugin_key === 'file_upload'
   try {
+    const isFileUpload = form.value.plugin_key === 'file_upload'
     if (
+      !isFileUpload &&
       form.value.source_type !== 'managed_workspace' &&
       !canSaveDatasource()
     ) {
@@ -1358,10 +1470,41 @@ async function save() {
     } else {
       const payload = buildPayload()
       await updateDataSource(uuid, payload)
+      const files = pendingUploadFiles.value.filter((file) => !file.existing)
+      if (files.length) await uploadDataSourceFile(uuid, files)
+      const currentNames = new Set(
+        pendingUploadFiles.value.map((file) => file.name)
+      )
+      for (const name of uploadBaselineNames.value) {
+        if (!currentNames.has(name)) await deleteDataSourceUpload(uuid, name)
+      }
     }
     showSuccess(t('lensAdmin.messages.saveSuccess'))
     closeDrawer()
     await load()
+    if (shouldOpenUpload && filesToUpload.length) {
+      const created = dataSources.value.find(
+        (row) => row.plugin_key === 'file_upload' && row.name === datasourceName
+      )
+      if (created) {
+        const limits = await getDataSourceUploadLimits()
+        for (const file of filesToUpload) {
+          if (!file.name.toLowerCase().endsWith('.zip')) {
+            throw new Error(t('lensAdmin.messages.uploadZipOnly'))
+          }
+          if (file.size > limits.max_bytes) {
+            throw new Error(
+              t('lensAdmin.messages.uploadTooLarge', {
+                size: limits.max_bytes / (1024 * 1024)
+              })
+            )
+          }
+        }
+        await uploadDataSourceFile(created.uuid, filesToUpload)
+        pendingUploadFiles.value = []
+        showSuccess(t('lensAdmin.messages.uploadStarted'))
+      }
+    }
   } catch (error) {
     formError.value = extractErrorMessage(
       error,
@@ -1395,6 +1538,16 @@ function buildPayload() {
     payload.connection_uuid = null
     payload.plugin_key = ''
     payload.datasource_config = {}
+  }
+  if (normalizedSourceType(form.value.source_type) === 'upload') {
+    payload.plugin_key = 'file_upload'
+    payload.connection_uuid = null
+    payload.datasource_config = {}
+    payload.config = {}
+    payload.credential_uuid = null
+    if (form.value.lensnode_uuid) {
+      payload.lensnode_uuid = form.value.lensnode_uuid
+    }
   }
   return payload
 }
@@ -1708,11 +1861,13 @@ function validateFeishuResources() {
         return t('lensAdmin.credentials.validationSuccess')
       } catch (error) {
         throw new Error(
-          extractErrorMessage(error, t('lensAdmin.credentials.validationFailed'))
+          extractErrorMessage(
+            error,
+            t('lensAdmin.credentials.validationFailed')
+          )
         )
       }
-    }
-    ,
+    },
     t('lensAdmin.datasourceWizard.duplicateResourceUrl')
   )
 }
@@ -2162,26 +2317,53 @@ async function refreshAvailability(row) {
 function openUpload(row) {
   if (!row?.uuid) return
   uploadTarget.value = row
-  showUploadModal.value = true
+  uploadFileInput.value?.click()
 }
 
-function openUploadFromForm() {
-  const uuid = form.value.uuid
-  if (!uuid) return
-  const row = dataSources.value.find((item) => item.uuid === uuid)
-  openUpload(row || { uuid, name: form.value.name })
+function handleSelectedUploadFiles(files) {
+  const incoming = Array.from(files || [])
+  const existing = pendingUploadFiles.value.filter((file) => file.existing)
+  const current = [
+    ...existing,
+    ...pendingUploadFiles.value.filter((file) => !file.existing)
+  ]
+  const byName = new Map(current.map((file) => [file.name, file]))
+  incoming.forEach((file) => byName.set(file.name, file))
+  pendingUploadFiles.value = [...byName.values()]
 }
 
-function closeUploadModal() {
-  showUploadModal.value = false
-  uploadTarget.value = null
+function removeSelectedUploadFile(file) {
+  pendingUploadFiles.value = pendingUploadFiles.value.filter(
+    (item) => item !== file
+  )
 }
 
-async function handleUploaded(datasource, allSubmitted) {
-  await load()
-  if (allSubmitted) {
+async function handleDirectUpload(event) {
+  const datasource = uploadTarget.value
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  if (!datasource?.uuid || !files.length) return
+  try {
+    const limits = await getDataSourceUploadLimits()
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith('.zip')) {
+        throw new Error(t('lensAdmin.messages.uploadZipOnly'))
+      }
+      if (file.size > limits.max_bytes) {
+        throw new Error(
+          t('lensAdmin.messages.uploadTooLarge', {
+            size: limits.max_bytes / (1024 * 1024)
+          })
+        )
+      }
+    }
+    await uploadDataSourceFile(datasource.uuid, files)
     showSuccess(t('lensAdmin.messages.uploadStarted'))
-    closeUploadModal()
+    await load()
+  } catch (error) {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.uploadFailed')))
+  } finally {
+    uploadTarget.value = null
   }
 }
 

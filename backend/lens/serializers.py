@@ -2038,7 +2038,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
-        if lensnode is not None:
+        if lensnode is not None and source_type != DataSource.SourceType.UPLOAD:
             try:
                 validate_datasource_lensnode(lensnode)
                 attrs["target_path"] = normalize_workspace_target_path(
@@ -2076,7 +2076,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
         if (
             connection is None
             and plugin_key == "file_upload"
-            and source_type == DataSource.SourceType.MANAGED_WORKSPACE
+            and source_type == DataSource.SourceType.UPLOAD
         ):
             if credential is not None or config or datasource_config:
                 raise serializers.ValidationError(
@@ -2102,7 +2102,10 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 }
             )
         if connection is not None:
-            if source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+            if source_type in (
+                DataSource.SourceType.MANAGED_WORKSPACE,
+                DataSource.SourceType.UPLOAD,
+            ):
                 raise serializers.ValidationError(
                     {"connection_uuid": "Managed workspace does not use connections"}
                 )
@@ -2214,6 +2217,32 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 self.instance,
                 credential,
             )
+        elif connection is None and source_type == DataSource.SourceType.UPLOAD:
+            upload_plugin_key = plugin_key or getattr(
+                self.instance, "plugin_key", ""
+            )
+            if upload_plugin_key != "file_upload":
+                raise serializers.ValidationError(
+                    {
+                        "plugin_key": (
+                            "Manual upload requires the file_upload plugin"
+                        )
+                    }
+                )
+            if credential is not None or config or datasource_config:
+                raise serializers.ValidationError(
+                    {
+                        "plugin_key": (
+                            "File upload capability does not accept credentials "
+                            "or configuration"
+                        )
+                    }
+                )
+            attrs["plugin_key"] = "file_upload"
+            attrs["credential"] = None
+            attrs["config"] = {}
+            attrs["datasource_config"] = {}
+            attrs["sync_policy"] = {}
         elif connection is None:
             raise serializers.ValidationError(
                 {"source_type": "Unsupported datasource source_type"}
@@ -2296,6 +2325,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                     module__in=[
                         "lens_datasource",
                         "lens_datasource_conversion",
+                        "lens_datasource_upload",
                     ],
                     metadata__datasource_uuid=str(datasource.uuid),
                     status__in=[
@@ -2313,6 +2343,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "id": task.id,
             "task_id": task.task_id,
             "task_name": task.task_name,
+            "filename": (task.metadata or {}).get("filename", ""),
             "status": task.status,
             "started_at": task.started_at,
             "created_at": task.created_at,
@@ -2393,7 +2424,20 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a datasource bound to reusable credentials."""
 
-        return DataSource.objects.create(**validated_data)
+        datasource = DataSource.objects.create(**validated_data)
+        if (
+            datasource.source_type == DataSource.SourceType.UPLOAD
+            and datasource.lensnode_id
+        ):
+            workspace_path = str(
+                datasource.lensnode.workspace_path or ""
+            ).strip().rstrip("/")
+            if workspace_path:
+                datasource.target_path = (
+                    f"{workspace_path}/datasources/{datasource.uuid}"
+                )
+                datasource.save(update_fields=["target_path", "updated_at"])
+        return datasource
 
     def update(self, instance, validated_data):
         """Update datasource metadata and credential binding."""

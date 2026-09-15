@@ -15,6 +15,7 @@ from lens.datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
     check_datasource_path,
+    delete_datasource_upload,
     list_datasource_files,
     normalize_workspace_target_path,
 )
@@ -199,6 +200,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 module__in=[
                     "lens_datasource",
                     "lens_datasource_conversion",
+                    "lens_datasource_upload",
                 ],
                 metadata__datasource_uuid__in=datasource_uuids,
                 status__in=active_statuses,
@@ -440,7 +442,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         self._validate_plugin_datasource_access(serializer)
         datasource = serializer.save()
         ensure_datasource_periodic_task(datasource)
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return
         if datasource.status == DataSource.Status.DISABLED:
             return
@@ -506,7 +511,10 @@ class DataSourceViewSet(BaseAdminViewSet):
     def _enqueue_datasource_sync(datasource, task_id, trigger, user=None):
         """Register and enqueue one datasource sync task."""
 
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             raise ValueError("DATASOURCE_SYNC_NOT_SUPPORTED")
         if datasource.status == DataSource.Status.DISABLED:
             raise ValueError("DATASOURCE_DISABLED")
@@ -534,7 +542,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         """Enqueue datasource synchronization on its LensNode."""
 
         datasource = self.get_object()
-        if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return Response(
                 {"detail": "DATASOURCE_SYNC_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -566,7 +577,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         """Enqueue explicit conversion for a managed workspace."""
 
         datasource = self.get_object()
-        if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+        if datasource.source_type not in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
             return Response(
                 {"detail": "DATASOURCE_CONVERSION_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -619,10 +633,16 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["post"], url_path="upload")
     def upload(self, request, uuid=None):
-        """Queue one file upload into a Managed Workspace."""
+        """Queue one or more files as independent upload tasks."""
 
         datasource = self.get_object()
-        if datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE:
+        if not (
+            datasource.source_type == DataSource.SourceType.UPLOAD
+            or (
+                datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE
+                and datasource.plugin_key == "file_upload"
+            )
+        ):
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_NOT_SUPPORTED"},
                 status=status.HTTP_409_CONFLICT,
@@ -632,55 +652,84 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_DISABLED"},
                 status=status.HTTP_409_CONFLICT,
             )
-        uploaded = request.FILES.get("file")
-        if uploaded is None:
+        uploads = request.FILES.getlist("files") or request.FILES.getlist(
+            "file"
+        )
+        if not uploads:
             return Response(
                 {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if uploaded.size > get_datasource_upload_limits()["max_bytes"]:
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        limits = get_datasource_upload_limits()
+        from agentcore_task.adapters.django.models import TaskExecution
+        queued = []
+        for uploaded in uploads:
+            if uploaded.size > limits["max_bytes"]:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+            filename = os.path.basename(str(uploaded.name or "")).strip()
+            if not filename or filename in {".", ".."}:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            lowered_filename = filename.lower()
+            if not any(
+                lowered_filename.endswith(extension)
+                for extension in DATASOURCE_UPLOAD_EXTENSIONS
+            ):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            task_id = uuid_mod.uuid4().hex
+            previous = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).count()
+            previous_task = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).order_by("-created_at").first()
+            if previous_task is not None:
+                previous_metadata = dict(previous_task.metadata or {})
+                previous_metadata["is_latest_version"] = False
+                previous_task.metadata = previous_metadata
+                previous_task.save(update_fields=["metadata"])
+            storage_name = default_storage.save(
+                f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
+                ContentFile(uploaded.read()),
             )
-        filename = os.path.basename(str(uploaded.name or "")).strip()
-        if not filename or filename in {".", ".."}:
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
-                status=status.HTTP_400_BAD_REQUEST,
+            register_datasource_upload_task(
+                datasource,
+                task_id,
+                filename,
+                created_by=request.user,
+                byte_size=uploaded.size,
+                content_type=uploaded.content_type or "",
+                metadata={
+                    "storage_name": storage_name,
+                    "upload_version": previous + 1,
+                    "is_latest_version": True,
+                },
             )
-        lowered_filename = filename.lower()
-        if not any(
-            lowered_filename.endswith(extension)
-            for extension in DATASOURCE_UPLOAD_EXTENSIONS
-        ):
-            return Response(
-                {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
-                status=status.HTTP_400_BAD_REQUEST,
+            datasource_upload_task.apply_async(
+                args=[str(datasource.uuid), storage_name, filename],
+                task_id=task_id,
             )
-        task_id = uuid_mod.uuid4().hex
-        storage_name = default_storage.save(
-            f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
-            ContentFile(uploaded.read()),
-        )
-        register_datasource_upload_task(
-            datasource,
-            task_id,
-            filename,
-            created_by=request.user,
-            byte_size=uploaded.size,
-            content_type=uploaded.content_type or "",
-            metadata={"storage_name": storage_name},
-        )
-        datasource_upload_task.apply_async(
-            args=[str(datasource.uuid), storage_name, filename],
-            task_id=task_id,
-        )
+            queued.append(
+                {"task_id": task_id, "filename": filename, "status": "PENDING"}
+            )
         return Response(
             {
                 "uuid": str(datasource.uuid),
-                "task_id": task_id,
-                "filename": filename,
+                "task_id": queued[0]["task_id"],
+                "filename": queued[0]["filename"],
+                "uploads": queued,
                 "status": "PENDING",
             },
             status=status.HTTP_202_ACCEPTED,
@@ -706,6 +755,51 @@ class DataSourceViewSet(BaseAdminViewSet):
             datasource.save(update_fields=["status", "updated_at"])
         ensure_datasource_periodic_task(datasource)
         return Response(DataSourceSerializer(datasource).data)
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"uploads/(?P<filename>[^/.]+(?:\.[^/.]+)*)",
+    )
+    def delete_upload(self, request, uuid=None, filename=None):
+        """Delete one uploaded archive and its extracted contents."""
+
+        datasource = self.get_object()
+        if (
+            datasource.plugin_key != "file_upload"
+            and datasource.source_type != DataSource.SourceType.UPLOAD
+        ):
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_NOT_SUPPORTED"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            from agentcore_task.adapters.django.models import TaskExecution
+
+            task = TaskExecution.objects.filter(
+                module="lens_datasource_upload",
+                metadata__datasource_uuid=str(datasource.uuid),
+                metadata__filename=filename,
+            ).order_by("-created_at").first()
+            version = (
+                (task.metadata or {}).get("upload_version", 1) if task else 1
+            )
+            archive_name = os.path.splitext(filename)[0]
+            if int(version) > 1:
+                archive_name = f"{archive_name}.v{int(version)}"
+            result = delete_datasource_upload(datasource, archive_name)
+            if task is not None:
+                metadata = dict(task.metadata or {})
+                metadata["is_latest_version"] = False
+                metadata["deleted"] = True
+                task.metadata = metadata
+                task.save(update_fields=["metadata"])
+        except DataSourceDispatchError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(result)
 
     @action(detail=True, methods=["post"], url_path="refresh-availability")
     def refresh_availability(self, request, uuid=None):
@@ -852,7 +946,10 @@ class DataSourceViewSet(BaseAdminViewSet):
         datasource = self.get_object()
         module = (
             "lens_datasource_upload"
-            if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE
+            if (
+                datasource.source_type == DataSource.SourceType.UPLOAD
+                or datasource.plugin_key == "file_upload"
+            )
             else "lens_datasource"
         )
         queryset = (

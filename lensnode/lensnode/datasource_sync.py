@@ -345,7 +345,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
     source_type = str(command.get("source_type") or "")
     marker = manifest_store.read_manifest_marker(target)
     if (
-        source_type != "managed_workspace"
+        source_type not in {"managed_workspace", "upload"}
         and (
             not datasource_uuid
             or marker.get("datasource_uuid") != datasource_uuid
@@ -365,7 +365,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
         raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
 
     candidates = []
-    if source_type == "managed_workspace":
+    if source_type in {"managed_workspace", "upload"}:
         manifest_items = _managed_workspace_catalog_items(target)
     else:
         manifest_items = manifest_store.manifest_items(
@@ -507,13 +507,14 @@ def convert_managed_workspace(
 ):
     """Convert files in a managed workspace without synchronizing it."""
 
-    if command.get("source_type") != "managed_workspace":
+    source_type = command.get("source_type")
+    if source_type not in {"managed_workspace", "upload"}:
         raise DataSourceSyncError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
     target = normalize_target_path(
         command.get("target_path"),
         workspace_path,
     )
-    if command.get("plugin_key") != "file_upload" and not target.is_dir():
+    if source_type == "managed_workspace" and not target.is_dir():
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
 
     context = _sync_context(command, target)
@@ -693,21 +694,17 @@ def convert_managed_workspace(
 
 
 def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
-    """Write one upload into a managed workspace and convert its contents."""
+    """Write one manual upload into a datasource workspace and convert it."""
 
-    if command.get("source_type", "managed_workspace") != "managed_workspace":
+    if command.get("source_type", "upload") != "upload":
         raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
-    target = normalize_target_path(command.get("target_path"), workspace_path)
-    datasource_root = target
-    upload_root = target
-    if command.get("plugin_key") == "file_upload":
-        datasource_uuid = safe_filename(command.get("datasource_uuid"))
-        if not datasource_uuid:
-            raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
-        datasource_root = Path(workspace_path).resolve() / "datasource" / datasource_uuid
-        datasource_root.mkdir(parents=True, exist_ok=True)
-    if command.get("plugin_key") != "file_upload" and not target.is_dir():
-        raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
+    datasource_uuid = safe_filename(command.get("datasource_uuid"))
+    if not datasource_uuid:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
+    datasource_root = (
+        Path(workspace_path).resolve() / "datasources" / datasource_uuid
+    )
+    datasource_root.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(command.get("filename"))
     if not filename:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_FILENAME_INVALID")
@@ -724,11 +721,11 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         max_bytes = 50 * 1024 * 1024
     if len(content) > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
-    if command.get("plugin_key") == "file_upload":
-        archive_name = Path(filename).stem
-        upload_root = datasource_root / safe_filename(archive_name)
-        upload_root.mkdir(parents=True, exist_ok=True)
-        target = upload_root
+    version = command.get("upload_version") or 1
+    archive_name = Path(filename).stem
+    if int(version) > 1:
+        archive_name = f"{archive_name}.v{int(version)}"
+    target = datasource_root / safe_filename(archive_name)
     target.mkdir(parents=True, exist_ok=True)
     staging = target / ".sourcelens-upload-staging.sourcelens"
     if staging.exists():
@@ -743,7 +740,7 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
             extracted = _extract_tar_archive(staged_archive, staging, limits)
         previous = target / ".sourcelens-uploaded.sourcelens"
-        if previous.exists() and command.get("plugin_key") != "file_upload":
+        if previous.exists():
             for path in previous.read_text(encoding="utf-8").splitlines():
                 candidate = (target / path).resolve()
                 if candidate.is_file():
@@ -759,7 +756,7 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
             {
                 **command,
                 "target_path": str(target),
-                "source_type": "managed_workspace",
+                "source_type": "upload",
                 "conversion": command.get("conversion")
                 or {"document": True, "image": True},
             },
@@ -773,6 +770,26 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     result["uploaded"] = filename
     result["extracted_files"] = [str(path) for path in extracted]
     return result
+
+
+def delete_datasource_upload(command, workspace_path=WORKSPACE_ROOT):
+    """Remove one uploaded archive directory and all extracted contents."""
+
+    datasource_uuid = safe_filename(command.get("datasource_uuid"))
+    archive_name = safe_filename(command.get("archive_name"))
+    if not datasource_uuid or not archive_name:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID")
+    root = (
+        Path(workspace_path).resolve() / "datasources" / datasource_uuid
+    ).resolve()
+    target = (root / archive_name).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_INVALID") from exc
+    if target.exists():
+        shutil.rmtree(target)
+    return {"status": "success", "deleted": archive_name}
 
 
 def _archive_member_path(root, name):

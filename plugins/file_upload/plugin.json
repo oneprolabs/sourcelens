@@ -6,12 +6,12 @@
   "display_name": "File upload",
   "icon": "assets/icon.svg",
   "description": "Upload files or archives to a LensNode workspace and process them through the standard datasource pipeline.",
-  "datasource_source_type": "managed_workspace",
+  "datasource_source_type": "upload",
   "datasource": {
     "key": "file_upload",
     "display_name": "File upload",
     "description": "Local LensNode file upload datasource.",
-    "source_type": "managed_workspace",
+    "source_type": "upload",
     "resources": [],
     "runtime": {
       "supports_incremental": false,

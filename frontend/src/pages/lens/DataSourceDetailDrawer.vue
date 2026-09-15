@@ -103,6 +103,46 @@
         </DrawerSection>
 
         <section
+          v-if="isUploadDatasource && originalUploadFiles.length"
+          class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
+        >
+          <h3 class="text-sm font-semibold text-ink-900">
+            {{ t('lensAdmin.datasourceDetail.originalFiles') }}
+          </h3>
+          <div class="mt-3 overflow-hidden rounded-lg border border-line">
+            <div
+              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
+            >
+              <span>{{ t('lensAdmin.datasourceDetail.fileName') }}</span>
+              <span>{{ t('lensAdmin.datasourceDetail.uploadedAt') }}</span>
+              <span class="text-right">{{
+                t('lensAdmin.datasourceDetail.fileSize')
+              }}</span>
+            </div>
+            <div
+              v-for="file in originalUploadFiles"
+              :key="file.name"
+              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 border-t border-line px-3 py-2 text-sm"
+            >
+              <span class="min-w-0 truncate text-ink-800" :title="file.name">{{
+                file.name
+              }}</span>
+              <span class="text-xs text-ink-500">{{
+                formatDate(file.uploadedAt)
+              }}</span>
+              <span class="text-right text-xs text-ink-500">{{
+                formatFileSize(file.size)
+              }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section
+          v-if="
+            !isUploadDatasource &&
+            (datasourceResourceDetails.length ||
+              organizationRepositories.length)
+          "
           class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
         >
           <h3 class="text-sm font-semibold text-ink-900">
@@ -143,14 +183,14 @@
               v-for="repo in organizationRepositories"
               :key="repo.repo_url || repo.name || repo.path"
               class="rounded-lg border border-line bg-surface-sunken px-3 py-2"
-              >
-                <div class="flex min-w-0 items-center gap-2">
-                  <PluginIcon
-                    :plugin-key="datasource.plugin_key"
-                    :src="pluginIconUrls[datasource.plugin_key]"
-                    :label="datasource.plugin_key || datasource.source_type"
-                  />
-                  <span
+            >
+              <div class="flex min-w-0 items-center gap-2">
+                <PluginIcon
+                  :plugin-key="datasource.plugin_key"
+                  :src="pluginIconUrls[datasource.plugin_key]"
+                  :label="datasource.plugin_key || datasource.source_type"
+                />
+                <span
                   class="min-w-0 flex-1 truncate text-xs font-medium text-ink-800"
                   :title="repo.name || repo.path || repo.repo_url"
                 >
@@ -179,7 +219,7 @@
         </section>
 
         <DrawerSection
-          v-if="datasource.source_type !== 'managed_workspace'"
+          v-if="isSyncableDatasource"
           :title="t('lensAdmin.datasourceDetail.sync')"
           class="datasource-sync-block rounded-xl border border-line bg-surface p-4"
         >
@@ -216,7 +256,7 @@
         </DrawerSection>
 
         <DrawerSection
-          v-if="datasource.source_type !== 'managed_workspace'"
+          v-if="isSyncableDatasource"
           :title="t('lensAdmin.datasourceDetail.retrieval')"
           class="datasource-retrieval-block rounded-xl border border-line bg-surface p-4"
         >
@@ -322,6 +362,11 @@
                       :title="task.task_name"
                     >
                       {{ task.task_name || '-' }}
+                      <span
+                        v-if="task.metadata?.filename"
+                        class="font-normal text-ink-500"
+                        >· {{ task.metadata.filename }}</span
+                      >
                     </span>
                     <div class="flex shrink-0 items-center gap-2">
                       <StatusBadge :status="mapTaskStatus(task.status)" />
@@ -377,6 +422,11 @@
                     :title="task.task_name"
                   >
                     {{ task.task_name || '-' }}
+                    <span
+                      v-if="task.metadata?.filename"
+                      class="font-normal text-ink-500"
+                      >· {{ task.metadata.filename }}</span
+                    >
                   </span>
                   <span
                     class="whitespace-nowrap text-sm font-medium text-ink-900"
@@ -578,7 +628,7 @@
     <template v-if="datasource" #footer>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <BaseButton
-          v-if="datasource.source_type !== 'managed_workspace'"
+          v-if="isSyncableDatasource"
           variant="outline"
           @click="$emit('toggle-enabled', datasource)"
         >
@@ -588,23 +638,23 @@
               : t('lensAdmin.actions.enableDatasource')
           }}
         </BaseButton>
-        <div class="flex flex-wrap gap-2">
+        <div class="ml-auto flex flex-wrap gap-2">
           <BaseButton
-            v-if="datasource.source_type !== 'managed_workspace' && isDataSourceSyncing(datasource)"
+            v-if="isSyncableDatasource && isDataSourceSyncing(datasource)"
             variant="danger"
             @click="$emit('cancel-sync', datasource)"
             >{{ t('lensAdmin.actions.cancelSync') }}</BaseButton
           >
           <BaseButton
-            v-else-if="datasource.source_type !== 'managed_workspace'"
+            v-else-if="isSyncableDatasource"
             variant="outline"
             :disabled="datasource.status !== 'active'"
             @click="$emit('sync', datasource)"
             >{{ t('lensAdmin.actions.sync') }}</BaseButton
           >
-          <BaseButton variant="primary" @click="$emit('edit', datasource)">{{
-            t('common.edit')
-          }}</BaseButton>
+          <BaseButton variant="primary" @click="$emit('edit', datasource)">
+            {{ t('common.edit') }}
+          </BaseButton>
         </div>
       </div>
     </template>
@@ -664,6 +714,38 @@ defineEmits([
 const { t } = useI18n()
 const formatDateTime = useShortDateTime()
 const activeTab = ref('basic')
+const isSyncableDatasource = computed(
+  () => !['managed_workspace', 'upload'].includes(props.datasource?.source_type)
+)
+const isUploadDatasource = computed(
+  () =>
+    props.datasource?.source_type === 'upload' ||
+    props.datasource?.plugin_key === 'file_upload'
+)
+const originalUploadFiles = computed(() => {
+  const latest = new Map()
+  tasks.value.forEach((task) => {
+    const metadata = task?.metadata || {}
+    if (
+      !metadata.filename ||
+      metadata.deleted ||
+      metadata.is_latest_version === false
+    )
+      return
+    if (!latest.has(metadata.filename))
+      latest.set(metadata.filename, {
+        name: metadata.filename,
+        size: Number(metadata.byte_size) || 0,
+        uploadedAt: task.created_at
+      })
+  })
+  return [...latest.values()]
+})
+
+function formatFileSize(bytes) {
+  if (!bytes) return '-'
+  return `${new Intl.NumberFormat().format(Math.ceil(bytes / 1024))} KB`
+}
 
 const tasks = ref([])
 const tasksLoading = ref(false)
@@ -712,6 +794,8 @@ const TASK_METADATA_FIELDS = [
   'sync_summary',
   'source_type',
   'target_path',
+  'filename',
+  'byte_size',
   'error'
 ].join(',')
 
@@ -826,7 +910,10 @@ function loadMoreFiles() {
 function observeFilesLoadMoreSentinel() {
   filesLoadMoreObserver?.disconnect()
   filesLoadMoreObserver = null
-  if (!filesLoadMoreSentinel.value || typeof IntersectionObserver === 'undefined') {
+  if (
+    !filesLoadMoreSentinel.value ||
+    typeof IntersectionObserver === 'undefined'
+  ) {
     return
   }
   filesLoadMoreObserver = new IntersectionObserver(
@@ -1010,8 +1097,27 @@ function formatTrigger(task) {
 watch(
   () => [props.datasource?.uuid, props.show, activeTab.value],
   ([uuid, visible, tab]) => {
-    if (!visible || !uuid || tab !== 'details') {
+    if (!visible || !uuid) {
       stopProcessingRefresh()
+      taskRequestSeq.value += 1
+      taskListContextKey.value = ''
+      tasksLoadInFlight.value = false
+      tasksLoading.value = false
+      resetTaskList()
+      return
+    }
+    if (tab !== 'details') {
+      stopProcessingRefresh()
+      if (isUploadDatasource.value) {
+        const uploadContextKey = `${uuid}:upload`
+        if (taskListContextKey.value !== uploadContextKey) {
+          taskListContextKey.value = uploadContextKey
+          currentPage.value = 1
+          resetTaskList()
+          loadTasks({ silent: true })
+        }
+        return
+      }
       taskRequestSeq.value += 1
       taskListContextKey.value = ''
       tasksLoadInFlight.value = false
@@ -1087,12 +1193,23 @@ onBeforeUnmount(() => {
   stopProcessingRefresh()
 })
 
-function formatSourceType(sourceType) {
+function formatSourceType(rowOrType) {
+  const sourceType =
+    typeof rowOrType === 'string' ? rowOrType : rowOrType?.source_type
+  if (
+    typeof rowOrType !== 'string' &&
+    rowOrType?.plugin_key === 'file_upload'
+  ) {
+    return t('lensAdmin.datasourceWizard.fileUploadTitle')
+  }
   if (sourceType === 'git') {
     return 'Git'
   }
   if (sourceType === 'feishu') {
     return t('lensAdmin.datasourceWizard.feishu')
+  }
+  if (sourceType === 'upload') {
+    return t('lensAdmin.datasourceWizard.fileUploadTitle')
   }
   if (sourceType === 'managed_workspace') {
     return t('lensAdmin.datasourceWizard.managedWorkspace')
@@ -1170,7 +1287,7 @@ const datasourceOverviewDetails = computed(() => {
   if (!row) return []
   return [
     detailItem(t('lensAdmin.fields.name'), row.name),
-    detailItem(t('lensAdmin.fields.type'), formatSourceType(row.source_type)),
+    detailItem(t('lensAdmin.fields.type'), formatSourceType(row)),
     detailItem(
       t('lensAdmin.datasourceDetail.connection'),
       row.connection_name ||
@@ -1245,7 +1362,7 @@ const datasourceResourceDetails = computed(() => {
         { href: isHttpUrl(url) ? url : '', wide: true }
       )
     ),
-    detailItem(t('lensAdmin.fields.syncScope'), feishuScopeLabel()),
+    detailItem(t('lensAdmin.fields.syncScope'), feishuScopeLabel())
   ].filter((item) => item.value !== emptyValue)
 })
 
@@ -1421,5 +1538,4 @@ function isHttpUrl(value) {
 .detail-tab-active {
   @apply border-primary-500 text-primary-600;
 }
-
 </style>

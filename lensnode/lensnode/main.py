@@ -23,6 +23,7 @@ from .checkpoint import (
 from .config import load_config
 from .datasource_sync import DataSourceSyncError
 from .datasource_sync import convert_managed_workspace
+from .datasource_sync import delete_datasource_upload
 from .datasource_sync import inspect_datasource_path, list_datasource_files
 from .datasource_sync import sync_datasource
 from .datasource_sync import test_datasource_connection
@@ -619,6 +620,8 @@ class LensNodeClient:
             await self._start_datasource_conversion(message)
         elif message_type == "datasource_upload":
             await self._start_datasource_upload(message)
+        elif message_type == "datasource_upload_delete":
+            await self._handle_datasource_upload_delete(message)
         elif message_type == "datasource_convert_cancel":
             task_id = str(message.get("task_id") or "")
             cancel_event = self.datasource_conversion_cancels.get(task_id)
@@ -912,6 +915,26 @@ class LensNodeClient:
         self._enqueue(
             {
                 "type": "datasource_files_result",
+                "request_id": request_id,
+                "result": result,
+            }
+        )
+
+    async def _handle_datasource_upload_delete(self, message):
+        """Delete one uploaded archive directory and reply with the result."""
+
+        request_id = str(message.get("request_id") or "")
+        try:
+            result = await asyncio.to_thread(
+                delete_datasource_upload,
+                message,
+                self.config.workspace_path,
+            )
+        except DataSourceSyncError as exc:
+            result = {"status": "failed", "error": str(exc)}
+        self._enqueue(
+            {
+                "type": "datasource_upload_delete_result",
                 "request_id": request_id,
                 "result": result,
             }

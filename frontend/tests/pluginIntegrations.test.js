@@ -476,7 +476,7 @@ test('managed workspace setup does not request a credential', async () => {
   assert.match(drawer, /managedWorkspaceDesc/)
   assert.match(
     drawer,
-    /if \(isManagedWorkspace\.value\) \{\s*return onlineLensNodes/
+    /if \(isManagedWorkspace\.value\) \{\s*if \(isFileUpload\.value\) \{[\s\S]*?return onlineLensNodes/
   )
   assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return false/)
 })
