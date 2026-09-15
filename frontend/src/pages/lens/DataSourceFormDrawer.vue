@@ -57,7 +57,7 @@
         </header>
 
     <div v-if="activeStepKey === 'basic'" class="space-y-5">
-      <FormRow :label="t('lensAdmin.fields.name')" required>
+      <FormRow v-if="!isFileUpload" :label="t('lensAdmin.fields.name')" required>
         <input v-model="form.name" class="form-input" required />
       </FormRow>
       <FormRow :label="t('lensAdmin.fields.type')" required>
@@ -77,7 +77,9 @@
     </div>
 
     <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
-      <template v-if="isPluginSourceType(form.source_type)">
+      <template
+        v-if="isPluginSourceType(form.source_type) && !isManagedWorkspace"
+      >
         <FormRow :label="t('lensAdmin.pages.connections.label')" required>
           <div
             class="grid gap-3 sm:grid-cols-2"
@@ -269,11 +271,62 @@
         </FormRow>
       </template>
       <template v-else-if="isManagedWorkspace">
-        <div
-          class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-800"
-        >
+        <div v-if="isFileUpload" class="file-upload-panel">
+          <div class="file-upload-panel-heading">
+            <div class="file-upload-icon">
+              <UploadCloudIcon class="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h4 class="text-sm font-semibold text-ink-900">
+                {{ t('lensAdmin.datasourceWizard.fileUploadPanelTitle') }}
+              </h4>
+              <p class="mt-1 text-xs leading-5 text-ink-500">
+                {{ t('lensAdmin.datasourceWizard.fileUploadDesc') }}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="file-upload-dropzone"
+            :disabled="!form.lensnode_uuid"
+            @click="$emit('upload')"
+          >
+            <UploadCloudIcon class="h-8 w-8 text-brand-500" aria-hidden="true" />
+            <span class="text-sm font-medium text-ink-800">
+              {{ t('lensAdmin.actions.uploadFile') }}
+            </span>
+            <span class="text-xs text-ink-500">
+              {{ t('lensAdmin.datasourceWizard.fileUploadHint') }}
+            </span>
+          </button>
+        </div>
+        <div v-else class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-800">
           {{ t('lensAdmin.datasourceWizard.managedWorkspaceDesc') }}
         </div>
+        <FormRow
+          v-if="!isFileUpload"
+          :label="t('lensAdmin.fields.lensnode')"
+          required
+        >
+          <BaseSelect v-model="form.lensnode_uuid">
+            <option value="">
+              {{ t('lensAdmin.placeholders.selectLensNode') }}
+            </option>
+            <option
+              v-for="node in onlineLensNodes"
+              :key="node.uuid"
+              :value="node.uuid"
+            >
+              {{ node.name }} · {{ node.workspace_path || '/workspace' }}
+            </option>
+          </BaseSelect>
+          <p class="mt-1 text-xs text-ink-500">
+            {{ t('lensAdmin.datasourceWizard.onlineNodeHint') }}
+          </p>
+        </FormRow>
+        <p v-if="!onlineLensNodes.length" class="text-xs text-warning-700">
+          {{ t('lensAdmin.datasourceWizard.noOnlineNodes') }}
+        </p>
       </template>
       <template v-else>
         <FormRow :label="t('lensAdmin.fields.credential')" required>
@@ -1311,10 +1364,12 @@
               !canProceedWizard ||
               (!isManagedWorkspace && connectionResult?.status !== 'success')
             "
-            @click="$emit('save')"
+            @click="isFileUpload ? $emit('upload') : $emit('save')"
           >
             {{
-              mode === 'create'
+              isFileUpload
+                ? t('lensAdmin.actions.uploadFile')
+                : mode === 'create'
                 ? t('lensAdmin.wizard.finish')
                 : t('common.save')
             }}
@@ -1337,6 +1392,7 @@ import {
   LoaderCircle as LoaderCircleIcon,
   Plus as PlusIcon,
   RefreshCw as RefreshCwIcon,
+  UploadCloud as UploadCloudIcon,
   X as XIcon,
   XCircle as XCircleIcon
 } from '@lucide/vue'
@@ -1388,6 +1444,7 @@ const props = defineProps({
 const emit = defineEmits([
   'close',
   'save',
+  'upload',
   'type-change',
   'check-path',
   'test-connection',
@@ -1565,10 +1622,19 @@ const sourceTypes = computed(() => {
     })
   ]
   if (props.mode === 'edit' && props.form.source_type === 'managed_workspace') {
+    const fileUpload = props.form.plugin_key === 'file_upload'
     types.push({
       value: 'managed_workspace',
-      label: t('lensAdmin.datasourceWizard.managedWorkspace'),
-      description: t('lensAdmin.datasourceWizard.managedWorkspaceDesc')
+      label: t(
+        fileUpload
+          ? 'lensAdmin.datasourceWizard.fileUploadTitle'
+          : 'lensAdmin.datasourceWizard.managedWorkspace'
+      ),
+      description: t(
+        fileUpload
+          ? 'lensAdmin.datasourceWizard.fileUploadDesc'
+          : 'lensAdmin.datasourceWizard.managedWorkspaceDesc'
+      )
     })
   }
   if (
@@ -1619,7 +1685,14 @@ const pluginResources = computed(
 )
 
 const isManagedWorkspace = computed(
-  () => props.form.source_type === 'managed_workspace'
+  () =>
+    props.form.source_type === 'managed_workspace' ||
+    localizedPluginManifest.value?.datasource_source_type ===
+      'managed_workspace'
+)
+
+const isFileUpload = computed(
+  () => props.form.plugin_key === 'file_upload'
 )
 
 const wizardStepsMeta = computed(() => {
@@ -1631,8 +1704,12 @@ const wizardStepsMeta = computed(() => {
     },
     {
       key: 'connection',
-      title: t('lensAdmin.datasourceWizard.step2Title'),
-      description: t('lensAdmin.datasourceWizard.step2Desc')
+      title: t(isFileUpload.value
+        ? 'lensAdmin.datasourceWizard.fileUploadTitle'
+        : 'lensAdmin.datasourceWizard.step2Title'),
+      description: t(isFileUpload.value
+        ? 'lensAdmin.datasourceWizard.fileUploadDesc'
+        : 'lensAdmin.datasourceWizard.step2Desc')
     }
   ]
 })
@@ -1762,17 +1839,22 @@ const missingDatasourceFields = computed(() => {
 })
 
 const connectionFieldInvalid = computed(() =>
-  isPluginSourceType(props.form.source_type) && !props.form.connection_uuid
+  isPluginSourceType(props.form.source_type) &&
+  !isManagedWorkspace.value &&
+  !props.form.connection_uuid
 )
 
 const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'basic') {
-    return !!props.form.name?.trim() && !!props.form.source_type
+    return (isFileUpload.value || !!props.form.name?.trim()) &&
+      !!props.form.source_type
   }
   if (activeStepKey.value === 'node') return true
   if (activeStepKey.value === 'connection') {
     if (isManagedWorkspace.value) {
-      return true
+      return onlineLensNodes.value.some(
+        (node) => node.uuid === props.form.lensnode_uuid
+      )
     }
     if (props.connectionResult?.status !== 'success') {
       return false
@@ -2537,5 +2619,21 @@ function datasourceConnectionConfigSignature() {
 
 .directory-name-input {
   @apply h-7 min-w-0 flex-1 rounded border border-line bg-surface px-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+}
+
+.file-upload-panel {
+  @apply space-y-4 rounded-lg border border-line bg-surface p-4;
+}
+
+.file-upload-panel-heading {
+  @apply flex items-start gap-3;
+}
+
+.file-upload-icon {
+  @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-700;
+}
+
+.file-upload-dropzone {
+  @apply flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line bg-surface-sunken px-4 py-8 text-center transition-colors hover:border-brand-200 hover:bg-brand-50/40 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50;
 }
 </style>

@@ -52,10 +52,19 @@ DETAIL_ITEMS_LIMIT = 200
 def _ensure_file_upload_datasource(lensnode_uuid):
     """Create the connectionless file upload datasource once per node."""
 
-    lensnode = LensNode.objects.select_for_update().get(pk=lensnode_uuid)
-    target_path = str(lensnode.workspace_path or "").strip()
-    if not target_path:
+    lensnode = (
+        LensNode.objects.select_for_update().filter(uuid=lensnode_uuid).first()
+    )
+    if lensnode is None:
+        LOGGER.warning(
+            "Skipping file upload datasource setup for unknown LensNode %s",
+            lensnode_uuid,
+        )
         return None
+    workspace_path = str(lensnode.workspace_path or "").strip().rstrip("/")
+    if not workspace_path:
+        return None
+    target_path = f"{workspace_path}/file_uploads"
     datasource, _ = DataSource.objects.get_or_create(
         lensnode=lensnode,
         plugin_key="file_upload",

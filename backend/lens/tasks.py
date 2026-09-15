@@ -432,6 +432,8 @@ def register_datasource_upload_task(
     filename,
     created_by=None,
     metadata=None,
+    byte_size=None,
+    content_type="",
 ):
     """Register a managed workspace upload execution."""
 
@@ -447,6 +449,8 @@ def register_datasource_upload_task(
         "lensnode_name": lensnode.name if lensnode else "",
         "target_path": datasource.target_path,
         "filename": filename,
+        "byte_size": byte_size,
+        "content_type": content_type or "",
         "steps": [],
         "lensnode_connection_id": lensnode.connection_id if lensnode else "",
     }

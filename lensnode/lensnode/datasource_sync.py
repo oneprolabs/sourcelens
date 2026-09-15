@@ -133,7 +133,7 @@ def inspect_datasource_path(command, workspace_path=WORKSPACE_ROOT):
         result["message"] = "Directory will be created during first sync."
         return result
 
-    if not target.is_dir():
+    if command.get("plugin_key") != "file_upload" and not target.is_dir():
         result.update(
             {
                 "source_compatible": False,
@@ -513,7 +513,7 @@ def convert_managed_workspace(
         command.get("target_path"),
         workspace_path,
     )
-    if not target.is_dir():
+    if command.get("plugin_key") != "file_upload" and not target.is_dir():
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
 
     context = _sync_context(command, target)
@@ -698,7 +698,15 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     if command.get("source_type", "managed_workspace") != "managed_workspace":
         raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
     target = normalize_target_path(command.get("target_path"), workspace_path)
-    if not target.is_dir():
+    datasource_root = target
+    upload_root = target
+    if command.get("plugin_key") == "file_upload":
+        datasource_uuid = safe_filename(command.get("datasource_uuid"))
+        if not datasource_uuid:
+            raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
+        datasource_root = Path(workspace_path).resolve() / "datasource" / datasource_uuid
+        datasource_root.mkdir(parents=True, exist_ok=True)
+    if command.get("plugin_key") != "file_upload" and not target.is_dir():
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
     filename = safe_filename(command.get("filename"))
     if not filename:
@@ -716,7 +724,12 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         max_bytes = 50 * 1024 * 1024
     if len(content) > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
-    archive_path = target / filename
+    if command.get("plugin_key") == "file_upload":
+        archive_name = Path(filename).stem
+        upload_root = datasource_root / safe_filename(archive_name)
+        upload_root.mkdir(parents=True, exist_ok=True)
+        target = upload_root
+    target.mkdir(parents=True, exist_ok=True)
     staging = target / ".sourcelens-upload-staging.sourcelens"
     if staging.exists():
         shutil.rmtree(staging)
@@ -730,14 +743,12 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         elif filename.lower().endswith((".tar", ".tar.gz", ".tgz")):
             extracted = _extract_tar_archive(staged_archive, staging, limits)
         previous = target / ".sourcelens-uploaded.sourcelens"
-        if previous.exists():
+        if previous.exists() and command.get("plugin_key") != "file_upload":
             for path in previous.read_text(encoding="utf-8").splitlines():
                 candidate = (target / path).resolve()
                 if candidate.is_file():
                     candidate.unlink()
-        members = [filename] + [
-            path.relative_to(staging).as_posix() for path in extracted
-        ]
+        members = [path.relative_to(staging).as_posix() for path in extracted]
         for member in members:
             source = staging / member
             destination = target / member

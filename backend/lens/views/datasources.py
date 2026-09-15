@@ -668,6 +668,8 @@ class DataSourceViewSet(BaseAdminViewSet):
             task_id,
             filename,
             created_by=request.user,
+            byte_size=uploaded.size,
+            content_type=uploaded.content_type or "",
             metadata={"storage_name": storage_name},
         )
         datasource_upload_task.apply_async(
@@ -848,9 +850,14 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
+        module = (
+            "lens_datasource_upload"
+            if datasource.source_type == DataSource.SourceType.MANAGED_WORKSPACE
+            else "lens_datasource"
+        )
         queryset = (
             TaskExecution.objects.filter(
-                module="lens_datasource",
+                module=module,
                 metadata__datasource_uuid=str(datasource.uuid),
             )
             .select_related("created_by")

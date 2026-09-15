@@ -467,7 +467,7 @@ def test_managed_workspace_upload_extracts_archive_and_converts(
     )
 
     assert result["uploaded"] == "package.zip"
-    assert (target / "package.zip").exists()
+    assert not (target / "package.zip").exists()
     assert (target / "nested" / "guide.pdf").read_bytes() == b"pdf"
 
 
@@ -1867,3 +1867,40 @@ def test_http_json_preserves_network_error(monkeypatch):
         _http_json("https://example.invalid")
 
     assert "TimeoutError" in str(exc.value)
+
+
+def test_file_upload_initializes_directory_and_keeps_multiple_archives(
+    tmp_path, monkeypatch,
+):
+    """File upload initializes storage and retains earlier uploaded files."""
+    target = tmp_path / "file_uploads"
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    for name in ("first", "second"):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr(f"{name}.txt", name)
+        result = upload_managed_workspace(
+            {
+                "plugin_key": "file_upload",
+                "datasource_uuid": "datasource-123",
+                "target_path": str(target),
+                "filename": f"{name}.zip",
+                "content_base64": base64.b64encode(
+                    archive.getvalue()
+                ).decode(),
+            },
+            workspace_path=tmp_path,
+        )
+        assert result["status"] == "success"
+    for name in ("first", "second"):
+        assert not (target / f"{name}.zip").exists()
+        assert (
+            target.parent
+            / "datasource"
+            / "datasource-123"
+            / name
+            / f"{name}.txt"
+        ).read_text() == name

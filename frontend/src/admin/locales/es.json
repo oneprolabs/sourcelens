@@ -1291,7 +1291,24 @@
       "selected": "seleccionados",
       "private": "Privado"
     },
+    "upload": {
+      "records": "Historial de cargas",
+      "title": "Subir archivos",
+      "select": "Seleccionar archivos",
+      "hint": "Selecciona varios ZIP. La carga comienza al guardar.",
+      "limit": "Máximo por archivo: {size}",
+      "count": "{count} archivos seleccionados",
+      "pending": "Pendiente",
+      "uploading": "Cargando",
+      "submitted": "Enviado",
+      "failed": "Error",
+      "remove": "Quitar {name}"
+    },
     "plugins": {
+      "file_upload": {
+        "displayName": "Carga de archivos",
+        "description": "Sube archivos ZIP al espacio de trabajo de un LensNode."
+      },
       "feishu": {
         "displayName": "Feishu",
         "description": "Conecta una app personalizada de Feishu y sincroniza carpetas, documentos, hojas, presentaciones, bases Bitable y páginas wiki accesibles con espacios de trabajo de LensNode.",
@@ -1667,6 +1684,8 @@
       "uploadFile": "Subir archivo",
       "enableDatasource": "Habilitar",
       "disableDatasource": "Desactivar",
+      "disableUpload": "Desactivar cargas",
+      "enableUpload": "Activar cargas",
       "cancelSync": "Cancelar sincronización",
       "viewTask": "Ver tarea",
       "addRow": "Agregar fila",
@@ -1895,6 +1914,11 @@
       "feishu": "Feishu",
       "feishuDesc": "Sincronizar documentos de Feishu o carpetas de Drive en el espacio de trabajo del nodo.",
       "managedWorkspace": "Espacio de trabajo gestionado",
+      "fileUploadTitle": "Carga manual",
+      "fileUploadPanelTitle": "Subir archivos",
+      "fileUploadDesc": "Selecciona un LensNode en línea y sube un archivo ZIP a su fuente de datos de carga de archivos.",
+      "fileUploadUnavailable": "La fuente de datos de carga aún no está lista. Espera a que el nodo se conecte e inténtalo de nuevo.",
+      "fileUploadHint": "Se admiten archivos ZIP y el LensNode los procesa.",
       "managedWorkspaceDesc": "Catalogar un directorio existente gestionado por un sistema externo sin modificar ni sincronizar su contenido.",
       "managedNodeDesc": "Seleccione el LensNode en línea que contiene el directorio gestionado externamente.",
       "managedPathDesc": "Seleccione o ingrese un directorio existente. SourceLens solo lo verificará y catalogará.",

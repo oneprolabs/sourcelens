@@ -490,6 +490,7 @@ def dispatch_datasource_upload_async(
         datasource.lensnode,
         {
             "type": "datasource_upload",
+            "plugin_key": datasource.plugin_key,
             "request_id": request_id,
             "task_id": task_id,
             "datasource_uuid": str(datasource.uuid),

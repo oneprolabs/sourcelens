@@ -274,38 +274,36 @@
                   </p>
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
-                  <BaseButton
-                    v-if="
-                      row.source_type !== 'managed_workspace' &&
-                      !isDataSourceSyncing(row)
-                    "
-                    size="sm"
-                    variant="outline"
-                    :disabled="!isDataSourceEnabled(row)"
-                    @click="sync(row)"
-                    >{{ t('lensAdmin.actions.sync') }}</BaseButton
-                  >
-                  <BaseButton
-                    v-else-if="isDataSourceSyncing(row)"
-                    size="sm"
-                    variant="danger"
-                    :title="t('lensAdmin.actions.cancelSync')"
-                    @click="cancelSync(row)"
-                  >
-                    <span class="sm:hidden">{{ t('common.cancel') }}</span>
-                    <span class="hidden sm:inline">{{
-                      t('lensAdmin.actions.cancelSync')
-                    }}</span>
-                  </BaseButton>
+                  <template v-if="row.source_type !== 'managed_workspace'">
+                    <BaseButton
+                      v-if="!isDataSourceSyncing(row)"
+                      size="sm"
+                      variant="outline"
+                      :disabled="!isDataSourceEnabled(row)"
+                      @click="sync(row)"
+                      >{{ t('lensAdmin.actions.sync') }}</BaseButton
+                    >
+                    <BaseButton
+                      v-else
+                      size="sm"
+                      variant="danger"
+                      :title="t('lensAdmin.actions.cancelSync')"
+                      @click="cancelSync(row)"
+                    >
+                      <span class="sm:hidden">{{ t('common.cancel') }}</span>
+                      <span class="hidden sm:inline">{{
+                        t('lensAdmin.actions.cancelSync')
+                      }}</span>
+                    </BaseButton>
+                  </template>
                   <BaseButton
                     v-else
                     size="sm"
                     variant="outline"
                     @click="refreshAvailability(row)"
-                    >{{
-                      t('lensAdmin.actions.refreshAvailability')
-                    }}</BaseButton
                   >
+                    {{ t('lensAdmin.actions.refreshAvailability') }}
+                  </BaseButton>
                   <BaseButton
                     v-if="row.source_type === 'managed_workspace'"
                     size="sm"
@@ -357,6 +355,7 @@
         :form-error="formError"
         @close="closeDrawer"
         @save="save"
+        @upload="openUploadFromForm"
         @type-change="handleDatasourceTypeChange"
         @check-path="checkDatasourcePath"
         @test-connection="testDatasourceConnection"
@@ -378,12 +377,11 @@
         @toggle-enabled="toggleDataSourceEnabled"
         @upload="openUpload"
       />
-      <input
-        ref="uploadInput"
-        class="hidden"
-        type="file"
-        :accept="uploadAccept"
-        @change="uploadFile"
+      <DataSourceUploadModal
+        :show="showUploadModal"
+        :datasource="uploadTarget"
+        @close="closeUploadModal"
+        @uploaded="handleUploaded"
       />
     </div>
   </AdminLayout>
@@ -416,8 +414,6 @@ import {
   listPlugins,
   scanLensNodeDirs,
   refreshDataSourceAvailability,
-  uploadDataSourceFile,
-  getDataSourceUploadLimits,
   setDataSourceEnabled,
   syncDataSource,
   testLensNodeDataSourceConnection,
@@ -433,6 +429,7 @@ import { pluginDisplayName } from '@/utils/pluginI18n'
 
 import DataSourceDetailDrawer from './DataSourceDetailDrawer.vue'
 import DataSourceFormDrawer from './DataSourceFormDrawer.vue'
+import DataSourceUploadModal from './DataSourceUploadModal.vue'
 import RowActions from './components/RowActions.vue'
 import { EMPTY_VALUE as emptyValue, normalizeList } from './adminHelpers'
 import {
@@ -487,9 +484,8 @@ const pluginManifests = ref({})
 const pluginIconUrls = ref({})
 const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
-const uploadInput = ref(null)
-const uploadDataSource = ref(null)
-const uploadAccept = ['.zip'].join(',')
+const showUploadModal = ref(false)
+const uploadTarget = ref(null)
 
 const datasourceConfig = ref({})
 const datasourcePathResult = ref(null)
@@ -526,7 +522,10 @@ const currentPluginManifest = computed(
 
 const datasourcePlugins = computed(() =>
   plugins.value.filter(
-    (plugin) => plugin.datasource && plugin.datasource_source_type
+    (plugin) =>
+      plugin.datasource &&
+      plugin.datasource_source_type &&
+      plugin.datasource_source_type !== 'managed_workspace'
   )
 )
 
@@ -2161,37 +2160,28 @@ async function refreshAvailability(row) {
 }
 
 function openUpload(row) {
-  uploadDataSource.value = row
-  uploadInput.value?.click()
+  if (!row?.uuid) return
+  uploadTarget.value = row
+  showUploadModal.value = true
 }
 
-async function uploadFile(event) {
-  const file = event.target.files?.[0]
-  const row = uploadDataSource.value
-  event.target.value = ''
-  if (!file || !row) return
-  if (!file.name.toLowerCase().endsWith('.zip')) {
-    showError(t('lensAdmin.messages.uploadZipOnly'))
-    uploadDataSource.value = null
-    return
-  }
-  try {
-    const limits = await getDataSourceUploadLimits()
-    if (file.size > limits.max_bytes) {
-      showError(t('lensAdmin.messages.uploadTooLarge', {
-        size: limits.max_bytes / (1024 * 1024)
-      }))
-      return
-    }
-    const result = await uploadDataSourceFile(row.uuid, file)
-    showSuccess(
-      `${t('lensAdmin.messages.uploadStarted')} (${result.task_id || ''})`
-    )
-    await load()
-  } catch (error) {
-    showError(extractErrorMessage(error, t('lensAdmin.messages.uploadFailed')))
-  } finally {
-    uploadDataSource.value = null
+function openUploadFromForm() {
+  const uuid = form.value.uuid
+  if (!uuid) return
+  const row = dataSources.value.find((item) => item.uuid === uuid)
+  openUpload(row || { uuid, name: form.value.name })
+}
+
+function closeUploadModal() {
+  showUploadModal.value = false
+  uploadTarget.value = null
+}
+
+async function handleUploaded(datasource, allSubmitted) {
+  await load()
+  if (allSubmitted) {
+    showSuccess(t('lensAdmin.messages.uploadStarted'))
+    closeUploadModal()
   }
 }
 

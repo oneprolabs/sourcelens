@@ -1291,7 +1291,24 @@
       "selected": "selected",
       "private": "Private"
     },
+    "upload": {
+      "records": "Upload history",
+      "title": "Upload files",
+      "select": "Select files",
+      "hint": "Select multiple ZIP files. Upload starts when you click Save.",
+      "limit": "Maximum per file: {size}",
+      "count": "{count} files selected",
+      "pending": "Pending",
+      "uploading": "Uploading",
+      "submitted": "Submitted",
+      "failed": "Failed",
+      "remove": "Remove {name}"
+    },
     "plugins": {
+      "file_upload": {
+        "displayName": "File upload",
+        "description": "Upload files or archives to a LensNode workspace and process them through the standard datasource pipeline."
+      },
       "feishu": {
         "displayName": "Feishu",
         "description": "Connect a Feishu custom app and sync accessible Drive folders, documents, sheets, slides, Bitable bases, and wiki pages into LensNode workspaces.",
@@ -1667,6 +1684,8 @@
       "uploadFile": "Upload file",
       "enableDatasource": "Resume sync",
       "disableDatasource": "Pause sync",
+      "disableUpload": "Disable uploads",
+      "enableUpload": "Enable uploads",
       "cancelSync": "Cancel Sync",
       "viewTask": "View Task",
       "addRow": "Add row",
@@ -1895,6 +1914,11 @@
       "feishu": "Feishu",
       "feishuDesc": "Sync Feishu documents or Drive folders into the node workspace.",
       "managedWorkspace": "Managed Workspace",
+      "fileUploadTitle": "Manual upload",
+      "fileUploadPanelTitle": "Upload files",
+      "fileUploadDesc": "Select an online LensNode and upload a ZIP file to its file upload datasource.",
+      "fileUploadUnavailable": "The file upload datasource is not ready. Wait for the node to connect and try again.",
+      "fileUploadHint": "ZIP files are supported and processed by the LensNode.",
       "managedWorkspaceDesc": "Catalog an existing directory managed by an external system without modifying or synchronizing its contents.",
       "managedNodeDesc": "Select the online LensNode that contains the externally managed directory.",
       "managedPathDesc": "Select or enter an existing directory. SourceLens will only check and catalog it.",

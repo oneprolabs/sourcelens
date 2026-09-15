@@ -471,7 +471,7 @@
         </div>
       </div>
       <div v-show="activeTab === 'files'" class="space-y-4">
-        <div class="flex flex-wrap gap-2">
+        <div class="ml-auto flex flex-wrap gap-2">
           <input
             v-model="fileQuery"
             class="min-w-48 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-primary-500"
@@ -578,6 +578,7 @@
     <template v-if="datasource" #footer>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <BaseButton
+          v-if="datasource.source_type !== 'managed_workspace'"
           variant="outline"
           @click="$emit('toggle-enabled', datasource)"
         >
@@ -589,19 +590,13 @@
         </BaseButton>
         <div class="flex flex-wrap gap-2">
           <BaseButton
-            v-if="datasource.source_type === 'managed_workspace'"
-            variant="outline"
-            @click="$emit('upload', datasource)"
-            >{{ t('lensAdmin.actions.uploadFile') }}</BaseButton
-          >
-          <BaseButton
-            v-else-if="isDataSourceSyncing(datasource)"
+            v-if="datasource.source_type !== 'managed_workspace' && isDataSourceSyncing(datasource)"
             variant="danger"
             @click="$emit('cancel-sync', datasource)"
             >{{ t('lensAdmin.actions.cancelSync') }}</BaseButton
           >
           <BaseButton
-            v-else
+            v-else-if="datasource.source_type !== 'managed_workspace'"
             variant="outline"
             :disabled="datasource.status !== 'active'"
             @click="$emit('sync', datasource)"

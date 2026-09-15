@@ -5968,6 +5968,55 @@ class LensApiTests(TestCase):
         self.assertEqual(task.created_by, self.user)
         self.assertEqual(task.metadata["filename"], "requirements.pdf")
 
+    def test_upload_history_records_files_and_excludes_other_sources(self):
+        """Keep file metadata and processing state scoped to the datasource."""
+        datasource = DataSource.objects.create(
+            name="Upload history",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/file_uploads",
+        )
+        with (
+            patch(
+                "lens.views.datasources.default_storage.save",
+                return_value="uploads/test.zip",
+            ),
+            patch("lens.views.datasources.datasource_upload_task.apply_async"),
+        ):
+            for name in ("first.zip", "second.zip"):
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}/upload/",
+                    {"file": SimpleUploadedFile(
+                        name, b"archive", content_type="application/zip",
+                    )},
+                    format="multipart",
+                )
+                self.assertEqual(response.status_code, 202, response.data)
+                task = TaskExecution.objects.get(
+                    task_id=response.data["task_id"],
+                )
+                self.assertEqual(task.metadata["filename"], name)
+                self.assertEqual(task.metadata["byte_size"], 7)
+                self.assertEqual(
+                    task.metadata["content_type"], "application/zip",
+                )
+                self.assertEqual(task.created_by, self.user)
+                self.assertIsNotNone(task.created_at)
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/sync-tasks/",
+            {"metadata_fields": "filename,byte_size,content_type"},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        payload = response.data
+        rows = payload["results"] if isinstance(payload, dict) else payload
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(
+            {row["metadata"]["filename"] for row in rows},
+            {"first.zip", "second.zip"},
+        )
+        self.assertTrue(all(row["status"] == "PENDING" for row in rows))
+
     def test_datasource_upload_rejects_unsupported_source_and_file(self):
         unsupported = SimpleUploadedFile(
             "notes.txt",
