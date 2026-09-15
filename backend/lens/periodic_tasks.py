@@ -1,4 +1,8 @@
+import hashlib
+from datetime import timedelta
+
 from core.periodic_registry import TASK_REGISTRY
+from django.utils import timezone
 
 from .models import DataSource, GlobalSetting, ScheduledTask
 
@@ -119,6 +123,9 @@ def ensure_datasource_periodic_task(datasource):
 
     schedule_field, schedule = _datasource_schedule(datasource.sync_policy)
     name = f"lens-source-sync-{datasource.uuid}"
+    digest = hashlib.sha256(str(datasource.uuid).encode()).digest()
+    jitter_seconds = int.from_bytes(digest[:2], "big") % 1201 - 600
+    start_time = timezone.now() + timedelta(seconds=jitter_seconds)
     task, created = PeriodicTask.objects.get_or_create(
         name=name,
         defaults={
@@ -127,12 +134,16 @@ def ensure_datasource_periodic_task(datasource):
             "args": f'["{datasource.uuid}"]',
             "queue": "lens",
             "enabled": True,
+            "start_time": start_time,
         },
     )
     changed = created
     expected_args = f'["{datasource.uuid}"]'
     update_fields = []
     if not created:
+        if task.start_time is None:
+            task.start_time = start_time
+            update_fields.append("start_time")
         if task.task != "lens.source_sync":
             task.task = "lens.source_sync"
             update_fields.append("task")
