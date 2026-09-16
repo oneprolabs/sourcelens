@@ -318,7 +318,9 @@
                   v-if="activeSection === 'notifications'"
                 />
 
-                <AgentAccessSettings v-if="activeSection === 'agent-access'" />
+                <AgentIntegrationSettings
+                  v-if="activeSection === 'agent-integration'"
+                />
 
                 <ReleaseNotesSettings
                   v-if="activeSection === 'release-notes'"
@@ -339,7 +341,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AnswerNotificationSettings from '@/components/settings/AnswerNotificationSettings.vue'
-import AgentAccessSettings from '@/components/settings/AgentAccessSettings.vue'
+import AgentIntegrationSettings from '@/components/settings/AgentIntegrationSettings.vue'
 import PasswordChangeSettings from '@/components/settings/PasswordChangeSettings.vue'
 import ReleaseNotesSettings from '@/components/settings/ReleaseNotesSettings.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -444,8 +446,8 @@ const sections = computed(() => [
     icon: BellIcon
   },
   {
-    key: 'agent-access',
-    label: t('settings.modal.agentAccess'),
+    key: 'agent-integration',
+    label: t('settings.modal.agentIntegration'),
     icon: TerminalIcon
   },
   {
