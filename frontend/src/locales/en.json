@@ -755,7 +755,7 @@
       "agentAccessValidity": "Token validity",
       "agentAccessValidityDesc": "Choose how long a newly generated token stays valid.",
       "agentAccessValidityMonths": "{months} months",
-      "agentAccessPrompt": "Install and configure the SourceLens Q&A MCP integration (Codex / Claude) on this machine:\n\n1. Run the installer: npx github:oneprolabs/sourcelens-client install\n2. Endpoint (env SOURCELENS_MCP_URL): {url}\n3. Access token: {token}\n4. Write the endpoint and token into the agent's local config (env var or config file) following its conventions; do not commit the token to version control.\n5. Verify the read-only tools sourcelens_ask and sourcelens_search work.\n\nToken expires {date}.",
+      "agentAccessPrompt": "Install and configure the SourceLens Q&A MCP integration (Codex / Claude) on this machine:\n\n1. Run the installer with the endpoint and access token (it writes ~/.config/sourcelens/env and registers the MCP server): npx sourcelens-agent-kit install --url {url} --api-key {token}\n2. Do not commit the token to version control.\n3. Verify the install: `sourcelens ping` should confirm the MCP endpoint and its read-only tools respond, and `sourcelens assistants` should list the available assistants. Neither starts a Q&A run.\n\nToken expires {date}.",
       "allAssistants": "All Assistants",
       "switchAssistantTitle": "Switch assistant",
       "switchAssistantDesc": "Switch to another assistant",

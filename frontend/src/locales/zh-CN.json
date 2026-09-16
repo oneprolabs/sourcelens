@@ -755,7 +755,7 @@
       "agentAccessValidity": "令牌有效期",
       "agentAccessValidityDesc": "选择新令牌的有效时长，重新生成后生效。",
       "agentAccessValidityMonths": "{months} 个月",
-      "agentAccessPrompt": "请在本机安装并配置 SourceLens 问答的 MCP 集成（Codex / Claude）：\n\n1. 运行安装器：npx github:oneprolabs/sourcelens-client install\n2. 服务地址（环境变量 SOURCELENS_MCP_URL）：{url}\n3. 访问令牌：{token}\n4. 按该智能体的约定把地址与令牌写入本地配置（环境变量或配置文件），不要把令牌提交到版本库。\n5. 验证只读工具 sourcelens_ask 和 sourcelens_search 可以正常调用。\n\n令牌有效期至 {date}。",
+      "agentAccessPrompt": "请在本机安装并配置 SourceLens 问答的 MCP 集成（Codex / Claude）：\n\n1. 运行安装器并传入服务地址与访问令牌（安装器会写入 ~/.config/sourcelens/env 并自动注册 MCP 服务）：npx sourcelens-agent-kit install --url {url} --api-key {token}\n2. 不要把令牌提交到版本库。\n3. 验证安装：`sourcelens ping` 应确认 MCP 端点及其只读工具可正常响应，`sourcelens assistants` 应能列出可用助手。两者都不会发起问答。\n\n令牌有效期至 {date}。",
       "allAssistants": "全部助手",
       "switchAssistantTitle": "切换助手",
       "switchAssistantDesc": "切换到其他助手",

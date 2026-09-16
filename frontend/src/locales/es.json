@@ -755,7 +755,7 @@
       "agentAccessValidity": "Validez del token",
       "agentAccessValidityDesc": "Elige cuánto tiempo es válido un token recién generado.",
       "agentAccessValidityMonths": "{months} meses",
-      "agentAccessPrompt": "Instala y configura la integración MCP de SourceLens Q&A (Codex / Claude) en esta máquina:\n\n1. Ejecuta el instalador: npx github:oneprolabs/sourcelens-client install\n2. Dirección del servicio (variable SOURCELENS_MCP_URL): {url}\n3. Token de acceso: {token}\n4. Escribe la dirección y el token en la configuración local del agente (variable de entorno o archivo de configuración) según sus convenciones; no subas el token al control de versiones.\n5. Verifica que las herramientas de solo lectura sourcelens_ask y sourcelens_search funcionen.\n\nEl token caduca el {date}.",
+      "agentAccessPrompt": "Instala y configura la integración MCP de SourceLens Q&A (Codex / Claude) en esta máquina:\n\n1. Ejecuta el instalador con la dirección del servicio y el token de acceso (escribe ~/.config/sourcelens/env y registra el servidor MCP): npx sourcelens-agent-kit install --url {url} --api-key {token}\n2. No subas el token al control de versiones.\n3. Verifica la instalación: `sourcelens ping` debe confirmar que el endpoint MCP y sus herramientas de solo lectura responden, y `sourcelens assistants` debe listar los asistentes disponibles. Ninguno inicia una consulta.\n\nEl token caduca el {date}.",
       "allAssistants": "Todos los asistentes",
       "switchAssistantTitle": "Cambiar asistente",
       "switchAssistantDesc": "Cambiar a otro asistente",
