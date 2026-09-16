@@ -168,16 +168,16 @@ def load_config():
             os.getenv("LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS", "1")
         ),
         summary_trigger_tokens=int(
-            os.getenv("LENSNODE_SUMMARY_TRIGGER_TOKENS", "48000")
+            os.getenv("LENSNODE_SUMMARY_TRIGGER_TOKENS", "32000")
         ),
         summary_keep_tokens=int(
-            os.getenv("LENSNODE_SUMMARY_KEEP_TOKENS", "16000")
+            os.getenv("LENSNODE_SUMMARY_KEEP_TOKENS", "12000")
         ),
         context_window_tokens=int(
             os.getenv("LENSNODE_CONTEXT_WINDOW_TOKENS", "128000")
         ),
         summary_trigger_ratio=float(
-            os.getenv("LENSNODE_SUMMARY_TRIGGER_RATIO", "0.75")
+            os.getenv("LENSNODE_SUMMARY_TRIGGER_RATIO", "0.5")
         ),
         token_budget_max_tokens=int(
             os.getenv("LENSNODE_TOKEN_BUDGET_MAX_TOKENS", "200000")

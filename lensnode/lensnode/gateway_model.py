@@ -496,6 +496,7 @@ class LensGatewayChatModel(BaseChatModel):
         if kwargs.get("runtime_final_synthesis"):
             payload.pop("tools", None)
             payload.pop("tool_choice", None)
+            payload["runtime_final_synthesis"] = True
         completed_plan_followup = _follows_completed_plan(messages)
         if completed_plan_followup:
             payload.pop("tools", None)
