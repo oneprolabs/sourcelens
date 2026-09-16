@@ -1,0 +1,4 @@
+type: feature
+audience: user
+en: Added read-only SourceLens Q&A access for external coding agents through an authenticated MCP gateway.
+zh-CN: 新增通过鉴权 MCP 网关为外部编码 Agent 提供只读 SourceLens 问答能力。
