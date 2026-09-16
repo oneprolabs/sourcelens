@@ -2,7 +2,7 @@
 
 SourceLens Q&A is delivered to external coding agents as a shared Skill plus
 a read-only MCP contract. The client package now lives in the sibling
-`../sourcelens-client` repository; this document remains the server integration
+`../sourcelens-agent-kit` repository; this document remains the server integration
 contract.
 
 ## Boundary
@@ -86,10 +86,11 @@ today.
 
 The gateway reuses the platform JWT authentication. Coding agents cannot run
 the interactive refresh flow, so the user mints a long-lived access token once
-from the web app (User settings -> MCP Clients) through
-`POST /api/v1/auth/mcp/token`. The token carries a `scope=mcp` claim and lives
-for `MCP_TOKEN_LIFETIME_DAYS` days (default 30, non-positive disables the
-endpoint); the client sends it as `Authorization: Bearer <token>`.
+from the web app (User settings -> Agent Access) through
+`POST /api/v1/auth/mcp/token`. The request body may carry `lifetime_months`
+(one of 1, 3, 6); omitting it falls back to `MCP_TOKEN_LIFETIME_DAYS` days
+(default 30, non-positive disables the endpoint). The token carries a
+`scope=mcp` claim and is sent as `Authorization: Bearer <token>`.
 
 The token resolves to the owning user, so assistant access, quotas, and
 per-user run isolation are unchanged. It is shown only once and must never be
