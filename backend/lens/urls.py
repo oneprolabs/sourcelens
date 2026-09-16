@@ -108,6 +108,13 @@ router.register(
 )
 
 urlpatterns = [
+    path("mcp/qa/", SourceLensQAMCPView.as_view(), name="lens-mcp-qa"),
+    path("mcp/", SourceLensQAMCPRPCView.as_view(), name="lens-mcp-rpc"),
+    path(
+        "mcp/qa/<uuid:uuid>/",
+        SourceLensQAMCPResultView.as_view(),
+        name="lens-mcp-qa-result",
+    ),
     path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),
     path(
         "plugin-runtime/tool-snapshots/",

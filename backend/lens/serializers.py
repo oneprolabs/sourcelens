@@ -4352,6 +4352,14 @@ class SessionCreateSerializer(serializers.Serializer):
         return attrs
 
 
+def _validated_request_source(data):
+    """Normalize optional request origin data without granting privileges."""
+
+    from lens.mcp_qa import validate_request_source
+
+    return validate_request_source(data.get("request_source"))
+
+
 class RunCreateSerializer(serializers.Serializer):
     """Run creation payload."""
 
@@ -4361,6 +4369,7 @@ class RunCreateSerializer(serializers.Serializer):
         default="",
         max_length=CLARIFICATION_MAX_ORIGINAL_CHARS,
     )
+    request_source = serializers.JSONField(required=False)
     idempotency_key = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -4472,6 +4481,7 @@ class RunCreateSerializer(serializers.Serializer):
                 routing_assistant_uuid=validated_data.get("routing_assistant_uuid"),
                 routing_assistant_uuids=validated_data.get("routing_assistant_uuids"),
                 agent_rounds=validated_data.get("agent_rounds"),
+                request_source=_validated_request_source(validated_data),
             )
         except AssistantNotRunnableError:
             raise PermissionDenied("You do not have access to this assistant.")

@@ -1100,6 +1100,7 @@ def create_execution_run(
     routing_assistant_uuid=None,
     routing_assistant_uuids=None,
     agent_rounds=None,
+    request_source=None,
 ):
     """Create a queued run for LensNode execution."""
 
@@ -1253,6 +1254,8 @@ def create_execution_run(
     document_count = len(documents)
     execution = run.execution
     runtime_snapshot = dict(execution.runtime_snapshot or {})
+    if request_source:
+        runtime_snapshot["request_source"] = request_source
     runtime_snapshot["session_attachment_uuids"] = [
         item["uuid"] for item in selected_context if item["kind"] == "image"
     ]
