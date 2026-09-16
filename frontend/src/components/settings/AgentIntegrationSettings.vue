@@ -83,7 +83,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { generateMcpToken } from '@/api/auth'
+import { generateAgentToken } from '@/api/auth'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
@@ -122,12 +122,12 @@ async function generatePrompt() {
   generating.value = true
   try {
     const payload = extractResponseData(
-      await generateMcpToken(lifetimeMonths.value)
+      await generateAgentToken(lifetimeMonths.value)
     )
     expiresAt.value = payload.expires_at
     copied.value = false
     prompt.value = t('settings.modal.agentIntegrationPrompt', {
-      url: `${publicBaseUrl()}/api/lens/mcp/`,
+      url: publicBaseUrl(),
       token: payload.access,
       date: date.value
     })

@@ -48,6 +48,7 @@ from lens.models import (
     GlobalSetting,
     LensNode,
     MCPServer,
+    Message,
     MessageAttachment,
     PluginInvocation,
     Run,
@@ -5401,6 +5402,40 @@ class LensApiTests(TestCase):
         response = self.client.get(f"/api/lens/runs/{run_response.data['uuid']}/")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_run_detail_exposes_completed_answer_text(self):
+        session_response = self.client.post(
+            "/api/lens/sessions/",
+            {"assistant_uuid": str(self.assistant.uuid)},
+            format="json",
+        )
+        run_response = self.client.post(
+            f"/api/lens/sessions/{session_response.data['uuid']}/runs/",
+            {
+                "question": "What is the answer?",
+                "idempotency_key": "run-answer",
+                "enqueue": False,
+            },
+            format="json",
+        )
+        run = Run.objects.get(uuid=run_response.data["uuid"])
+        self.assertEqual(run_response.data["answer"], "")
+
+        answer = Message.objects.create(
+            session=run.session,
+            role=Message.Role.ASSISTANT,
+            content="The answer is 42.",
+            run=run,
+            sequence=1000,
+        )
+        run.output_message = answer
+        run.status = Run.Status.DONE
+        run.save(update_fields=["output_message", "status", "updated_at"])
+
+        response = self.client.get(f"/api/lens/runs/{run.uuid}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "The answer is 42.")
 
     def test_running_run_can_be_cancelled(self):
         session_response = self.client.post(

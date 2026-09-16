@@ -1,17 +1,17 @@
 """Minimal Django settings for accounts API tests."""
 
 from core.settings.rest import (  # noqa: F401
-    MCP_TOKEN_ALLOWED_ROUTES as PRODUCTION_MCP_TOKEN_ALLOWED_ROUTES,
+    AGENT_TOKEN_ALLOWED_ROUTES as PRODUCTION_AGENT_TOKEN_ALLOWED_ROUTES,
 )
-from core.settings.rest import MCP_TOKEN_DAYS_PER_MONTH  # noqa: F401
-from core.settings.rest import MCP_TOKEN_LIFETIME_DAYS  # noqa: F401
+from core.settings.rest import AGENT_TOKEN_DAYS_PER_MONTH  # noqa: F401
+from core.settings.rest import AGENT_TOKEN_LIFETIME_DAYS  # noqa: F401
 from core.settings.rest import (  # noqa: F401
-    MCP_TOKEN_LIFETIME_MONTHS_OPTIONS,
+    AGENT_TOKEN_LIFETIME_MONTHS_OPTIONS,
 )
 
 # Exercise the production allowlist plus one route that exists in the
 # accounts test URL conf, so the confinement is testable here.
-MCP_TOKEN_ALLOWED_ROUTES = PRODUCTION_MCP_TOKEN_ALLOWED_ROUTES + (
+AGENT_TOKEN_ALLOWED_ROUTES = PRODUCTION_AGENT_TOKEN_ALLOWED_ROUTES + (
     ("GET", r"/api/v1/auth/probe"),
 )
 
@@ -57,7 +57,7 @@ SITE_ID = 1
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "accounts.authentication.MCPRestrictedJWTAuthentication",
+        "accounts.authentication.AgentRestrictedJWTAuthentication",
     ),
     "DEFAULT_PARSER_CLASSES": (
         "djangorestframework_camel_case.parser.CamelCaseJSONParser",

@@ -755,7 +755,7 @@
       "agentIntegrationValidity": "Validez del token",
       "agentIntegrationValidityDesc": "Elige cuánto tiempo es válido un token recién generado.",
       "agentIntegrationValidityMonths": "{months} meses",
-      "agentIntegrationPrompt": "Instala y configura la integración MCP de SourceLens Q&A en esta máquina:\n\n1. Ejecuta el instalador con la dirección del servicio y el token de acceso (escribe ~/.config/sourcelens/env y registra el servidor MCP): npx sourcelens-agent-kit install --url {url} --api-key {token}\n2. No subas el token al control de versiones.\n3. Verifica la instalación: `sourcelens ping` debe confirmar que el endpoint MCP y sus herramientas de solo lectura responden, y `sourcelens assistants` debe listar los asistentes disponibles. Ninguno inicia una consulta.\n\nEl token caduca el {date}.",
+      "agentIntegrationPrompt": "Instala y configura la integración de agente de SourceLens Q&A en esta máquina:\n\n1. Ejecuta el instalador con la dirección del servicio y el token de acceso (escribe ~/.config/sourcelens/env y añade el comando sourcelens al PATH): npx sourcelens-agent-kit install --url {url} --api-key {token}\n2. No subas el token al control de versiones.\n3. Verifica la instalación: `sourcelens ping` debe confirmar que el servicio responde, y `sourcelens assistants` debe listar los asistentes disponibles. Ninguno inicia una consulta.\n\nEl token caduca el {date}.",
       "allAssistants": "Todos los asistentes",
       "switchAssistantTitle": "Cambiar asistente",
       "switchAssistantDesc": "Cambiar a otro asistente",

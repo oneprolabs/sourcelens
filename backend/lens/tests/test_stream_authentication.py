@@ -11,7 +11,7 @@ from lens.views.base import _authenticate_stream_request
 
 
 class StreamAuthenticationTests(SimpleTestCase):
-    """Native streams must enforce MCP scope before user permissions."""
+    """Native streams must enforce agent scope before user permissions."""
 
     paths = (
         "/api/lens/runs/00000000-0000-0000-0000-000000000001/stream/",
@@ -37,10 +37,10 @@ class StreamAuthenticationTests(SimpleTestCase):
         token = AccessToken()
         token["user_id"] = 1
         if scoped:
-            token["scope"] = "mcp"
+            token["scope"] = "agent"
         return str(token)
 
-    def test_mcp_tokens_receive_http_403_on_both_streams(self):
+    def test_agent_tokens_receive_http_403_on_both_streams(self):
         """A scope rejection is a forbidden response, not a server error."""
 
         for path in self.paths:

@@ -1,22 +1,34 @@
 # SourceLens Q&A distribution
 
-SourceLens Q&A is delivered to external coding agents as a shared Skill plus
-a read-only MCP contract. The client package now lives in the sibling
-`../sourcelens-agent-kit` repository; this document remains the server integration
-contract.
+SourceLens Q&A is delivered to external coding agents as a shared Skill plus a
+read-only REST contract. The client package lives in the sibling
+`../sourcelens-agent-kit` repository; this document remains the server
+integration contract.
 
 ## Boundary
 
-The client package exposes only `sourcelens_ask` and `sourcelens_search`.
-Workspace, assistant, connection, datasource, user, and plugin management are
-not part of this interface; assistant listing is exposed read-only so the
-client can choose one. The MCP gateway enforces user identity,
-workspace/assistant bindings, connection scopes, quotas, and audit logging on
-every request.
+The client exposes only an ask operation. Workspace, assistant, connection,
+datasource, user, and plugin management are not part of this interface;
+assistant listing is exposed read-only so the client can choose one. The
+platform enforces user identity, workspace/assistant bindings, connection
+scopes, quotas, and audit logging on every request.
+
+There is no dedicated Q&A gateway. The client drives the ordinary session and
+run endpoints:
+
+```
+POST /api/lens/sessions/                 { assistant_uuid }
+POST /api/lens/sessions/<uuid>/runs/     { question, request_source }
+GET  /api/lens/runs/<uuid>/              -> status, answer, citations
+GET  /api/lens/assistants/               -> assistant catalog
+```
+
+`Run.answer` is the completed answer text (empty until the run finishes), so a
+single run poll yields status, answer, and citations.
 
 ## Assistant discovery and routing
 
-Both MCP tools require an `assistant_uuid`, so the client has to choose an
+Every run requires an `assistant_uuid`, so the client has to choose an
 assistant before it can ask anything. Two read-only endpoints support that
 choice:
 
@@ -32,8 +44,8 @@ is limited to configured directories; it carries no credentials and no
 workspace paths. Localize it with `Accept-Language` (`en`, `zh`, `es`).
 
 The local agent reads every candidate's `routing_description` together with
-`datasource_bindings`, picks one assistant, then calls the MCP tool. Selection
-stays client-side; the gateway only authorizes the assistant it is handed.
+`datasource_bindings`, picks one assistant, then creates the run. Selection
+stays client-side; the server only authorizes the assistant it is handed.
 
 ## Citations
 
@@ -73,24 +85,24 @@ found" about one term suppressed the citations of a fully grounded reply.
 
 ## Host integration
 
-Codex and Claude use the same `SKILL.md` and MCP descriptor, while their host
-configuration files remain client-specific. The installer copies the package
-to the conventional local Skill directory; the host setup registers the HTTPS
-endpoint from `SOURCELENS_MCP_URL`.
+Codex and Claude use the same `SKILL.md`, while their host configuration files
+remain client-specific. The installer copies the package to the conventional
+local Skill directory and adds the `sourcelens` CLI to `PATH`; there is no MCP
+server to register. The CLI reads the service base URL from
+`SOURCELENS_BASE_URL` and talks to the REST endpoints above.
 
-The gateway must eventually support browser/device authentication and issue a
-short-lived session for the MCP connection. See Authentication for what ships
-today.
+A future hosted flow could support browser/device authentication and a
+short-lived session. See Authentication for what ships today.
 
 ## Authentication
 
-The gateway reuses the platform JWT authentication. Coding agents cannot run
+The service reuses the platform JWT authentication. Coding agents cannot run
 the interactive refresh flow, so the user mints a long-lived access token once
 from the web app (User settings -> Agent Integration) through
-`POST /api/v1/auth/mcp/token`. The request body may carry `lifetime_months`
-(one of 1, 3, 6); omitting it falls back to `MCP_TOKEN_LIFETIME_DAYS` days
+`POST /api/v1/auth/agent/token`. The request body may carry `lifetime_months`
+(one of 1, 3, 6); omitting it falls back to `AGENT_TOKEN_LIFETIME_DAYS` days
 (default 30, non-positive disables the endpoint). The token carries a
-`scope=mcp` claim and is sent as `Authorization: Bearer <token>`.
+`scope=agent` claim and is sent as `Authorization: Bearer <token>`.
 
 The token resolves to the owning user, so assistant access, quotas, and
 per-user run isolation are unchanged. It is shown only once and must never be
@@ -98,25 +110,20 @@ embedded in the package.
 
 ### Scope enforcement
 
-`scope=mcp` is enforced by `accounts.authentication.MCPRestrictedJWTAuthentication`,
-which runs on every DRF request. A token carrying the claim may reach only the
-routes in `MCP_TOKEN_ALLOWED_ROUTES`:
+`scope=agent` is enforced by
+`accounts.authentication.AgentRestrictedJWTAuthentication`, which runs on every
+DRF request. A token carrying the claim may reach only the routes in
+`AGENT_TOKEN_ALLOWED_ROUTES`:
 
 ```
-POST /api/lens/mcp/            POST /api/lens/mcp/qa/
-GET  /api/lens/mcp/qa/<uuid>/  GET  /api/lens/assistants/[<uuid>/]
+POST /api/lens/sessions/                    POST /api/lens/sessions/<uuid>/runs/
+GET  /api/lens/runs/<uuid>/                 GET  /api/lens/assistants/[<uuid>/]
 ```
 
-Everything else is refused with `403 MCP_TOKEN_SCOPE_RESTRICTED`, including
+Everything else is refused with `403 AGENT_TOKEN_SCOPE_RESTRICTED`, including
 reads of admin endpoints and any write. Tokens without the claim (web sessions,
 ordinary access tokens) are unaffected. Update the setting when the client
 needs another read-only route.
-
-The MCP transport (`/api/lens/mcp/`) answers with a bare JSON-RPC envelope, not
-the platform's `code`/`message`/`data` wrapper: MCP clients reject the wrapper
-during the `initialize` handshake. `SourceLensQAMCPRPCView` therefore sets
-`renderer_classes = [JSONRenderer]`. `/api/lens/mcp/qa/<uuid>/` stays on the
-platform envelope — it is polled by the client CLI, not by an MCP client.
 
 SimpleJWT blacklisting is not enabled, so an issued token cannot be revoked
 individually before it expires. A dedicated, revocable API key is the planned

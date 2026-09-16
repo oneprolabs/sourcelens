@@ -1,4 +1,4 @@
-"""Long-lived MCP client token issuance tests."""
+"""Long-lived agent client token issuance tests."""
 
 from datetime import timedelta
 
@@ -9,20 +9,20 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
-from accounts.authentication import mcp_token_route_allowed
+from accounts.authentication import agent_token_route_allowed
 
-TOKEN_URL = "/api/v1/auth/mcp/token"
+TOKEN_URL = "/api/v1/auth/agent/token"
 
 
 @override_settings(ROOT_URLCONF="accounts.tests.urls")
-class McpTokenTests(TestCase):
-    """Mint a long-lived, MCP-scoped access token for authenticated users."""
+class AgentTokenTests(TestCase):
+    """Mint a long-lived, agent-scoped access token for authenticated users."""
 
     def setUp(self):
         """Create an authenticated client for one user."""
         self.user = User.objects.create_user(
-            username="mcp-user",
-            email="mcp-user@example.com",
+            username="agent-user",
+            email="agent-user@example.com",
             password="Original7Qx9",
         )
         self.client = APIClient()
@@ -34,13 +34,13 @@ class McpTokenTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_returns_long_lived_mcp_scoped_token(self):
-        """The minted token carries the MCP scope and the long lifetime."""
+    def test_returns_long_lived_agent_scoped_token(self):
+        """The minted token carries the agent scope and the long lifetime."""
         response = self.client.post(TOKEN_URL)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["token_type"], "Bearer")
-        self.assertEqual(response.data["scope"], "mcp")
+        self.assertEqual(response.data["scope"], "agent")
         self.assertEqual(
             response.data["expires_in"],
             int(timedelta(days=30).total_seconds()),
@@ -48,12 +48,12 @@ class McpTokenTests(TestCase):
 
         token = AccessToken(response.data["access"])
         self.assertEqual(token["user_id"], self.user.pk)
-        self.assertEqual(token["scope"], "mcp")
+        self.assertEqual(token["scope"], "agent")
         self.assertEqual(token["token_type"], "access")
 
     def test_custom_lifetime_is_honored(self):
-        """MCP_TOKEN_LIFETIME_DAYS overrides the default lifetime."""
-        with override_settings(MCP_TOKEN_LIFETIME_DAYS=7):
+        """AGENT_TOKEN_LIFETIME_DAYS overrides the default lifetime."""
+        with override_settings(AGENT_TOKEN_LIFETIME_DAYS=7):
             response = self.client.post(TOKEN_URL)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -86,7 +86,7 @@ class McpTokenTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(
-            response.data["error"], "MCP_TOKEN_INVALID_LIFETIME"
+            response.data["error"], "AGENT_TOKEN_INVALID_LIFETIME"
         )
 
     def test_expires_at_matches_lifetime(self):
@@ -98,13 +98,13 @@ class McpTokenTests(TestCase):
         ).total_seconds()
         self.assertAlmostEqual(response.data["expires_at"], expected, delta=10)
 
-    @override_settings(MCP_TOKEN_LIFETIME_DAYS=0)
+    @override_settings(AGENT_TOKEN_LIFETIME_DAYS=0)
     def test_disabled_lifetime_rejects_issuance(self):
         """A non-positive lifetime turns the endpoint off."""
         response = self.client.post(TOKEN_URL)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data["error"], "MCP_TOKEN_DISABLED")
+        self.assertEqual(response.data["error"], "AGENT_TOKEN_DISABLED")
 
     def test_minted_token_authenticates_allowlisted_routes(self):
         """The token authenticates the read-only routes it is scoped to."""
@@ -126,13 +126,13 @@ class McpTokenTests(TestCase):
         response = client.get("/api/v1/auth/user")
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data["detail"], "MCP_TOKEN_SCOPE_RESTRICTED")
+        self.assertEqual(response.data["detail"], "AGENT_TOKEN_SCOPE_RESTRICTED")
         self.assertEqual(
-            response.data["detail"].code, "mcp_token_scope_restricted"
+            response.data["detail"].code, "agent_token_scope_restricted"
         )
 
     def test_unscoped_token_keeps_full_user_access(self):
-        """A normal access token is unaffected by the MCP confinement."""
+        """A normal access token is unaffected by the agent confinement."""
         token = str(AccessToken.for_user(self.user))
 
         client = APIClient()
@@ -142,16 +142,17 @@ class McpTokenTests(TestCase):
         self.assertNotEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class McpTokenRouteAllowlistTests(SimpleTestCase):
+class AgentTokenRouteAllowlistTests(SimpleTestCase):
     """The allowlist admits only the read-only Q&A surface."""
 
+    RUN = "2f6c1a3e-1f5a-4d4e-9a3a-0e6b7c8d9e0f"
     ALLOWED = (
-        ("POST", "/api/lens/mcp/"),
-        ("POST", "/api/lens/mcp"),
-        ("POST", "/api/lens/mcp/qa/"),
-        ("GET", "/api/lens/mcp/qa/2f6c1a3e-1f5a-4d4e-9a3a-0e6b7c8d9e0f/"),
+        ("POST", "/api/lens/sessions/"),
+        ("POST", "/api/lens/sessions"),
+        ("POST", f"/api/lens/sessions/{RUN}/runs/"),
+        ("GET", f"/api/lens/runs/{RUN}/"),
         ("GET", "/api/lens/assistants/"),
-        ("GET", "/api/lens/assistants/2f6c1a3e-1f5a-4d4e-9a3a-0e6b7c8d9e0f/"),
+        ("GET", f"/api/lens/assistants/{RUN}/"),
         ("OPTIONS", "/api/lens/admin/global-settings/"),
         ("HEAD", "/api/lens/admin/global-settings/"),
     )
@@ -161,18 +162,20 @@ class McpTokenRouteAllowlistTests(SimpleTestCase):
         ("GET", "/api/lens/admin/environment-variable-sets/"),
         ("POST", "/api/lens/admin/skills/"),
         ("POST", "/api/lens/assistants/"),
-        ("DELETE", "/api/lens/mcp/"),
-        ("PUT", "/api/lens/assistants/2f6c1a3e-1f5a-4d4e-9a3a-0e6b7c8d9e0f/"),
-        ("GET", "/api/lens/mcp/qa/not-a-uuid/"),
-        ("GET", "/api/lens/mcp/qa/2f6c1a3e-1f5a-4d4e-9a3a-0e6b7c8d9e0f/extra/"),
+        ("GET", "/api/lens/runs/"),
+        ("POST", f"/api/lens/runs/{RUN}/cancel/"),
+        ("DELETE", "/api/lens/sessions/"),
+        ("PUT", f"/api/lens/assistants/{RUN}/"),
+        ("GET", f"/api/lens/assistants/{RUN}/qa/"),
+        ("GET", f"/api/lens/runs/{RUN}/extra/"),
     )
 
     def test_allowlisted_routes_are_reachable(self):
         for method, path in self.ALLOWED:
             with self.subTest(method=method, path=path):
-                self.assertTrue(mcp_token_route_allowed(method, path))
+                self.assertTrue(agent_token_route_allowed(method, path))
 
     def test_everything_else_is_rejected(self):
         for method, path in self.DENIED:
             with self.subTest(method=method, path=path):
-                self.assertFalse(mcp_token_route_allowed(method, path))
+                self.assertFalse(agent_token_route_allowed(method, path))

@@ -4,7 +4,7 @@ from django.core.exceptions import PermissionDenied
 from rest_framework import exceptions, permissions, viewsets
 from rest_framework.renderers import BaseRenderer
 
-from accounts.authentication import MCPRestrictedJWTAuthentication
+from accounts.authentication import AgentRestrictedJWTAuthentication
 from lens.lensnode_auth import token_matches
 from lens.models import LensNode, Run
 
@@ -40,7 +40,7 @@ def _authenticate_stream_request(request):
     """Authenticate a native Django SSE request with JWT."""
 
     try:
-        authenticated = MCPRestrictedJWTAuthentication().authenticate(request)
+        authenticated = AgentRestrictedJWTAuthentication().authenticate(request)
     except exceptions.PermissionDenied as exc:
         # Native Django views do not run DRF's exception handler.
         raise PermissionDenied(str(exc.detail)) from exc

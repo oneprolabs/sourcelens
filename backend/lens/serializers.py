@@ -4104,6 +4104,7 @@ class RunSerializer(serializers.ModelSerializer):
     termination_detail = serializers.SerializerMethodField()
     citations = serializers.SerializerMethodField()
     planned_evidence = serializers.SerializerMethodField()
+    answer = serializers.SerializerMethodField()
 
     def get_termination_detail(self, obj):
         """Return allowlisted terminal metadata only."""
@@ -4120,6 +4121,13 @@ class RunSerializer(serializers.ModelSerializer):
 
         return sanitize_planned_evidence(obj.planned_evidence)
 
+    def get_answer(self, obj):
+        """Return the completed answer text, empty until the run produces it."""
+
+        if obj.output_message is None:
+            return ""
+        return (obj.output_message.content or "")[:50000]
+
     class Meta:
         model = Run
         fields = [
@@ -4135,6 +4143,7 @@ class RunSerializer(serializers.ModelSerializer):
             "termination_detail",
             "citations",
             "planned_evidence",
+            "answer",
             "feedback",
             "feedback_updated_at",
             "started_at",
@@ -4377,12 +4386,30 @@ class SessionCreateSerializer(serializers.Serializer):
         return attrs
 
 
+_REQUEST_SOURCE_CHANNELS = frozenset({"cli", "web", "mobile", "api"})
+_REQUEST_SOURCE_CLIENTS = frozenset({
+    "codex", "claude", "sourcelens-web", "sourcelens-ios",
+    "sourcelens-android", "unknown",
+})
+
+
 def _validated_request_source(data):
     """Normalize optional request origin data without granting privileges."""
 
-    from lens.mcp_qa import validate_request_source
-
-    return validate_request_source(data.get("request_source"))
+    value = data.get("request_source")
+    if not isinstance(value, dict):
+        return {"channel": "api", "client": "unknown"}
+    channel = value.get("channel", "api")
+    client = value.get("client", "unknown")
+    output = {
+        "channel": channel if channel in _REQUEST_SOURCE_CHANNELS else "api",
+        "client": client if client in _REQUEST_SOURCE_CLIENTS else "unknown",
+    }
+    for key in ("client_version", "skill", "tool", "request_id"):
+        text = value.get(key, "")
+        if isinstance(text, str) and text:
+            output[key] = text[:128]
+    return output
 
 
 class RunCreateSerializer(serializers.Serializer):
