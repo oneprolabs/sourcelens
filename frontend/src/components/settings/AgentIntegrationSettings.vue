@@ -1,26 +1,26 @@
 <template>
   <div class="space-y-4">
     <p class="text-sm text-theme-muted">
-      {{ t('settings.modal.agentAccessDesc') }}
+      {{ t('settings.modal.agentIntegrationDesc') }}
     </p>
 
     <div class="space-y-3 rounded-xl border border-line px-4 py-4">
       <div class="flex items-center justify-between gap-4">
         <div class="min-w-0">
           <div class="text-sm font-medium text-theme">
-            {{ t('settings.modal.agentAccessValidity') }}
+            {{ t('settings.modal.agentIntegrationValidity') }}
           </div>
           <p class="mt-1 text-xs leading-5 text-theme-muted">
-            {{ t('settings.modal.agentAccessValidityDesc') }}
+            {{ t('settings.modal.agentIntegrationValidityDesc') }}
           </p>
         </div>
         <BaseSelect
-          id="agent-access-validity"
+          id="agent-integration-validity"
           v-model="lifetimeMonths"
           class="w-32 shrink-0"
           :full-width="false"
           size="sm"
-          :aria-label="t('settings.modal.agentAccessValidity')"
+          :aria-label="t('settings.modal.agentIntegrationValidity')"
         >
           <option
             v-for="option in validityOptions"
@@ -35,10 +35,10 @@
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="text-sm font-medium text-theme">
-            {{ t('settings.modal.agentAccessPromptTitle') }}
+            {{ t('settings.modal.agentIntegrationPromptTitle') }}
           </div>
           <p class="mt-1 text-xs leading-5 text-theme-muted">
-            {{ t('settings.modal.agentAccessPromptDesc') }}
+            {{ t('settings.modal.agentIntegrationPromptDesc') }}
           </p>
         </div>
         <button
@@ -52,14 +52,12 @@
       </div>
 
       <div v-if="prompt" class="space-y-2">
-        <pre
-          class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-sunken px-3 py-2 font-mono text-xs text-theme-secondary"
-          >{{ prompt }}</pre
-        >
         <div
           class="flex flex-wrap items-center justify-between gap-2 text-xs text-theme-muted"
         >
-          <span>{{ t('settings.modal.agentAccessExpires', { date }) }}</span>
+          <span>{{
+            t('settings.modal.agentIntegrationExpires', { date })
+          }}</span>
           <button
             type="button"
             class="font-medium text-primary-600 transition-colors hover:text-primary-700"
@@ -67,11 +65,15 @@
           >
             {{
               copied
-                ? t('settings.modal.agentAccessCopied')
-                : t('settings.modal.agentAccessCopy')
+                ? t('settings.modal.agentIntegrationCopied')
+                : t('settings.modal.agentIntegrationCopy')
             }}
           </button>
         </div>
+        <pre
+          class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-sunken px-3 py-2 font-mono text-xs text-theme-secondary"
+          >{{ prompt }}</pre
+        >
       </div>
     </div>
   </div>
@@ -100,14 +102,14 @@ const lifetimeMonths = ref(1)
 const validityOptions = computed(() =>
   [1, 3, 6].map((months) => ({
     value: months,
-    label: t('settings.modal.agentAccessValidityMonths', { months })
+    label: t('settings.modal.agentIntegrationValidityMonths', { months })
   }))
 )
 
 const actionLabel = computed(() => {
-  if (generating.value) return t('settings.modal.agentAccessGenerating')
-  if (prompt.value) return t('settings.modal.agentAccessRegenerate')
-  return t('settings.modal.agentAccessGenerate')
+  if (generating.value) return t('settings.modal.agentIntegrationGenerating')
+  if (prompt.value) return t('settings.modal.agentIntegrationRegenerate')
+  return t('settings.modal.agentIntegrationGenerate')
 })
 
 const date = computed(() =>
@@ -124,13 +126,15 @@ async function generatePrompt() {
     )
     expiresAt.value = payload.expires_at
     copied.value = false
-    prompt.value = t('settings.modal.agentAccessPrompt', {
+    prompt.value = t('settings.modal.agentIntegrationPrompt', {
       url: `${publicBaseUrl()}/api/lens/mcp/`,
       token: payload.access,
       date: date.value
     })
   } catch (error) {
-    showError(extractErrorMessage(error, t('settings.modal.agentAccessFailed')))
+    showError(
+      extractErrorMessage(error, t('settings.modal.agentIntegrationFailed'))
+    )
   } finally {
     generating.value = false
   }
@@ -144,6 +148,6 @@ async function copyPrompt() {
     }, 2400)
     return
   }
-  showError(t('settings.modal.agentAccessCopyFailed'))
+  showError(t('settings.modal.agentIntegrationCopyFailed'))
 }
 </script>

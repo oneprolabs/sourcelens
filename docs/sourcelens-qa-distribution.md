@@ -86,7 +86,7 @@ today.
 
 The gateway reuses the platform JWT authentication. Coding agents cannot run
 the interactive refresh flow, so the user mints a long-lived access token once
-from the web app (User settings -> Agent Access) through
+from the web app (User settings -> Agent Integration) through
 `POST /api/v1/auth/mcp/token`. The request body may carry `lifetime_months`
 (one of 1, 3, 6); omitting it falls back to `MCP_TOKEN_LIFETIME_DAYS` days
 (default 30, non-positive disables the endpoint). The token carries a
