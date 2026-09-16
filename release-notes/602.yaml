@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Replaced the external Q&A MCP gateway with a read-only REST contract that the SourceLens agent CLI drives directly. Agent tokens are now scoped to the session, run, and assistant endpoints.
+zh-CN: 外部问答改为由 SourceLens 智能体 CLI 直接调用的只读 REST 契约，不再提供 MCP 网关。智能体令牌现在仅限会话、运行与助手接口。

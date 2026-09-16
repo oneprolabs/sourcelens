@@ -30,7 +30,7 @@ import os
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'accounts.authentication.MCPRestrictedJWTAuthentication',
+        'accounts.authentication.AgentRestrictedJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_RENDERER_CLASSES': (
@@ -104,29 +104,29 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
 }
 
-# Long-lived JWT for external MCP clients (Codex / Claude CLI).
+# Long-lived JWT for external agent clients (Codex / Claude CLI).
 #
 # Those clients cannot run an interactive refresh flow, so the token is
 # minted once from the user settings page and reused until it expires.
-# Override the lifetime with MCP_TOKEN_LIFETIME_DAYS; a non-positive value
+# Override the lifetime with AGENT_TOKEN_LIFETIME_DAYS; a non-positive value
 # disables the minting endpoint. SimpleJWT blacklisting is not enabled, so
 # an issued token cannot be revoked individually before it expires.
-MCP_TOKEN_LIFETIME_DAYS = int(os.getenv("MCP_TOKEN_LIFETIME_DAYS", "30"))
+AGENT_TOKEN_LIFETIME_DAYS = int(os.getenv("AGENT_TOKEN_LIFETIME_DAYS", "30"))
 
 # Validity choices (in months) the user may pick when minting a token.
-# The requested value, when present, overrides MCP_TOKEN_LIFETIME_DAYS;
-# each month is treated as MCP_TOKEN_DAYS_PER_MONTH days.
-MCP_TOKEN_LIFETIME_MONTHS_OPTIONS = (1, 3, 6)
-MCP_TOKEN_DAYS_PER_MONTH = 30
+# The requested value, when present, overrides AGENT_TOKEN_LIFETIME_DAYS;
+# each month is treated as AGENT_TOKEN_DAYS_PER_MONTH days.
+AGENT_TOKEN_LIFETIME_MONTHS_OPTIONS = (1, 3, 6)
+AGENT_TOKEN_DAYS_PER_MONTH = 30
 
-# Routes an MCP-scoped token may reach. The token exists for read-only Q&A,
-# so it is confined to the MCP transport, its run results, and the assistant
-# catalog it needs to choose an assistant. Everything else is rejected with
-# MCP_TOKEN_SCOPE_RESTRICTED, including reads of admin endpoints.
-MCP_TOKEN_ALLOWED_ROUTES = (
-    ("POST", r"/api/lens/mcp/?"),
-    ("POST", r"/api/lens/mcp/qa/?"),
-    ("GET", r"/api/lens/mcp/qa/[0-9A-Fa-f-]{36}/?"),
+# Routes an agent-scoped token may reach. The token exists for read-only Q&A,
+# so it is confined to the session/run endpoints the CLI drives and the
+# assistant catalog it needs to choose an assistant. Everything else is
+# rejected with AGENT_TOKEN_SCOPE_RESTRICTED, including admin endpoint reads.
+AGENT_TOKEN_ALLOWED_ROUTES = (
+    ("POST", r"/api/lens/sessions/?"),
+    ("POST", r"/api/lens/sessions/[0-9A-Fa-f-]{36}/runs/?"),
+    ("GET", r"/api/lens/runs/[0-9A-Fa-f-]{36}/?"),
     ("GET", r"/api/lens/assistants/?"),
     ("GET", r"/api/lens/assistants/[0-9A-Fa-f-]{36}/?"),
 )

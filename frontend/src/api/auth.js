@@ -36,9 +36,9 @@ export const authApi = {
     return api.post('/v1/auth/token/refresh')
   },
 
-  // Mint a long-lived token for external MCP clients (Codex / Claude)
-  generateMcpToken(lifetimeMonths) {
-    return api.post('/v1/auth/mcp/token', {
+  // Mint a long-lived token for external agent clients (Codex / Claude)
+  generateAgentToken(lifetimeMonths) {
+    return api.post('/v1/auth/agent/token', {
       lifetime_months: lifetimeMonths
     })
   },
@@ -90,7 +90,7 @@ export const {
   updateProfile,
   logout,
   refreshToken,
-  generateMcpToken,
+  generateAgentToken,
   resetPassword,
   confirmPasswordReset,
   changePassword,

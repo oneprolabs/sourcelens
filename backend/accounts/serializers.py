@@ -104,9 +104,9 @@ class AuthTokenResponseSerializer(serializers.Serializer):
     user = serializers.DictField(help_text=_("User basic info"))
 
 
-class McpTokenRequestSerializer(serializers.Serializer):
+class AgentTokenRequestSerializer(serializers.Serializer):
     """
-    Optional request for long-lived MCP client token issuance.
+    Optional request for long-lived agent client token issuance.
     """
     lifetime_months = serializers.IntegerField(
         required=False,
@@ -115,9 +115,9 @@ class McpTokenRequestSerializer(serializers.Serializer):
     )
 
 
-class McpTokenResponseSerializer(serializers.Serializer):
+class AgentTokenResponseSerializer(serializers.Serializer):
     """
-    Long-lived token response for external MCP clients.
+    Long-lived token response for external agent clients.
     """
     access = serializers.CharField(
         help_text=_("Long-lived JWT access token")
@@ -127,7 +127,7 @@ class McpTokenResponseSerializer(serializers.Serializer):
         help_text=_("Authorization scheme for the token"),
     )
     scope = serializers.CharField(
-        help_text=_("Marker claim identifying the MCP scope")
+        help_text=_("Marker claim identifying the agent scope")
     )
     expires_in = serializers.IntegerField(
         help_text=_("Remaining validity in seconds")

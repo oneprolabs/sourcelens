@@ -1,9 +1,9 @@
-"""Keep long-lived MCP client tokens inside their read-only Q&A scope.
+"""Keep long-lived agent client tokens inside their read-only Q&A scope.
 
-The MCP token is a normal access token for its owning user, so without a
+The agent token is a normal access token for its owning user, so without a
 guard it would inherit the full account privileges (including admin writes)
-for its whole lifetime. Every mcp-scoped token is therefore confined to the
-routes in ``settings.MCP_TOKEN_ALLOWED_ROUTES``; anything else is rejected
+for its whole lifetime. Every agent-scoped token is therefore confined to the
+routes in ``settings.AGENT_TOKEN_ALLOWED_ROUTES``; anything else is rejected
 before permissions run.
 """
 
@@ -13,8 +13,8 @@ from django.conf import settings
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-MCP_TOKEN_SCOPE = "mcp"
-MCP_SCOPE_CLAIM = "scope"
+AGENT_TOKEN_SCOPE = "agent"
+AGENT_SCOPE_CLAIM = "scope"
 _UNRESTRICTED_METHODS = frozenset({"HEAD", "OPTIONS"})
 _ROUTE_CACHE = {}
 
@@ -25,7 +25,7 @@ def _allowed_routes():
     configured = tuple(
         (str(method).upper(), str(pattern))
         for method, pattern in getattr(
-            settings, "MCP_TOKEN_ALLOWED_ROUTES", ()
+            settings, "AGENT_TOKEN_ALLOWED_ROUTES", ()
         )
     )
     cached = _ROUTE_CACHE.get("routes")
@@ -39,8 +39,8 @@ def _allowed_routes():
     return cached[1]
 
 
-def mcp_token_route_allowed(method, path):
-    """Return whether an MCP-scoped token may reach this request."""
+def agent_token_route_allowed(method, path):
+    """Return whether an agent-scoped token may reach this request."""
 
     method = str(method or "").upper()
     if method in _UNRESTRICTED_METHODS:
@@ -52,25 +52,25 @@ def mcp_token_route_allowed(method, path):
     )
 
 
-class MCPRestrictedJWTAuthentication(JWTAuthentication):
-    """Reject MCP-scoped tokens outside the read-only Q&A surface."""
+class AgentRestrictedJWTAuthentication(JWTAuthentication):
+    """Reject agent-scoped tokens outside the read-only Q&A surface."""
 
     def authenticate(self, request):
-        """Authenticate, then confine mcp-scoped tokens to their allowlist."""
+        """Authenticate, then confine agent-scoped tokens to their allowlist."""
 
         result = super().authenticate(request)
         if result is None:
             return None
         user, token = result
         try:
-            scope = token.get(MCP_SCOPE_CLAIM)
+            scope = token.get(AGENT_SCOPE_CLAIM)
         except Exception:
             scope = None
-        if scope != MCP_TOKEN_SCOPE:
+        if scope != AGENT_TOKEN_SCOPE:
             return result
-        if mcp_token_route_allowed(request.method, request.path):
+        if agent_token_route_allowed(request.method, request.path):
             return result
         raise PermissionDenied(
-            detail="MCP_TOKEN_SCOPE_RESTRICTED",
-            code="mcp_token_scope_restricted",
+            detail="AGENT_TOKEN_SCOPE_RESTRICTED",
+            code="agent_token_scope_restricted",
         )
