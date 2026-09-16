@@ -3,7 +3,11 @@
 from core.settings.rest import (  # noqa: F401
     MCP_TOKEN_ALLOWED_ROUTES as PRODUCTION_MCP_TOKEN_ALLOWED_ROUTES,
 )
+from core.settings.rest import MCP_TOKEN_DAYS_PER_MONTH  # noqa: F401
 from core.settings.rest import MCP_TOKEN_LIFETIME_DAYS  # noqa: F401
+from core.settings.rest import (  # noqa: F401
+    MCP_TOKEN_LIFETIME_MONTHS_OPTIONS,
+)
 
 # Exercise the production allowlist plus one route that exists in the
 # accounts test URL conf, so the confinement is testable here.

@@ -64,6 +64,31 @@ class McpTokenTests(TestCase):
         token = AccessToken(response.data["access"])
         self.assertEqual(token["exp"] - token["iat"], 7 * 24 * 3600)
 
+    def test_requested_lifetime_months_is_honored(self):
+        """A requested month option is treated as 30 days per month."""
+        for months in (1, 3, 6):
+            with self.subTest(months=months):
+                response = self.client.post(
+                    TOKEN_URL, {"lifetime_months": months}, format="json"
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                token = AccessToken(response.data["access"])
+                self.assertEqual(
+                    token["exp"] - token["iat"], months * 30 * 24 * 3600
+                )
+
+    def test_unlisted_lifetime_months_is_rejected(self):
+        """Only the configured month options are accepted."""
+        response = self.client.post(
+            TOKEN_URL, {"lifetime_months": 2}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["error"], "MCP_TOKEN_INVALID_LIFETIME"
+        )
+
     def test_expires_at_matches_lifetime(self):
         """The reported expiry is about one lifetime away."""
         response = self.client.post(TOKEN_URL)

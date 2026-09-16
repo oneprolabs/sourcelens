@@ -21,7 +21,10 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken
 
 from ..authentication import MCP_TOKEN_SCOPE
-from ..serializers import McpTokenResponseSerializer
+from ..serializers import (
+    McpTokenRequestSerializer,
+    McpTokenResponseSerializer,
+)
 
 
 class McpTokenView(APIView):
@@ -30,16 +33,32 @@ class McpTokenView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=None,
+        request=McpTokenRequestSerializer,
         responses={status.HTTP_200_OK: McpTokenResponseSerializer},
     )
     def post(self, request):
         """Return a long-lived, MCP-scoped JWT for the current user."""
 
-        lifetime_days = settings.MCP_TOKEN_LIFETIME_DAYS
-        if lifetime_days <= 0:
+        default_lifetime_days = settings.MCP_TOKEN_LIFETIME_DAYS
+        if default_lifetime_days <= 0:
             return Response(
                 {"error": "MCP_TOKEN_DISABLED"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = McpTokenRequestSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        lifetime_months = serializer.validated_data.get("lifetime_months")
+
+        if lifetime_months is None:
+            lifetime_days = default_lifetime_days
+        elif lifetime_months in settings.MCP_TOKEN_LIFETIME_MONTHS_OPTIONS:
+            lifetime_days = (
+                lifetime_months * settings.MCP_TOKEN_DAYS_PER_MONTH
+            )
+        else:
+            return Response(
+                {"error": "MCP_TOKEN_INVALID_LIFETIME"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

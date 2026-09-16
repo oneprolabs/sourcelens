@@ -5,6 +5,33 @@
     </p>
 
     <div class="space-y-3 rounded-xl border border-line px-4 py-4">
+      <div class="flex items-center justify-between gap-4">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-theme">
+            {{ t('settings.modal.agentAccessValidity') }}
+          </div>
+          <p class="mt-1 text-xs leading-5 text-theme-muted">
+            {{ t('settings.modal.agentAccessValidityDesc') }}
+          </p>
+        </div>
+        <BaseSelect
+          id="agent-access-validity"
+          v-model="lifetimeMonths"
+          class="w-32 shrink-0"
+          :full-width="false"
+          size="sm"
+          :aria-label="t('settings.modal.agentAccessValidity')"
+        >
+          <option
+            v-for="option in validityOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </option>
+        </BaseSelect>
+      </div>
+
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="text-sm font-medium text-theme">
@@ -55,6 +82,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { generateMcpToken } from '@/api/auth'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -67,6 +95,14 @@ const prompt = ref('')
 const expiresAt = ref(0)
 const generating = ref(false)
 const copied = ref(false)
+const lifetimeMonths = ref(1)
+
+const validityOptions = computed(() =>
+  [1, 3, 6].map((months) => ({
+    value: months,
+    label: t('settings.modal.agentAccessValidityMonths', { months })
+  }))
+)
 
 const actionLabel = computed(() => {
   if (generating.value) return t('settings.modal.agentAccessGenerating')
@@ -83,7 +119,9 @@ const date = computed(() =>
 async function generatePrompt() {
   generating.value = true
   try {
-    const payload = extractResponseData(await generateMcpToken())
+    const payload = extractResponseData(
+      await generateMcpToken(lifetimeMonths.value)
+    )
     expiresAt.value = payload.expires_at
     copied.value = false
     prompt.value = t('settings.modal.agentAccessPrompt', {

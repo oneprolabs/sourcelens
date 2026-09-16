@@ -104,6 +104,17 @@ class AuthTokenResponseSerializer(serializers.Serializer):
     user = serializers.DictField(help_text=_("User basic info"))
 
 
+class McpTokenRequestSerializer(serializers.Serializer):
+    """
+    Optional request for long-lived MCP client token issuance.
+    """
+    lifetime_months = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        help_text=_("Requested token validity in months"),
+    )
+
+
 class McpTokenResponseSerializer(serializers.Serializer):
     """
     Long-lived token response for external MCP clients.

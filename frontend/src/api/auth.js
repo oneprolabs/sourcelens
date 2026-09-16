@@ -37,8 +37,10 @@ export const authApi = {
   },
 
   // Mint a long-lived token for external MCP clients (Codex / Claude)
-  generateMcpToken() {
-    return api.post('/v1/auth/mcp/token')
+  generateMcpToken(lifetimeMonths) {
+    return api.post('/v1/auth/mcp/token', {
+      lifetime_months: lifetimeMonths
+    })
   },
 
   // Reset password - Send reset email

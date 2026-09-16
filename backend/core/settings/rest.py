@@ -113,6 +113,12 @@ SIMPLE_JWT = {
 # an issued token cannot be revoked individually before it expires.
 MCP_TOKEN_LIFETIME_DAYS = int(os.getenv("MCP_TOKEN_LIFETIME_DAYS", "30"))
 
+# Validity choices (in months) the user may pick when minting a token.
+# The requested value, when present, overrides MCP_TOKEN_LIFETIME_DAYS;
+# each month is treated as MCP_TOKEN_DAYS_PER_MONTH days.
+MCP_TOKEN_LIFETIME_MONTHS_OPTIONS = (1, 3, 6)
+MCP_TOKEN_DAYS_PER_MONTH = 30
+
 # Routes an MCP-scoped token may reach. The token exists for read-only Q&A,
 # so it is confined to the MCP transport, its run results, and the assistant
 # catalog it needs to choose an assistant. Everything else is rejected with
