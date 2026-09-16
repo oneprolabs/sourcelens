@@ -24,6 +24,7 @@ def run_datasource_snapshots(run):
             "snapshot_uuid": str(row.uuid),
             "version_uuid": str(row.version.uuid) if row.version_id else "",
             "datasource_uuid": str(row.datasource.uuid),
+            "datasource_name": row.datasource.name,
             "mount_name": row.mount_name,
             "target_path": (
                 row.datasource.target_path

@@ -8,6 +8,12 @@ MAX_CITATIONS = 5
 MAX_CITATION_SOURCE_CHARS = 100_000
 MAX_LINE_NUMBER = 10_000_000
 CITATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+# Datasource mounts are materialized as `ds_<uuid>` directories; the segment
+# is internal plumbing and carries no meaning for a reader of the citation.
+# This is the guarantee layer: `lensnode/consulted_sources.py` normally
+# replaces a generated mount with the datasource name before the citation
+# reaches us, and this strip covers the runs where no name is available.
+DATASOURCE_MOUNT_PATTERN = re.compile(r"^ds_[0-9a-f]{32}(_[0-9a-f]{8,32})?$")
 GAP_CATEGORIES = {
     "caller_context",
     "runtime_error",
@@ -136,7 +142,7 @@ def _sanitize_citation(value):
         "project": _bounded_text(value.get("project"), 160),
         "repository": _bounded_text(value.get("repository"), 240),
         "revision": revision,
-        "path": path.as_posix(),
+        "path": _public_path(path),
         "symbol": _bounded_text(value.get("symbol"), 500),
         "start_line": start_line,
         "end_line": end_line,
@@ -147,3 +153,17 @@ def _sanitize_citation(value):
 
 def _bounded_text(value, limit):
     return str(value or "").strip()[:limit]
+
+
+def _public_path(path):
+    """Return the reader-facing citation path.
+
+    A datasource is mounted as a ``ds_<uuid>`` directory, so its files arrive
+    as ``ds_<uuid>/<relative path>``. That first segment is internal plumbing,
+    so it is dropped for display while the rest of the path is preserved.
+    """
+
+    parts = path.parts
+    if len(parts) > 1 and DATASOURCE_MOUNT_PATTERN.fullmatch(parts[0]):
+        return PurePosixPath(*parts[1:]).as_posix()
+    return path.as_posix()

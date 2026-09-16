@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -34,6 +35,8 @@ from .workspace import search_workspace as search_workspace_files
 from .workspace import (
     target_scope,
 )
+
+LOGGER = logging.getLogger("lensnode")
 
 # Tools that emit their own tool.<name>.start/.done events. The generic
 # tool.<name>.invoke event is suppressed for these to avoid duplicate trace
@@ -109,7 +112,13 @@ class _GitLogArgs(BaseModel):
     )
 
 
-def build_agent_tools(command, resources=None, config=None, emit_event=None):
+def build_agent_tools(
+    command,
+    resources=None,
+    config=None,
+    emit_event=None,
+    source_recorder=None,
+):
     """Build read-only tools scoped to the selected workspace dirs."""
 
     target_dirs = command.get("target_dirs") or []
@@ -173,6 +182,11 @@ def build_agent_tools(command, resources=None, config=None, emit_event=None):
         matches = result.get("matches") or []
         files = result.get("files") or []
         counts = result.get("counts") or []
+        if source_recorder is not None and matches:
+            try:
+                source_recorder.record_search(query, matches)
+            except Exception:
+                LOGGER.exception("Failed to record consulted search sources")
         paths = list(dict.fromkeys(item["path"] for item in matches))
         emit(
             "tool.search_workspace.done",
@@ -249,6 +263,16 @@ def build_agent_tools(command, resources=None, config=None, emit_event=None):
         )
         visible_path = str(citation_path(resolved))
         window["path"] = visible_path
+        if source_recorder is not None and not window.get("error"):
+            try:
+                source_recorder.record_read(
+                    visible_path,
+                    window.get("start_line"),
+                    window.get("end_line"),
+                    _unnumbered_source(window),
+                )
+            except Exception:
+                LOGGER.exception("Failed to record consulted read sources")
         emit(
             "tool.read_workspace_file.done",
             {
@@ -3560,6 +3584,20 @@ def _search_done_summary(result, matches, files, counts, paths):
     if files:
         return f"no matches · listing {len(files)} files"
     return "no matches"
+
+
+def _unnumbered_source(window):
+    """Drop the "<line>\t" prefixes from a read window for citations."""
+
+    text = str(window.get("content") or "")
+    if not text:
+        return ""
+    start = window.get("start_line")
+    lines = []
+    for offset, line in enumerate(text.splitlines()):
+        prefix = f"{start + offset}\t" if isinstance(start, int) else ""
+        lines.append(line[len(prefix):] if prefix and line.startswith(prefix) else line)
+    return "\n".join(lines)
 
 
 def _json(payload):

@@ -1,9 +1,10 @@
 """Base viewsets, renderers, and shared authentication helpers."""
 
-from rest_framework import permissions, viewsets
+from django.core.exceptions import PermissionDenied
+from rest_framework import exceptions, permissions, viewsets
 from rest_framework.renderers import BaseRenderer
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from accounts.authentication import MCPRestrictedJWTAuthentication
 from lens.lensnode_auth import token_matches
 from lens.models import LensNode, Run
 
@@ -38,15 +39,18 @@ class EventStreamRenderer(BaseRenderer):
 def _authenticate_stream_request(request):
     """Authenticate a native Django SSE request with JWT."""
 
-    if getattr(request, "user", None) is not None:
-        if request.user.is_authenticated:
-            return request.user
-
-    authenticated = JWTAuthentication().authenticate(request)
-    if authenticated is None:
+    try:
+        authenticated = MCPRestrictedJWTAuthentication().authenticate(request)
+    except exceptions.PermissionDenied as exc:
+        # Native Django views do not run DRF's exception handler.
+        raise PermissionDenied(str(exc.detail)) from exc
+    except exceptions.AuthenticationFailed:
         return None
-    user, _ = authenticated
-    return user
+    if authenticated is not None:
+        user, _ = authenticated
+        return user
+    user = getattr(request, "user", None)
+    return user if user is not None and user.is_authenticated else None
 
 
 def _get_user_run(run_uuid, user):

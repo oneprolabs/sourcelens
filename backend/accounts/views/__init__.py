@@ -22,6 +22,7 @@ from .password import (
 )
 from .user import CustomUserDetailsView
 from .scenes import GetAvailableScenesView
+from .mcp_token import McpTokenView
 
 __all__ = [
     'CompleteGoogleSetupView',
@@ -36,4 +37,5 @@ __all__ = [
     'ConfirmPasswordResetView',
     'CustomUserDetailsView',
     'GetAvailableScenesView',
+    'McpTokenView',
 ]

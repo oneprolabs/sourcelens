@@ -32,6 +32,7 @@ from ..checkpoint import (
     save_runtime_state,
     thread_config,
 )
+from ..consulted_sources import ConsultedSources
 from ..gateway_model import (
     LensGatewayChatModel,
     RunCancelledError,
@@ -577,6 +578,7 @@ class LensDeepAgentRuntime:
             config=self.config,
             http_client=self.http_client,
             trajectory=trajectory,
+            consulted_sources=ConsultedSources(command),
         )
 
         def emit_agent_event(event, detail=None):
@@ -741,6 +743,7 @@ class LensDeepAgentRuntime:
                     if state.trajectory is not None
                     else None
                 ),
+                consulted_sources=state.consulted_sources.export_state(),
             )
 
         state.persist_execution_state = persist_execution_state
@@ -831,6 +834,9 @@ class LensDeepAgentRuntime:
             shared_token_budget=state.shared_token_budget,
         )
         if state.resume_state is not None:
+            state.consulted_sources.restore_state(
+                state.resume_state.consulted_sources
+            )
             state.model.restore_runtime_state(
                 state.resume_state.messages,
                 state.resume_state.guardrail_state,
@@ -856,6 +862,7 @@ class LensDeepAgentRuntime:
                 state.resources,
                 self.config,
                 emit_event=state.emit_agent_event,
+                source_recorder=state.consulted_sources,
             )
         state.plugin_tools = build_plugin_tools(
             state.command,
@@ -1526,6 +1533,9 @@ class LensDeepAgentRuntime:
             "token_usage": state.model.token_usage,
             "outcome": outcome,
             "termination_detail": termination_detail,
+            "citations": state.consulted_sources.citations(
+                _command_answer_language(state.command)
+            ),
         }
 
 

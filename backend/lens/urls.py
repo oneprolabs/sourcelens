@@ -48,6 +48,9 @@ from .views import (
     SessionViewSet,
     SharedQAViewSet,
     SkillViewSet,
+    SourceLensQAMCPRPCView,
+    SourceLensQAMCPResultView,
+    SourceLensQAMCPView,
     admin_run_trajectory_stream_view,
     run_stream_view,
 )

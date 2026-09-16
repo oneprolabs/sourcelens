@@ -17,6 +17,7 @@ from accounts.views import (
     ConfirmPasswordResetView,
     CustomUserDetailsView,
     GetAvailableScenesView,
+    McpTokenView,
     SendLoginCodeView,
     SendPasswordResetEmailView,
     SendRegistrationEmailView,
@@ -77,6 +78,12 @@ urlpatterns = [
         'api/v1/auth/token/refresh',
         TokenRefreshView.as_view(),
         name='token_refresh'
+    ),
+    # Long-lived JWT for external MCP clients (Codex / Claude)
+    path(
+        'api/v1/auth/mcp/token',
+        McpTokenView.as_view(),
+        name='mcp_token'
     ),
     # Passwordless email verification-code login
     path(

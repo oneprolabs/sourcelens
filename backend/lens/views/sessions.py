@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.http import content_disposition_header
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.renderers import JSONRenderer
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -103,6 +104,7 @@ class SourceLensQAMCPView(APIView):
     """Read-only HTTP adapter for external SourceLens Q&A clients."""
 
     permission_classes = [permissions.IsAuthenticated]
+    renderer_classes = [JSONRenderer]
 
     def post(self, request):
         """Create one authorized Q&A run without exposing management APIs."""
@@ -167,9 +169,15 @@ class SourceLensQAMCPResultView(APIView):
 
 
 class SourceLensQAMCPRPCView(APIView):
-    """Minimal authenticated MCP JSON-RPC transport for Q&A tools."""
+    """Minimal authenticated MCP JSON-RPC transport for Q&A tools.
+
+    The MCP transport answers with a bare JSON-RPC envelope: MCP clients
+    reject the platform's ``code``/``message``/``data`` wrapper, so the
+    response bypasses ``CustomJSONRenderer``.
+    """
 
     permission_classes = [permissions.IsAuthenticated]
+    renderer_classes = [JSONRenderer]
 
     def post(self, request):
         """Handle MCP initialize, tools/list, and tools/call requests."""

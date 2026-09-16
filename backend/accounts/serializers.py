@@ -104,6 +104,28 @@ class AuthTokenResponseSerializer(serializers.Serializer):
     user = serializers.DictField(help_text=_("User basic info"))
 
 
+class McpTokenResponseSerializer(serializers.Serializer):
+    """
+    Long-lived token response for external MCP clients.
+    """
+    access = serializers.CharField(
+        help_text=_("Long-lived JWT access token")
+    )
+    token_type = serializers.CharField(
+        default="Bearer",
+        help_text=_("Authorization scheme for the token"),
+    )
+    scope = serializers.CharField(
+        help_text=_("Marker claim identifying the MCP scope")
+    )
+    expires_in = serializers.IntegerField(
+        help_text=_("Remaining validity in seconds")
+    )
+    expires_at = serializers.IntegerField(
+        help_text=_("Expiry as a Unix timestamp")
+    )
+
+
 class UsernameAvailabilityResponseSerializer(serializers.Serializer):
     """
     Username availability check response.

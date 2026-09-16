@@ -28,6 +28,7 @@ class LensNodeExecutionQueue:
         self,
         max_standard_concurrency,
         max_exclusive_concurrency=1,
+        exclusive_barrier=False,
     ):
         self.max_standard_concurrency = max(
             1,
@@ -43,6 +44,7 @@ class LensNodeExecutionQueue:
         self._active_delegated = 0
         self.max_delegated_concurrency = self.max_standard_concurrency
         self._active_exclusive = 0
+        self.exclusive_barrier = bool(exclusive_barrier)
 
     async def acquire(
         self,
@@ -109,6 +111,12 @@ class LensNodeExecutionQueue:
     def _admit_standard_waiters(self):
         """Fill free standard slots without an exclusive-work barrier."""
 
+        if self.exclusive_barrier and any(
+            request.execution_class == ExecutionClass.EXCLUSIVE
+            for request in self._waiting
+        ):
+            return
+
         waiting = collections.deque()
         while self._waiting:
             request = self._waiting.popleft()
@@ -131,6 +139,13 @@ class LensNodeExecutionQueue:
             if (
                 request.execution_class == ExecutionClass.EXCLUSIVE
                 and self._active_exclusive < self.max_exclusive_concurrency
+                and (
+                    not self.exclusive_barrier
+                    or (
+                        self._active_standard == 0
+                        and self._active_delegated == 0
+                    )
+                )
             ):
                 self._active_exclusive += 1
                 request.admitted.set_result(None)

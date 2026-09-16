@@ -36,6 +36,11 @@ export const authApi = {
     return api.post('/v1/auth/token/refresh')
   },
 
+  // Mint a long-lived token for external MCP clients (Codex / Claude)
+  generateMcpToken() {
+    return api.post('/v1/auth/mcp/token')
+  },
+
   // Reset password - Send reset email
   resetPassword(email) {
     return api.post('/v1/auth/password/reset', { email })
@@ -83,6 +88,7 @@ export const {
   updateProfile,
   logout,
   refreshToken,
+  generateMcpToken,
   resetPassword,
   confirmPasswordReset,
   changePassword,

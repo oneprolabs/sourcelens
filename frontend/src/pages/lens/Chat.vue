@@ -6,15 +6,6 @@
     }"
     :style="mobileViewportStyle"
   >
-    <div class="mcp-install-banner">
-      <span>在 Codex / Claude 中使用此助手</span>
-      <button type="button" @click="copyMcpInstallCommand('codex')">
-        {{ mcpCopied === 'codex' ? 'Codex 命令已复制' : '复制到 Codex' }}
-      </button>
-      <button type="button" @click="copyMcpInstallCommand('claude')">
-        {{ mcpCopied === 'claude' ? 'Claude 命令已复制' : '复制到 Claude' }}
-      </button>
-    </div>
     <Transition
       enter-active-class="transition-opacity duration-200"
       enter-from-class="opacity-0"
@@ -1911,7 +1902,6 @@ import QaShareModal from '@/components/lens/QaShareModal.vue'
 import FilePreviewModal from '@/components/lens/FilePreviewModal.vue'
 import CodeCitationDrawer from '@/pages/lens/components/CodeCitationDrawer.vue'
 import MessageCitations from '@/pages/lens/components/MessageCitations.vue'
-import { copyToClipboard } from '@/utils/clipboard'
 import AssistantActivityGroups from '@/pages/lens/components/AssistantActivityGroups.vue'
 import ParticipatingAssistantsPicker from '@/pages/lens/components/ParticipatingAssistantsPicker.vue'
 import {
@@ -2045,12 +2035,6 @@ const preferencesStore = usePreferencesStore()
 const sessionActivity = useSessionActivity()
 
 const assistants = ref([])
-const mcpCopied = ref('')
-async function copyMcpInstallCommand(client) {
-  const command = `npx github:oneprolabs/sourcelens-client install --client ${client}`
-  if (await copyToClipboard(command)) mcpCopied.value = client
-  window.setTimeout(() => { mcpCopied.value = '' }, 2400)
-}
 const sessions = ref([])
 const messages = ref([])
 const sessionsLoading = ref(false)

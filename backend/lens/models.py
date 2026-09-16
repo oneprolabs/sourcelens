@@ -1176,6 +1176,21 @@ class AssistantDataSourceBinding(TimestampedUUIDModel):
             )
         ]
 
+    def save(self, *args, **kwargs):
+        """Refresh the owning Assistant after changing its data source."""
+
+        result = super().save(*args, **kwargs)
+        _refresh_assistant_routing_description(self.assistant)
+        return result
+
+    def delete(self, *args, **kwargs):
+        """Refresh the owning Assistant after deleting its data source."""
+
+        assistant = self.assistant
+        result = super().delete(*args, **kwargs)
+        _refresh_assistant_routing_description(assistant)
+        return result
+
 
 class AssistantPluginBinding(models.Model):
     """Assistant access to one reusable Plugin connection.
