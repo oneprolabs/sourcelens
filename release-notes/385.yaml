@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Preserve a bounded final synthesis when a run reaches its token budget and trigger context summaries earlier for large conversations.
+zh-CN: 运行达到令牌预算时保留有界的最终总结，并在长对话中更早触发上下文摘要。

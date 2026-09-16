@@ -214,7 +214,10 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                     f"00-{run.uuid.hex}-"
                     f"{trace_context['parent_observation_id']}-01"
                 )
-        budget_lock = self._acquire_parent_budget_lock(run)
+        final_synthesis = bool(request.data.get("runtime_final_synthesis"))
+        budget_lock = self._acquire_parent_budget_lock(
+            run, allow_overage=final_synthesis
+        )
         if run_uuid and budget_lock == "exhausted":
             return Response(
                 {
@@ -232,7 +235,11 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 status=status.HTTP_409_CONFLICT,
             )
         effective_max_tokens = request.data.get("max_tokens")
-        if isinstance(budget_lock, tuple) and budget_lock[4] > 0:
+        if final_synthesis and budget_lock == "final_overage":
+            effective_max_tokens = min(
+                int(effective_max_tokens or 4096), 4096
+            )
+        elif isinstance(budget_lock, tuple) and budget_lock[4] > 0:
             remaining_tokens = budget_lock[4]
             effective_max_tokens = min(
                 int(effective_max_tokens or remaining_tokens),
@@ -284,7 +291,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         return Response(data)
 
     @staticmethod
-    def _acquire_parent_budget_lock(run):
+    def _acquire_parent_budget_lock(run, allow_overage=False):
         """Serialize metered calls for one Run tree at its budget boundary."""
 
         if run is None:
@@ -322,6 +329,9 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 used = LLMUsage.objects.filter(
                     metadata__run_uuid__in=usage_ids,
                 ).aggregate(total=Sum("total_tokens"))["total"] or 0
+                if int(used) >= limit and allow_overage:
+                    cache.delete(key)
+                    return "final_overage"
                 if int(used) >= limit:
                     cache.delete(key)
                     return "exhausted"
@@ -333,7 +343,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
     def _release_parent_budget_lock(lock):
         """Release a budget lock only when it is still owned by this call."""
 
-        if lock is None or lock == "disabled":
+        if lock is None or lock in {"disabled", "final_overage", "exhausted"}:
             return
         key, token, _root_uuid, _limit, _remaining = lock
         if cache.get(key) == token:
