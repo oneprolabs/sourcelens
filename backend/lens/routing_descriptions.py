@@ -7,6 +7,7 @@ _ROUTING_TEXT = {
         "overview": "Assistant overview",
         "skills": "Available Skills",
         "mcps": "Available MCPs",
+        "data_sources": "Available data sources",
         "workspace_scope": "The workspace scope is limited to configured directories.",
         "unknown_capability": "Specialized capability",
         "unknown_request": "specialized requests",
@@ -17,6 +18,7 @@ _ROUTING_TEXT = {
         "overview": "Resumen del asistente",
         "skills": "Skills disponibles",
         "mcps": "MCP disponibles",
+        "data_sources": "Fuentes de datos disponibles",
         "workspace_scope": "El ámbito de trabajo se limita a los directorios configurados.",
         "unknown_capability": "Capacidad especializada",
         "unknown_request": "solicitudes especializadas",
@@ -27,6 +29,7 @@ _ROUTING_TEXT = {
         "overview": "助手概述",
         "skills": "可用 Skills",
         "mcps": "可用 MCP",
+        "data_sources": "可用数据源",
         "workspace_scope": "工作范围仅限已配置的工作区目录。",
         "unknown_capability": "专用能力",
         "unknown_request": "专用请求",
@@ -88,6 +91,23 @@ def _resource_names(bindings, relation):
             name = _compact(getattr(resource, "name", ""), limit=80)
             if name:
                 names.append(name)
+    return names[:8]
+
+
+def _datasource_names(assistant):
+    """Return the enabled data source names without their configuration."""
+
+    names = []
+    for binding in assistant.datasource_bindings.all():
+        datasource = getattr(binding, "datasource", None)
+        if datasource is None:
+            continue
+        status = getattr(datasource, "status", "")
+        if status and status != "active":
+            continue
+        name = _compact(getattr(datasource, "name", ""), limit=80)
+        if name:
+            names.append(name)
     return names[:8]
 
 
@@ -154,6 +174,16 @@ def build_routing_description(assistant, answer_language="en-US"):
         separator = "、" if language == "zh" else ", "
         parts.append(
             _field_sentence(text["mcps"], separator.join(mcps), language)
+        )
+    datasources = _datasource_names(assistant)
+    if datasources:
+        separator = "、" if language == "zh" else ", "
+        parts.append(
+            _field_sentence(
+                text["data_sources"],
+                separator.join(datasources),
+                language,
+            )
         )
     if assistant.selected_dirs:
         parts.append(text["workspace_scope"])

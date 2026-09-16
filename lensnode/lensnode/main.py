@@ -126,6 +126,7 @@ class LensNodeClient:
                 "max_concurrent_datasource_syncs",
                 1,
             ),
+            exclusive_barrier=True,
         )
         self.datasource_conversion_cancels = {}
         self.datasource_upload_cancels = {}
@@ -664,12 +665,19 @@ class LensNodeClient:
                 else:
                     task.cancel()
             if task is None:
+                runtime_path = getattr(self.config, "runtime_path", None)
+                if not runtime_path:
+                    runtime_path = getattr(
+                        self.config,
+                        "workspace_path",
+                        None,
+                    )
                 cleanup_run_checkpoint(
                     run_uuid,
                     getattr(self.config, "workspace_path", None),
                 )
                 cleanup_run_runtime_resources(
-                    getattr(self.config, "runtime_path", None),
+                    runtime_path,
                     run_uuid,
                 )
             elif command is None:
@@ -1592,6 +1600,10 @@ class LensNodeClient:
             )
         )
         try:
+            # Let the queue register this waiter before another command can
+            # claim a free slot. This preserves FIFO priority for exclusive
+            # datasource work arriving just before a standard run.
+            await asyncio.sleep(0)
             while not acquire_task.done():
                 if cancel_event is not None and cancel_event.is_set():
                     acquire_task.cancel()

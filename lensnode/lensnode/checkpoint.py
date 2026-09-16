@@ -60,6 +60,7 @@ class ResumeState:
     open_call_ids: tuple = ()
     open_span_ids: tuple = ()
     parent_call_map: dict = field(default_factory=dict)
+    consulted_sources: dict = field(default_factory=dict)
 
 
 def checkpoint_enabled() -> bool:
@@ -279,6 +280,7 @@ def save_runtime_state(
     runtime_evidence=None,
     guardrail_state=None,
     trace_state=None,
+    consulted_sources=None,
 ):
     """Persist execution-gate state that must survive a process restart."""
 
@@ -309,6 +311,7 @@ def save_runtime_state(
             ("runtime_evidence", runtime_evidence),
             ("guardrail_state", guardrail_state),
             ("trace_state", trace_state),
+            ("consulted_sources", consulted_sources),
         ):
             if value is not None:
                 payload[key] = value
@@ -425,6 +428,7 @@ def load_resume_state(run_uuid, workspace_path) -> ResumeState:
         open_call_ids=tuple(trace_state["open_call_ids"]),
         open_span_ids=tuple(trace_state["open_span_ids"]),
         parent_call_map=trace_state["parent_call_map"],
+        consulted_sources=runtime_state.get("consulted_sources") or {},
     )
 
 

@@ -130,8 +130,10 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
 
         if self.action == "list":
             queryset = Assistant.objects.select_related("lensnode").prefetch_related(
-                "skill_bindings",
-                "mcp_bindings",
+                "skill_bindings__skill",
+                "mcp_bindings__mcp",
+                "datasource_bindings__datasource",
+                "datasource_bindings__item",
                 "plugin_bindings__connection",
                 Prefetch(
                     "collaboration_members",

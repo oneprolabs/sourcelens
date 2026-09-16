@@ -314,7 +314,14 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "lensnode",
                 "credential",
             )
-            .prefetch_related(
+        )
+        # These actions only load the datasource to scope a task listing, so
+        # prefetching its deployment copies would be work nobody reads.
+        if getattr(self, "action", "") not in {
+            "conversion_tasks",
+            "sync_tasks",
+        }:
+            queryset = queryset.prefetch_related(
                 Prefetch(
                     "deployments",
                     queryset=DataSourceDeployment.objects.select_related(
@@ -322,7 +329,6 @@ class DataSourceViewSet(BaseAdminViewSet):
                     ).order_by("created_at"),
                 )
             )
-        )
         filters = self._datasource_search_filters(
             self.request.query_params.get("filters")
         )

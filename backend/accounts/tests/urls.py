@@ -6,7 +6,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.urls import CustomLoginView
-from accounts.views import CustomUserDetailsView, VerifyLoginCodeView
+from accounts.views import (
+    CustomUserDetailsView,
+    McpTokenView,
+    VerifyLoginCodeView,
+)
 from accounts.views.management import (
     ManagementGroupBulkDeleteView,
     ManagementGroupListView,
@@ -48,6 +52,7 @@ urlpatterns = [
         PasswordChangeView.as_view(),
     ),
     path("api/v1/auth/probe", AuthenticatedProbeView.as_view()),
+    path("api/v1/auth/mcp/token", McpTokenView.as_view()),
     path(
         "api/v1/management/users/",
         ManagementUserListView.as_view(),

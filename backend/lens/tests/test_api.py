@@ -69,6 +69,7 @@ from lens.serializers import (
     validate_retrieval_scope,
 )
 from lens.routing_descriptions import build_routing_description
+from lens.serializers import localized_routing_description
 from lens.services import (
     LensNodeDispatchError,
     append_lensnode_output,
@@ -864,7 +865,11 @@ class LensApiTests(TestCase):
         )
         self.assertIn("Code Search", assistant.routing_description)
         self.assertIn("GitHub MCP", assistant.routing_description)
-        self.assertNotIn("routing_description", response.data)
+        self.assertIn("Knowledge Q&A", response.data["routing_description"])
+        self.assertEqual(
+            response.data["routing_description"],
+            localized_routing_description(assistant),
+        )
         self.assertEqual(
             assistant.settings["_model_check"]["agent_model_ref"]["status"],
             "skipped",
@@ -970,6 +975,36 @@ class LensApiTests(TestCase):
         self.assertIn("Renamed Code Search", self.assistant.routing_description)
         self.assertNotIn(self.mcp.name, self.assistant.routing_description)
 
+    def test_routing_description_lists_bound_data_sources(self):
+        """Routing metadata names the data sources an assistant can query."""
+
+        binding = AssistantDataSourceBinding.objects.create(
+            assistant=self.assistant,
+            datasource=self.datasource,
+            mount_name="repo-cache",
+        )
+        self.assistant.refresh_from_db()
+
+        self.assertIn("Available data sources", self.assistant.routing_description)
+        self.assertIn(self.datasource.name, self.assistant.routing_description)
+        self.assertIn(
+            "可用数据源",
+            build_routing_description(self.assistant, "zh-CN"),
+        )
+
+        self.datasource.status = DataSource.Status.DISABLED
+        self.datasource.save(update_fields=["status"])
+
+        self.assertNotIn(
+            self.datasource.name,
+            build_routing_description(self.assistant, "en-US"),
+        )
+
+        binding.delete()
+        self.assistant.refresh_from_db()
+
+        self.assertNotIn("Available data sources", self.assistant.routing_description)
+
     def test_routing_description_uses_the_run_answer_language(self):
         """Smart-routing metadata follows the current Run language."""
 
@@ -1066,6 +1101,11 @@ class LensApiTests(TestCase):
         self.assertNotIn("mcp_bindings", row)
         self.assertNotIn("access_grants", row)
         self.assertNotIn("settings", row)
+        self.assertEqual(
+            row["routing_description"],
+            localized_routing_description(self.assistant),
+        )
+        self.assertIn("Knowledge Q&A", row["routing_description"])
 
         detail_response = self.client.get(
             f"/api/lens/assistants/{self.assistant.uuid}/"
@@ -1319,6 +1359,7 @@ class LensApiTests(TestCase):
             {
                 "content": "Updated instructions.",
                 "environment": [],
+                "required_plugins": [],
             },
         )
 
@@ -2503,7 +2544,7 @@ class LensApiTests(TestCase):
         self.assertEqual(updated.allowed_assistant_uuids, [])
 
     def test_smart_collaboration_session_defaults_to_empty_range(self):
-        """Smart Collaboration requires an explicit participant choice."""
+        """An empty range is a valid state that freezes no delegate."""
 
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
@@ -2526,8 +2567,13 @@ class LensApiTests(TestCase):
             },
         )
         self.assertTrue(run.is_valid(), run.errors)
-        with self.assertRaises(PermissionDenied):
-            run.save()
+        saved = run.save()
+
+        self.assertEqual(saved.execution.task, "general_chat")
+        snapshot = saved.execution.runtime_snapshot
+        self.assertFalse(snapshot["routing_assistant_explicit"])
+        self.assertEqual(snapshot["routing_assistant_uuids"], [])
+        self.assertEqual(snapshot["subagents"], [])
 
     def test_smart_collaboration_rejects_legacy_model_setting(self):
         """Only the final Smart Collaboration model setting is accepted."""
@@ -5637,7 +5683,7 @@ class LensApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertLessEqual(len(queries), 4)
+        self.assertLessEqual(len(queries), 5)
         self.assertEqual(response.data["count"], 10)
         self.assertTrue(
             all(row["current_sync"] for row in response.data["results"])
@@ -5686,6 +5732,7 @@ class LensApiTests(TestCase):
                         "id": task.id,
                         "task_id": task.task_id,
                         "task_name": task.task_name,
+                        "filename": "",
                         "status": task.status,
                         "started_at": None,
                         "created_at": task.created_at,

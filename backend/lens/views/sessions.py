@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.http import content_disposition_header
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.renderers import JSONRenderer
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -26,7 +27,11 @@ from rest_framework.views import APIView
 from accounts.models import normalize_answer_language
 from lens.assistant_lifecycle import AssistantNotRunnableError
 from lens.attachments import AttachmentError, store_message_attachment
-from lens.citations import citation_source_payload, sanitize_run_citations
+from lens.citations import (
+    citation_source_payload,
+    public_run_citations,
+    sanitize_run_citations,
+)
 from lens.document_attachments import (
     DocumentAttachmentError,
     delete_document_attachment,
@@ -83,6 +88,7 @@ from lens.services import (
     create_execution_run,
     stream_run_events_async,
 )
+from lens.mcp_qa import QAMCPRequestError, validate_request
 from lens.shared_qa_files import snapshot_shared_qa_files
 
 from .base import (
@@ -92,6 +98,200 @@ from .base import (
     _get_user_run,
 )
 from .shares import _shared_qa_default_title, _unique_share_token
+
+
+class SourceLensQAMCPView(APIView):
+    """Read-only HTTP adapter for external SourceLens Q&A clients."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    renderer_classes = [JSONRenderer]
+
+    def post(self, request):
+        """Create one authorized Q&A run without exposing management APIs."""
+
+        tool = request.data.get("tool", "sourcelens_ask")
+        try:
+            query = validate_request(tool, request.data)
+        except QAMCPRequestError as exc:
+            return Response({"error": str(exc)}, status=400)
+        assistant_uuid = request.data.get("assistant_uuid")
+        if not assistant_uuid:
+            return Response({"error": "assistant_uuid is required"}, status=400)
+        session_serializer = SessionCreateSerializer(
+            data={"assistant_uuid": assistant_uuid},
+            context={"request": request},
+        )
+        session_serializer.is_valid(raise_exception=True)
+        session = session_serializer.save()
+        run_serializer = RunCreateSerializer(
+            data={
+                "question": query.query,
+                "request_source": request.data.get("request_source", {}),
+            },
+            context={"session": session, "request": request},
+        )
+        run_serializer.is_valid(raise_exception=True)
+        run = run_serializer.save()
+        run.refresh_from_db()
+        return Response(
+            {"run_uuid": str(run.uuid), "status": run.status},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class SourceLensQAMCPResultView(APIView):
+    """Return one Q&A run result to its owning authenticated user."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, uuid):
+        """Return bounded status, answer, and citations for a Q&A run."""
+
+        run = (
+            Run.objects.select_related(
+                "session",
+                "session__assistant",
+                "output_message",
+            )
+            .filter(uuid=uuid, session__user=request.user)
+            .first()
+        )
+        if run is None:
+            return Response({"error": "RUN_NOT_FOUND"}, status=404)
+        payload = {
+            "run_uuid": str(run.uuid),
+            "status": run.status,
+        }
+        if run.output_message is not None:
+            payload["answer"] = (run.output_message.content or "")[:50000]
+        payload["citations"] = public_run_citations(run.citations)
+        return Response(payload)
+
+
+class SourceLensQAMCPRPCView(APIView):
+    """Minimal authenticated MCP JSON-RPC transport for Q&A tools.
+
+    The MCP transport answers with a bare JSON-RPC envelope: MCP clients
+    reject the platform's ``code``/``message``/``data`` wrapper, so the
+    response bypasses ``CustomJSONRenderer``.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    renderer_classes = [JSONRenderer]
+
+    def post(self, request):
+        """Handle MCP initialize, tools/list, and tools/call requests."""
+
+        rpc = request.data if isinstance(request.data, dict) else {}
+        request_id = rpc.get("id")
+        method = rpc.get("method")
+        if method == "initialize":
+            return Response({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "sourcelens-qa",
+                        "version": "1.0.0",
+                    },
+                },
+            })
+        if method == "notifications/initialized":
+            return Response(status=202)
+        if method == "tools/list":
+            return Response({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"tools": [
+                    {
+                        "name": "sourcelens_ask",
+                        "description": "Ask an authorized SourceLens workspace.",
+                        "inputSchema": _qa_mcp_schema(),
+                    },
+                    {
+                        "name": "sourcelens_search",
+                        "description": "Search an authorized SourceLens workspace.",
+                        "inputSchema": _qa_mcp_schema(),
+                    },
+                ]},
+            })
+        if method == "tools/call":
+            params = rpc.get("params") or {}
+            name = params.get("name")
+            arguments = params.get("arguments") or {}
+            try:
+                query = validate_request(name, arguments)
+            except QAMCPRequestError as exc:
+                return Response(_mcp_error(request_id, str(exc)), status=400)
+            if not arguments.get("assistant_uuid"):
+                return Response(
+                    _mcp_error(request_id, "ASSISTANT_REQUIRED"), status=400
+                )
+            view = SourceLensQAMCPView()
+            view.request = request
+            source = dict(arguments.get("request_source") or {})
+            source.update({
+                "channel": "mcp",
+                "tool": name,
+                "request_id": str(request_id or ""),
+            })
+            request._full_data = {
+                **arguments,
+                "tool": name,
+                "request_source": source,
+            }
+            response = view.post(request)
+            if response.status_code >= 400:
+                return Response(
+                    _mcp_error(
+                        request_id,
+                        str(response.data.get("error") or "Q&A_REQUEST_FAILED"),
+                    ),
+                    status=response.status_code,
+                )
+            run_uuid = response.data.get("run_uuid", "")
+            return Response({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"content": [{
+                    "type": "text",
+                    "text": (
+                        "run_uuid=" + str(run_uuid) + "\n"
+                        "status=" + str(response.data.get("status", "")) + "\n"
+                        "result_path=/api/lens/mcp/qa/" + str(run_uuid) + "/"
+                    ),
+                }], "isError": False},
+            }, status=response.status_code)
+        return Response(_mcp_error(request_id, "METHOD_NOT_FOUND"), status=400)
+
+
+def _qa_mcp_schema():
+    """Return the shared input schema for the public Q&A tools."""
+
+    return {
+        "type": "object",
+        "properties": {
+            "assistant_uuid": {"type": "string"},
+            "query": {"type": "string", "maxLength": 8000},
+            "workspace": {"type": "string", "maxLength": 200},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 50},
+            "request_source": {"type": "object"},
+        },
+        "required": ["assistant_uuid", "query"],
+        "additionalProperties": False,
+    }
+
+
+def _mcp_error(request_id, message):
+    """Build a stable JSON-RPC error response."""
+
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": -32602, "message": message},
+    }
 
 logger = logging.getLogger(__name__)
 

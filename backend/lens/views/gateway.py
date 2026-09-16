@@ -178,6 +178,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 {"detail": "Invalid trace_context."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        run = None
         if run_uuid:
             try:
                 run = Run.objects.select_related("session").get(

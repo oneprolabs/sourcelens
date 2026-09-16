@@ -48,6 +48,9 @@ from .views import (
     SessionViewSet,
     SharedQAViewSet,
     SkillViewSet,
+    SourceLensQAMCPRPCView,
+    SourceLensQAMCPResultView,
+    SourceLensQAMCPView,
     admin_run_trajectory_stream_view,
     run_stream_view,
 )
@@ -108,6 +111,13 @@ router.register(
 )
 
 urlpatterns = [
+    path("mcp/qa/", SourceLensQAMCPView.as_view(), name="lens-mcp-qa"),
+    path("mcp/", SourceLensQAMCPRPCView.as_view(), name="lens-mcp-rpc"),
+    path(
+        "mcp/qa/<uuid:uuid>/",
+        SourceLensQAMCPResultView.as_view(),
+        name="lens-mcp-qa-result",
+    ),
     path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),
     path(
         "plugin-runtime/tool-snapshots/",

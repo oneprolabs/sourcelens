@@ -176,6 +176,10 @@ def test_resume_loads_checkpoint_and_frozen_runtime_metadata(
             "open_span_ids": ["tool-1"],
             "parent_call_map": {"tool-1": "model-1"},
         },
+        consulted_sources={
+            "reads": [["/sources/demo.md", 1, 1, "answer"]],
+            "searches": [],
+        },
     )
 
     try:
@@ -203,6 +207,10 @@ def test_resume_loads_checkpoint_and_frozen_runtime_metadata(
     assert state.open_call_ids == ("model-1",)
     assert state.open_span_ids == ("tool-1",)
     assert state.parent_call_map == {"tool-1": "model-1"}
+    assert state.consulted_sources == {
+        "reads": [["/sources/demo.md", 1, 1, "answer"]],
+        "searches": [],
+    }
 
 
 def test_route_update_preserves_runtime_state(tmp_path, monkeypatch):

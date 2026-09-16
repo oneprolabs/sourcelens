@@ -7,6 +7,7 @@ from django.contrib.auth.models import Group
 from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import get_language
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
@@ -79,7 +80,10 @@ from .plugins.skill_requirements import (
     SkillPluginRequirementError,
     validate_required_plugins,
 )
-from .routing_descriptions import refresh_routing_description
+from .routing_descriptions import (
+    build_routing_description,
+    refresh_routing_description,
+)
 from .runtime_events import (
     public_step_detail,
     sanitize_loaded_mcps,
@@ -675,10 +679,17 @@ class AccessGrantsField(serializers.Field):
         return validated
 
 
+def localized_routing_description(assistant):
+    """Return the caller-localized, non-sensitive routing synopsis."""
+
+    return build_routing_description(assistant, get_language() or "en-US")
+
+
 class AssistantListSerializer(serializers.ModelSerializer):
     """Compact assistant representation for collection responses."""
 
     datasource_routing = serializers.SerializerMethodField()
+    routing_description = serializers.SerializerMethodField()
     datasource_bindings = DatasourceBindingsField(read_only=True)
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
     lensnode_name = serializers.CharField(source="lensnode.name", read_only=True)
@@ -698,6 +709,8 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "datasource_routing",
             "datasource_bindings",
             "name",
+            "description",
+            "routing_description",
             "capability",
             "agent_rounds",
             "slug",
@@ -715,6 +728,11 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "vision_model_capability",
             "can_process_images",
         ]
+
+    def get_routing_description(self, assistant):
+        """Expose the localized routing synopsis used for assistant choice."""
+
+        return localized_routing_description(assistant)
 
     def get_datasource_routing(self, assistant):
         """Expose the data selection mode without other runtime settings."""
@@ -827,6 +845,7 @@ class AssistantSerializer(serializers.ModelSerializer):
     datasource_bindings = DatasourceBindingsField(required=False)
     access_grants = AccessGrantsField(required=False)
     workspace_guide = serializers.JSONField(required=False)
+    routing_description = serializers.SerializerMethodField()
     skill_summary = serializers.SerializerMethodField()
     mcp_summary = serializers.SerializerMethodField()
     plugin_summary = serializers.SerializerMethodField()
@@ -848,6 +867,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             "datasource_bindings",
             "name",
             "description",
+            "routing_description",
             "mode",
             "capability",
             "slug",
@@ -896,6 +916,11 @@ class AssistantSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_routing_description(self, assistant):
+        """Expose the localized routing synopsis used for assistant choice."""
+
+        return localized_routing_description(assistant)
 
     def get_skill_summary(self, assistant):
         """Return skill binding summary for list views."""
@@ -4352,6 +4377,14 @@ class SessionCreateSerializer(serializers.Serializer):
         return attrs
 
 
+def _validated_request_source(data):
+    """Normalize optional request origin data without granting privileges."""
+
+    from lens.mcp_qa import validate_request_source
+
+    return validate_request_source(data.get("request_source"))
+
+
 class RunCreateSerializer(serializers.Serializer):
     """Run creation payload."""
 
@@ -4361,6 +4394,7 @@ class RunCreateSerializer(serializers.Serializer):
         default="",
         max_length=CLARIFICATION_MAX_ORIGINAL_CHARS,
     )
+    request_source = serializers.JSONField(required=False)
     idempotency_key = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -4472,6 +4506,7 @@ class RunCreateSerializer(serializers.Serializer):
                 routing_assistant_uuid=validated_data.get("routing_assistant_uuid"),
                 routing_assistant_uuids=validated_data.get("routing_assistant_uuids"),
                 agent_rounds=validated_data.get("agent_rounds"),
+                request_source=_validated_request_source(validated_data),
             )
         except AssistantNotRunnableError:
             raise PermissionDenied("You do not have access to this assistant.")

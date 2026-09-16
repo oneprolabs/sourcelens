@@ -318,6 +318,8 @@
                   v-if="activeSection === 'notifications'"
                 />
 
+                <AgentAccessSettings v-if="activeSection === 'agent-access'" />
+
                 <ReleaseNotesSettings
                   v-if="activeSection === 'release-notes'"
                 />
@@ -337,6 +339,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AnswerNotificationSettings from '@/components/settings/AnswerNotificationSettings.vue'
+import AgentAccessSettings from '@/components/settings/AgentAccessSettings.vue'
 import PasswordChangeSettings from '@/components/settings/PasswordChangeSettings.vue'
 import ReleaseNotesSettings from '@/components/settings/ReleaseNotesSettings.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -375,6 +378,9 @@ const BellIcon = {
 }
 const ReleaseNotesIcon = {
   template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>`
+}
+const TerminalIcon = {
+  template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 }
 const LockIcon = {
   template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg>`
@@ -436,6 +442,11 @@ const sections = computed(() => [
     key: 'notifications',
     label: t('settings.modal.notifications'),
     icon: BellIcon
+  },
+  {
+    key: 'agent-access',
+    label: t('settings.modal.agentAccess'),
+    icon: TerminalIcon
   },
   {
     key: 'security',
