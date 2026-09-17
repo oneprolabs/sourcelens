@@ -363,6 +363,140 @@ class InstallerPlatformTests(unittest.TestCase):
             self.assertIn("--force-recreate", calls[0])
             self.assertNotIn("--force-recreate", calls[1])
 
+    def _patch_compose(self, registry):
+        with tempfile.TemporaryDirectory() as directory:
+            install_dir = Path(directory)
+            compose = install_dir / "docker-compose.standalone.yml"
+            shutil.copyfile(COMPOSE, compose)
+            run_installer_function(
+                'PLATFORM=linux; LOG_FILE=""; CHANNEL=cn; SOURCE_DIR=""; '
+                'REGISTRY="$2"; REGISTRY_CN="$3"; VERSION=0.57.0; '
+                'INSTALL_DIR="$4"; '
+                "COMPOSE_FILE=docker-compose.standalone.yml; patch_compose",
+                registry,
+                "registry.cn-beijing.aliyuncs.com/oneprolabs",
+                install_dir,
+            )
+            return compose.read_text()
+
+    def test_cn_channel_pulls_infrastructure_images_from_aliyun(self):
+        content = self._patch_compose(
+            "registry.cn-beijing.aliyuncs.com/oneprolabs"
+        )
+
+        self.assertIn(
+            "image: registry.cn-beijing.aliyuncs.com/oneprolabs/nginx:latest",
+            content,
+        )
+        self.assertIn(
+            "image: registry.cn-beijing.aliyuncs.com/oneprolabs/postgres:17",
+            content,
+        )
+        self.assertIn(
+            "image: registry.cn-beijing.aliyuncs.com/oneprolabs"
+            "/redis:alpine",
+            content,
+        )
+
+    def test_docker_hub_channel_keeps_bare_infrastructure_images(self):
+        content = self._patch_compose("oneprolabs")
+
+        self.assertIn("image: nginx:latest", content)
+        self.assertIn("image: postgres:17", content)
+        self.assertIn("image: redis:alpine", content)
+
+    def test_unreachable_docker_hub_falls_back_to_aliyun_registry(self):
+        result = run_installer_function(
+            'curl() { '
+            'case "$*" in *registry-1.docker.io*) printf "000" ;; '
+            '*) printf "401" ;; esac; }; '
+            'CHANNEL=github; DOWNLOAD_SOURCE=github; '
+            'detect_download_source; printf "REG=%s\\n" "$REGISTRY"'
+        )
+
+        self.assertIn(
+            "REG=registry.cn-beijing.aliyuncs.com/oneprolabs", result.stdout
+        )
+
+    def test_reachable_docker_hub_selects_docker_hub_registry(self):
+        result = run_installer_function(
+            'curl() { printf "401"; }; '
+            'CHANNEL=github; DOWNLOAD_SOURCE=github; '
+            'detect_download_source; printf "REG=%s\\n" "$REGISTRY"'
+        )
+
+        self.assertIn("REG=oneprolabs", result.stdout)
+
+    def test_cn_channel_generates_certificate_with_host_openssl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install_dir = Path(directory)
+            log_file = install_dir / "install.log"
+            run_installer_function(
+                'PLATFORM=linux; REGISTRY="$4"; REGISTRY_CN="$4"; '
+                'INSTALL_DIR="$2"; DOMAIN=127.0.0.1; LOG_FILE="$3"; '
+                'docker() { return 1; }; generate_certs',
+                install_dir,
+                log_file,
+                "registry.cn-beijing.aliyuncs.com/oneprolabs",
+            )
+
+            certs = install_dir / "docker/nginx/certs"
+            self.assertTrue((certs / "nginx-selfsigned.crt").is_file())
+            self.assertTrue((certs / "nginx-selfsigned.key").is_file())
+
+    def test_cn_channel_does_not_require_tls_helper_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_installer_function(
+                'PLATFORM=linux; REGISTRY="$2"; REGISTRY_CN="$2"; '
+                'INSTALL_DIR="$3"; ! tls_helper_image_required',
+                "registry.cn-beijing.aliyuncs.com/oneprolabs",
+                directory,
+            )
+
+    def test_ai_model_setup_prompt_defaults_to_no(self):
+        result = run_installer_function(
+            'LOG_FILE=""; ASSUME_YES=0; '
+            'model_setup_is_available() { return 0; }; '
+            'model_is_configured() { return 1; }; '
+            'model_setup_has_terminal() { return 0; }; '
+            'confirm() { printf "CONFIRM:%s default=%s\\n" "$1" "$2"; '
+            'return 1; }; '
+            'run_model_setup_wizard() { printf "WIZARD\\n"; }; '
+            "configure_ai_model"
+        )
+
+        self.assertIn(
+            "CONFIRM:Configure a model now? default=no", result.stdout
+        )
+        self.assertNotIn("WIZARD", result.stdout)
+
+    def test_ai_model_setup_runs_wizard_when_confirmed(self):
+        result = run_installer_function(
+            'LOG_FILE=""; ASSUME_YES=0; '
+            'model_setup_is_available() { return 0; }; '
+            'model_is_configured() { return 1; }; '
+            'model_setup_has_terminal() { return 0; }; '
+            'confirm() { return 0; }; '
+            'run_model_setup_wizard() { printf "WIZARD\\n"; }; '
+            "configure_ai_model"
+        )
+
+        self.assertIn("WIZARD", result.stdout)
+
+    def test_ai_model_setup_skipped_with_yes_flag(self):
+        result = run_installer_function(
+            'LOG_FILE=""; ASSUME_YES=1; '
+            'model_setup_is_available() { return 0; }; '
+            'model_is_configured() { return 1; }; '
+            'confirm() { printf "CONFIRM\\n"; return 0; }; '
+            'run_model_setup_wizard() { printf "WIZARD\\n"; }; '
+            "configure_ai_model"
+        )
+
+        self.assertNotIn("CONFIRM", result.stdout)
+        self.assertNotIn("WIZARD", result.stdout)
+        self.assertIn("skipped because --yes is enabled", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,6 +114,8 @@ HTTPS_PORT="${SOURCELENS_HTTPS_PORT:-${DEFAULT_HTTPS_PORT}}"
 CHANNEL="${SOURCELENS_CHANNEL:-}"
 GITHUB_REACHABLE_PENDING=1
 GITHUB_REACHABLE=0
+DOCKERHUB_REACHABLE_PENDING=1
+DOCKERHUB_REACHABLE=0
 DOWNLOAD_SOURCE="${SOURCELENS_DOWNLOAD_SOURCE:-}"
 VERSION="${SOURCELENS_VERSION:-}"
 REGISTRY="${SOURCELENS_REGISTRY:-}"
@@ -213,24 +215,34 @@ EOF
 # Interaction helpers
 # ---------------------------------------------------------------------------
 confirm() {
-  local prompt="$1" answer=""
-  [[ "${ASSUME_YES}" == "1" ]] && return 0
+  local prompt="$1" default="${2:-yes}" answer="" suffix="[Y/n]"
+  [[ "${default}" == "no" ]] && suffix="[y/N]"
+  if [[ "${ASSUME_YES}" == "1" ]]; then
+    [[ "${default}" == "no" ]] && return 1
+    return 0
+  fi
   while :; do
     if [[ ! -t 0 ]]; then
       if [[ -e /dev/tty ]]; then
-        printf '%s [yes/No] ' "${prompt}" >/dev/tty
-        read -r answer </dev/tty || answer="no"
+        printf '%s %s ' "${prompt}" "${suffix}" >/dev/tty
+        read -r answer </dev/tty || answer=""
+      elif [[ "${default}" == "no" ]]; then
+        return 1 # non-interactive: fall back to the default answer
       else
-        return 0 # fully non-interactive: proceed with defaults
+        return 0
       fi
     else
-      printf '%s [yes/No] ' "${prompt}"
-      read -r answer || answer="no"
+      printf '%s %s ' "${prompt}" "${suffix}"
+      read -r answer || answer=""
     fi
     answer="$(printf '%s' "${answer}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -z "${answer}" ]]; then
+      [[ "${default}" == "no" ]] && return 1
+      return 0
+    fi
     case "${answer}" in
-      yes) return 0 ;;
-      ""|no) return 1 ;;
+      y|yes) return 0 ;;
+      n|no) return 1 ;;
       *)
         if [[ ! -t 0 && -e /dev/tty ]]; then
           printf 'Enter yes or no.\n' >/dev/tty
@@ -373,6 +385,25 @@ probe_github_reachable() {
   fi
 }
 
+# Docker Hub reachability, probed independently of github.com: the two are
+# often asymmetric on mainland CN hosts (github.com may answer while
+# registry-1.docker.io is blocked), and it's the registry — not github.com —
+# that decides whether the Docker Hub or the Aliyun ACR images are usable.
+# /v2/ answers 401 without credentials when it's reachable, so 200|401 = up.
+probe_dockerhub_reachable() {
+  if [[ "${DOCKERHUB_REACHABLE_PENDING}" == "1" ]]; then
+    local code=""
+    code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' \
+      https://registry-1.docker.io/v2/ 2>/dev/null || printf '000')"
+    if [[ "${code}" == "200" || "${code}" == "401" ]]; then
+      DOCKERHUB_REACHABLE=1
+    else
+      DOCKERHUB_REACHABLE=0
+    fi
+    DOCKERHUB_REACHABLE_PENDING=0
+  fi
+}
+
 detect_channel() {
   if [[ -z "${CHANNEL}" ]]; then
     probe_github_reachable
@@ -410,13 +441,22 @@ detect_download_source() {
     github|gitee) ;;
     *) abort "invalid download source '${DOWNLOAD_SOURCE}' (supported: github, gitee)" ;;
   esac
-  # The download source selects the application image registry: github -> Docker
-  # Hub, gitee -> Aliyun ACR. An explicit --channel cn also forces the CN path.
+  # The image registry is chosen from actual network reachability, not from the
+  # download source alone: an explicit --channel cn / --download-source gitee
+  # forces the CN path, otherwise Docker Hub is used only when
+  # registry-1.docker.io actually answers — github.com being reachable does NOT
+  # imply Docker Hub is, which is the common case on mainland CN hosts.
   if [[ -z "${REGISTRY}" ]]; then
     if [[ "${DOWNLOAD_SOURCE}" == "gitee" || "${CHANNEL}" == "cn" ]]; then
       REGISTRY="${REGISTRY_CN}"
     else
-      REGISTRY="${REGISTRY_GITHUB}"
+      probe_dockerhub_reachable
+      if [[ "${DOCKERHUB_REACHABLE}" == "1" ]]; then
+        REGISTRY="${REGISTRY_GITHUB}"
+      else
+        REGISTRY="${REGISTRY_CN}"
+        log_warn "Docker Hub (registry-1.docker.io) is unreachable; using the Aliyun ACR mirror for images"
+      fi
     fi
   fi
   REGISTRY="${REGISTRY%/}"
@@ -882,6 +922,18 @@ patch_compose() {
   if ! grep -q "image: ${REGISTRY}/sourcelens-backend:${VERSION}" "${compose}"; then
     abort "failed to pin image references in ${compose}"
   fi
+  # Infrastructure images (nginx/postgres/redis) are referenced bare in the
+  # compose files, i.e. implicitly Docker Hub. On the Aliyun ACR path pull them
+  # from the same namespace, where they are mirrored, because Docker Hub is
+  # unreachable from most mainland CN hosts. Only bare (slash-less) references
+  # are touched, so the already-rewritten oneprolabs/<app> lines are unaffected.
+  if [[ "${REGISTRY}" == "${REGISTRY_CN}" ]]; then
+    sed_inplace "${compose}" -E \
+      "s#image:[[:space:]]*([a-zA-Z0-9][a-zA-Z0-9._-]*):([a-zA-Z0-9][a-zA-Z0-9._-]*)\$#image: ${REGISTRY}/\1:\2#"
+    if grep -qE "^[[:space:]]*image:[[:space:]]*(nginx|postgres|redis):" "${compose}"; then
+      abort "failed to rewrite infrastructure image references in ${compose}"
+    fi
+  fi
   patch_platform_compose "${compose}"
   if [[ -n "${SOURCE_DIR}" && "${INSTALL_DIR}" != "${DEFAULT_INSTALL_DIR}" ]]; then
     local project_name=""
@@ -948,7 +1000,7 @@ generate_certs() {
   mkdir -p "${certs_dir}"
   if [[ ! -f "${certs_dir}/nginx-selfsigned.crt" || ! -f "${certs_dir}/nginx-selfsigned.key" ]]; then
     log_info "Generating self-signed certificate for ${DOMAIN} (replace with a real certificate for production)"
-    if [[ "${PLATFORM}" == "windows" ]]; then
+    if tls_uses_host_openssl; then
       (
         cd "${certs_dir}"
         MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 \
@@ -1074,18 +1126,28 @@ pull_image_label() {
     *sourcelens-backend*) printf 'SourceLens Backend' ;;
     *sourcelens-frontend*) printf 'SourceLens Frontend' ;;
     *sourcelens-lensnode*) printf 'SourceLens LensNode' ;;
-    postgres:*) printf 'PostgreSQL' ;;
-    redis:*) printf 'Redis' ;;
-    nginx:*) printf 'Nginx' ;;
+    *postgres:*) printf 'PostgreSQL' ;;
+    *redis:*) printf 'Redis' ;;
+    *nginx:*) printf 'Nginx' ;;
     alpine/openssl*) printf 'TLS Helper' ;;
     *) printf '%s' "${1##*/}" ;;
   esac
 }
 
+# Windows Git Bash and the Aliyun ACR path generate the certificate with the
+# host openssl (required by check_tools) instead of the alpine/openssl
+# container: the CN channel has no Docker Hub access, and the helper image is
+# not mirrored on the Aliyun ACR.
+tls_uses_host_openssl() {
+  [[ "${PLATFORM}" == "windows" || "${REGISTRY}" == "${REGISTRY_CN}" ]]
+}
+
 tls_helper_image_required() {
-  [[ "${PLATFORM}" != "windows" && \
-     (! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.crt" || \
-      ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.key") ]]
+  if tls_uses_host_openssl; then
+    return 1
+  fi
+  [[ ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.crt" || \
+     ! -f "${INSTALL_DIR}/docker/nginx/certs/nginx-selfsigned.key" ]]
 }
 
 pull_layer_progress() {
@@ -1126,6 +1188,12 @@ pull_progress_bar() {
   printf '%s' "${bar}"
 }
 
+format_duration() {
+  local total_seconds="$1"
+  ((total_seconds < 0)) && total_seconds=0
+  printf '%02d:%02d' "$((total_seconds / 60))" "$((total_seconds % 60))"
+}
+
 _pull_dashboard_cursor_hidden=0
 
 pull_dashboard_hide_cursor() {
@@ -1141,19 +1209,17 @@ pull_dashboard_show_cursor() {
 }
 
 render_pull_dashboard() {
-  local total="$1" started="$2" tick="$3"
+  local total="$1" tick="$2"
   local index=0 state="" output_file="" metrics="" detail=""
   local done_layers=0 total_layers=0 percent=0 elapsed=0
-  local minutes=0 seconds=0 indicator="" color="" bar=""
+  local indicator="" color="" bar="" time_str=""
+  local now="${SECONDS}"
   local chars='/-\|'
   [[ -t 1 ]] || return 0
 
   if [[ "${_pull_dashboard_rendered}" == "1" ]]; then
     printf '\033[%sA' "${total}"
   fi
-  elapsed=$((SECONDS - started))
-  minutes=$((elapsed / 60))
-  seconds=$((elapsed % 60))
 
   for ((index = 0; index < total; index++)); do
     state="${image_states[index]}"
@@ -1162,6 +1228,9 @@ render_pull_dashboard() {
     indicator="·"
     color="${c_cyan}"
     detail="waiting"
+    # Each row shows its own elapsed time, frozen once the image finishes, so a
+    # completed image no longer keeps "ticking" with the overall timer.
+    time_str="--:--"
     if [[ "${state}" == "active" ]]; then
       indicator="${chars:$((tick % 4)):1}"
       metrics="$(pull_layer_progress "${output_file}")"
@@ -1174,24 +1243,31 @@ render_pull_dashboard() {
       else
         detail="starting"
       fi
+      time_str="$(format_duration $((now - image_started[index])))"
     elif [[ "${state}" == "done" ]]; then
       indicator="✓"
       color="${c_green}"
       percent=100
       detail="complete"
+      time_str="$(format_duration \
+        $((image_finished[index] - image_started[index])))"
     elif [[ "${state}" == "retrying" ]]; then
       indicator="!"
       color="${c_yellow}"
       detail="retrying"
+      time_str="$(format_duration \
+        $((image_finished[index] - image_started[index])))"
     elif [[ "${state}" == "failed" ]]; then
       indicator="✗"
       color="${c_red}"
       detail="failed"
+      time_str="$(format_duration \
+        $((image_finished[index] - image_started[index])))"
     fi
     bar="$(pull_progress_bar "${percent}")"
-    printf '\r\033[K%s%s  %-20s [%s]  %3d%%  %-12s  %02d:%02d%s\n' \
+    printf '\r\033[K%s%s  %-20s [%s]  %3d%%  %-12s  %s%s\n' \
       "${color}" "${indicator}" "${image_labels[index]}" "${bar}" \
-      "${percent}" "${detail}" "${minutes}" "${seconds}" "${c_reset}"
+      "${percent}" "${detail}" "${time_str}" "${c_reset}"
   done
   _pull_dashboard_rendered=1
 }
@@ -1211,12 +1287,13 @@ pull_images() {
 
   local total="${#images[@]}" attempt=1 max_attempts=3
   local completed=0 cursor=0 job=0 image_index=0 img=""
-  local running=0 found=0 started="${SECONDS}" tick=0 rc=0
+  local running=0 found=0 tick=0 rc=0
   local status_file="" output_file=""
   local failure_message="" retry_message=""
   local status_dir="${INSTALL_DIR}/logs/.pull-status-$$"
   local -a pending=() failed=() pids=() batch=() statuses=()
   local -a image_states=() image_logs=() image_labels=()
+  local -a image_started=() image_finished=()
   if ((total == 0)); then
     log_warn "No components need to be downloaded"
     return 0
@@ -1226,6 +1303,8 @@ pull_images() {
     image_states+=("waiting")
     image_logs+=("")
     image_labels+=("$(pull_image_label "${images[image_index]}")")
+    image_started+=("0")
+    image_finished+=("0")
   done
   log_info \
     "Downloading ${total} components, up to ${PULL_PARALLELISM} in parallel"
@@ -1248,6 +1327,8 @@ pull_images() {
         output_file="${status_dir}/${attempt}-${image_index}.log"
         image_states[image_index]="active"
         image_logs[image_index]="${output_file}"
+        image_started[image_index]="${SECONDS}"
+        image_finished[image_index]="0"
         (
           if pull_one "${img}" "${output_file}"; then
             printf '0\n' >"${status_file}"
@@ -1274,10 +1355,12 @@ pull_images() {
             && cat "${output_file}" >>"${LOG_FILE:-/dev/null}"
           if [[ "${rc}" == "0" ]]; then
             image_states[image_index]="done"
+            image_finished[image_index]="${SECONDS}"
             completed=$((completed + 1))
             log_line "[PROGRESS] ${completed}/${total} components downloaded"
           else
             image_states[image_index]="retrying"
+            image_finished[image_index]="${SECONDS}"
             failed+=("${image_index}")
           fi
           rm -f "${status_file}" "${output_file}"
@@ -1288,7 +1371,7 @@ pull_images() {
         fi
       done
       tick=$((tick + 1))
-      render_pull_dashboard "${total}" "${started}" "${tick}"
+      render_pull_dashboard "${total}" "${tick}"
       ((found == 1)) || sleep 0.2
     done
 
@@ -1299,7 +1382,7 @@ pull_images() {
       for image_index in "${failed[@]}"; do
         image_states[image_index]="failed"
       done
-      render_pull_dashboard "${total}" "${started}" "${tick}"
+      render_pull_dashboard "${total}" "${tick}"
       pull_dashboard_show_cursor
       failure_message="failed to download ${#failed[@]} component(s) after "
       failure_message+="${max_attempts} attempts; check registry access "
@@ -1309,13 +1392,13 @@ pull_images() {
     retry_message="${#failed[@]} component download(s) failed on attempt "
     retry_message+="${attempt}/${max_attempts}; retrying in 10s"
     log_line "[WARN]  ${retry_message}"
-    render_pull_dashboard "${total}" "${started}" "${tick}"
+    render_pull_dashboard "${total}" "${tick}"
     sleep 10
     pending=("${failed[@]}")
     attempt=$((attempt + 1))
   done
   rmdir "${status_dir}" 2>/dev/null || true
-  render_pull_dashboard "${total}" "${started}" "${tick}"
+  render_pull_dashboard "${total}" "${tick}"
   pull_dashboard_show_cursor
   if [[ -t 1 ]]; then
     log_line "[OK]    All ${total} components downloaded"
@@ -1477,6 +1560,15 @@ model_is_configured() {
     python manage.py setup_ai_model --check >/dev/null 2>&1
 }
 
+model_setup_has_terminal() {
+  [[ -r /dev/tty && -w /dev/tty ]]
+}
+
+run_model_setup_wizard() {
+  run_compose_quiet exec backend-api \
+    python manage.py setup_ai_model </dev/tty >/dev/tty 2>/dev/tty
+}
+
 configure_ai_model() {
   local skip_message="" unavailable_message=""
   log_step "AI model setup"
@@ -1495,18 +1587,24 @@ configure_ai_model() {
   fi
 
   if [[ "${ASSUME_YES}" == "1" ]]; then
-    skip_message="AI model setup needs an interactive terminal and was "
-    skip_message+="skipped because --yes is enabled"
+    skip_message="AI model setup was skipped because --yes is enabled"
     log_warn "${skip_message}"
     return 0
   fi
-  if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
+  if ! model_setup_has_terminal; then
     log_warn "No interactive terminal is available; AI model setup was skipped"
     return 0
   fi
+  # The installer owns the opt-in (default No, plain Enter skips); the wizard
+  # itself then goes straight to provider selection.
+  if ! confirm "Configure a model now?" no; then
+    skip_message="AI model setup skipped; configure it later in the "
+    skip_message+="SourceLens management console"
+    log_warn "${skip_message}"
+    return 0
+  fi
 
-  if ! run_compose_quiet exec backend-api \
-    python manage.py setup_ai_model </dev/tty >/dev/tty 2>/dev/tty; then
+  if ! run_model_setup_wizard; then
     log_warn "Interactive AI model setup did not complete"
   fi
   if model_is_configured; then

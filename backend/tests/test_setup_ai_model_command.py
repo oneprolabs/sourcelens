@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from agentcore_metering.adapters.django.models import LLMConfig
-from core.management.commands.setup_ai_model import Command
+from core.management.commands.setup_ai_model import Command, SetupAborted
 
 
 class FakeTerminalInput:
@@ -67,7 +67,7 @@ def test_existing_active_global_model_skips_prompts(monkeypatch):
 def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
     """A successful connection creates one active system default model."""
 
-    answers = iter(["", ""])
+    answers = iter([""])
     secret = "test-api-key"
     captured = {}
 
@@ -113,20 +113,6 @@ def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
     assert "saved as the system default" in output.getvalue()
 
 
-@pytest.mark.django_db
-def test_interactive_setup_can_be_skipped(monkeypatch):
-    """Skipping model setup leaves the working installation unchanged."""
-
-    monkeypatch.setattr(Command, "_has_tty", lambda self: True)
-    monkeypatch.setattr(Command, "_input", lambda self, prompt: "no")
-    output = StringIO()
-
-    call_command(Command(), stdout=output)
-
-    assert not LLMConfig.objects.exists()
-    assert "skipped" in output.getvalue().lower()
-
-
 def test_option_menu_uses_arrow_keys(monkeypatch):
     """Arrow keys move the active option before Enter confirms it."""
 
@@ -143,6 +129,58 @@ def test_option_menu_uses_arrow_keys(monkeypatch):
     assert selected == 1
     assert "use ↑/↓ and press Enter" in output.getvalue()
     assert "> Anthropic" in output.getvalue()
+
+
+def test_option_menu_escape_aborts_setup(monkeypatch):
+    """Esc leaves the option menu instead of selecting a value."""
+
+    monkeypatch.setattr(Command, "_read_key", lambda self: "escape")
+    command = Command(stdout=StringIO())
+
+    with pytest.raises(SetupAborted):
+        command._select_option("Providers", ["OpenAI", "Anthropic"])
+
+
+def test_read_key_maps_quit_and_escape(monkeypatch):
+    """The key reader recognises q as quit and a lone Esc as escape."""
+
+    class FakeInput:
+        def __init__(self, char):
+            self._char = char
+
+        @staticmethod
+        def fileno():
+            return 0
+
+        def read(self, size):
+            del size
+            return self._char
+
+    module = "core.management.commands.setup_ai_model"
+    monkeypatch.setattr(f"{module}.termios.tcgetattr", lambda fd: [fd])
+    monkeypatch.setattr(f"{module}.termios.tcsetattr", lambda *args: None)
+    monkeypatch.setattr(f"{module}.tty.setraw", lambda fd: None)
+
+    monkeypatch.setattr(sys, "stdin", FakeInput("q"))
+    assert Command._read_key() == "quit"
+
+    monkeypatch.setattr(sys, "stdin", FakeInput("\x1b"))
+    monkeypatch.setattr(f"{module}.select.select", lambda *args: ([], [], []))
+    assert Command._read_key() == "escape"
+
+
+@pytest.mark.django_db
+def test_model_setup_can_be_aborted_midway(monkeypatch):
+    """Aborting the provider menu skips setup and saves no model."""
+
+    monkeypatch.setattr(Command, "_has_tty", lambda self: True)
+    monkeypatch.setattr(Command, "_read_key", lambda self: "escape")
+    output = StringIO()
+
+    call_command(Command(), stdout=output)
+
+    assert not LLMConfig.objects.exists()
+    assert "skipped" in output.getvalue().lower()
 
 
 def test_secret_input_displays_masks_and_supports_backspace(monkeypatch):

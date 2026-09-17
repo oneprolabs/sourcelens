@@ -73,6 +73,59 @@ POST_SWITCH_OBSERVE_SECONDS="${POST_SWITCH_OBSERVE_SECONDS:-30}"
 log() { echo -e "\033[1;36m[install]\033[0m $*"; }
 die() { echo -e "\033[1;31m[install] ERROR:\033[0m $*" >&2; exit 1; }
 
+# Yes/no confirmation: plain Enter is "yes" (the default), and a non-interactive
+# stdin (CI, piped runs) also proceeds, so automation is never blocked waiting
+# on a prompt nobody can answer.
+confirm() {
+    local prompt="$1" reply
+    if [ ! -t 0 ]; then
+        return 0
+    fi
+    read -r -p "$prompt [Y/n] " reply || reply=""
+    case "$reply" in
+        ""|[yY]|[yY][eE][sS]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Dependency preflight: fail in one actionable screenful BEFORE the lock or any
+# fetch, instead of a cryptic `docker: command not found` deep in the deploy.
+check_dependencies() {
+    if command -v docker >/dev/null 2>&1 \
+        && docker info >/dev/null 2>&1 \
+        && docker compose version >/dev/null 2>&1; then
+        return 0
+    fi
+    cat >&2 <<'EOF'
+
+ERROR: Required dependency is missing.
+
+SourceLens requires Docker Engine and Docker Compose V2.
+
+Please install:
+
+Ubuntu/Debian:
+  sudo apt update && sudo apt install -y docker.io docker-compose-v2
+
+CentOS/RHEL:
+  sudo yum install -y docker docker-compose-plugin
+
+Enable Docker:
+
+  sudo systemctl enable --now docker
+
+Verify:
+
+  docker --version
+  docker compose version
+
+Then re-run the SourceLens installer.
+
+EOF
+    exit 1
+}
+check_dependencies
+
 cd "$DEPLOY_PATH"
 
 # --- Single-flight lock: refuses to run two deploys at once on one host ---
@@ -253,6 +306,11 @@ if [ "$LOCAL_MODE" != "true" ] && [ "$FIRST_INSTALL" != "true" ]; then
         exit 0
     fi
 fi
+
+# Interactive confirmation (auto-yes when stdin isn't a TTY): give the operator
+# a chance to abort before any image is pulled/built or any container touched.
+confirm "Proceed with deploy: ${GIT_REF} -> color ${DEPLOY_COLOR}?" \
+    || die "Aborted at confirmation prompt."
 
 export APP_VERSION="$IMAGE_TAG"
 
