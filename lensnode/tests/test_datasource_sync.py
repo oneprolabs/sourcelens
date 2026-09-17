@@ -1,9 +1,11 @@
 import base64
+import hashlib
 import io
 import json
 import subprocess
 import zipfile
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 
 import httpx
@@ -44,8 +46,21 @@ from lensnode.datasource_sync import (
     delete_datasource_upload,
     upload_managed_workspace,
 )
+from lensnode.datasource_sync import (
+    append_managed_upload_chunk,
+    cleanup_managed_upload,
+    find_duplicate_upload,
+    prepare_managed_upload,
+    read_upload_index,
+)
 from lensnode.path_rules import source_sha256
 from lensnode.path_rules import stable_suffix
+
+
+def source_sha256_bytes(content):
+    """Return the sha256 hex digest for in-memory bytes."""
+
+    return hashlib.sha256(content).hexdigest()
 
 
 def test_datasource_sync_workers_defaults_to_four():
@@ -2057,3 +2072,197 @@ def test_file_upload_initializes_directory_and_keeps_multiple_archives(
     root = tmp_path / "datasources" / "datasource-123"
     for name in ("first", "second"):
         assert (root / name / f"{name}.txt").read_text() == name
+
+
+def test_prepare_managed_upload_resumes_from_staged_bytes(tmp_path):
+    """A second begin resumes from the bytes already staged on disk."""
+
+    content = b"chunked upload payload"
+    command = {
+        "datasource_uuid": "uuid-resume",
+        "task_id": "task-resume",
+        "filename": "report.pdf",
+        "total_bytes": len(content),
+        "sha256": source_sha256_bytes(content),
+    }
+
+    state = prepare_managed_upload(command, workspace_path=tmp_path)
+    assert state["duplicate"] is False
+    assert state["offset"] == 0
+    assert append_managed_upload_chunk(
+        state["part_path"], 0, content[:7]
+    ) == 7
+
+    resumed = prepare_managed_upload(command, workspace_path=tmp_path)
+    assert resumed["offset"] == 7
+    assert append_managed_upload_chunk(
+        resumed["part_path"], 7, content[7:]
+    ) == len(content)
+    assert Path(resumed["part_path"]).read_bytes() == content
+
+    cleanup_managed_upload(command, workspace_path=tmp_path)
+    assert not Path(resumed["part_path"]).exists()
+
+
+def test_prepare_managed_upload_stale_meta_resets_offset(tmp_path):
+    """A staged part for different content must not resume."""
+
+    command = {
+        "datasource_uuid": "uuid-stale",
+        "task_id": "task-stale",
+        "filename": "report.pdf",
+        "total_bytes": 10,
+        "sha256": source_sha256_bytes(b"0123456789"),
+    }
+    state = prepare_managed_upload(command, workspace_path=tmp_path)
+    Path(state["part_path"]).write_bytes(b"old-bytes")
+
+    changed = prepare_managed_upload(
+        {**command, "sha256": source_sha256_bytes(b"different")},
+        workspace_path=tmp_path,
+    )
+    assert changed["offset"] == 0
+    assert Path(changed["part_path"]).read_bytes() == b""
+
+
+def test_append_managed_upload_chunk_reports_mismatched_offset(tmp_path):
+    """An out-of-order chunk is not written; the durable offset is returned."""
+
+    command = {
+        "datasource_uuid": "uuid-order",
+        "task_id": "task-order",
+        "filename": "report.pdf",
+        "total_bytes": 16,
+        "sha256": source_sha256_bytes(b"x" * 16),
+    }
+    state = prepare_managed_upload(command, workspace_path=tmp_path)
+    assert append_managed_upload_chunk(state["part_path"], 0, b"abcd") == 4
+    assert append_managed_upload_chunk(state["part_path"], 99, b"zz") == 4
+    assert Path(state["part_path"]).read_bytes() == b"abcd"
+
+
+def test_upload_deduplicates_identical_content(tmp_path, monkeypatch):
+    """A repeated upload of identical content is detected as a duplicate."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    content = b"same document bytes"
+    result = upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-dedupe",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(content).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+    digest = result["sha256"]
+    assert digest == source_sha256_bytes(content)
+
+    duplicate = prepare_managed_upload(
+        {
+            "datasource_uuid": "uuid-dedupe",
+            "task_id": "task-dedupe",
+            "filename": "report.pdf",
+            "total_bytes": len(content),
+            "sha256": digest,
+        },
+        workspace_path=tmp_path,
+    )
+    assert duplicate["duplicate"] is True
+    assert duplicate["duplicate_path"] == "report.pdf"
+    assert duplicate["duplicate_filename"] == "report.pdf"
+
+
+def test_upload_index_forgets_overwritten_path(tmp_path, monkeypatch):
+    """Replacing a file drops the index entry for its previous content."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    first = upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-overwrite",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(b"first").decode(),
+        },
+        workspace_path=tmp_path,
+    )
+    upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-overwrite",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(b"second").decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-overwrite"
+    assert find_duplicate_upload(root, first["sha256"]) is None
+    entries = read_upload_index(root)["entries"]
+    assert source_sha256_bytes(b"second") in entries
+
+
+def test_delete_upload_removes_index_entry(tmp_path, monkeypatch):
+    """Deleting an upload also forgets its content index entry."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    content = b"deletable content"
+    result = upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-delete",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(content).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+    delete_datasource_upload(
+        {
+            "datasource_uuid": "uuid-delete",
+            "filename": "report.pdf",
+            "upload_version": 1,
+        },
+        workspace_path=tmp_path,
+    )
+    root = tmp_path / "datasources" / "uuid-delete"
+    assert find_duplicate_upload(root, result["sha256"]) is None
+
+
+def test_upload_managed_workspace_consumes_staged_file(tmp_path, monkeypatch):
+    """A chunked transfer's staged part becomes the stored upload."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    content = b"%PDF-1.4 staged payload"
+    command = {
+        "datasource_uuid": "uuid-staged",
+        "task_id": "task-staged",
+        "filename": "report.pdf",
+        "total_bytes": len(content),
+        "sha256": source_sha256_bytes(content),
+        "upload_version": 1,
+    }
+    state = prepare_managed_upload(command, workspace_path=tmp_path)
+    assert (
+        append_managed_upload_chunk(state["part_path"], 0, content)
+        == len(content)
+    )
+
+    result = upload_managed_workspace(
+        command,
+        workspace_path=tmp_path,
+        staged_path=state["part_path"],
+    )
+
+    root = tmp_path / "datasources" / "uuid-staged"
+    assert result["uploaded"] == "report.pdf"
+    assert result["sha256"] == source_sha256_bytes(content)
+    assert (root / "report.pdf").read_bytes() == content
+    assert not Path(state["part_path"]).exists()

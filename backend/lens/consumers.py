@@ -203,6 +203,10 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_datasource_conversion_done(content)
         elif frame_type == "datasource_upload_done":
             await self._handle_datasource_upload_done(content)
+        elif frame_type == "datasource_upload_ready":
+            await self._handle_datasource_upload_ready(content)
+        elif frame_type == "datasource_upload_ack":
+            await self._handle_datasource_upload_ack(content)
         else:
             await self.send_json(
                 {
@@ -1135,6 +1139,86 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 connection_id=connection_id,
             )
         return task_id
+
+    async def _handle_datasource_upload_ready(self, content):
+        """Record a chunked upload's resume offset for the sender."""
+
+        task_id = str(content.get("task_id") or "")
+        if not task_id:
+            return
+        await database_sync_to_async(self._store_datasource_upload_ready)(
+            task_id,
+            content,
+        )
+
+    @staticmethod
+    def _store_datasource_upload_ready(task_id, content):
+        from .datasource.services import (
+            datasource_upload_ready_key,
+            get_datasource_upload_timeout_s,
+        )
+
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        try:
+            cache.set(
+                datasource_upload_ready_key(task_id),
+                {
+                    "offset": int(content.get("offset") or 0),
+                    "total_bytes": int(content.get("total_bytes") or 0),
+                    "duplicate": bool(content.get("duplicate")),
+                    "duplicate_path": str(
+                        content.get("duplicate_path") or ""
+                    ),
+                },
+                timeout=get_datasource_upload_timeout_s(),
+            )
+            task = TaskExecution.objects.filter(task_id=task_id).first()
+            if task is None:
+                return
+            metadata = dict(task.metadata or {})
+            if metadata.pop(
+                "datasource_orphan_confirmation_connection_id", None
+            ) is not None:
+                task.metadata = metadata
+                task.save(update_fields=["metadata"])
+        except Exception:
+            # A cache/database hiccup must not tear down the control channel;
+            # the sender re-begins on its next ack timeout and resumes.
+            LOGGER.exception(
+                "Failed to record datasource upload ready task=%s", task_id
+            )
+
+    async def _handle_datasource_upload_ack(self, content):
+        """Record the durable offset a LensNode acknowledged."""
+
+        task_id = str(content.get("task_id") or "")
+        if not task_id:
+            return
+        await database_sync_to_async(self._store_datasource_upload_ack)(
+            task_id,
+            content,
+        )
+
+    @staticmethod
+    def _store_datasource_upload_ack(task_id, content):
+        from .datasource.services import (
+            datasource_upload_ack_key,
+            get_datasource_upload_timeout_s,
+        )
+
+        try:
+            cache.set(
+                datasource_upload_ack_key(task_id),
+                int(content.get("offset") or 0),
+                timeout=get_datasource_upload_timeout_s(),
+            )
+        except Exception:
+            # Dropping one ack only costs a resume from the last durable
+            # offset; it must never crash the LensNode control channel.
+            LOGGER.exception(
+                "Failed to record datasource upload ack task=%s", task_id
+            )
 
     @staticmethod
     def _complete_datasource_conversion_done(

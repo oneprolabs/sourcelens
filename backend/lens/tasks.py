@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import timedelta
@@ -14,10 +15,17 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .datasource.services import (
+    DATASOURCE_RESULT_POLL_S,
+    DATASOURCE_UPLOAD_CHUNK_BYTES,
+    DATASOURCE_UPLOAD_CHUNK_WINDOW,
     DataSourceDispatchError,
+    datasource_upload_ack_key,
+    datasource_upload_ready_key,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
+    dispatch_datasource_upload_begin,
     resolve_datasource_lensnode,
+    send_datasource_upload_chunk,
     get_datasource_conversion_timeout_s,
     get_datasource_sync_timeout_s,
     get_datasource_upload_timeout_s,
@@ -1309,6 +1317,188 @@ def datasource_conversion_task(
     return 0
 
 
+def _delete_upload_storage(metadata):
+    """Delete the stored file backing a terminal upload task.
+
+    Best-effort: a storage hiccup must not abort the terminal callback and
+    leave the task stuck in an active status.
+    """
+
+    storage_name = str((metadata or {}).get("storage_name") or "")
+    if not storage_name:
+        return
+    try:
+        if default_storage.exists(storage_name):
+            default_storage.delete(storage_name)
+    except Exception:
+        logger.exception(
+            "Failed to delete stored upload file %s", storage_name
+        )
+
+
+def _upload_task_is_terminal(task_id):
+    """Return whether an upload task already reached a terminal status."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    status = (
+        TaskExecution.objects.filter(task_id=task_id)
+        .values_list("status", flat=True)
+        .first()
+    )
+    return status in TaskStatus.get_completed_statuses()
+
+
+def _update_upload_task_metadata(task_id, metadata, status=None):
+    """Merge upload metadata only while the task is still active.
+
+    A LensNode reports completion before the sender finishes reading the
+    resume offset (a duplicate completes instantly), so an unconditional
+    ``STARTED`` write would downgrade a completed task back to "uploading"
+    and leave it stuck there. The conditional update never touches a task
+    that the terminal callback already finished.
+    """
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    task = TaskExecution.objects.filter(task_id=task_id).first()
+    if task is None or task.status in TaskStatus.get_completed_statuses():
+        return False
+    merged = dict(task.metadata or {})
+    merged.update(metadata)
+    updates = {"metadata": merged}
+    if status is not None and status != task.status:
+        updates["status"] = status
+        if status == TaskStatus.STARTED and task.started_at is None:
+            updates["started_at"] = timezone.now()
+    return (
+        TaskExecution.objects.filter(
+            task_id=task_id,
+            status__in=_datasource_active_statuses(TaskStatus),
+        ).update(**updates)
+        > 0
+    )
+
+
+def _wait_datasource_upload_ready(task_id, timeout_s):
+    """Wait for the LensNode's resume offset for one upload."""
+
+    key = datasource_upload_ready_key(task_id)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        value = cache.get(key)
+        if value is not None:
+            cache.delete(key)
+            return value if isinstance(value, dict) else {}
+        time.sleep(DATASOURCE_RESULT_POLL_S)
+    return None
+
+
+def _wait_datasource_upload_ack(task_id, target_offset, timeout_s):
+    """Wait until the LensNode acknowledges ``target_offset`` bytes."""
+
+    key = datasource_upload_ack_key(task_id)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        value = cache.get(key)
+        if value is not None:
+            try:
+                current = int(value)
+            except (TypeError, ValueError):
+                current = 0
+            if current >= target_offset:
+                return current
+        time.sleep(DATASOURCE_RESULT_POLL_S)
+    return None
+
+
+def _stream_datasource_upload(
+    execution_node,
+    task_id,
+    storage_name,
+    offset,
+    total_bytes,
+    deadline,
+    progress,
+):
+    """Stream acknowledged chunks from the stored file to the LensNode.
+
+    Returns ``"sent"`` once every byte is acknowledged, ``"interrupted"``
+    when the channel dropped (the caller re-begins to resume), ``"terminal"``
+    when the task was already completed by a LensNode callback, or
+    ``"timeout"`` when the overall deadline was reached.
+    """
+
+    chunk_size = DATASOURCE_UPLOAD_CHUNK_BYTES
+    ack_timeout = 8
+    if offset < 0:
+        offset = 0
+    last_reported = -1
+    with default_storage.open(storage_name, "rb") as stream:
+        while offset < total_bytes:
+            if _upload_task_is_terminal(task_id):
+                return "terminal"
+            if time.monotonic() >= deadline:
+                return "timeout"
+            stream.seek(offset)
+            sent = offset
+            for _ in range(DATASOURCE_UPLOAD_CHUNK_WINDOW):
+                if sent >= total_bytes:
+                    break
+                data = stream.read(min(chunk_size, total_bytes - sent))
+                if not data:
+                    break
+                try:
+                    send_datasource_upload_chunk(
+                        execution_node,
+                        task_id,
+                        sent,
+                        data,
+                    )
+                except DataSourceDispatchError:
+                    return "interrupted"
+                sent += len(data)
+            acked = _wait_datasource_upload_ack(task_id, sent, ack_timeout)
+            if acked is None:
+                return "interrupted"
+            offset = acked
+            megabyte = offset // (1024 * 1024)
+            if megabyte != last_reported:
+                last_reported = megabyte
+                progress(offset, total_bytes)
+    return "sent"
+
+
+def _begin_datasource_upload_transfer(
+    datasource,
+    task_id,
+    filename,
+    total_bytes,
+    sha256,
+    upload_version,
+    deadline,
+):
+    """Dispatch a begin frame and read back the node's resume offset."""
+
+    while time.monotonic() < deadline:
+        dispatch_datasource_upload_begin(
+            datasource,
+            task_id,
+            filename,
+            total_bytes,
+            sha256,
+            upload_version=upload_version,
+        )
+        ready = _wait_datasource_upload_ready(task_id, 20)
+        if ready is None:
+            time.sleep(2)
+            continue
+        return ready
+    return None
+
+
 @shared_task(bind=True, name="lens.datasource_upload", queue="lens")
 def datasource_upload_task(
     self,
@@ -1323,12 +1513,12 @@ def datasource_upload_task(
     from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
-    from .datasource.services import dispatch_datasource_upload_async
-
     task_id = task_id or self.request.id
     task = TaskExecution.objects.get(task_id=task_id)
     if task.status in TaskStatus.get_completed_statuses():
+        _delete_upload_storage(task.metadata)
         return 0
+    task_metadata = dict(task.metadata or {})
     datasource = (
         DataSource.objects.select_related("lensnode")
         .filter(uuid=datasource_uuid)
@@ -1340,8 +1530,7 @@ def datasource_upload_task(
             TaskStatus.FAILURE,
             error="DATASOURCE_NOT_FOUND",
         )
-        if default_storage.exists(storage_name):
-            default_storage.delete(storage_name)
+        _delete_upload_storage(task_metadata)
         return 0
     try:
         execution_node = resolve_datasource_lensnode(datasource)
@@ -1351,13 +1540,11 @@ def datasource_upload_task(
             TaskStatus.FAILURE,
             error=str(exc) or "LENSNODE_REQUIRED",
         )
-        if default_storage.exists(storage_name):
-            default_storage.delete(storage_name)
+        _delete_upload_storage(task_metadata)
         return 0
     if datasource.lensnode_id != execution_node.uuid:
         datasource.lensnode = execution_node
         datasource.save(update_fields=["lensnode", "updated_at"])
-    task_metadata = dict(task.metadata or {})
     try:
         lock_key = f"lens:datasource-sync:{datasource.uuid}"
         if cache.get(lock_key) != task_id:
@@ -1384,49 +1571,113 @@ def datasource_upload_task(
         )
         return 0
     _mark_datasource_task_dispatched(task_id)
-    try:
-        with default_storage.open(storage_name, "rb") as stream:
-            content = stream.read()
-        task_metadata.update(
+
+    total_bytes = int(task_metadata.get("byte_size") or 0)
+    sha256 = str(task_metadata.get("sha256") or "")
+    upload_version = task_metadata.get("upload_version", 1)
+    if total_bytes <= 0:
+        release_datasource_lock(datasource.uuid, token=task_id)
+        TaskTracker.update_task_status(
+            task_id,
+            TaskStatus.FAILURE,
+            error="DATASOURCE_UPLOAD_FILE_REQUIRED",
+        )
+        _delete_upload_storage(task_metadata)
+        return 0
+    timeout_s = get_datasource_upload_timeout_s()
+    deadline = time.monotonic() + timeout_s
+    transfer_metadata = {
+        "lensnode_uuid": str(execution_node.uuid),
+        "lensnode_name": execution_node.name,
+        "lensnode_connection_id": execution_node.connection_id,
+        "lock_token": task_id,
+        "progress_message": "Uploading file to LensNode.",
+    }
+    task_metadata.update(transfer_metadata)
+    if not _update_upload_task_metadata(
+        task_id,
+        transfer_metadata,
+        status=TaskStatus.STARTED,
+    ):
+        return 0
+    cache.delete(datasource_upload_ready_key(task_id))
+    cache.delete(datasource_upload_ack_key(task_id))
+
+    def report_progress(offset, total):
+        _update_upload_task_metadata(
+            task_id,
             {
-                "lensnode_uuid": str(execution_node.uuid),
-                "lensnode_name": execution_node.name,
-                "lensnode_connection_id": execution_node.connection_id,
-                "lock_token": task_id,
-                "progress_message": "Uploading file to LensNode.",
-            }
+                "datasource_upload_offset": offset,
+                "datasource_upload_total": total,
+                "progress_message": f"Uploaded {offset} of {total} bytes.",
+            },
         )
-        TaskTracker.update_task_status(
-            task_id,
-            TaskStatus.STARTED,
-            metadata=task_metadata,
-        )
-        request_id = dispatch_datasource_upload_async(
-            datasource,
-            task_id,
-            filename,
-            content,
-            upload_version=task_metadata.get("upload_version", 1),
-        )
-        TaskTracker.update_task_status(
-            task_id,
-            TaskStatus.STARTED,
-            metadata={"datasource_upload_request_id": request_id},
-        )
+
+    try:
+        while time.monotonic() < deadline:
+            try:
+                ready = _begin_datasource_upload_transfer(
+                    datasource,
+                    task_id,
+                    filename,
+                    total_bytes,
+                    sha256,
+                    upload_version,
+                    deadline,
+                )
+            except DataSourceDispatchError:
+                break
+            if ready is None:
+                break
+            if ready.get("duplicate"):
+                _update_upload_task_metadata(
+                    task_id,
+                    {
+                        "duplicate": True,
+                        "duplicate_path": ready.get("duplicate_path") or "",
+                        "progress_message": "Duplicate file skipped.",
+                    },
+                )
+                return 0
+            offset = int(ready.get("offset") or 0)
+            outcome = _stream_datasource_upload(
+                execution_node,
+                task_id,
+                storage_name,
+                offset,
+                total_bytes,
+                deadline,
+                report_progress,
+            )
+            if outcome == "sent":
+                return 0
+            if outcome == "terminal":
+                return 0
+            if outcome == "timeout":
+                break
     except Exception as exc:
-        release_datasource_lock(
-            datasource.uuid,
-            token=task_id,
-        )
+        release_datasource_lock(datasource.uuid, token=task_id)
         TaskTracker.update_task_status(
             task_id,
             TaskStatus.FAILURE,
             error=str(exc) or "DATASOURCE_UPLOAD_FAILED",
         )
+        _delete_upload_storage(task_metadata)
         raise
-    finally:
-        if default_storage.exists(storage_name):
-            default_storage.delete(storage_name)
+    if not _queue_datasource_task(
+        task_id,
+        (
+            "LensNode upload interrupted; resuming from the last "
+            "acknowledged byte."
+        ),
+    ):
+        release_datasource_lock(datasource.uuid, token=task_id)
+        return 0
+    _refresh_datasource_lock(
+        datasource.uuid,
+        task_id,
+        get_datasource_upload_timeout_s(),
+    )
     return 0
 
 
@@ -1588,6 +1839,7 @@ def complete_datasource_upload_task(
             metadata.get("datasource_uuid"),
             token=metadata.get("lock_token") or task_id,
         )
+        _delete_upload_storage(metadata)
         return TaskTracker.update_task_status(
             task_id,
             task.status,
@@ -1612,19 +1864,28 @@ def complete_datasource_upload_task(
         metadata.get("datasource_uuid"),
         token=metadata.get("lock_token") or task_id,
     )
+    _delete_upload_storage(metadata)
+    completion_metadata = {"upload_result": result}
+    if result.get("duplicate"):
+        completion_metadata["duplicate"] = True
+        completion_metadata["duplicate_path"] = str(
+            result.get("duplicate_path") or ""
+        )
+    completion_metadata["progress_message"] = (
+        (
+            "Duplicate file skipped."
+            if result.get("duplicate")
+            else "Managed workspace upload completed."
+        )
+        if task_status == TaskStatus.SUCCESS
+        else error
+    )
     return TaskTracker.update_task_status(
         task_id,
         task_status,
         result=result,
         error=error or None,
-        metadata={
-            "upload_result": result,
-            "progress_message": (
-                "Managed workspace upload completed."
-                if task_status == TaskStatus.SUCCESS
-                else error
-            ),
-        },
+        metadata=completion_metadata,
     )
 
 
@@ -2109,6 +2370,8 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
         datasource_uuid,
         token=metadata.get("lock_token") or task.task_id,
     )
+    if is_upload:
+        _delete_upload_storage(metadata)
     return True
 
 
@@ -2248,6 +2511,8 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
             token=metadata.get("lock_token") or task.task_id,
         )
         metadata["timeout_cancelled_at"] = now.isoformat()
+        if is_upload:
+            _delete_upload_storage(metadata)
         task.status = TaskStatus.FAILURE
         task.finished_at = now
         task.error = error

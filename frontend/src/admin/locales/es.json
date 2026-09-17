@@ -1621,6 +1621,11 @@
       "fileName": "Nombre del archivo",
       "uploadedAt": "Subido el",
       "fileSize": "Tamaño",
+      "uploadStatus": {
+        "label": "Estado",
+        "uploading": "Subiendo",
+        "processed": "Procesado"
+      },
       "tabs": {
         "basic": "Información básica",
         "details": "Historial de sincronización",

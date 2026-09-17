@@ -1621,6 +1621,11 @@
       "fileName": "File name",
       "uploadedAt": "Uploaded at",
       "fileSize": "Size",
+      "uploadStatus": {
+        "label": "Status",
+        "uploading": "Uploading",
+        "processed": "Processed"
+      },
       "tabs": {
         "basic": "Basic Information",
         "details": "Sync history",
