@@ -1,5 +1,7 @@
 """Configure and validate the first system AI model interactively."""
 
+import os
+import select
 import sys
 import termios
 import tty
@@ -30,6 +32,10 @@ FIELD_LABELS = {
     "api_version": "API version",
     "deployment": "Deployment name",
 }
+
+
+class SetupAborted(Exception):
+    """Raised when the user chooses to leave the wizard before saving."""
 
 
 class Command(BaseCommand):
@@ -73,18 +79,13 @@ class Command(BaseCommand):
         self.stdout.write(
             "SourceLens needs an AI model before assistants can run."
         )
-        if not self._confirm("Configure a model now?", default=True):
-            self.stdout.write(
-                self.style.WARNING(
-                    "AI model setup skipped. You can configure it later in "
-                    "the SourceLens management console."
-                )
-            )
-            return
+        self.stdout.write(
+            "Press Ctrl+C at any time, or Esc in a menu, to skip."
+        )
 
         try:
             self._configure_until_complete()
-        except (EOFError, KeyboardInterrupt):
+        except (EOFError, KeyboardInterrupt, SetupAborted):
             self.stdout.write("")
             self.stdout.write(
                 self.style.WARNING(
@@ -217,7 +218,9 @@ class Command(BaseCommand):
         """Select one option using arrow keys and Enter."""
 
         self.stdout.write("")
-        self.stdout.write(f"{title} (use ↑/↓ and press Enter):")
+        self.stdout.write(
+            f"{title} (use ↑/↓ and press Enter, Esc to skip):"
+        )
         self._render_options(options, selected)
         while True:
             key = self._read_key()
@@ -227,6 +230,8 @@ class Command(BaseCommand):
                 selected = (selected + 1) % len(options)
             elif key == "enter":
                 return selected
+            elif key in {"escape", "quit"}:
+                raise SetupAborted
             else:
                 continue
             self.stdout.write(
@@ -258,12 +263,20 @@ class Command(BaseCommand):
                 raise KeyboardInterrupt
             if char in {"\r", "\n"}:
                 return "enter"
+            if char in {"q", "Q"}:
+                return "quit"
             if char == "\x1b":
-                sequence = sys.stdin.read(2)
+                # Esc alone sends one byte; arrow keys send an ESC-prefixed
+                # burst, so only wait for the rest when it is already there.
+                ready, _, _ = select.select([fd], [], [], 0.05)
+                if not ready:
+                    return "escape"
+                sequence = os.read(fd, 2).decode("utf-8", "ignore")
                 if sequence == "[A":
                     return "up"
                 if sequence == "[B":
                     return "down"
+                return "escape"
             return ""
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, previous)
@@ -356,6 +369,10 @@ class Command(BaseCommand):
                     raise KeyboardInterrupt
                 if char == "\x04":
                     raise EOFError
+                if char == "\x1b":
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    raise SetupAborted
                 if char in {"\x7f", "\b"}:
                     if secret:
                         secret.pop()
