@@ -187,6 +187,8 @@ class Assistant(TimestampedUUIDModel):
         DEEP = "deep", "深度"
         MAX = "max", "极限"
 
+    # Retained for historical rows only; execution resources now come from
+    # datasource bindings, so no business code reads or writes this field.
     selected_dirs = models.JSONField(default=list, blank=True)
     workspace_guide = models.TextField(blank=True, default="")
     preprocess_model_ref = models.UUIDField(null=True, blank=True)
@@ -279,7 +281,7 @@ class Assistant(TimestampedUUIDModel):
             ]
             update_fields = kwargs["update_fields"]
         result = super().save(*args, **kwargs)
-        routing_fields = {"capability", "description", "selected_dirs"}
+        routing_fields = {"capability", "description"}
         if not update_fields or routing_fields.intersection(update_fields):
             _refresh_assistant_routing_description(self)
         return result
@@ -1315,6 +1317,9 @@ class SessionDataSource(TimestampedUUIDModel):
     datasource_version = models.CharField(max_length=64, blank=True, default="")
     mount_name = models.CharField(max_length=120)
     storage_key = models.CharField(max_length=500)
+    # Captured from the assistant binding: a required datasource that is
+    # unavailable must fail the run, while an optional one is skipped.
+    required = models.BooleanField(default=True)
 
 
 class Message(models.Model):

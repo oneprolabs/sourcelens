@@ -112,6 +112,7 @@
     "datasourceSyncFailed": "Datasource sync failed. Check the datasource before retrying.",
     "datasourceSyncTimeout": "Timed out waiting for datasource sync. Retry later.",
     "datasourceUploadRequired": "Upload files to this datasource before asking.",
+    "datasourceUnavailable": "The bound datasource \"{name}\" has no available files. Contact an administrator.",
     "datasourceDisabled": "The selected datasource is disabled. Contact an administrator.",
     "datasourceResourceLimit": "The datasource exceeds its resource limit. Remove large files or increase the Git byte limit, then try again.",
     "datasourceCredentialInvalid": "The datasource credentials are invalid. Update them and try again.",

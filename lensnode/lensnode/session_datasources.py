@@ -17,11 +17,12 @@ def materialize_datasources(
 
     snapshots = command.get("datasource_snapshots") or []
     if not snapshots:
-        return
+        return []
     workspace_root = Path(config.workspace_path)
     target = _session_workspace_target(command, config, runtime_root)
     directories = []
     names = set()
+    skipped = []
 
     def check_activity():
         """Stop cancelled downloads and report measurable progress."""
@@ -43,6 +44,7 @@ def materialize_datasources(
             staging = Path(temporary) / "workspace"
             sources = staging / "sources"
             sources.mkdir(parents=True)
+            missing = []
             for snapshot in snapshots:
                 check_activity()
                 name = snapshot["mount_name"]
@@ -75,11 +77,23 @@ def materialize_datasources(
                         "path": str(target / "sources" / name),
                     })
                     continue
-                raise RuntimeError(
-                    "DATASOURCE_TARGET_UNAVAILABLE:"
-                    + str(snapshot.get("datasource_uuid") or "")
-                )
+                missing.append((snapshot, name))
             check_activity()
+            # Mirror the control plane: an empty source is skipped as long as
+            # another source mounted, so one empty datasource never blocks a
+            # question the remaining sources can still answer. A required
+            # empty source is fatal only when nothing else mounted.
+            if not directories:
+                fatal = [
+                    item for item in missing
+                    if item[0].get("required", True)
+                ]
+                if fatal:
+                    raise RuntimeError(
+                        "DATASOURCE_TARGET_UNAVAILABLE:"
+                        + str(fatal[0][0].get("datasource_uuid") or "")
+                    )
+            skipped.extend(name for _, name in missing)
             if target.is_symlink():
                 raise ValueError("SESSION_WORKSPACE_PATH_INVALID")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +110,7 @@ def materialize_datasources(
                 shutil.move(str(link), str(existing))
     command["target_dirs"] = directories
     command["workspace_path"] = str(target)
+    return skipped
 
 
 def _session_workspace_target(command, config, runtime_root):

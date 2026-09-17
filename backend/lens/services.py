@@ -2351,11 +2351,7 @@ def create_run_execution_snapshot(
             "loaded_plugins": loaded_plugins,
             "agent_rounds": agent_rounds,
             "run_timeout_s": run_timeout_for_rounds(agent_rounds),
-            "target_dirs": (
-                []
-                if assistant.capability == Assistant.Capability.GENERAL_CHAT
-                else assistant.selected_dirs
-            ),
+            "target_dirs": [],
             "runtime_snapshot": runtime_snapshot,
             "token_budget_profile": token_budget["profile"],
             "token_budget_max_tokens": token_budget["max_tokens"],
@@ -2438,12 +2434,7 @@ def _build_run_runtime_snapshot(
                     "lensnode_uuid": (
                         str(item.lensnode.uuid) if item.lensnode_id else ""
                     ),
-                    "target_dirs": (
-                        []
-                        if item.capability
-                        == Assistant.Capability.GENERAL_CHAT
-                        else item.selected_dirs
-                    ),
+                    "target_dirs": [],
                     "workspace_guide": item.workspace_guide,
                     "agent_model_ref": str(item.agent_model_ref or ""),
                     "settings": item.settings or {},
@@ -3491,6 +3482,34 @@ def record_lensnode_run_event(run_uuid, step_type, status, detail):
     return step
 
 
+def _resolve_lensnode_error(error):
+    """Name the bound datasource behind a materialization failure.
+
+    The LensNode reports an empty or unreadable datasource workspace as
+    ``DATASOURCE_TARGET_UNAVAILABLE:<datasource_uuid>``. Resolve the
+    datasource name so the chat can tell the user which bound datasource
+    has no usable files instead of showing a generic retry hint.
+    """
+
+    prefix = "DATASOURCE_TARGET_UNAVAILABLE:"
+    if not isinstance(error, str) or not error.startswith(prefix):
+        return error
+    from uuid import UUID
+
+    from .models import DataSource
+
+    try:
+        datasource_uuid = UUID(error[len(prefix):])
+    except (TypeError, ValueError):
+        return error
+    name = (
+        DataSource.objects.filter(uuid=datasource_uuid)
+        .values_list("name", flat=True)
+        .first()
+    )
+    return f"DATASOURCE_UNAVAILABLE:{name or ''}"
+
+
 @transaction.atomic
 def finish_lensnode_run(
     run_uuid,
@@ -3523,6 +3542,7 @@ def finish_lensnode_run(
     if run.status in TERMINAL_RUN_STATUSES:
         return run
     now = timezone.now()
+    error = _resolve_lensnode_error(error)
 
     retryable_admission_error = error == "LENSNODE_BUSY" or (
         error == "LENSNODE_DRAINING" and run.resume_by is not None

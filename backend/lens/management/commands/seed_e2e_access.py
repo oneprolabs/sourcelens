@@ -55,7 +55,6 @@ class Command(BaseCommand):
     def _setup(self):
         lensnode = self._pick_lensnode()
         task = self._lensnode_task(lensnode)
-        path = self._lensnode_dir(lensnode)
 
         users = {}
         user_ids = {}
@@ -74,11 +73,11 @@ class Command(BaseCommand):
         )
 
         public = self._upsert_assistant(
-            PUBLIC_SLUG, "E2E Public", lensnode, task, path,
+            PUBLIC_SLUG, "E2E Public", lensnode, task,
             Assistant.Visibility.PUBLIC,
         )
         private = self._upsert_assistant(
-            PRIVATE_SLUG, "E2E Private", lensnode, task, path,
+            PRIVATE_SLUG, "E2E Private", lensnode, task,
             Assistant.Visibility.PRIVATE,
         )
 
@@ -143,25 +142,13 @@ class Command(BaseCommand):
         first = tasks[0]
         return first.get("name") if isinstance(first, dict) else str(first)
 
-    def _lensnode_dir(self, lensnode):
-        dirs = (
-            lensnode.available_dirs
-            if isinstance(lensnode.available_dirs, list)
-            else []
-        )
-        if not dirs:
-            raise CommandError("LensNode reports no available dirs.")
-        first = dirs[0]
-        return first.get("path") if isinstance(first, dict) else str(first)
-
-    def _upsert_assistant(self, slug, name, lensnode, task, path, visibility):
+    def _upsert_assistant(self, slug, name, lensnode, task, visibility):
         assistant, _ = Assistant.objects.update_or_create(
             slug=slug,
             defaults={
                 "name": name,
                 "lensnode": lensnode,
                 "selected_task": task,
-                "selected_dirs": [{"path": path}],
                 "visibility": visibility,
                 "status": Assistant.Status.ACTIVE,
             },

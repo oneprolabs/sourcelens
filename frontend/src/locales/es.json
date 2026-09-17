@@ -112,6 +112,7 @@
     "datasourceSyncFailed": "La sincronización falló. Compruebe la fuente e inténtelo de nuevo.",
     "datasourceSyncTimeout": "Tiempo de espera agotado al sincronizar.",
     "datasourceUploadRequired": "Suba archivos a esta fuente antes de preguntar.",
+    "datasourceUnavailable": "La fuente de datos vinculada \"{name}\" no tiene archivos disponibles. Contacte con un administrador.",
     "datasourceDisabled": "La fuente seleccionada está desactivada.",
     "datasourceResourceLimit": "El origen de datos supera el límite de recursos. Elimine archivos grandes o aumente el límite de bytes de Git y vuelva a intentarlo.",
     "datasourceCredentialInvalid": "Las credenciales del origen de datos no son válidas. Actualícelas y vuelva a intentarlo.",

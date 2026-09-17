@@ -19,10 +19,26 @@ const LENSNODE_ERROR_KEYS = {
   ATTACHMENT_UNREADABLE: 'attachmentUnreadable'
 }
 
+const DATASOURCE_UNAVAILABLE_PREFIX = 'DATASOURCE_UNAVAILABLE'
+const DATASOURCE_TARGET_UNAVAILABLE_PREFIX = 'DATASOURCE_TARGET_UNAVAILABLE'
+
 export function lensNodeErrorMessage(code, t) {
-  const normalized = String(code || '')
-    .trim()
-    .toUpperCase()
+  const raw = String(code || '').trim()
+  const normalized = raw.toUpperCase()
+  if (
+    normalized === DATASOURCE_UNAVAILABLE_PREFIX ||
+    normalized.startsWith(`${DATASOURCE_UNAVAILABLE_PREFIX}:`)
+  ) {
+    const name = raw
+      .slice(DATASOURCE_UNAVAILABLE_PREFIX.length)
+      .replace(/^:/, '')
+    return name
+      ? t('lensNodeErrors.datasourceUnavailable', { name })
+      : t('lensNodeErrors.datasourceUploadRequired')
+  }
+  if (normalized.startsWith(DATASOURCE_TARGET_UNAVAILABLE_PREFIX)) {
+    return t('lensNodeErrors.datasourceUploadRequired')
+  }
   const key = LENSNODE_ERROR_KEYS[normalized]
   return key ? t(`lensNodeErrors.${key}`) : ''
 }

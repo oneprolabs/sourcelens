@@ -24,6 +24,10 @@ from core.asgi import application
 from core.management.commands.register_periodic_tasks import discover_and_register
 from core.periodic_registry import TASK_REGISTRY
 from lens.consumers import LensNodeConsumer
+from lens.datasource.routing import (
+    DatasourceRoutingError,
+    prepare_run_datasources,
+)
 from lens.datasource.services import (
     DataSourceDispatchError,
     dispatch_datasource_conversion_async,
@@ -511,6 +515,175 @@ class LensServiceTests(TransactionTestCase):
         self.assertIsNone(
             finish_lensnode_run(str(uuid4()), Run.Status.DONE)
         )
+
+    def test_finish_lensnode_run_names_empty_datasource(self):
+        """A datasource target failure names the bound datasource."""
+
+        datasource = DataSource.objects.create(
+            name="ray.sun",
+            source_type=DataSource.SourceType.UPLOAD,
+            plugin_key="file_upload",
+        )
+        run = create_execution_run(
+            session=self.session,
+            question="How was revenue last year?",
+            enqueue=False,
+        )
+
+        finish_lensnode_run(
+            run.uuid,
+            Run.Status.FAILED,
+            error=f"DATASOURCE_TARGET_UNAVAILABLE:{datasource.uuid}",
+            outcome=Run.Outcome.BLOCKED,
+        )
+
+        run.refresh_from_db()
+        self.assertEqual(run.error, "DATASOURCE_UNAVAILABLE:ray.sun")
+
+    def _bind_datasource(self, *, name, required):
+        datasource = DataSource.objects.create(
+            name=name,
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=self.assistant,
+            datasource=datasource,
+            mount_name="uploads",
+            required=required,
+        )
+        return create_execution_run(
+            session=self.session,
+            question="How was revenue last year?",
+            enqueue=False,
+        )
+
+    def test_prepare_run_blocks_required_empty_datasource(self):
+        """A required datasource with no files fails with a named error."""
+
+        run = self._bind_datasource(name="ray.sun", required=True)
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            return_value={"exists": True, "is_empty": True},
+        ):
+            with self.assertRaises(DatasourceRoutingError) as caught:
+                prepare_run_datasources(run)
+
+        self.assertEqual(
+            str(caught.exception),
+            "DATASOURCE_UNAVAILABLE:ray.sun",
+        )
+
+    def test_prepare_run_skips_empty_source_when_another_is_usable(self):
+        """One empty datasource does not block a run with a usable one."""
+
+        empty = DataSource.objects.create(
+            name="Empty Source",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        ready = DataSource.objects.create(
+            name="Ready Source",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=self.assistant,
+            datasource=empty,
+            mount_name="empty",
+            required=True,
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=self.assistant,
+            datasource=ready,
+            mount_name="ready",
+            required=True,
+        )
+        run = create_execution_run(
+            session=self.session,
+            question="How was revenue last year?",
+            enqueue=False,
+        )
+        empty_uuid = str(empty.uuid)
+
+        def check_path(lensnode, target_path, source_type, config=None):
+            return {
+                "exists": True,
+                "is_empty": empty_uuid in target_path,
+            }
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            side_effect=check_path,
+        ):
+            prepared = prepare_run_datasources(run)
+
+        self.assertTrue(prepared)
+        run.execution.refresh_from_db()
+        snapshots = run.execution.runtime_snapshot.get("datasource_snapshots")
+        self.assertEqual(
+            [snapshot["datasource_name"] for snapshot in snapshots],
+            ["Ready Source"],
+        )
+
+    def test_prepare_run_skips_optional_empty_datasource(self):
+        """An optional datasource with no files is dropped, not fatal."""
+
+        run = self._bind_datasource(name="ray.sun", required=False)
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            return_value={"exists": True, "is_empty": True},
+        ):
+            prepared = prepare_run_datasources(run)
+
+        self.assertTrue(prepared)
+        run.execution.refresh_from_db()
+        self.assertEqual(
+            run.execution.runtime_snapshot.get("datasource_snapshots"),
+            [],
+        )
+
+    def test_prepare_run_restores_optional_datasource_when_available(self):
+        """A skipped optional datasource returns once it has files again."""
+
+        run = self._bind_datasource(name="ray.sun", required=False)
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            return_value={"exists": True, "is_empty": True},
+        ):
+            prepare_run_datasources(run)
+        run.execution.refresh_from_db()
+        self.assertEqual(
+            run.execution.runtime_snapshot.get("datasource_snapshots"),
+            [],
+        )
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            return_value={"exists": True, "is_empty": False},
+        ):
+            prepare_run_datasources(run)
+        run.execution.refresh_from_db()
+        self.assertEqual(
+            len(run.execution.runtime_snapshot.get("datasource_snapshots")),
+            1,
+        )
+
+    def test_prepare_run_keeps_required_datasource_with_files(self):
+        """A required datasource with files is left in the run snapshot."""
+
+        run = self._bind_datasource(name="ray.sun", required=True)
+
+        with patch(
+            "lens.datasource.services.check_datasource_path",
+            return_value={"exists": True, "is_empty": False},
+        ):
+            prepared = prepare_run_datasources(run)
+
+        self.assertTrue(prepared)
 
     def test_reap_sweeps_leftover_delegated_sessions(self):
         """A child that outlived its parent is reaped by the sweep."""
@@ -1498,7 +1671,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(run.steps.count(), 3)
         self.assertTrue(run.output_message.content)
         self.assertEqual(run.execution.task, "knowledge_qa")
-        self.assertEqual(run.execution.target_dirs, [{"path": "/workspace/repo"}])
+        self.assertEqual(run.execution.target_dirs, [])
         self.assertEqual(run.execution.agent_rounds, "max")
         self.assertEqual(run.execution.run_timeout_s, 3600)
         self.assertEqual(run.execution.token_budget_profile, "unlimited")

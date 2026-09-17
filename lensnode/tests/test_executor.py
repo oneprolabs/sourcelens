@@ -1454,8 +1454,12 @@ def test_explicit_agent_turn_limit_overrides_code_analysis_default():
     )
 
 
-def test_other_tasks_keep_unset_agent_turn_limit():
-    assert _resolve_agent_turn_limit({"task": "knowledge_qa"}) is None
+def test_knowledge_qa_has_bounded_default_agent_turns():
+    assert _resolve_agent_turn_limit({"task": "knowledge_qa"}) == 26
+
+
+def test_unknown_tasks_keep_unset_agent_turn_limit():
+    assert _resolve_agent_turn_limit({"task": "document_qa"}) is None
 
 
 def test_code_analysis_does_not_enable_subagents():

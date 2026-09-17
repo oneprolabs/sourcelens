@@ -67,7 +67,6 @@ from lens.serializers import (
     SessionCreateSerializer,
     SessionSerializer,
     validate_retrieval_policy,
-    validate_retrieval_scope,
 )
 from lens.routing_descriptions import build_routing_description
 from lens.serializers import localized_routing_description
@@ -232,23 +231,12 @@ def skill_zip_upload_with_member_names(member_names):
 class RetrievalPolicyValidationTests(SimpleTestCase):
     def test_hidden_file_retrieval_options_accept_booleans(self):
         self.assertEqual(
-            validate_retrieval_scope({"include_hidden": True}),
-            {"include_hidden": True},
-        )
-        self.assertEqual(
             validate_retrieval_policy({"include_hidden": False}),
             {"include_hidden": False},
         )
 
     def test_hidden_file_retrieval_options_reject_non_booleans(self):
         for value in ("true", None, 1):
-            with self.subTest(scope_value=value):
-                with self.assertRaisesRegex(
-                    ValidationError,
-                    "retrieval_scope.include_hidden must be a boolean",
-                ):
-                    validate_retrieval_scope({"include_hidden": value})
-
             with self.subTest(policy_value=value):
                 with self.assertRaisesRegex(
                     ValidationError,
@@ -1016,18 +1004,6 @@ class LensApiTests(TestCase):
         self.assertIn("能力：知识库问答。", chinese)
 
     def test_assistant_serializer_rejects_non_boolean_hidden_options(self):
-        scope_serializer = AssistantSerializer(
-            self.assistant,
-            data={
-                "selected_dirs": [
-                    {
-                        "path": "/workspace/repo",
-                        "retrieval_scope": {"include_hidden": "true"},
-                    }
-                ]
-            },
-            partial=True,
-        )
         policy_serializer = AssistantSerializer(
             self.assistant,
             data={
@@ -1038,9 +1014,7 @@ class LensApiTests(TestCase):
             partial=True,
         )
 
-        self.assertFalse(scope_serializer.is_valid())
         self.assertFalse(policy_serializer.is_valid())
-        self.assertIn("include_hidden", str(scope_serializer.errors))
         self.assertIn("include_hidden", str(policy_serializer.errors))
 
     def test_assistant_archive_moves_it_to_archived_list(self):
@@ -1948,7 +1922,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("selected_task", response.data)
 
-    def test_assistant_create_allows_unreported_dir(self):
+    def test_assistant_create_ignores_selected_dirs(self):
         payload = {
             "name": "Bad Dir",
             "slug": "bad-dir",
@@ -1964,12 +1938,13 @@ class LensApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
+        self.assertNotIn("selected_dirs", response.data)
         self.assertEqual(
-            response.data["selected_dirs"],
-            [{"path": "/workspace/missing"}],
+            Assistant.objects.get(slug="bad-dir").selected_dirs,
+            [],
         )
 
-    def test_auto_scheduled_assistant_drops_selected_dirs(self):
+    def test_auto_scheduled_assistant_ignores_selected_dirs(self):
         payload = {
             "name": "Auto Scheduled QA",
             "slug": "auto-scheduled-qa",
@@ -1984,7 +1959,7 @@ class LensApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data["selected_dirs"], [])
+        self.assertNotIn("selected_dirs", response.data)
         self.assertIsNone(
             Assistant.objects.get(slug="auto-scheduled-qa").lensnode
         )
@@ -2343,7 +2318,6 @@ class LensApiTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         assistant = serializer.save()
         self.assertIsNone(assistant.lensnode)
-        self.assertEqual(assistant.selected_dirs, [])
         self.assertFalse(assistant.skill_bindings.exists())
         self.assertFalse(assistant.mcp_bindings.exists())
         self.assertFalse(assistant.datasource_bindings.exists())
@@ -4944,10 +4918,7 @@ class LensApiTests(TestCase):
         self.assertEqual(run_response.status_code, 201)
         self.assertEqual(run_response.data["status"], "done")
         self.assertEqual(run_response.data["execution"]["task"], "knowledge_qa")
-        self.assertEqual(
-            run_response.data["execution"]["target_dirs"][0]["path"],
-            "/workspace/repo",
-        )
+        self.assertEqual(run_response.data["execution"]["target_dirs"], [])
 
         stream_response = self.client.get(
             f"/api/lens/runs/{run_response.data['uuid']}/stream/",

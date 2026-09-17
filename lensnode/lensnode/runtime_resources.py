@@ -156,7 +156,7 @@ def prepare_runtime_resources(
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        materialize_datasources(
+        skipped_datasources = materialize_datasources(
             config, command, runtime_root,
             cancel_event=cancel_event, on_activity=on_activity,
         )
@@ -271,6 +271,7 @@ def prepare_runtime_resources(
                 "transform_count": sum(
                     len(items) for items in skill_transforms.values()
                 ),
+                "skipped_datasources": skipped_datasources,
                 "runtime_root": str(runtime_root),
             },
         )
