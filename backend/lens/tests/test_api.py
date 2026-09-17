@@ -1969,6 +1969,26 @@ class LensApiTests(TestCase):
             [{"path": "/workspace/missing"}],
         )
 
+    def test_auto_scheduled_assistant_drops_selected_dirs(self):
+        payload = {
+            "name": "Auto Scheduled QA",
+            "slug": "auto-scheduled-qa",
+            "capability": "knowledge_qa",
+            "selected_dirs": [{"path": "/workspace/missing"}],
+        }
+
+        response = self.client.post(
+            "/api/lens/assistants/",
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["selected_dirs"], [])
+        self.assertIsNone(
+            Assistant.objects.get(slug="auto-scheduled-qa").lensnode
+        )
+
     def test_general_chat_create_allows_empty_dirs_with_skill(self):
         payload = {
             "name": "Skill Runner",

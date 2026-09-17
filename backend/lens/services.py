@@ -1347,6 +1347,27 @@ def select_execution_lensnode(
     return min(candidates, key=lambda item: (item.active_runs, item.created_at))
 
 
+def _bound_datasource_lensnode_ids(assistant):
+    """Return node ids hosting every datasource bound to the Assistant.
+
+    ``None`` means the Assistant has no datasource bindings, so scheduling is
+    unconstrained. An empty set means the bound datasources share no host and
+    the Run cannot be placed.
+    """
+
+    node_ids = None
+    bindings = assistant.datasource_bindings.select_related("datasource")
+    for binding in bindings:
+        datasource = binding.datasource
+        available = set(
+            datasource.deployments.values_list("lensnode_id", flat=True)
+        )
+        if datasource.lensnode_id:
+            available.add(datasource.lensnode_id)
+        node_ids = available if node_ids is None else node_ids & available
+    return node_ids
+
+
 def _compatible_execution_lensnodes(
     assistant,
     *,
@@ -1371,6 +1392,9 @@ def _compatible_execution_lensnodes(
             ),
         )
     )
+    bound_node_ids = _bound_datasource_lensnode_ids(assistant)
+    if bound_node_ids is not None:
+        queryset = queryset.filter(pk__in=bound_node_ids)
     for lensnode in queryset:
         if execution_task_for_capability(assistant.capability) not in task_names(
             lensnode

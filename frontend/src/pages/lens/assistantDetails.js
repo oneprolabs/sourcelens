@@ -8,12 +8,6 @@ function bindingItem(binding, name) {
 
 /** Normalize assistant data for read-only detail views. */
 export function buildAssistantDetail(assistant = {}) {
-  const workspaceDirectories = (assistant.selected_dirs || [])
-    .map((directory) =>
-      typeof directory === 'string' ? directory : directory?.path
-    )
-    .filter(Boolean)
-
   const skills = (assistant.skill_bindings || [])
     .map((binding) =>
       bindingItem(binding, binding?.skill_name || binding?.skill?.name)
@@ -49,7 +43,6 @@ export function buildAssistantDetail(assistant = {}) {
     }))
 
   return {
-    workspaceDirectories,
     plugins,
     skills,
     mcps,

@@ -135,7 +135,7 @@ test('keeps assignments visible during incremental loading and search', async ({
     const url = new URL(request.url())
     return (
       url.pathname === '/api/v1/management/users/' &&
-      url.searchParams.get('assignable') === 'true'
+      url.searchParams.get('compact') === 'true'
     )
   })
   const drawer = await openAccessStep(page)

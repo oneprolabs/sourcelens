@@ -386,10 +386,8 @@
       :datasource-options="datasourceOptions"
       :saving="saving"
       :form-error="formError"
-      :refreshing-dirs="refreshingDirs"
       @close="closeDrawer"
       @save="save"
-      @refresh-dirs="refreshDirs"
     />
 
     <BaseModal
@@ -488,7 +486,6 @@ import {
   formatAssistantType,
   listToText,
   normalizeList,
-  selectedDirsFromValue,
   splitList
 } from './adminHelpers'
 
@@ -497,7 +494,6 @@ const { showSuccess, showError } = useToast()
 
 const loading = ref(false)
 const saving = ref(false)
-const refreshingDirs = ref(false)
 const showDrawer = ref(false)
 const mode = ref('create')
 const form = ref({})
@@ -655,10 +651,6 @@ async function copyShareUrl(row) {
   } else {
     showError(t('lens.share.copyFailed'))
   }
-}
-
-function selectedDirs() {
-  return Array.isArray(form.value.selected_dirs) ? form.value.selected_dirs : []
 }
 
 async function load() {
@@ -884,18 +876,6 @@ function serializeForm(value) {
   })
 }
 
-async function refreshDirs() {
-  if (!form.value.lensnode_uuid) return
-  refreshingDirs.value = true
-  try {
-    lensnodes.value = normalizeList(await listLensNodes())
-  } catch {
-    showError(t('lensAdmin.messages.loadFailed'))
-  } finally {
-    refreshingDirs.value = false
-  }
-}
-
 function defaultForm() {
   return {
     name: '',
@@ -903,7 +883,6 @@ function defaultForm() {
     capability: '',
     slug: '',
     lensnode_uuid: '',
-    selected_dirs: [],
     datasource_bindings: [],
     agent_model_ref: '',
     agent_rounds: 'balanced',
@@ -952,7 +931,6 @@ function formFromRow(row) {
       .filter(Boolean),
     slug: row.slug || '',
     lensnode_uuid: row.lensnode?.uuid || row.lensnode || '',
-    selected_dirs: selectedDirsFromValue(row.selected_dirs || []),
     datasource_bindings: Array.isArray(row.datasource_bindings)
       ? row.datasource_bindings
       : [],
@@ -1076,8 +1054,6 @@ function buildPayload() {
       : {}),
     datasource_bindings:
       form.value.mode === 'smart' ? [] : form.value.datasource_bindings || [],
-    selected_dirs:
-      form.value.capability === 'general_chat' ? [] : buildSelectedDirs(),
     agent_model_ref: form.value.agent_model_ref || null,
     agent_rounds: form.value.agent_rounds || 'balanced',
     ...(mode.value === 'edit'
@@ -1166,22 +1142,6 @@ function buildAssistantSettings() {
   features.codegraph = !!form.value.enable_codegraph
   settings.features = features
   return settings
-}
-
-function buildSelectedDirs() {
-  return selectedDirs().map((dir) => {
-    const includePaths = String(dir.include_paths_text || '')
-      .split('\n')
-      .map((item) => item.trim())
-      .filter(Boolean)
-    if (!includePaths.length) {
-      return { path: dir.path }
-    }
-    return {
-      path: dir.path,
-      retrieval_scope: { include_paths: includePaths }
-    }
-  })
 }
 
 async function archive(row) {

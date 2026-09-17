@@ -34,6 +34,7 @@ from lens.execution import execute_answer_run
 from lens.lensnode_auth import issue_lensnode_token
 from lens.models import (
     Assistant,
+    AssistantDataSourceBinding,
     AssistantSkill,
     DataSource,
     GlobalSetting,
@@ -288,6 +289,62 @@ class LensServiceTests(TransactionTestCase):
 
         self.assertEqual(selected, idle)
         self.assertEqual(busy_run.lensnode, self.lensnode)
+
+    def test_bound_datasource_pins_execution_to_its_lensnode(self):
+        """An auto-scheduled Assistant runs where its datasource lives."""
+
+        other = LensNode.objects.create(
+            name="Datasource LensNode",
+            status=LensNode.Status.ONLINE,
+            enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+            workspace_path="/workspace",
+            tasks=[{"name": "knowledge_qa"}],
+        )
+        datasource = DataSource.objects.create(
+            name="Team Uploads",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=other,
+            target_path="/workspace/datasources/team-uploads",
+        )
+        unbound = Assistant.objects.create(
+            name="Bound Assistant",
+            slug="bound-assistant",
+            lensnode=None,
+            selected_task="knowledge_qa",
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=unbound,
+            datasource=datasource,
+            mount_name="ds_team_uploads",
+        )
+
+        selected = select_execution_lensnode(unbound)
+
+        self.assertEqual(selected, other)
+
+    def test_bound_datasource_without_host_blocks_scheduling(self):
+        """A datasource that has no host cannot place an automatic Run."""
+
+        datasource = DataSource.objects.create(
+            name="Unsynced Datasource",
+            source_type=DataSource.SourceType.GIT,
+            lensnode=None,
+            target_path="/workspace/unsynced",
+        )
+        unbound = Assistant.objects.create(
+            name="Hostless Assistant",
+            slug="hostless-assistant",
+            lensnode=None,
+            selected_task="knowledge_qa",
+        )
+        AssistantDataSourceBinding.objects.create(
+            assistant=unbound,
+            datasource=datasource,
+            mount_name="ds_unsynced",
+        )
+
+        with self.assertRaises(LensNodeDispatchError):
+            select_execution_lensnode(unbound)
 
     def test_delegated_run_uses_selected_assistant_lensnode(self):
         self.session.routing_mode = Session.RoutingMode.SMART

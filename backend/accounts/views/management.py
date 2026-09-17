@@ -220,11 +220,6 @@ class ManagementUserListView(APIView):
                 Q(username__icontains=search)
                 | Q(email__icontains=search)
             )
-        assignable = str(
-            request.query_params.get('assignable') or ''
-        ).lower()
-        if assignable in {'1', 'true', 'yes'}:
-            qs = qs.filter(is_staff=False, is_superuser=False)
         total = qs.count()
         start = (page - 1) * page_size
         end = start + page_size

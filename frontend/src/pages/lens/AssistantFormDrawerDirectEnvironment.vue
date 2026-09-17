@@ -418,6 +418,11 @@
                           selectSource(source, null, $event.target.checked)
                         "
                       />
+                      <PluginIcon
+                        :plugin-key="source.plugin_key"
+                        :src="pluginIconUrl(source.plugin_key)"
+                        :label="source.plugin_key || source.source_type"
+                      />
                       <span class="min-w-0 flex-1 truncate">{{
                         source.name
                       }}</span>
@@ -475,71 +480,8 @@
                 {{ t('lensAdmin.datasourceSelection.empty') }}
               </p>
             </fieldset>
-            <div v-if="requiresWorkspace && !form.datasource_bindings?.length">
-              <div class="mb-1 flex items-center justify-between">
-                <span class="text-sm font-medium text-ink-700">{{
-                  t('lensAdmin.fields.selectedDirs')
-                }}</span>
-                <button
-                  v-if="form.lensnode_uuid"
-                  type="button"
-                  class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-500 transition-colors hover:bg-surface-sunken hover:text-ink-700 disabled:opacity-40"
-                  :disabled="refreshingDirs"
-                  @click="$emit('refresh-dirs')"
-                >
-                  <svg
-                    class="h-3.5 w-3.5"
-                    :class="{ 'animate-spin': refreshingDirs }"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                  {{ t('common.refresh') }}
-                </button>
-              </div>
-              <BaseSelect
-                v-if="selectedLensNodeDirs.length"
-                v-model="selectedDirPath"
-                class="font-mono"
-              >
-                <option value="">
-                  {{ t('lensAdmin.placeholders.selectDir') }}
-                </option>
-                <option
-                  v-for="dir in selectedLensNodeDirs"
-                  :key="dir.path"
-                  :value="dir.path"
-                >
-                  {{ dir.path }}
-                </option>
-              </BaseSelect>
-              <div
-                v-else
-                class="rounded-md border border-line bg-surface-sunken p-3 text-sm text-ink-500"
-              >
-                {{ t('lensAdmin.placeholders.noDirs') }}
-              </div>
-              <div v-if="selectedDirPath" class="mt-2">
-                <label class="mb-1 block text-xs font-medium text-ink-500">
-                  {{ t('lensAdmin.fields.includePaths') }}
-                </label>
-                <textarea
-                  class="form-input min-h-20 font-mono"
-                  :placeholder="t('lensAdmin.placeholders.includePaths')"
-                  :value="selectedDirScopeText(selectedDirPath)"
-                  @input="updateDirScope(selectedDirPath, $event.target.value)"
-                />
-              </div>
-            </div>
             <div
-              v-else-if="isGeneralChatTask"
+              v-if="isGeneralChatTask"
               class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
             >
               {{ t('lensAdmin.wizard.generalChatExecutionHint') }}
@@ -1216,9 +1158,15 @@
                     <UsersIcon class="h-4 w-4 flex-shrink-0 text-ink-400" />
                     <span class="truncate">{{ g.name }}</span>
                   </label>
+                  <p
+                    v-if="groupLoading"
+                    class="px-3 py-2 text-center text-xs text-ink-400"
+                  >
+                    {{ t('lensAdmin.access.loadingGroups') }}
+                  </p>
                 </div>
                 <p
-                  v-if="groupLoading"
+                  v-if="groupLoading && !orderedGroups.length"
                   class="px-3 py-3 text-center text-xs text-ink-400"
                 >
                   {{ t('lensAdmin.access.loadingGroups') }}
@@ -1314,9 +1262,15 @@
                       </div>
                     </div>
                   </label>
+                  <p
+                    v-if="userLoading"
+                    class="px-3 py-2 text-center text-xs text-ink-400"
+                  >
+                    {{ t('lensAdmin.access.loadingUsers') }}
+                  </p>
                 </div>
                 <p
-                  v-if="userLoading"
+                  v-if="userLoading && !orderedUsers.length"
                   class="px-3 py-3 text-center text-xs text-ink-400"
                 >
                   {{ t('lensAdmin.access.loadingUsers') }}
@@ -1452,11 +1406,10 @@ const props = defineProps({
   llmConfigOptions: { type: Array, default: () => [] },
   datasourceOptions: { type: Array, default: () => [] },
   saving: Boolean,
-  formError: { type: String, default: '' },
-  refreshingDirs: Boolean
+  formError: { type: String, default: '' }
 })
 
-defineEmits(['close', 'save', 'refresh-dirs'])
+defineEmits(['close', 'save'])
 
 const { t, te } = useI18n()
 const userStore = useUserStore()
@@ -1756,9 +1709,7 @@ const canProceedWizard = computed(() => {
     }
     if (!props.form.capability) return false
     if (isGeneralChatTask.value) return true
-    return (
-      selectedDirs().length > 0 || props.form.datasource_bindings?.length > 0
-    )
+    return (props.form.datasource_bindings || []).length > 0
   }
   if (wizardStep.value === 3) {
     if (isSmartMode.value) return true
@@ -1877,20 +1828,11 @@ const requiresWorkspace = computed(() =>
 const requiresNodeSelection = computed(() => false)
 
 watch(
-  () => props.form.capability,
-  (capability, previousCapability) => {
-    if (capability === previousCapability) return
-    if (!requiresWorkspace.value) props.form.selected_dirs = []
-  }
-)
-
-watch(
   () => props.form.mode,
   (assistantMode) => {
     if (assistantMode !== 'smart') return
     props.form.capability = 'general_chat'
     props.form.lensnode_uuid = ''
-    props.form.selected_dirs = []
     props.form.skill_uuids = []
     props.form.mcp_uuids = []
     props.form.datasource_bindings = []
@@ -1950,17 +1892,6 @@ function togglePluginConnection(connection, checked) {
     { connection_uuid: connection.uuid, enabled: true }
   ]
 }
-
-const selectedLensNodeDirs = computed(() => {
-  const selected = props.lensnodes.find(
-    (lensnode) => lensnode.uuid === props.form.lensnode_uuid
-  )
-  const dirs = Array.isArray(selected?.available_dirs)
-    ? selected.available_dirs
-    : []
-  const workspacePath = selected?.workspace_path || '/workspace'
-  return [{ path: workspacePath }]
-})
 
 function nextWizardStep() {
   if (wizardStep.value < WIZARD_STEP_COUNT) wizardStep.value++
@@ -2109,7 +2040,6 @@ async function loadUsers(page = userPage.value) {
       {
         page,
         page_size: ACCESS_PAGE_SIZE,
-        assignable: true,
         compact: true,
         ...(search ? { search } : {})
       },
@@ -2366,35 +2296,6 @@ function clearDatasourceBindings() {
 function removeDatasourceBinding(binding) {
   if (props.saving) return
   selectSource(binding.source, binding.item, false)
-}
-
-function selectedDirs() {
-  return Array.isArray(props.form.selected_dirs) ? props.form.selected_dirs : []
-}
-
-const selectedDirPath = computed({
-  get() {
-    return selectedDirs()[0]?.path || ''
-  },
-  set(path) {
-    if (!path) {
-      props.form.selected_dirs = []
-      return
-    }
-    const existing = selectedDirs().find((dir) => dir.path === path)
-    props.form.selected_dirs = [existing || { path, include_paths_text: '' }]
-  }
-})
-
-function selectedDirScopeText(path) {
-  const dir = selectedDirs().find((item) => item.path === path)
-  return dir?.include_paths_text || ''
-}
-
-function updateDirScope(path, value) {
-  props.form.selected_dirs = selectedDirs().map((dir) =>
-    dir.path === path ? { ...dir, include_paths_text: value } : dir
-  )
 }
 </script>
 
