@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: "Hardened the installer for restricted networks: it now falls back to the Aliyun ACR mirror when Docker Hub is unreachable, mirrors nginx, PostgreSQL, and Redis images on that path, and lets you skip the interactive AI model setup with Esc or Ctrl+C."
+zh-CN: "加固了受限网络下的安装流程：Docker Hub 不可达时自动回退到阿里云 ACR 镜像，并在该路径下同步 nginx、PostgreSQL、Redis 镜像；AI 模型交互配置支持按 Esc 或 Ctrl+C 跳过。"
