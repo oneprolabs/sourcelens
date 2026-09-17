@@ -8,7 +8,6 @@ _ROUTING_TEXT = {
         "skills": "Available Skills",
         "mcps": "Available MCPs",
         "data_sources": "Available data sources",
-        "workspace_scope": "The workspace scope is limited to configured directories.",
         "unknown_capability": "Specialized capability",
         "unknown_request": "specialized requests",
     },
@@ -19,7 +18,6 @@ _ROUTING_TEXT = {
         "skills": "Skills disponibles",
         "mcps": "MCP disponibles",
         "data_sources": "Fuentes de datos disponibles",
-        "workspace_scope": "El ámbito de trabajo se limita a los directorios configurados.",
         "unknown_capability": "Capacidad especializada",
         "unknown_request": "solicitudes especializadas",
     },
@@ -30,7 +28,6 @@ _ROUTING_TEXT = {
         "skills": "可用 Skills",
         "mcps": "可用 MCP",
         "data_sources": "可用数据源",
-        "workspace_scope": "工作范围仅限已配置的工作区目录。",
         "unknown_capability": "专用能力",
         "unknown_request": "专用请求",
     },
@@ -185,8 +182,6 @@ def build_routing_description(assistant, answer_language="en-US"):
                 language,
             )
         )
-    if assistant.selected_dirs:
-        parts.append(text["workspace_scope"])
     return "".join(parts)[:1000]
 
 

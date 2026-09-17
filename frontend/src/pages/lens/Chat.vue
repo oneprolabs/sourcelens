@@ -3002,7 +3002,7 @@ const showRetryHint = computed(() => {
 // timeout is the model being slow (after retries), not a platform fault.
 function mapRunError(code) {
   const c = String(code || '').toUpperCase()
-  const lensNodeMessage = lensNodeErrorMessage(c, t)
+  const lensNodeMessage = lensNodeErrorMessage(code, t)
   if (lensNodeMessage) return lensNodeMessage
   if (c.includes('IMAGE_PREPROCESSING')) {
     return t('lens.chat.errorImagePreprocessing')

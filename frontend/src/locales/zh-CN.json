@@ -112,6 +112,7 @@
     "datasourceSyncFailed": "数据源同步失败，请检查数据源状态后重试。",
     "datasourceSyncTimeout": "等待数据源同步超时，请稍后重试。",
     "datasourceUploadRequired": "数据源没有可用文件，请先上传文件。",
+    "datasourceUnavailable": "当前绑定的数据源「{name}」没有可用的文件内容，请联系管理员。",
     "datasourceDisabled": "所选数据源已停用，请联系管理员。",
     "datasourceResourceLimit": "数据源超过资源上限，请清理大文件或提高 Git 字节上限后重试。",
     "datasourceCredentialInvalid": "数据源凭证无效，请更新后重试。",

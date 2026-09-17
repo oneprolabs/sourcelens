@@ -92,6 +92,59 @@ def test_materialize_datasource_rejects_missing_local_directory(tmp_path):
         )
 
 
+def test_materialize_skips_empty_source_when_another_mounts(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    workspace.mkdir()
+    runtime.mkdir()
+    present_uuid = uuid.uuid4()
+    source = workspace / "datasources" / f"{present_uuid}-abc"
+    source.mkdir(parents=True)
+    (source / "README.md").write_text("ready", encoding="utf-8")
+    command = {
+        "run_uuid": str(uuid.uuid4()),
+        "datasource_snapshots": [
+            {
+                "datasource_uuid": str(uuid.uuid4()),
+                "mount_name": "missing",
+                "required": True,
+            },
+            {
+                "datasource_uuid": str(present_uuid),
+                "mount_name": "present",
+                "required": True,
+            },
+        ],
+    }
+
+    skipped = materialize_datasources(
+        type("Config", (), {"workspace_path": str(workspace)})(),
+        command,
+        runtime,
+    )
+
+    assert skipped == ["missing"]
+    assert [item["name"] for item in command["target_dirs"]] == ["present"]
+
+
+def test_materialize_skips_optional_missing_local_directory(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    workspace.mkdir()
+    runtime.mkdir()
+    command = _command(uuid.uuid4())
+    command["datasource_snapshots"][0]["required"] = False
+
+    skipped = materialize_datasources(
+        type("Config", (), {"workspace_path": str(workspace)})(),
+        command,
+        runtime,
+    )
+
+    assert skipped == ["source"]
+    assert command["target_dirs"] == []
+
+
 def test_relative_link_survives_staging_and_workspace_relocation(tmp_path):
     """Resolve links from the final Session directory, not staging."""
 

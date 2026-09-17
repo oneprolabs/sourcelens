@@ -79,6 +79,7 @@ def capture_session_datasources(session, assistant, bindings=None):
                     version=version,
                     mount_name=mount_name,
                     storage_key=storage_key,
+                    required=binding.required,
                 )
             )
     _validate_mount_names(rows)

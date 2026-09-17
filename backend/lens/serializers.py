@@ -120,44 +120,6 @@ def _task_names(lensnode):
     return names
 
 
-def validate_retrieval_scope(value):
-    """Validate retrieval_scope JSON."""
-
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise serializers.ValidationError("retrieval_scope must be an object or null")
-
-    list_fields = [
-        "include_paths",
-        "exclude_paths",
-        "exclude_extensions",
-    ]
-    for field in list_fields:
-        items = value.get(field)
-        if items is not None and (
-            not isinstance(items, list)
-            or any(not isinstance(item, str) for item in items)
-        ):
-            raise serializers.ValidationError(
-                f"retrieval_scope.{field} must be a list of strings"
-            )
-
-    max_depth = value.get("max_depth")
-    if max_depth is not None and (not isinstance(max_depth, int) or max_depth <= 0):
-        raise serializers.ValidationError(
-            "retrieval_scope.max_depth must be a positive integer"
-        )
-
-    include_hidden = value.get("include_hidden")
-    if "include_hidden" in value and not isinstance(include_hidden, bool):
-        raise serializers.ValidationError(
-            "retrieval_scope.include_hidden must be a boolean"
-        )
-
-    return value
-
-
 def validate_retrieval_policy(value):
     """Validate Assistant-level retrieval policy options."""
 
@@ -172,23 +134,6 @@ def validate_retrieval_policy(value):
         raise serializers.ValidationError(
             "settings.retrieval_policy.include_hidden must be " "a boolean"
         )
-    return value
-
-
-def validate_selected_dirs(value, lensnode=None):
-    """Validate selected_dirs payload against LensNode availability."""
-
-    if not isinstance(value, list):
-        raise serializers.ValidationError("selected_dirs must be a list")
-
-    for item in value:
-        if not isinstance(item, dict):
-            raise serializers.ValidationError("selected_dirs items must be objects")
-        path = item.get("path")
-        if not isinstance(path, str) or not path:
-            raise serializers.ValidationError("selected_dirs.path is required")
-        if "retrieval_scope" in item:
-            validate_retrieval_scope(item.get("retrieval_scope"))
     return value
 
 
@@ -877,7 +822,6 @@ class AssistantSerializer(serializers.ModelSerializer):
             "routing_mode",
             "collaboration_member_uuids",
             "collaboration_members",
-            "selected_dirs",
             "multimodal_model_ref",
             "agent_model_ref",
             "agent_rounds",
@@ -1110,7 +1054,6 @@ class AssistantSerializer(serializers.ModelSerializer):
             attrs["capability"] = normalized_capability
             capability = normalized_capability
             attrs["lensnode"] = None
-            attrs["selected_dirs"] = []
             attrs["multimodal_model_ref"] = None
             attrs["datasource_bindings"] = []
             attrs["skill_bindings"] = []
@@ -1138,12 +1081,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                 {"capability": "capability is not available on LensNode"}
             )
 
-        selected_dirs = attrs.get(
-            "selected_dirs",
-            getattr(self.instance, "selected_dirs", []),
-        )
         if not requires_workspace:
-            attrs["selected_dirs"] = []
             if mode_behavior.requires_skill:
                 skill_bindings = attrs.get("skill_bindings")
                 if skill_bindings is None and self.instance is not None:
@@ -1191,13 +1129,6 @@ class AssistantSerializer(serializers.ModelSerializer):
                             )
                         }
                     )
-        elif lensnode is not None:
-            validate_selected_dirs(selected_dirs, lensnode)
-        else:
-            # Node-local directories only exist on a bound LensNode; an
-            # auto-scheduled Assistant selects knowledge via datasource
-            # bindings instead.
-            attrs["selected_dirs"] = []
         self._validate_skill_plugin_requirements(attrs)
         self._validate_plugin_tool_uniqueness(attrs)
         settings = attrs.get(

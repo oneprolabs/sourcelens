@@ -32,6 +32,7 @@ def run_datasource_snapshots(run):
                 == row.datasource.SourceType.MANAGED_WORKSPACE
                 else ""
             ),
+            "required": row.required,
         })
     return result
 
