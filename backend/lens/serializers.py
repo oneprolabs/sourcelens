@@ -1193,15 +1193,11 @@ class AssistantSerializer(serializers.ModelSerializer):
                     )
         elif lensnode is not None:
             validate_selected_dirs(selected_dirs, lensnode)
-        elif selected_dirs:
-            raise serializers.ValidationError(
-                {
-                    "selected_dirs": (
-                        "Auto-scheduled assistants cannot select node-local "
-                        "directories."
-                    )
-                }
-            )
+        else:
+            # Node-local directories only exist on a bound LensNode; an
+            # auto-scheduled Assistant selects knowledge via datasource
+            # bindings instead.
+            attrs["selected_dirs"] = []
         self._validate_skill_plugin_requirements(attrs)
         self._validate_plugin_tool_uniqueness(attrs)
         settings = attrs.get(

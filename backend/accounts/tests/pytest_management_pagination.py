@@ -274,48 +274,38 @@ class TestManagementUsersPagination:
         assert first_user.id < second_user.id
         assert [user["id"] for user in data["results"]] == [second_user.id]
 
-    def test_users_list_assignable_filter_excludes_admin_accounts(self):
+    def test_users_list_includes_admin_accounts_for_assignment(self):
         admin = User.objects.create_user(
             username="admin_for_assignable_filter",
             password="x",
             is_staff=True,
         )
-        assignable_user = User.objects.create_user(
-            username="assignable-selector-user",
-            password="x",
-        )
-        User.objects.create_user(
+        staff = User.objects.create_user(
             username="assignable-selector-staff",
             password="x",
             is_staff=True,
         )
-        User.objects.create_user(
+        superuser = User.objects.create_user(
             username="assignable-selector-superuser",
+            email="assignable-superuser@example.com",
             password="x",
             is_superuser=True,
         )
 
         client = APIClient()
         client.force_authenticate(user=admin)
-        default_response = client.get(
-            "/api/v1/management/users/",
-            {"assignable": "true"},
-        )
         response = client.get(
             "/api/v1/management/users/",
-            {"search": "assignable-selector", "assignable": "true"},
+            {"search": "assignable-selector"},
         )
 
-        assert default_response.status_code == 200
-        assert [
-            user["id"] for user in _payload(default_response)["results"]
-        ] == [assignable_user.id]
         assert response.status_code == 200
         data = _payload(response)
-        assert data["count"] == 1
-        assert [user["id"] for user in data["results"]] == [
-            assignable_user.id
-        ]
+        assert sorted(user["id"] for user in data["results"]) == sorted(
+            [staff.id, superuser.id]
+        )
+        emails = {user["id"]: user["email"] for user in data["results"]}
+        assert emails[superuser.id] == "assignable-superuser@example.com"
 
     def test_users_list_compact_search_returns_selector_fields_only(self):
         admin = User.objects.create_user(
@@ -336,7 +326,6 @@ class TestManagementUsersPagination:
         response = client.get(
             "/api/v1/management/users/",
             {
-                "assignable": "true",
                 "compact": "true",
                 "search": "compact-selector",
             },

@@ -80,22 +80,6 @@ export function rowsToObject(rows) {
   }, {})
 }
 
-export function selectedDirsFromValue(value) {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  return value
-    .map((dir) => ({
-      path: dir.path || '',
-      include_paths_text: (
-        dir.retrieval_scope?.include_paths ||
-        dir.include_paths ||
-        []
-      ).join('\n')
-    }))
-    .filter((dir) => dir.path)
-}
-
 export function normalizeList(payload) {
   if (Array.isArray(payload)) {
     return payload
