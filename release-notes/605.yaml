@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: "Fixed authorized-user search in Assistant access settings so admin and staff accounts are listed with their email addresses, and removed the workspace-directory requirement that blocked auto-scheduled Knowledge Q&A assistants from being saved."
+zh-CN: "修复助手访问设置中的授权用户搜索，现可列出管理员与员工账号及其邮箱；并移除了自动调度型知识问答助手保存时的本地工作目录必填限制。"
