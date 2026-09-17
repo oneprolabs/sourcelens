@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: "Fixed manual datasource uploads failing with DATASOURCE_UPLOAD_ORPHANED for files larger than about 786 KB. Uploads now transfer in acknowledged chunks, resume automatically after a LensNode reconnect, and skip files whose content already exists in the datasource."
+zh-CN: "修复手动数据源上传中大于约 786 KB 的文件报 DATASOURCE_UPLOAD_ORPHANED 的问题。上传改为按分片确认传输，LensNode 重连后自动续传，并跳过数据源内内容已存在的重复文件。"
