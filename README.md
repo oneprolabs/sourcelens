@@ -9,17 +9,28 @@
 
 **Harness-based Agentic RAG** — no embeddings, no vector DB, no pre-indexing
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-D22B2B?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Django](https://img.shields.io/badge/Django-REST-092E20?style=flat-square&logo=django&logoColor=white)](https://www.django-rest-framework.org/)
+[![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose%20V2-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-4C1?style=flat-square)](https://github.com/oneprolabs/sourcelens/pulls)
+
+[**Quick Start**](#-quick-start) · [**Why SourceLens**](#why-sourcelens) · [**What We Believe**](#-what-we-believe) · [**Local Development**](#-local-development) · [**Community**](#-community--contact)
+
 </div>
 
 **SourceLens** is Agentic RAG built on an AI coding agent harness — the same kind of harness behind tools like Cursor, Claude Code, or Codex, not those products themselves — running inside a sandboxed environment. Instead of embedding your files into a vector index ahead of time, SourceLens hands them directly to the agent harness, which reads, searches, and reasons over the file system on demand — turning any pile of documents or code into something you can just ask questions of.
 
-![What is SourceLens](docs/images/what_is_sourcelens.png)
+![SourceLens overview](docs/images/sourcelens_en.png)
 
 Instead of vector embeddings or keyword indexes, SourceLens uses AI coding agents running in a sandbox to directly read, navigate, and reason over the file system. This means the retrieval understands code structure, cross-file relationships, and semantic intent — not just surface-level text matching.
 
 ## Background
 
 Our first attempts at RAG used graphical workflow tools like Dify and n8n. They asked a lot of the people building on them, and the real difficulty was always upfront: splitting documents and embedding them before they ever reached a vector store. That prep work took real effort to get right, and even after all of it, recall accuracy stayed disappointing — answers would come back incomplete, sometimes missing the point that was in the document all along.
+
+![From traditional RAG to SourceLens](docs/images/from_rag_to_sourcelens_en.png)
 
 Around the same time, we noticed something different from using Cursor for development: it did no pre-training or pre-indexing at all, yet it was consistently accurate at reasoning over a codebase. That raised an obvious question — why not use the same approach for RAG?
 
@@ -29,6 +40,89 @@ Most teams building a RAG knowledge base today go through some version of this s
 
 The underlying loop stays deliberately simple: a query triggers the agent to search, it synthesizes what it finds into a partial answer, and if that's not enough, it searches again and synthesizes again — repeating until it can answer with confidence. Skills and MCP integration are the planned path for extending what the agent can reach beyond the local file system, without changing that core loop.
 
+## 🚀 Quick Start
+
+### 1. Prerequisites
+
+| | |
+|---|---|
+| CPU / RAM | 4 cores · 8 GB |
+| Disk | 100 GB recommended |
+| Docker | Compose V2 (`docker compose`), installed and running |
+| OS | Linux · macOS or Windows via Docker Desktop |
+
+You also need API keys for two models:
+
+| Role | Requirement | Example |
+|---|---|---|
+| Chat & retrieval | Drives the agent loop and answer synthesis | `deepseek-flash` |
+| Image understanding | Must support vision input — screenshots, images in documents | `deepseek-flash`, `gpt-5.2`, `qwen-vl-max` |
+
+### 2. Install
+
+**Linux / macOS**
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh \
+  | sudo bash
+```
+
+**Windows (Git Bash)** — not PowerShell or CMD
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh \
+  | bash
+```
+
+**China network** — release files from Gitee, images from Aliyun ACR
+
+```bash
+curl -fsSL \
+  https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh \
+  | sudo bash -s -- --channel cn --download-source gitee
+```
+
+### 3. Verify
+
+```bash
+curl -f http://<host>:10083/health
+```
+
+### 4. Sign in
+
+Open `http://<host>:10083`. User `admin`, password in
+`<install-dir>/install-info.env`.
+
+<details>
+<summary><b>Options and notes</b></summary>
+
+| Option | Description |
+|---|---|
+| `--dir DIR` | Install directory |
+| `--port` / `--https-port` | Ports (default `10083` / `10443`) |
+| `--domain HOST` | Public hostname or IP |
+| `--version VER` | Install or upgrade to a specific release |
+| `--channel github\|cn` | Distribution channel (auto-detected) |
+| `--yes` | Non-interactive; skips the model setup prompt |
+
+Default install dir: `/opt/sourcelens` (Linux), `/Users/Shared/sourcelens`
+(macOS), `$HOME/sourcelens` (Windows Git Bash). `install.sh --help` lists the
+rest.
+
+Re-running with a newer `--version` upgrades in place; `.env` and data are
+preserved. A fresh install takes the latest release tag.
+
+An interactive install with no active model prompts you to configure one and
+tests the connection before saving. Skip with `--yes` and configure later at
+`/management/llm/config`.
+
+- **NAT VMs**: forward host TCP `10083` to guest TCP `10083`.
+- **Zero-downtime upgrades**: [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md).
+
+</details>
+
 ## Why SourceLens
 
 - **Agentic RAG, not embeddings** — an agent harness (the same kind behind Cursor, Claude Code, Codex, etc.) reads and reasons over files directly, no vector DB, no pre-indexing step
@@ -36,6 +130,39 @@ The underlying loop stays deliberately simple: a query triggers the agent to sea
 - **Pre/post LLM orchestration** — customizable LLM steps before and after retrieval for query refinement and answer synthesis
 - **Source-traceable** — every answer references exact file paths and code locations
 - **Works with any format** — Markdown, Word, PPT, images, and code (py, js, ts, vue, go, etc.), with zero prep
+
+### How is this different from Codex or Work Buddy?
+
+Same foundation — a harness agent with a working environment — different
+starting point.
+
+| | Codex / Work Buddy | SourceLens |
+|---|---|---|
+| **Starts from** | One person's local files | A company's shared data |
+| **Setup** | Each user installs a runtime and configures a model | Admin configures once; users open a URL |
+| **Governance** | None needed for a personal tool | Per-assistant sources, access control, traceable answers |
+
+SourceLens's unit is the **Assistant**. Admins decide what it mounts, which
+model it runs, who can reach it, and how deep retrieval goes. Users get one
+thing they can open and ask — and an answer that traces back to a specific
+file.
+
+## 💡 What We Believe
+
+**A harness agent is becoming the general-purpose way to work with AI.** The
+design question is moving from "how do we call the model one fewer time" to
+"how do we give the agent enough context, tools, and room to act that it gets
+the problem right."
+
+**Inference keeps getting cheaper, so saving a model call is the wrong thing to
+optimize for.** Chunking, embedding, vector stores, rerankers — all fixed cost,
+paid once to build and then forever to maintain. Letting the agent do the
+judging is variable cost, and it drops every time models get stronger and
+cheaper.
+
+Personal agent tools optimize for one person finishing a task. We optimize for
+turning a company's data into AI context that is durable, governable, and
+reusable — across people, assistants, and eventually harnesses.
 
 ## Use Cases
 
@@ -49,6 +176,13 @@ Point SourceLens at documents in any of these formats and start asking questions
 - Word documents
 - PowerPoint decks
 - Content inside images
+
+![Asking a question and getting a sourced answer](docs/images/sourcelens_answer_en.png)
+
+Ask in whatever language you like — the answer follows your question, not the
+language the documents were written in.
+
+![Answering in a different language from the source documents](docs/images/sourcelens_en_to_es.png)
 
 ### 2. Deep code insight from a screenshot
 
@@ -64,21 +198,9 @@ We package internal engineering knowledge as company-level Skills that anyone ca
 
 > Also fun in testing: pointing the same deep-insight flow at long-form content like novels turns out to be a surprisingly effective way to explore and query them.
 
-## Architecture
+## 🛠 Local Development
 
-```
-sourcelens/
-├── backend/                    # Django REST API
-│   ├── core/                   # Project config (settings/, urls.py, celery.py)
-│   ├── accounts/               # Auth, roles, permissions
-│   └── lens/                   # Assistants, sessions, runs, and data sources
-├── frontend/                   # Vue 3 (Vite + Pinia + Tailwind + vue-i18n)
-└── docs/                       # Design docs
-```
-
-## Quick Start
-
-### 1. Docker dev
+The dev stack builds from source and hot-reloads.
 
 > **Prerequisite:** Docker Compose **V2** (`docker compose`) is required. The dev
 > stack relies on Compose V2 features — the top-level `name` field (dev/prod
@@ -92,191 +214,37 @@ cp env.sample .env.dev
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 2. Services
+Everything is served on **http://localhost:8000** — frontend and API both sit
+behind the dev nginx.
 
-| Service | URL |
-|---|---|
-| Web UI | http://localhost:8000 |
-| API Docs | http://localhost:8000/swagger/ |
-| Admin | http://localhost:8000/admin/ |
-| Flower | http://localhost:5555 |
+Code is bind-mounted, so reload behavior differs per service:
 
-### 3. Common Commands
+| Service | Container | After a code change |
+|---|---|---|
+| `backend-api` | `sourcelens-api-dev` | Reloads automatically |
+| `backend-worker` | `sourcelens-worker-dev` | `docker restart sourcelens-worker-dev` |
+| `backend-scheduler` | `sourcelens-scheduler-dev` | `docker restart sourcelens-scheduler-dev` |
 
-```bash
-# Backend
-pytest
-pytest path/to/test.py
+New migrations are the one case that needs an API restart.
 
-# Django
-python backend/manage.py migrate
-python backend/manage.py register_periodic_tasks
-python backend/manage.py createsuperuser
+## 📄 License
 
-# Code quality
-black --check backend/
-isort --check backend/
+[Apache License 2.0](LICENSE)
 
-# Frontend
-cd frontend && npm install
-npm run dev          # → http://localhost:5173
-npm run build
-npm run lint
-npm run test:e2e     # Playwright E2E
-```
+## 💬 Community & Contact
 
-## Agentcore Packages
+- [GitHub Issues](https://github.com/oneprolabs/sourcelens/issues) — questions and bug reports
+- [GitHub Discussions](https://github.com/oneprolabs/sourcelens/discussions) — ideas and design discussion
+- [hyperfilelens.com](https://hyperfilelens.com) — product site
+- [X / Twitter @oneprolabs](https://x.com/oneprolabs) — releases and updates
+- Email — [opensource@oneprocloud.com](mailto:opensource@oneprocloud.com)
 
-Agentcore is installed from the Python package index through the project
-dependencies.
+**WeChat group** — scan to join:
 
-| Package | Minimum version | Django App | URL prefix |
-|---|---|---|---|
-| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` |
-| `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` |
-| `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` |
+<img src="docs/images/wechat-group.png" alt="SourceLens WeChat group" width="200">
 
-The image build resolves these minimum versions from PyPI with `uv pip compile`;
-the generated `requirements.txt` is used only inside the image and is ignored by
-Git. Rebuild the development image after pulling this migration so any previous
-editable-install finder files are removed.
+If SourceLens is useful to you, a ⭐ helps other people find it.
 
-For temporary agentcore source debugging, mount a checkout read-only and set
-`PYTHONPATH` to its package directory. Remove `PYTHONPATH` to return to the
-installed package. Do not run `uv pip install -e` in the container.
+---
 
-## Celery Task System
-
-- **Discovery**: `core/celery.py` calls `autodiscover_tasks()` to load `tasks.py` from every app
-- **Periodic tasks**: Registered via `register_periodic_tasks` into `django_celery_beat`; existing records are never overwritten
-- **Startup order**: `wait_for_db` → `migrate` → `register_periodic_tasks` → start service
-
-## Production
-
-SourceLens has two production deployment options. Use one per host:
-
-- **Standalone single instance**: installed and upgraded with `install.sh`.
-- **Zero-downtime blue/green**: deployed with `scripts/install.sh <tag>`.
-
-The one-command installer defaults to HTTP 10083 and HTTPS 10443.
-
-### One-command Installation
-
-The one-command installer sets up and starts SourceLens, then checks service
-health.
-
-For day-2 runtime operations, use `scripts/sourcelensctl.sh`. `restart` only
-restarts existing containers; `recreate` applies the current `.env` and Compose
-configuration but does not pull images. Both commands accept `workers`,
-`scheduler`, `lensnode`, or `runtime` (`runtime` means all three services):
-
-```bash
-./scripts/sourcelensctl.sh restart lensnode
-./scripts/sourcelensctl.sh recreate runtime
-```
-
-These commands do not operate on blue/green API/UI, nginx, PostgreSQL, or
-Redis. Use `scripts/install.sh` for API/UI deployments and configuration
-changes that require a blue/green traffic switch.
-
-Requirements:
-
-- Docker with Compose V2 (`docker compose`) must already be installed and
-  running. The SourceLens installer does not install Docker.
-- Supported platforms: Linux, macOS, and Windows through Git Bash
-- Linux uses Docker Engine and does not require a desktop environment; macOS
-  and Windows use Docker Desktop
-- `amd64` or `arm64` CPU architecture
-- At least 4 GB available memory and 20 GB free disk space
-
-Run on Linux or macOS:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | sudo bash
-```
-
-On Windows, run the equivalent command in Git Bash. Docker Desktop must be
-installed and running:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/sourcelens/main/install.sh | bash
-```
-
-If access to GitHub is slow or restricted, use the China distribution channel:
-
-```bash
-curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee
-```
-
-When running the China-channel command in Windows Git Bash, replace
-`sudo bash` with `bash`. Do not run this Bash installer directly in PowerShell
-or Command Prompt.
-
-The SourceLens repository is published as `oneprolabs/sourcelens` on both
-GitHub and Gitee. The installer automatically selects an available download
-source and its corresponding image registry. The China channel downloads
-release files from Gitee and pulls SourceLens application images from Aliyun
-ACR. To accept all defaults and skip interactive model setup, add `--yes`:
-
-```bash
-curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh | sudo bash -s -- --channel cn --download-source gitee --yes
-```
-
-Common options include `--dir /srv/sourcelens`, `--port 10083`,
-`--https-port 10443`, `--domain lens.example.com`, and `--version 0.49.6`.
-
-For a fresh installation, the installer selects the latest available release
-tag. An existing installation reuses its current version by default; to
-upgrade or install a specific release, add `--version <version>`. Run
-`install.sh --help` for the complete list of options.
-
-After installation:
-
-- Main site: `http://<host>:10083` (HTTPS: `https://<host>:10443`)
-- Configuration: `<install-dir>/.env`
-- Installation details and the initial admin password:
-  `<install-dir>/install-info.env`
-
-When no active system model exists during an interactive install or rerun, the
-installer offers to configure one before it prints the final summary. Select a
-provider and model with the arrow keys, enter the API key in the masked prompt,
-and the installer will test the connection before saving it as the system
-default. Existing model settings are preserved when the installer is run again.
-
-Use `--yes` to skip interactive model setup. You can configure or manage models
-later at `http://<host>:10083/management/llm/config`.
-
-When SourceLens is installed in a NAT virtual machine, forward host TCP port
-`10083` to guest TCP port `10083` before opening the site in the host browser.
-
-To test local changes, transfer the complete repository to the target machine,
-then run:
-
-```bash
-sudo bash /tmp/sourcelens-source/install.sh \
-  --source /tmp/sourcelens-source \
-  --dir /opt/sourcelens-fixed-test
-```
-
-`--source` reads installer and deployment files from that source tree while
-application images are still pulled from the registry. A non-default install
-directory creates an isolated test environment so an existing installation is
-not replaced; the installer will ask for another port if `10083` is busy.
-
-The default installation directory is `/opt/sourcelens` on Linux,
-`/Users/Shared/sourcelens` on macOS, and `$HOME/sourcelens` on Windows Git
-Bash. Re-running the installer with a newer tag upgrades the installation in
-place. Existing `.env` configuration and application data are preserved.
-
-For zero-downtime upgrades, see
-[`docs/blue-green-deployment.md`](docs/blue-green-deployment.md).
-
-## Tech Stack
-
-**Backend**: Python · Django REST Framework · Celery · PostgreSQL  
-**Frontend**: Vue 3 · Vite · Pinia · Vue Router · Tailwind CSS · vue-i18n  
-**Infra**: Docker · Nginx · Redis  
-
-## Design Principles
-
-Each Django app is self-contained (models, views, serializers, services, migrations, tests). Apps communicate via APIs.
+<sub>SourceLens is built and maintained by [OnePro Cloud](https://github.com/oneprolabs).</sub>
