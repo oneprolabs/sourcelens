@@ -199,6 +199,20 @@ def _knowledge_system_prompt(
             "project-specific question. Only provide a concept explanation "
             "when the user explicitly says `只解释概念`.\n"
         )
+    knowledge_qa_guidance = ""
+    if command.get("task") == "knowledge_qa":
+        knowledge_qa_guidance = (
+            "Knowledge Q&A retrieval policy:\n"
+            "- Judge the latest message by meaning: social small talk with "
+            "no information need (a greeting, thanks, farewell, or a question "
+            "about you — however it is worded, abbreviated, or misspelled) "
+            "is answered briefly with no tool calls; do not search merely "
+            "because an earlier turn did.\n"
+            "- Stop after two independent searches return no relevant "
+            "evidence. Report what you searched and that the information is "
+            "not in the current workspace; do not keep re-querying with "
+            "reworded keywords.\n"
+        )
     collaboration_guidance = ""
     if command.get("routing_mode") == "smart":
         collaboration_guidance = (
@@ -237,6 +251,7 @@ def _knowledge_system_prompt(
         "virtual path inside scratch, not the host filesystem; keep using "
         "the same path when calling save_deliverable.\n"
         f"{runtime_guidance_text}\n{code_analysis_guidance}"
+        f"{knowledge_qa_guidance}"
         "- For exact-text questions, or when CodeGraph is unavailable, your "
         "FIRST workspace action MUST be a search_workspace call, or a "
         "find_files call with a RECURSIVE "

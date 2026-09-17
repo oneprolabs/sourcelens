@@ -104,6 +104,7 @@ from .resume import (
 )
 from .restrictions import NoTaskMiddleware as _NoTaskMiddleware
 from .routing import (
+    _message_needs_retrieval,
     _normalize_route_evidence_capabilities,
     _parse_route_decision,
     _select_general_chat_route,
@@ -180,6 +181,7 @@ MAX_CONFIGURED_SUBAGENTS = 8
 
 _MAX_PRESENTED_CITATIONS = 5
 _DEFAULT_CODE_ANALYSIS_MAX_TURNS = 10
+_DEFAULT_KNOWLEDGE_QA_MAX_TURNS = 26
 _AGENT_TURNS_BY_ROUNDS = {
     "flash": 5,
     "fast": 13,
@@ -213,8 +215,11 @@ def _resolve_agent_turn_limit(command):
     agent_rounds = (command or {}).get("agent_rounds")
     if agent_rounds in _AGENT_TURNS_BY_ROUNDS:
         return _AGENT_TURNS_BY_ROUNDS[agent_rounds]
-    if (command or {}).get("task") == "code_analysis":
+    task = (command or {}).get("task")
+    if task == "code_analysis":
         return _DEFAULT_CODE_ANALYSIS_MAX_TURNS
+    if task == "knowledge_qa":
+        return _DEFAULT_KNOWLEDGE_QA_MAX_TURNS
     return configured
 
 
@@ -409,6 +414,9 @@ class LensDeepAgentRuntime:
                         "reason": "clarification_required",
                     },
                 }
+            direct_result = self._maybe_answer_without_retrieval(state)
+            if direct_result is not None:
+                return direct_result
             route_result = self._route_runtime(state)
             if route_result is not None:
                 return route_result
@@ -419,6 +427,91 @@ class LensDeepAgentRuntime:
                 cleanup_runtime_resources(state.resources)
                 for resources in getattr(state, "subagent_resources", []):
                     cleanup_runtime_resources(resources)
+
+    def _maybe_answer_without_retrieval(self, state):
+        """Answer messages with no information need without retrieval.
+
+        Document and code modes have no route gate, so a greeting would
+        otherwise trigger workspace searches. A semantic classifier decides
+        whether the message needs retrieval; it fails safe to retrieval, so
+        only a clear no-retrieval message with no uploaded document or image
+        is answered directly. Every other message falls through to the
+        normal agent loop.
+        """
+
+        runtime_mode = getattr(state, "runtime_mode", None)
+        if runtime_mode is None or getattr(
+            runtime_mode, "general_chat", False
+        ):
+            return None
+        if getattr(state, "resume_state", None) is not None:
+            return None
+        model = getattr(state, "model", None)
+        if model is None:
+            return None
+        command = getattr(state, "command", None) or {}
+        if command.get("subject_documents") or command.get("image_data_urls"):
+            return None
+        question = str(
+            getattr(state, "question", command.get("question", "")) or ""
+        ).strip()
+        if not question:
+            return None
+        if _message_needs_retrieval(
+            model,
+            question,
+            command.get("history"),
+        ):
+            return None
+
+        runtime_mode.emit_model_round(
+            state.emit_agent_event,
+            "start",
+            1,
+        )
+        original_emit_output = getattr(state.model, "emit_output", None)
+        state.model.emit_output = None
+        try:
+            answer = _answer_general_chat_directly(
+                state.model,
+                command,
+                _system_prompt(
+                    state.scenario,
+                    command,
+                    state.resources.context_skill_contents,
+                    workspace_guide=command.get("workspace_guide", ""),
+                ),
+                messages=None,
+                emit_event=state.emit_agent_event,
+                emit_output=None,
+            )
+        except Exception:
+            runtime_mode.emit_model_round(
+                state.emit_agent_event,
+                "failed",
+                1,
+            )
+            raise
+        finally:
+            state.model.emit_output = original_emit_output
+        if not answer.strip():
+            return None
+        runtime_mode.emit_model_round(
+            state.emit_agent_event,
+            "done",
+            1,
+        )
+        if state.emit_output is not None:
+            state.emit_output(answer)
+        return {
+            "answer": _normalize_code_analysis_paths(answer, command),
+            "samples": [],
+            "stop_reason": state.model.stop_reason,
+            "token_usage": state.model.token_usage,
+            "outcome": "completed",
+            "termination_detail": {},
+            "citations": [],
+        }
 
     def _subagents_enabled(self, state):
         """Return whether this run may delegate work to a subagent.

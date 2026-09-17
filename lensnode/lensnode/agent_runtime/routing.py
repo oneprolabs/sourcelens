@@ -44,6 +44,59 @@ PROTECTED_DISCLOSURE_PATTERN = re.compile(
     r"系统提示词|隐藏规则",
     re.IGNORECASE,
 )
+RETRIEVAL_GATE_PROMPT = (
+    "Decide whether answering the user's latest message requires searching "
+    "the workspace or the provided documents. Judge the MEANING, not the "
+    "wording: greetings, thanks, farewells, self-introductions, and other "
+    "social pleasantries need no retrieval, even when misspelled, "
+    "abbreviated, in another language, or phrased unconventionally. Any "
+    "message that names or asks about a topic, entity, document, file, "
+    "fact, or asks to explain, summarize, compare, find, or act on something "
+    "DOES need retrieval. Return JSON only: {\"needs_retrieval\": true} or "
+    "{\"needs_retrieval\": false}. When unsure, return true."
+)
+
+
+def _message_needs_retrieval(model, question, history=None):
+    """Return whether a message requires workspace or document retrieval.
+
+    Judges by meaning so typos, abbreviations, synonyms, and other languages
+    are handled without a keyword list. Fails safe: any error, non-JSON
+    output, or ambiguous answer returns True so the run proceeds with normal
+    retrieval. Only an explicit false disables retrieval.
+    """
+
+    messages = [
+        SystemMessage(content=RETRIEVAL_GATE_PROMPT),
+        *_build_initial_messages(history, question),
+    ]
+    try:
+        response = model.invoke(
+            messages,
+            runtime_control_call=True,
+            temperature=0,
+            reasoning_effort="none",
+        )
+    except RunCancelledError:
+        raise
+    except Exception:
+        LOGGER.warning("Retrieval gate classification failed", exc_info=True)
+        return True
+    text = str(getattr(response, "content", "") or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        value = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return True
+    if not isinstance(value, dict):
+        return True
+    return value.get("needs_retrieval") is not False
 
 
 def _parse_route_decision(content, fallback=None):
