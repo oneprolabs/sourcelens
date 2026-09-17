@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import collections
 import json
 import logging
@@ -22,9 +23,12 @@ from .checkpoint import (
 )
 from .config import load_config
 from .datasource_sync import DataSourceSyncError
+from .datasource_sync import append_managed_upload_chunk
+from .datasource_sync import cleanup_managed_upload
 from .datasource_sync import convert_managed_workspace
 from .datasource_sync import delete_datasource_upload
 from .datasource_sync import inspect_datasource_path, list_datasource_files
+from .datasource_sync import prepare_managed_upload
 from .datasource_sync import sync_datasource
 from .datasource_sync import test_datasource_connection
 from .datasource_sync import upload_managed_workspace
@@ -39,6 +43,7 @@ from .logging_utils import (
     task_log,
     utc_now,
 )
+from .path_rules import source_sha256
 from .plugin_http import PluginHttpClientPool
 from .plugin_package_loader import (
     PluginPackageLoadError,
@@ -130,6 +135,8 @@ class LensNodeClient:
         )
         self.datasource_conversion_cancels = {}
         self.datasource_upload_cancels = {}
+        self.datasource_upload_transfers = {}
+        self._datasource_transfer_lock = threading.Lock()
         self.active_datasource_operations = {}
         self._datasource_operations_lock = threading.Lock()
         self.datasource_sync_cancels = {}
@@ -619,8 +626,10 @@ class LensNodeClient:
             await self._start_datasource_sync(message, plugin=True)
         elif message_type == "datasource_convert":
             await self._start_datasource_conversion(message)
-        elif message_type == "datasource_upload":
-            await self._start_datasource_upload(message)
+        elif message_type == "datasource_upload_begin":
+            await self._begin_datasource_upload(message)
+        elif message_type == "datasource_upload_chunk":
+            await self._handle_datasource_upload_chunk(message)
         elif message_type == "datasource_upload_delete":
             await self._handle_datasource_upload_delete(message)
         elif message_type == "datasource_convert_cancel":
@@ -644,6 +653,7 @@ class LensNodeClient:
             )
             if cancel_event is not None:
                 cancel_event.set()
+            await self._cancel_datasource_upload(task_id)
             LOGGER.info(
                 task_log(
                     (
@@ -1500,15 +1510,31 @@ class LensNodeClient:
             self.datasource_conversion_cancels.pop(task_id, None)
             self.running_tasks.pop(task_key, None)
 
-    async def _start_datasource_upload(self, message):
-        """Start one managed workspace upload in a worker thread."""
+    async def _cancel_datasource_upload(self, task_id):
+        """Abort an in-flight chunked upload and drop its staged part."""
+
+        with self._datasource_transfer_lock:
+            state = self.datasource_upload_transfers.pop(task_id, None)
+        if state is None:
+            return
+        await self._finish_datasource_upload(
+            state["command"],
+            task_id,
+            state["request_id"],
+            error="DATASOURCE_UPLOAD_CANCELLED",
+        )
+
+    async def _begin_datasource_upload(self, message):
+        """Prepare one resumable upload and report the resume offset.
+
+        The control plane sends the whole file in chunks after this frame,
+        so a large upload never travels through a single oversized frame
+        that would tear the control channel down.
+        """
 
         request_id = str(message.get("request_id") or "")
         task_id = str(message.get("task_id") or request_id)
         if not task_id:
-            return
-        task_key = f"datasource-upload:{task_id}"
-        if task_key in self.running_tasks:
             return
         cancel_event = threading.Event()
         self.datasource_upload_cancels[task_id] = cancel_event
@@ -1516,34 +1542,202 @@ class LensNodeClient:
             task_id,
             message.get("datasource_uuid"),
             "upload",
-            "starting",
-            message.get("name"),
+            "receiving",
+            message.get("datasource_name"),
         )
+        try:
+            state = await asyncio.to_thread(
+                prepare_managed_upload,
+                message,
+                self.config.workspace_path,
+            )
+        except DataSourceSyncError as exc:
+            await self._finish_datasource_upload(
+                message,
+                task_id,
+                request_id,
+                error=str(exc),
+            )
+            return
+        except Exception:
+            LOGGER.exception(
+                "Managed workspace upload preparation failed task_id=%s",
+                task_id,
+            )
+            await self._finish_datasource_upload(
+                message,
+                task_id,
+                request_id,
+                error="DATASOURCE_UPLOAD_FAILED",
+            )
+            return
+        if state.get("duplicate"):
+            self._enqueue(
+                {
+                    "type": "datasource_upload_ready",
+                    "request_id": request_id,
+                    "task_id": task_id,
+                    "offset": int(state.get("offset") or 0),
+                    "total_bytes": int(state.get("total_bytes") or 0),
+                    "duplicate": True,
+                    "duplicate_path": state.get("duplicate_path") or "",
+                }
+            )
+            self._enqueue(
+                {
+                    "type": "datasource_upload_done",
+                    "request_id": request_id,
+                    "task_id": task_id,
+                    "status": "success",
+                    "duplicate": True,
+                    "duplicate_path": state.get("duplicate_path") or "",
+                    "duplicate_filename": (
+                        state.get("duplicate_filename") or ""
+                    ),
+                    "uploaded": str(message.get("filename") or ""),
+                }
+            )
+            self.datasource_upload_cancels.pop(task_id, None)
+            return
+        with self._datasource_transfer_lock:
+            self.datasource_upload_transfers[task_id] = {
+                **state,
+                "request_id": request_id,
+                "filename": str(message.get("filename") or ""),
+                "datasource_uuid": message.get("datasource_uuid"),
+                "command": message,
+                "finishing": False,
+            }
+        self._enqueue(
+            {
+                "type": "datasource_upload_ready",
+                "request_id": request_id,
+                "task_id": task_id,
+                "offset": int(state.get("offset") or 0),
+                "total_bytes": int(state.get("total_bytes") or 0),
+                "duplicate": False,
+            }
+        )
+
+    async def _handle_datasource_upload_chunk(self, message):
+        """Append one received chunk and acknowledge the durable offset."""
+
+        task_id = str(message.get("task_id") or "")
+        if not task_id:
+            return
+        with self._datasource_transfer_lock:
+            state = self.datasource_upload_transfers.get(task_id)
+        if state is None or state.get("finishing"):
+            # An unknown transfer (for example after a node restart) is not
+            # acknowledged; the sender re-begins and resumes from disk.
+            return
+        try:
+            data = base64.b64decode(
+                str(message.get("data_base64") or ""),
+                validate=True,
+            )
+        except (ValueError, TypeError):
+            await self._finish_datasource_upload(
+                state["command"],
+                task_id,
+                state["request_id"],
+                error="DATASOURCE_UPLOAD_CONTENT_INVALID",
+            )
+            return
+        try:
+            new_offset = await asyncio.to_thread(
+                append_managed_upload_chunk,
+                state["part_path"],
+                int(message.get("offset") or 0),
+                data,
+            )
+        except DataSourceSyncError as exc:
+            await self._finish_datasource_upload(
+                state["command"],
+                task_id,
+                state["request_id"],
+                error=str(exc),
+            )
+            return
+        state["offset"] = new_offset
+        self._enqueue(
+            {
+                "type": "datasource_upload_ack",
+                "task_id": task_id,
+                "offset": new_offset,
+            }
+        )
+        total_bytes = int(state.get("total_bytes") or 0)
+        if total_bytes and new_offset >= total_bytes:
+            await self._finish_datasource_upload(
+                state["command"],
+                task_id,
+                state["request_id"],
+            )
+
+    async def _finish_datasource_upload(
+        self,
+        command,
+        task_id,
+        request_id,
+        error=None,
+    ):
+        """Finalize a fully received upload in the exclusive worker slot."""
+
+        with self._datasource_transfer_lock:
+            state = self.datasource_upload_transfers.get(task_id)
+            if state is not None:
+                state["finishing"] = True
+        task_key = f"datasource-upload:{task_id}"
+        if task_key in self.running_tasks:
+            return
         task = asyncio.create_task(
             self._execute_datasource_upload(
-                {**message, "cancel_event": cancel_event}
+                command,
+                state,
+                task_id,
+                request_id,
+                error=error,
             )
         )
         self.running_tasks[task_key] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
 
-    async def _execute_datasource_upload(self, message):
-        """Execute an upload and emit its conversion result."""
+    async def _execute_datasource_upload(
+        self,
+        command,
+        state,
+        task_id,
+        request_id,
+        error=None,
+    ):
+        """Verify, store, and convert a fully received upload."""
 
-        request_id = str(message.get("request_id") or "")
-        task_id = str(message.get("task_id") or request_id)
         task_key = f"datasource-upload:{task_id}"
         slot_acquired = False
+        staged_path = (state or {}).get("part_path")
         try:
+            if error:
+                raise DataSourceSyncError(error)
+            expected = str(command.get("sha256") or "").lower()
+            if expected and staged_path:
+                digest = await asyncio.to_thread(
+                    source_sha256, staged_path
+                )
+                if digest != expected:
+                    raise DataSourceSyncError(
+                        "DATASOURCE_UPLOAD_CHECKSUM_MISMATCH"
+                    )
             await self._acquire_execution(
                 ExecutionClass.EXCLUSIVE,
-                cancel_event=message.get("cancel_event"),
+                cancel_event=self.datasource_upload_cancels.get(task_id),
             )
             slot_acquired = True
             result = await asyncio.to_thread(
                 upload_managed_workspace,
-                message,
+                command,
                 self.config.workspace_path,
+                staged_path,
             )
             self._enqueue(
                 {
@@ -1554,13 +1748,18 @@ class LensNodeClient:
                 }
             )
         except DataSourceSyncError as exc:
+            code = str(exc)
             self._enqueue(
                 {
                     "type": "datasource_upload_done",
                     "request_id": request_id,
                     "task_id": task_id,
-                    "status": "failed",
-                    "error": str(exc),
+                    "status": (
+                        "cancelled"
+                        if code == "DATASOURCE_UPLOAD_CANCELLED"
+                        else "failed"
+                    ),
+                    "error": code,
                 }
             )
         except Exception:
@@ -1577,6 +1776,13 @@ class LensNodeClient:
         finally:
             if slot_acquired:
                 await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
+            await asyncio.to_thread(
+                cleanup_managed_upload,
+                command,
+                self.config.workspace_path,
+            )
+            with self._datasource_transfer_lock:
+                self.datasource_upload_transfers.pop(task_id, None)
             self.datasource_upload_cancels.pop(task_id, None)
             self.running_tasks.pop(task_key, None)
 
@@ -1811,7 +2017,9 @@ class LensNodeClient:
         active_runs = {
             key
             for key in self.running_tasks
-            if not key.startswith(("datasource:", "datasource-convert:"))
+            if not key.startswith(
+                ("datasource:", "datasource-convert:", "datasource-upload:")
+            )
         }
         active_runs.update(
             str(payload["run_uuid"])

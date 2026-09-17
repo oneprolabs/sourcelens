@@ -29,10 +29,13 @@ from lens.datasource.routing import (
     prepare_run_datasources,
 )
 from lens.datasource.services import (
+    DATASOURCE_UPLOAD_CHUNK_BYTES,
     DataSourceDispatchError,
+    datasource_upload_ack_key,
+    datasource_upload_ready_key,
     dispatch_datasource_conversion_async,
     dispatch_datasource_sync_async,
-    dispatch_datasource_upload_async,
+    dispatch_datasource_upload_begin,
 )
 from lens.execution import execute_answer_run
 from lens.lensnode_auth import issue_lensnode_token
@@ -84,6 +87,7 @@ from lens.tasks import (
     _datasource_capacity_available,
     _datasource_capacity_slot_key,
     _queue_datasource_task,
+    _update_upload_task_metadata,
     acquire_datasource_lock,
     cleanup_stale_datasource_sync_tasks,
     complete_datasource_conversion_task,
@@ -92,6 +96,7 @@ from lens.tasks import (
     confirm_orphaned_datasource_conversion,
     datasource_conversion_task,
     datasource_lock,
+    datasource_upload_task,
     lensnode_health_task,
     reconcile_orphaned_datasource_conversions,
     register_datasource_conversion_task,
@@ -3939,19 +3944,25 @@ class LensServiceTests(TransactionTestCase):
             ),
             patch("lens.datasource.services._send_lensnode_command") as send,
         ):
-            request_id = dispatch_datasource_upload_async(
+            request_id = dispatch_datasource_upload_begin(
                 datasource,
                 task_id="managed-upload",
                 filename="package.zip",
-                content=b"archive-content",
+                total_bytes=len(b"archive-content"),
+                sha256=hashlib.sha256(b"archive-content").hexdigest(),
             )
 
         self.assertTrue(request_id)
         payload = send.call_args.args[1]
-        self.assertEqual(payload["type"], "datasource_upload")
+        self.assertEqual(payload["type"], "datasource_upload_begin")
         self.assertEqual(payload["source_type"], "upload")
         self.assertEqual(payload["filename"], "package.zip")
-        self.assertEqual(payload["content_base64"], "YXJjaGl2ZS1jb250ZW50")
+        self.assertEqual(payload["total_bytes"], len(b"archive-content"))
+        self.assertEqual(
+            payload["sha256"],
+            hashlib.sha256(b"archive-content").hexdigest(),
+        )
+        self.assertNotIn("content_base64", payload)
         self.assertEqual(
             payload["conversion"],
             {
@@ -5190,6 +5201,285 @@ class LensServiceTests(TransactionTestCase):
         self.assertIsNone(
             cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0))
         )
+
+    def test_upload_task_streams_chunks_and_acks(self):
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        content = b"x" * (DATASOURCE_UPLOAD_CHUNK_BYTES + 10)
+        storage_name = default_storage.save(
+            "datasource-uploads/chunked/report.pdf",
+            ContentFile(content),
+        )
+        task = register_datasource_upload_task(
+            datasource,
+            "upload-chunked",
+            "report.pdf",
+            byte_size=len(content),
+            metadata={
+                "storage_name": storage_name,
+                "upload_version": 1,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "total_bytes": len(content),
+            },
+        )
+        sent = []
+
+        def fake_begin(
+            node, task_id, filename, total, sha256, upload_version=1
+        ):
+            cache.set(
+                datasource_upload_ready_key(task_id),
+                {"offset": 0, "total_bytes": total, "duplicate": False},
+            )
+            return "request-1"
+
+        def fake_send(node, task_id, offset, data):
+            sent.append((offset, len(data)))
+            cache.set(
+                datasource_upload_ack_key(task_id),
+                offset + len(data),
+            )
+
+        with (
+            patch(
+                "lens.tasks.dispatch_datasource_upload_begin",
+                side_effect=fake_begin,
+            ),
+            patch(
+                "lens.tasks.send_datasource_upload_chunk",
+                side_effect=fake_send,
+            ),
+        ):
+            datasource_upload_task(
+                str(datasource.uuid),
+                storage_name,
+                "report.pdf",
+                task_id=task.task_id,
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(sent[0][0], 0)
+        self.assertEqual(
+            sum(length for _, length in sent),
+            len(content),
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.status, "STARTED")
+        default_storage.delete(storage_name)
+
+    def test_upload_task_skips_duplicate_content(self):
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        content = b"duplicate bytes"
+        storage_name = default_storage.save(
+            "datasource-uploads/duplicate/report.pdf",
+            ContentFile(content),
+        )
+        task = register_datasource_upload_task(
+            datasource,
+            "upload-duplicate",
+            "report.pdf",
+            byte_size=len(content),
+            metadata={
+                "storage_name": storage_name,
+                "upload_version": 1,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "total_bytes": len(content),
+            },
+        )
+
+        def fake_begin(
+            node, task_id, filename, total, sha256, upload_version=1
+        ):
+            cache.set(
+                datasource_upload_ready_key(task_id),
+                {
+                    "offset": total,
+                    "total_bytes": total,
+                    "duplicate": True,
+                    "duplicate_path": "report.pdf",
+                },
+            )
+            return "request-1"
+
+        with (
+            patch(
+                "lens.tasks.dispatch_datasource_upload_begin",
+                side_effect=fake_begin,
+            ),
+            patch(
+                "lens.tasks.send_datasource_upload_chunk"
+            ) as send_chunk,
+        ):
+            datasource_upload_task(
+                str(datasource.uuid),
+                storage_name,
+                "report.pdf",
+                task_id=task.task_id,
+            )
+
+        send_chunk.assert_not_called()
+        task.refresh_from_db()
+        self.assertTrue(task.metadata.get("duplicate"))
+        default_storage.delete(storage_name)
+
+    def test_upload_task_requeues_when_node_unreachable(self):
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        storage_name = default_storage.save(
+            "datasource-uploads/unreachable/report.pdf",
+            ContentFile(b"bytes"),
+        )
+        task = register_datasource_upload_task(
+            datasource,
+            "upload-unreachable",
+            "report.pdf",
+            byte_size=5,
+            metadata={
+                "storage_name": storage_name,
+                "upload_version": 1,
+                "sha256": hashlib.sha256(b"bytes").hexdigest(),
+                "total_bytes": 5,
+            },
+        )
+
+        with patch(
+            "lens.tasks._begin_datasource_upload_transfer",
+            return_value=None,
+        ):
+            datasource_upload_task(
+                str(datasource.uuid),
+                storage_name,
+                "report.pdf",
+                task_id=task.task_id,
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "PENDING")
+        self.assertEqual(task.metadata.get("admission_state"), "QUEUED")
+        self.assertTrue(default_storage.exists(storage_name))
+        default_storage.delete(storage_name)
+
+    def test_upload_duplicate_does_not_downgrade_completed_task(self):
+        """A late duplicate write must not revoke the terminal callback."""
+
+        task = register_datasource_upload_task(
+            self.datasource,
+            "upload-duplicate-done",
+            "report.pdf",
+        )
+        task.status = "STARTED"
+        task.save(update_fields=["status"])
+        complete_datasource_upload_task(
+            task.task_id,
+            {"status": "success", "duplicate": True},
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+
+        updated = _update_upload_task_metadata(
+            task.task_id,
+            {
+                "duplicate": True,
+                "progress_message": "Duplicate file skipped.",
+            },
+        )
+
+        self.assertFalse(updated)
+        task.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+        self.assertTrue(task.metadata["duplicate"])
+
+    def test_update_upload_metadata_keeps_active_status(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "upload-active-meta",
+            "report.pdf",
+        )
+        task.status = "STARTED"
+        task.save(update_fields=["status"])
+
+        updated = _update_upload_task_metadata(
+            task.task_id,
+            {"duplicate": True},
+        )
+
+        self.assertTrue(updated)
+        task.refresh_from_db()
+        self.assertEqual(task.status, "STARTED")
+        self.assertTrue(task.metadata["duplicate"])
+
+    def test_upload_ready_clears_orphan_marker(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "upload-ready",
+            "report.pdf",
+        )
+        task.metadata.update(
+            {
+                "lensnode_connection_id": "old-connection",
+                "datasource_orphan_confirmation_connection_id": "new-connection",
+            }
+        )
+        task.save(update_fields=["metadata"])
+
+        LensNodeConsumer._store_datasource_upload_ready(
+            "upload-ready",
+            {"offset": 5, "total_bytes": 10, "duplicate": False},
+        )
+        LensNodeConsumer._store_datasource_upload_ack(
+            "upload-ready",
+            {"offset": 7},
+        )
+
+        cached = cache.get(datasource_upload_ready_key("upload-ready"))
+        self.assertEqual(cached["offset"], 5)
+        self.assertEqual(
+            cache.get(datasource_upload_ack_key("upload-ready")),
+            7,
+        )
+        task.refresh_from_db()
+        self.assertNotIn(
+            "datasource_orphan_confirmation_connection_id",
+            task.metadata,
+        )
+
+    def test_upload_ack_cache_failure_does_not_raise(self):
+        """A cache hiccup while recording an ack must not crash the channel."""
+
+        with patch(
+            "lens.consumers.cache.set",
+            side_effect=RuntimeError("redis down"),
+        ):
+            LensNodeConsumer._store_datasource_upload_ack(
+                "upload-ack-fail",
+                {"offset": 10},
+            )
+            LensNodeConsumer._store_datasource_upload_ready(
+                "upload-ack-fail",
+                {"offset": 10, "total_bytes": 20, "duplicate": False},
+            )
 
     def test_upload_done_uses_upload_completion_handler(self):
         with (

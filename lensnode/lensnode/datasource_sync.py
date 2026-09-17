@@ -41,6 +41,9 @@ GIT_MAX_FILES = 100000
 GIT_MAX_BYTES = 1024 * 1024 * 1024
 UPLOAD_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
 UPLOAD_MAX_EXTRACTED_FILES = 300
+UPLOAD_PARTS_DIRNAME = ".sourcelens-upload-parts.sourcelens"
+UPLOAD_INDEX_FILENAME = ".sourcelens-upload-index.json.sourcelens"
+UPLOAD_INDEX_SCHEMA = 1
 DEFAULT_DATASOURCE_SYNC_WORKERS = 4
 FEISHU_EXPORT_PENDING_STATUSES = {1, 2}
 FEISHU_EXPORT_SUCCESS_STATUS = 0
@@ -697,39 +700,305 @@ def convert_managed_workspace(
     }
 
 
-def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
+def _upload_datasource_root(datasource_uuid, workspace_path=WORKSPACE_ROOT):
+    """Return the resolved root directory for one upload datasource."""
+
+    safe_uuid = safe_filename(datasource_uuid)
+    if not safe_uuid:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
+    root = (Path(workspace_path).resolve() / "datasources" / safe_uuid)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def upload_part_paths(datasource_root, task_id):
+    """Return the resumable part and metadata paths for one upload."""
+
+    safe_task = safe_filename(task_id)
+    directory = Path(datasource_root) / UPLOAD_PARTS_DIRNAME
+    return (
+        directory / f"{safe_task}.part",
+        directory / f"{safe_task}.json",
+    )
+
+
+def read_upload_index(datasource_root):
+    """Read the per-datasource content index keyed by sha256."""
+
+    path = Path(datasource_root) / UPLOAD_INDEX_FILENAME
+    if not path.is_file():
+        return {"schema_version": UPLOAD_INDEX_SCHEMA, "entries": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": UPLOAD_INDEX_SCHEMA, "entries": {}}
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("entries"), dict
+    ):
+        return {"schema_version": UPLOAD_INDEX_SCHEMA, "entries": {}}
+    payload.setdefault("schema_version", UPLOAD_INDEX_SCHEMA)
+    return payload
+
+
+def write_upload_index(datasource_root, payload):
+    """Write the per-datasource content index atomically."""
+
+    path = Path(datasource_root) / UPLOAD_INDEX_FILENAME
+    # Keep the temp name ending in ``.sourcelens`` so an interrupted write
+    # can never surface as a catalog entry.
+    tmp = Path(datasource_root) / ".sourcelens-upload-index.tmp.sourcelens"
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def find_duplicate_upload(datasource_root, sha256):
+    """Return the stored entry whose content matches ``sha256``."""
+
+    digest = str(sha256 or "").lower()
+    if not digest:
+        return None
+    entries = read_upload_index(datasource_root)["entries"].get(digest) or []
+    root = Path(datasource_root)
+    for entry in reversed(entries):
+        if not isinstance(entry, dict):
+            continue
+        relative = str(entry.get("path") or "")
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if relative and candidate.exists():
+            return entry
+    return None
+
+
+def record_upload_index(datasource_root, sha256, filename, version, target):
+    """Record one stored upload so later uploads can deduplicate it."""
+
+    digest = str(sha256 or "").lower()
+    if not digest:
+        return
+    root = Path(datasource_root)
+    try:
+        relative = (
+            Path(target).resolve().relative_to(root.resolve()).as_posix()
+        )
+    except ValueError:
+        return
+    payload = read_upload_index(root)
+    entries = payload["entries"].setdefault(digest, [])
+    entries[:] = [
+        entry
+        for entry in entries
+        if str(entry.get("path") or "") != relative
+    ]
+    entries.append(
+        {
+            "filename": filename,
+            "version": int(version or 1),
+            "path": relative,
+            "at": utc_timestamp(),
+        }
+    )
+    for other_digest, other_entries in list(payload["entries"].items()):
+        if other_digest == digest:
+            continue
+        kept = [
+            entry
+            for entry in other_entries
+            if str(entry.get("path") or "") != relative
+        ]
+        if kept:
+            payload["entries"][other_digest] = kept
+        else:
+            payload["entries"].pop(other_digest, None)
+    write_upload_index(root, payload)
+
+
+def remove_upload_index(datasource_root, filename, version):
+    """Drop index entries that refer to a deleted upload."""
+
+    root = Path(datasource_root)
+    payload = read_upload_index(root)
+    target_version = int(version or 1)
+    changed = False
+    for digest, entries in list(payload["entries"].items()):
+        kept = [
+            entry
+            for entry in entries
+            if not (
+                str(entry.get("filename") or "") == str(filename)
+                and int(entry.get("version") or 1) == target_version
+            )
+        ]
+        if len(kept) != len(entries):
+            changed = True
+        if kept:
+            payload["entries"][digest] = kept
+        else:
+            payload["entries"].pop(digest, None)
+    if changed:
+        write_upload_index(root, payload)
+
+
+def prepare_managed_upload(command, workspace_path=WORKSPACE_ROOT):
+    """Prepare a resumable upload, or report an existing duplicate.
+
+    The part file lives on the LensNode workspace, so a transfer that was
+    interrupted by a reconnect resumes from the bytes already staged
+    instead of starting over.
+    """
+
+    if command.get("source_type", "upload") != "upload":
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
+    root = _upload_datasource_root(
+        command.get("datasource_uuid"), workspace_path
+    )
+    filename = safe_filename(command.get("filename"))
+    if not filename:
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_FILENAME_INVALID")
+    try:
+        total_bytes = int(command.get("total_bytes") or 0)
+    except (TypeError, ValueError):
+        total_bytes = 0
+    sha256 = str(command.get("sha256") or "").lower()
+    duplicate = find_duplicate_upload(root, sha256)
+    if duplicate is not None:
+        return {
+            "duplicate": True,
+            "duplicate_path": str(duplicate.get("path") or ""),
+            "duplicate_filename": str(duplicate.get("filename") or ""),
+            "offset": total_bytes,
+            "total_bytes": total_bytes,
+        }
+    try:
+        upload_version = int(command.get("upload_version") or 1)
+    except (TypeError, ValueError):
+        upload_version = 1
+    part_path, meta_path = upload_part_paths(
+        root, command.get("task_id")
+    )
+    part_path.parent.mkdir(parents=True, exist_ok=True)
+    offset = 0
+    resumable = False
+    if part_path.is_file() and meta_path.is_file():
+        try:
+            previous = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = {}
+        resumable = (
+            str(previous.get("sha256") or "").lower() == sha256
+            and int(previous.get("total_bytes") or 0) == total_bytes
+            and str(previous.get("filename") or "") == filename
+        )
+    if resumable:
+        offset = part_path.stat().st_size
+        if total_bytes and offset > total_bytes:
+            offset = 0
+    if not resumable or offset == 0:
+        part_path.write_bytes(b"")
+    meta_path.write_text(
+        json.dumps(
+            {
+                "sha256": sha256,
+                "total_bytes": total_bytes,
+                "filename": filename,
+                "upload_version": upload_version,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "duplicate": False,
+        "offset": offset,
+        "total_bytes": total_bytes,
+        "part_path": str(part_path),
+        "meta_path": str(meta_path),
+    }
+
+
+def append_managed_upload_chunk(part_path, offset, data):
+    """Append one chunk at ``offset`` and return the new staged size.
+
+    A mismatched offset is not an error: the caller reports the current
+    size back so the sender can resume from the durable position.
+    """
+
+    path = Path(part_path)
+    if not path.is_file():
+        raise DataSourceSyncError("DATASOURCE_UPLOAD_CONTENT_INVALID")
+    current = path.stat().st_size
+    if int(offset) != current:
+        return current
+    with path.open("ab") as handle:
+        handle.write(data)
+    return current + len(data)
+
+
+def cleanup_managed_upload(command, workspace_path=WORKSPACE_ROOT):
+    """Remove the resumable part files for one upload task."""
+
+    try:
+        root = _upload_datasource_root(
+            command.get("datasource_uuid"), workspace_path
+        )
+    except DataSourceSyncError:
+        return
+    part_path, meta_path = upload_part_paths(root, command.get("task_id"))
+    part_path.unlink(missing_ok=True)
+    meta_path.unlink(missing_ok=True)
+
+
+def upload_managed_workspace(
+    command,
+    workspace_path=WORKSPACE_ROOT,
+    staged_path=None,
+):
     """Write one manual upload into a datasource workspace and convert it.
 
     Archives are extracted into a directory named after the archive; a
     plain file is stored directly under the datasource root. Both paths
     end in the same conversion pipeline, and every stored file is given
-    a sidecar so its content hash tracks later changes.
+    a sidecar so its content hash tracks later changes. ``staged_path``
+    supplies the already-received bytes so a large upload never travels
+    through a single control frame.
     """
 
     if command.get("source_type", "upload") != "upload":
         raise DataSourceSyncError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
-    datasource_uuid = safe_filename(command.get("datasource_uuid"))
-    if not datasource_uuid:
-        raise DataSourceSyncError("DATASOURCE_UPLOAD_DATASOURCE_INVALID")
-    datasource_root = (
-        Path(workspace_path).resolve() / "datasources" / datasource_uuid
+    datasource_root = _upload_datasource_root(
+        command.get("datasource_uuid"), workspace_path
     )
-    datasource_root.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(command.get("filename"))
     if not filename:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_FILENAME_INVALID")
-    try:
-        content = base64.b64decode(
-            str(command.get("content_base64") or ""),
-            validate=True,
-        )
-    except (ValueError, TypeError) as exc:
-        raise DataSourceSyncError("DATASOURCE_UPLOAD_CONTENT_INVALID") from exc
+    if staged_path is not None:
+        source_file = Path(staged_path)
+        if not source_file.is_file():
+            raise DataSourceSyncError("DATASOURCE_UPLOAD_CONTENT_INVALID")
+        byte_size = source_file.stat().st_size
+        content = None
+    else:
+        try:
+            content = base64.b64decode(
+                str(command.get("content_base64") or ""),
+                validate=True,
+            )
+        except (ValueError, TypeError) as exc:
+            raise DataSourceSyncError(
+                "DATASOURCE_UPLOAD_CONTENT_INVALID"
+            ) from exc
+        byte_size = len(content)
     limits = command.get("upload_limits") or {}
     max_bytes = limits.get("max_bytes", 50 * 1024 * 1024)
     if type(max_bytes) is not int or max_bytes <= 0:
         max_bytes = 50 * 1024 * 1024
-    if len(content) > max_bytes:
+    if byte_size > max_bytes:
         raise DataSourceSyncError("DATASOURCE_UPLOAD_TOO_LARGE")
     is_archive = _is_upload_archive(filename)
     archive_name = Path(filename).stem
@@ -743,7 +1012,17 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
         shutil.rmtree(staging)
     staging.mkdir()
     staged_upload = staging / filename
-    staged_upload.write_bytes(content)
+    if staged_path is not None:
+        source_file.replace(staged_upload)
+    else:
+        staged_upload.write_bytes(content)
+    digest = str(command.get("sha256") or "").lower() or source_sha256(
+        staged_upload
+    )
+    try:
+        upload_version = int(command.get("upload_version") or 1)
+    except (TypeError, ValueError):
+        upload_version = 1
     extracted = []
     try:
         if is_archive:
@@ -790,7 +1069,18 @@ def upload_managed_workspace(command, workspace_path=WORKSPACE_ROOT):
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     result["uploaded"] = filename
+    result["sha256"] = digest
     result["extracted_files"] = [str(path) for path in extracted]
+    index_target = (
+        target if is_archive else (extracted[0] if extracted else target)
+    )
+    record_upload_index(
+        datasource_root,
+        digest,
+        filename,
+        upload_version,
+        index_target,
+    )
     return result
 
 
@@ -838,6 +1128,7 @@ def delete_datasource_upload(command, workspace_path=WORKSPACE_ROOT):
                 deleted = deleted or target.name
         if not deleted:
             return {"status": "success", "deleted": ""}
+        remove_upload_index(root, filename, version)
         return {"status": "success", "deleted": deleted}
     file_path = (root / safe_filename(filename)).resolve()
     try:
@@ -847,6 +1138,7 @@ def delete_datasource_upload(command, workspace_path=WORKSPACE_ROOT):
     if file_path.is_file():
         file_path.unlink()
         remove_sidecar(file_path)
+        remove_upload_index(root, filename, version)
         return {"status": "success", "deleted": file_path.name}
     return {"status": "success", "deleted": ""}
 

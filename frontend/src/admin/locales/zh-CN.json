@@ -1619,6 +1619,11 @@
       "fileName": "文件名称",
       "uploadedAt": "上传时间",
       "fileSize": "大小",
+      "uploadStatus": {
+        "label": "状态",
+        "uploading": "上传中",
+        "processed": "已处理"
+      },
       "tabs": {
         "basic": "基本信息",
         "details": "同步记录",

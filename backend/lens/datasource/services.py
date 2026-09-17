@@ -30,6 +30,8 @@ DEFAULT_DATASOURCE_UPLOAD_TIMEOUT_S = 600
 DEFAULT_DATASOURCE_SYNC_WORKERS = 4
 DATASOURCE_RESULT_POLL_S = 0.5
 DATASOURCE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
+DATASOURCE_UPLOAD_CHUNK_BYTES = 256 * 1024
+DATASOURCE_UPLOAD_CHUNK_WINDOW = 4
 DATASOURCE_UPLOAD_EXTENSIONS = {
     ".pdf",
     ".docx",
@@ -531,15 +533,33 @@ def dispatch_datasource_conversion_async(
     return request_id
 
 
-def dispatch_datasource_upload_async(
+def datasource_upload_ready_key(task_id):
+    """Return the cache key where a LensNode reports its resume offset."""
+
+    return f"lens:datasource-upload-ready:{task_id}"
+
+
+def datasource_upload_ack_key(task_id):
+    """Return the cache key where a LensNode acknowledges a chunk offset."""
+
+    return f"lens:datasource-upload-ack:{task_id}"
+
+
+def dispatch_datasource_upload_begin(
     datasource,
     task_id,
     filename,
-    content,
+    total_bytes,
+    sha256,
     conversion=None,
     upload_version=1,
 ):
-    """Dispatch one managed workspace upload to its LensNode."""
+    """Start a chunked managed workspace upload on its LensNode.
+
+    The file bytes follow as separate ``datasource_upload_chunk`` frames so
+    no single control frame can exceed the LensNode WebSocket frame limit
+    that previously tore the control channel down.
+    """
 
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
@@ -553,35 +573,38 @@ def dispatch_datasource_upload_async(
     ):
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_NOT_SUPPORTED")
     execution_node = resolve_datasource_lensnode(datasource)
-    if len(content) > DATASOURCE_UPLOAD_MAX_BYTES:
+    if total_bytes > DATASOURCE_UPLOAD_MAX_BYTES:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_TOO_LARGE")
     upload_conversion = {"document": True, "image": True}
     upload_conversion.update(
         datasource_conversion_policy(datasource.sync_policy)
     )
     upload_conversion.update(conversion or {})
-    upload_source_type = DataSource.SourceType.UPLOAD
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         execution_node,
         {
-            "type": "datasource_upload",
+            "type": "datasource_upload_begin",
             "plugin_key": datasource.plugin_key,
             "request_id": request_id,
             "task_id": task_id,
             "datasource_uuid": str(datasource.uuid),
-            "source_type": upload_source_type,
+            "datasource_name": datasource.name,
+            "source_type": DataSource.SourceType.UPLOAD,
             "target_path": datasource_storage_target_path(
                 datasource, execution_node
             ),
             "filename": filename,
             "upload_version": upload_version,
-            "content_base64": base64.b64encode(content).decode("ascii"),
+            "total_bytes": total_bytes,
+            "chunk_size": DATASOURCE_UPLOAD_CHUNK_BYTES,
+            "sha256": sha256,
             "conversion": upload_conversion,
             **_lensnode_gateway_config(),
             "excluded_datasource_roots": excluded_datasource_roots(
                 datasource
             ),
+            "upload_limits": get_datasource_upload_limits(),
         },
     )
     cache.set(
@@ -590,6 +613,20 @@ def dispatch_datasource_upload_async(
         timeout=get_datasource_upload_timeout_s(),
     )
     return request_id
+
+
+def send_datasource_upload_chunk(lensnode, task_id, offset, data):
+    """Send one base64 chunk for a chunked managed workspace upload."""
+
+    _send_lensnode_command(
+        lensnode,
+        {
+            "type": "datasource_upload_chunk",
+            "task_id": task_id,
+            "offset": offset,
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        },
+    )
 
 
 def datasource_conversion_policy(sync_policy):

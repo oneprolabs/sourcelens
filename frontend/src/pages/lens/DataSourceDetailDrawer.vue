@@ -111,18 +111,21 @@
           </h3>
           <div class="mt-3 overflow-hidden rounded-lg border border-line">
             <div
-              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
+              class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
             >
               <span>{{ t('lensAdmin.datasourceDetail.fileName') }}</span>
               <span>{{ t('lensAdmin.datasourceDetail.uploadedAt') }}</span>
               <span class="text-right">{{
                 t('lensAdmin.datasourceDetail.fileSize')
               }}</span>
+              <span class="text-right">{{
+                t('lensAdmin.datasourceDetail.uploadStatus.label')
+              }}</span>
             </div>
             <div
               v-for="file in originalUploadFiles"
               :key="file.name"
-              class="grid grid-cols-[minmax(0,1fr)_9rem_6rem] gap-3 border-t border-line px-3 py-2 text-sm"
+              class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] items-center gap-3 border-t border-line px-3 py-2 text-sm"
             >
               <span class="min-w-0 truncate text-ink-800" :title="file.name">{{
                 file.name
@@ -133,6 +136,16 @@
               <span class="text-right text-xs text-ink-500">{{
                 formatFileSize(file.size)
               }}</span>
+              <span class="text-right">
+                <span
+                  class="inline-flex rounded border px-1.5 py-0.5 text-[11px] font-medium"
+                  :class="UPLOAD_STATUS_CLASS[file.status]"
+                >
+                  {{
+                    t(`lensAdmin.datasourceDetail.uploadStatus.${file.status}`)
+                  }}
+                </span>
+              </span>
             </div>
           </div>
         </section>
@@ -722,21 +735,37 @@ const isUploadDatasource = computed(
     props.datasource?.source_type === 'upload' ||
     props.datasource?.plugin_key === 'file_upload'
 )
+const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
+const UPLOAD_STATUS_CLASS = {
+  uploading: 'border-warning-200 bg-warning-50 text-warning-700',
+  processed: 'border-success-200 bg-success-50 text-success-700'
+}
+
+function uploadFileStatus(task) {
+  const status = String(task?.status || '').toUpperCase()
+  if (PROCESSING_STATUSES.has(status)) return 'uploading'
+  return 'processed'
+}
+
 const originalUploadFiles = computed(() => {
   const latest = new Map()
   tasks.value.forEach((task) => {
     const metadata = task?.metadata || {}
-    if (
-      !metadata.filename ||
-      metadata.deleted ||
-      metadata.is_latest_version === false
-    )
+    if (!metadata.filename || metadata.deleted) return
+    if (FAILED_UPLOAD_STATUSES.has(String(task?.status || '').toUpperCase()))
       return
+    // A deduplicated re-upload changed nothing on disk: keep the original
+    // file's row (and its processing state) instead of a "duplicate" row.
+    if (metadata.duplicate) return
+    // Tasks arrive newest first, so the first surviving row per filename is
+    // the latest real upload; the is_latest_version flag goes stale once a
+    // duplicate re-upload supersedes the task that actually stored the file.
     if (!latest.has(metadata.filename))
       latest.set(metadata.filename, {
         name: metadata.filename,
         size: Number(metadata.byte_size) || 0,
-        uploadedAt: task.created_at
+        uploadedAt: task.created_at,
+        status: uploadFileStatus(task)
       })
   })
   return [...latest.values()]
@@ -798,6 +827,7 @@ const TASK_METADATA_FIELDS = [
   'byte_size',
   'is_latest_version',
   'deleted',
+  'duplicate',
   'error'
 ].join(',')
 

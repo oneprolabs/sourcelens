@@ -1,5 +1,6 @@
 """Datasource CRUD, search, and synchronization views."""
 
+import hashlib
 import json
 import os
 import uuid as uuid_mod
@@ -756,9 +757,10 @@ class DataSourceViewSet(BaseAdminViewSet):
                 previous_metadata["is_latest_version"] = False
                 previous_task.metadata = previous_metadata
                 previous_task.save(update_fields=["metadata"])
+            raw_bytes = uploaded.read()
             storage_name = default_storage.save(
                 f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
-                ContentFile(uploaded.read()),
+                ContentFile(raw_bytes),
             )
             register_datasource_upload_task(
                 datasource,
@@ -771,6 +773,8 @@ class DataSourceViewSet(BaseAdminViewSet):
                     "storage_name": storage_name,
                     "upload_version": previous + 1,
                     "is_latest_version": True,
+                    "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                    "total_bytes": uploaded.size,
                 },
             )
             datasource_upload_task.apply_async(
