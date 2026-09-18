@@ -5721,6 +5721,43 @@ class LensApiTests(TestCase):
             )
         )
 
+    def test_datasource_serializer_exposes_processing_task_kind(self):
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        TaskExecution.objects.create(
+            task_id="running-datasource-conversion",
+            task_name="datasource_convert:Manual Upload",
+            module="lens_datasource_conversion",
+            status="STARTED",
+            metadata={
+                "datasource_uuid": str(datasource.uuid),
+                "phase": "PARSING_DOCUMENTS",
+                "progress_counts": {
+                    "total": 10,
+                    "processed": 4,
+                    "converted": 3,
+                    "failed": 1,
+                },
+            },
+        )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        current_sync = response.data["current_sync"]
+        self.assertEqual(
+            current_sync["task_module"],
+            "lens_datasource_conversion",
+        )
+        self.assertEqual(current_sync["phase"], "PARSING_DOCUMENTS")
+        self.assertEqual(current_sync["progress_counts"]["processed"], 4)
+
     def test_datasource_sync_statuses_returns_lightweight_page_updates(self):
         schedule = ScheduledTask.objects.create(
             name="Datasource sync",
@@ -5758,6 +5795,7 @@ class LensApiTests(TestCase):
                         "id": task.id,
                         "task_id": task.task_id,
                         "task_name": task.task_name,
+                        "task_module": "lens_datasource",
                         "filename": "",
                         "status": task.status,
                         "started_at": None,

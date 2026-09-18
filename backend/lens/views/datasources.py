@@ -266,6 +266,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "id",
                 "task_id",
                 "task_name",
+                "module",
                 "status",
                 "created_at",
                 "started_at",

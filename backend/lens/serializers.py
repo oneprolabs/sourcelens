@@ -2301,6 +2301,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "id": task.id,
             "task_id": task.task_id,
             "task_name": task.task_name,
+            "task_module": task.module,
             "filename": (task.metadata or {}).get("filename", ""),
             "status": task.status,
             "started_at": task.started_at,

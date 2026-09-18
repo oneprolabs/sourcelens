@@ -852,15 +852,42 @@ function datasourceLensNodeName(row) {
   return row.lensnode_name || row.lensnode?.name || row.lensnode || emptyValue
 }
 
+function datasourceTaskKind(row) {
+  const task = row.current_sync || {}
+  const module = String(task.task_module || task.module || '')
+  if (module === 'lens_datasource_conversion') return 'processing'
+  if (module === 'lens_datasource_upload' || isManualUpload(row)) {
+    return 'upload'
+  }
+  return 'sync'
+}
+
 function datasourceProgressLabel(row) {
   const task = row.current_sync || {}
-  const progress =
-    task.progress_message ||
-    task.progress_step ||
-    t('lensAdmin.table.syncRunning')
-  return isManualUpload(row) && task.filename
-    ? `${task.filename} · ${progress}`
-    : progress
+  const kind = datasourceTaskKind(row)
+  const fallback =
+    kind === 'processing'
+      ? t('lensAdmin.table.processingRunning')
+      : t('lensAdmin.table.syncRunning')
+  const counts = task.progress_counts || {}
+  const total = Number(counts.total) || 0
+  const processed = Number(counts.processed) || 0
+  const converted = Number(counts.converted) || 0
+  const failed = Number(counts.failed) || 0
+  const detail =
+    kind === 'processing' && total
+      ? t('lensAdmin.table.processingProgress', {
+          processed,
+          total,
+          converted,
+          failed
+        })
+      : ''
+  const progress = task.progress_message || task.progress_step || fallback
+  const parts = []
+  if (kind === 'upload' && task.filename) parts.push(task.filename)
+  parts.push(detail || progress)
+  return parts.join(' · ')
 }
 
 function isGitSourceType(sourceType) {

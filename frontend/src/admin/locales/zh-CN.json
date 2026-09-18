@@ -1255,6 +1255,8 @@
       "notRecorded": "未记录",
       "intervalSeconds": "{seconds}s",
       "syncRunning": "正在同步",
+      "processingRunning": "正在处理",
+      "processingProgress": "处理中 {processed}/{total}，已转换 {converted}，失败 {failed}",
       "notSynced": "未同步",
       "lastSync": "最近同步",
       "nextSync": "下次同步",

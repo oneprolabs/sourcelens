@@ -1257,6 +1257,8 @@
       "notRecorded": "No registrado",
       "intervalSeconds": "{seconds}s",
       "syncRunning": "Sincronizando",
+      "processingRunning": "Procesando",
+      "processingProgress": "Procesando {processed}/{total}, convertidos {converted}, fallidos {failed}",
       "notSynced": "No sincronizado",
       "lastSync": "Última sincronización",
       "nextSync": "Próxima sincronización",

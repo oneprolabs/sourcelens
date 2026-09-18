@@ -54,3 +54,13 @@ test('basic tab keeps upload task history for the original-file list', async () 
     /tab === 'basic' && isUploadDatasource\.value[\s\S]{0,240}loadTasks/
   )
 })
+
+test('datasource cards label processing tasks with live progress', async () => {
+  const page = await source('pages/lens/DataSources.vue')
+
+  assert.match(page, /function datasourceTaskKind/)
+  assert.match(page, /lens_datasource_conversion'\) return 'processing'/)
+  assert.match(page, /lensAdmin\.table\.processingRunning/)
+  assert.match(page, /lensAdmin\.table\.processingProgress/)
+  assert.match(page, /task\.progress_counts/)
+})
