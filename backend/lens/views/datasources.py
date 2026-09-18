@@ -71,6 +71,12 @@ from rest_framework.response import Response
 
 from .base import BaseAdminViewSet
 
+DATASOURCE_TASK_TYPES = (
+    "lens_datasource",
+    "lens_datasource_upload",
+    "lens_datasource_conversion",
+)
+
 
 def _finalize_datasource_cancellation(task, datasource, reason, user=None):
     """Terminate a datasource task locally and immediately.
@@ -260,6 +266,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "id",
                 "task_id",
                 "task_name",
+                "module",
                 "status",
                 "created_at",
                 "started_at",
@@ -631,23 +638,20 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["post"])
     def convert(self, request, uuid=None):
-        """Enqueue explicit conversion for a managed workspace."""
+        """Enqueue explicit conversion for a datasource."""
 
         datasource = self.get_object()
-        if datasource.source_type not in (
-            DataSource.SourceType.MANAGED_WORKSPACE,
-            DataSource.SourceType.UPLOAD,
-        ):
-            return Response(
-                {"detail": "DATASOURCE_CONVERSION_NOT_SUPPORTED"},
-                status=status.HTTP_409_CONFLICT,
-            )
         if datasource.status == DataSource.Status.DISABLED:
             return Response(
                 {"detail": "DATASOURCE_DISABLED"},
                 status=status.HTTP_409_CONFLICT,
             )
-        serializer = DataSourceConversionRequestSerializer(data=request.data)
+        payload = dict(request.data)
+        if "conversion" not in payload:
+            stored = (datasource.sync_policy or {}).get("conversion")
+            if stored:
+                payload["conversion"] = stored
+        serializer = DataSourceConversionRequestSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         conversion = serializer.validated_data["conversion"]
         force = serializer.validated_data["force"]
@@ -993,7 +997,7 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["get"], url_path="sync-tasks")
     def sync_tasks(self, request, uuid=None):
-        """List sync task executions for this datasource (paginated)."""
+        """List sync and conversion task executions for this datasource."""
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.adapters.django.serializers import (
@@ -1001,17 +1005,25 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
-        module = (
-            "lens_datasource_upload"
-            if (
-                datasource.source_type == DataSource.SourceType.UPLOAD
-                or datasource.plugin_key == "file_upload"
+        task_type = str(request.query_params.get("task_type") or "").strip()
+        if task_type == "lens_datasource_all":
+            modules = DATASOURCE_TASK_TYPES
+        elif task_type:
+            modules = (
+                (task_type,) if task_type in DATASOURCE_TASK_TYPES else ()
             )
-            else "lens_datasource"
-        )
+        else:
+            modules = (
+                "lens_datasource_upload"
+                if (
+                    datasource.source_type == DataSource.SourceType.UPLOAD
+                    or datasource.plugin_key == "file_upload"
+                )
+                else "lens_datasource",
+            )
         queryset = (
             TaskExecution.objects.filter(
-                module=module,
+                module__in=modules,
                 metadata__datasource_uuid=str(datasource.uuid),
             )
             .select_related("created_by")
@@ -1032,17 +1044,16 @@ class DataSourceViewSet(BaseAdminViewSet):
             .order_by("-created_at")
         )
         page = self.paginate_queryset(queryset)
+        serializer_args = {
+            "many": True,
+            "context": {"request": request},
+        }
         if page is not None:
-            serializer = TaskExecutionListSerializer(
-                page,
-                many=True,
-                context={"request": request},
-            )
+            serializer = TaskExecutionListSerializer(page, **serializer_args)
             return self.get_paginated_response(serializer.data)
         serializer = TaskExecutionListSerializer(
             queryset,
-            many=True,
-            context={"request": request},
+            **serializer_args,
         )
         return Response(serializer.data)
 

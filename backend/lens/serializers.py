@@ -1992,6 +1992,11 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
+        if source_type in (
+            DataSource.SourceType.MANAGED_WORKSPACE,
+            DataSource.SourceType.UPLOAD,
+        ):
+            _conversion_only_sync_policy(sync_policy)
         if source_type != DataSource.SourceType.MANAGED_WORKSPACE:
             attrs.pop("target_path", None)
         if lensnode is not None and source_type != DataSource.SourceType.UPLOAD:
@@ -2048,7 +2053,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             attrs["credential"] = None
             attrs["config"] = {}
             attrs["datasource_config"] = {}
-            attrs["sync_policy"] = {}
+            attrs["sync_policy"] = _conversion_only_sync_policy(sync_policy)
         elif connection is None and (plugin_key or datasource_config):
             raise serializers.ValidationError(
                 {
@@ -2134,10 +2139,6 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"config": ("Managed workspace does not use connection config")}
                 )
-            if sync_policy:
-                raise serializers.ValidationError(
-                    {"sync_policy": ("Managed workspace does not use sync policy")}
-                )
             if self._managed_workspace_path_changed(
                 lensnode,
                 attrs["target_path"],
@@ -2150,7 +2151,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 )
             attrs["credential"] = None
             attrs["config"] = {}
-            attrs["sync_policy"] = {}
+            attrs["sync_policy"] = _conversion_only_sync_policy(sync_policy)
         elif connection is None and source_type == DataSource.SourceType.GIT:
             _validate_datasource_credential_type(
                 credential,
@@ -2199,7 +2200,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             attrs["credential"] = None
             attrs["config"] = {}
             attrs["datasource_config"] = {}
-            attrs["sync_policy"] = {}
+            attrs["sync_policy"] = _conversion_only_sync_policy(sync_policy)
         elif connection is None:
             raise serializers.ValidationError(
                 {"source_type": "Unsupported datasource source_type"}
@@ -2300,6 +2301,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "id": task.id,
             "task_id": task.task_id,
             "task_name": task.task_name,
+            "task_module": task.module,
             "filename": (task.metadata or {}).get("filename", ""),
             "status": task.status,
             "started_at": task.started_at,
@@ -2510,7 +2512,7 @@ class DataSourceConversionRequestSerializer(serializers.Serializer):
             conversion.get(key) for key in ["document", "image", "embedded_image"]
         ):
             raise serializers.ValidationError(
-                {"conversion": ("At least one conversion type must be enabled")}
+                {"conversion": "DATASOURCE_CONVERSION_TYPE_REQUIRED"}
             )
         attrs["conversion"] = conversion
         return attrs
@@ -2830,6 +2832,39 @@ def _credential_provider(repo_url):
     if "gitlab" in value:
         return DataSourceCredential.Provider.GITLAB
     return DataSourceCredential.Provider.GENERIC
+
+
+MANAGED_SYNC_POLICY_KEYS = frozenset(
+    {"mode", "cron", "timezone", "interval_seconds"}
+)
+
+
+def _conversion_only_sync_policy(sync_policy):
+    """Return the conversion-only policy for managed workspace and upload.
+
+    Managed workspace and upload datasources are processed through the
+    explicit conversion API instead of a sync schedule, but they still
+    honor the conversion policy configured on the datasource.
+    """
+
+    if not isinstance(sync_policy, dict):
+        raise serializers.ValidationError(
+            {"sync_policy": "sync_policy must be an object"}
+        )
+    if MANAGED_SYNC_POLICY_KEYS & set(sync_policy):
+        raise serializers.ValidationError(
+            {
+                "sync_policy": (
+                    "Managed workspace and upload datasources do not use "
+                    "sync schedules"
+                )
+            }
+        )
+    conversion = sync_policy.get("conversion")
+    if conversion is None:
+        return {}
+    _validate_conversion_policy(conversion)
+    return {"conversion": conversion}
 
 
 def _validate_sync_policy(sync_policy):

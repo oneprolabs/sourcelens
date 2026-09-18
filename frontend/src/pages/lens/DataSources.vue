@@ -396,12 +396,49 @@
         :plugin-icon-urls="pluginIconUrls"
         :lensnodes="lensnodes"
         @cancel-sync="cancelSync"
+        @reprocess="reprocess"
         @close="closeDataSourceDetail"
         @edit="startEdit"
         @sync="sync"
         @toggle-enabled="toggleDataSourceEnabled"
         @upload="openUpload"
       />
+
+      <BaseModal
+        :show="Boolean(reprocessConfirmRow)"
+        :title="t('lensAdmin.messages.reprocessTitle')"
+        icon-type="warning"
+        max-width="md"
+        :close-on-backdrop="!reprocessing"
+        @close="closeReprocessConfirmation"
+      >
+        <p class="text-sm text-ink-600">
+          {{ t('lensAdmin.messages.reprocessConfirm') }}
+        </p>
+        <p
+          v-if="reprocessConfirmRow"
+          class="mt-2 text-sm font-medium text-ink-900"
+        >
+          {{ reprocessConfirmRow.name }}
+        </p>
+        <template #footer>
+          <BaseButton
+            variant="primary"
+            :loading="reprocessing"
+            @click="confirmReprocess"
+          >
+            {{ t('lensAdmin.messages.reprocessConfirmAction') }}
+          </BaseButton>
+          <BaseButton
+            variant="outline"
+            class="mr-3"
+            :disabled="reprocessing"
+            @click="closeReprocessConfirmation"
+          >
+            {{ t('common.cancel') }}
+          </BaseButton>
+        </template>
+      </BaseModal>
     </div>
   </AdminLayout>
 </template>
@@ -421,6 +458,7 @@ import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import {
   cancelDataSourceSync,
   checkLensNodeDataSourcePath,
+  convertDataSource,
   createDataSource,
   deleteDataSource,
   getConnectionResources,
@@ -447,6 +485,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { pluginDisplayName } from '@/utils/pluginI18n'
@@ -508,6 +547,8 @@ const pluginIconUrls = ref({})
 const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
 const uploadTarget = ref(null)
+const reprocessConfirmRow = ref(null)
+const reprocessing = ref(false)
 const pendingUploadFiles = ref([])
 const uploadBaselineNames = ref([])
 const uploadFileInput = ref(null)
@@ -850,15 +891,42 @@ function datasourceLensNodeName(row) {
   return row.lensnode_name || row.lensnode?.name || row.lensnode || emptyValue
 }
 
+function datasourceTaskKind(row) {
+  const task = row.current_sync || {}
+  const module = String(task.task_module || task.module || '')
+  if (module === 'lens_datasource_conversion') return 'processing'
+  if (module === 'lens_datasource_upload' || isManualUpload(row)) {
+    return 'upload'
+  }
+  return 'sync'
+}
+
 function datasourceProgressLabel(row) {
   const task = row.current_sync || {}
-  const progress =
-    task.progress_message ||
-    task.progress_step ||
-    t('lensAdmin.table.syncRunning')
-  return isManualUpload(row) && task.filename
-    ? `${task.filename} · ${progress}`
-    : progress
+  const kind = datasourceTaskKind(row)
+  const fallback =
+    kind === 'processing'
+      ? t('lensAdmin.table.processingRunning')
+      : t('lensAdmin.table.syncRunning')
+  const counts = task.progress_counts || {}
+  const total = Number(counts.total) || 0
+  const processed = Number(counts.processed) || 0
+  const converted = Number(counts.converted) || 0
+  const failed = Number(counts.failed) || 0
+  const detail =
+    kind === 'processing' && total
+      ? t('lensAdmin.table.processingProgress', {
+          processed,
+          total,
+          converted,
+          failed
+        })
+      : ''
+  const progress = task.progress_message || task.progress_step || fallback
+  const parts = []
+  if (kind === 'upload' && task.filename) parts.push(task.filename)
+  parts.push(detail || progress)
+  return parts.join(' · ')
 }
 
 function isGitSourceType(sourceType) {
@@ -1264,7 +1332,7 @@ function formFromRow(row) {
     credential_configured: !!row.credential_configured,
     connection_uuid: row.connection || '',
     plugin_key: row.plugin_key || '',
-    conversion_document: row.sync_policy?.conversion?.document === true,
+    conversion_document: row.sync_policy?.conversion?.document !== false,
     conversion_document_model_ref:
       row.sync_policy?.conversion?.document_model_ref || '',
     conversion_image: row.sync_policy?.conversion?.image === true,
@@ -1527,12 +1595,18 @@ async function save() {
 }
 
 function buildPayload() {
-  const managedWorkspace = form.value.source_type === 'managed_workspace'
+  const sourceType = normalizedSourceType(form.value.source_type)
+  const managedWorkspace = sourceType === 'managed_workspace'
+  const conversionOnlyPolicy = ['managed_workspace', 'upload'].includes(
+    sourceType
+  )
   const payload = {
     name: form.value.name,
-    source_type: normalizedSourceType(form.value.source_type),
+    source_type: sourceType,
     config: managedWorkspace ? {} : buildDatasourceConfig(),
-    sync_policy: managedWorkspace ? {} : buildDatasourceSyncPolicy(),
+    sync_policy: conversionOnlyPolicy
+      ? buildDatasourceConversionPolicy()
+      : buildDatasourceSyncPolicy(),
     status: form.value.status || 'active',
     credential_uuid: shouldUseDatasourceCredential()
       ? form.value.credential_uuid
@@ -1662,7 +1736,7 @@ function buildDatasourceConfig() {
   return config
 }
 
-function buildDatasourceSyncPolicy() {
+function buildDatasourceConversion() {
   const conversion = {
     document: form.value.conversion_document === true,
     image: form.value.conversion_image === true,
@@ -1710,6 +1784,15 @@ function buildDatasourceSyncPolicy() {
   if (conversion.image && form.value.conversion_vision_model_ref) {
     conversion.vision_model_ref = form.value.conversion_vision_model_ref
   }
+  return conversion
+}
+
+function buildDatasourceConversionPolicy() {
+  return { conversion: buildDatasourceConversion() }
+}
+
+function buildDatasourceSyncPolicy() {
+  const conversion = buildDatasourceConversion()
   if (syncPolicyMode.value === 'crontab') {
     return {
       mode: 'crontab',
@@ -2311,6 +2394,43 @@ async function sync(row) {
       lensNodeErrorMessage(error.response?.data?.detail, t) ||
         extractErrorMessage(error, t('lensAdmin.messages.syncFailed'))
     )
+  }
+}
+
+function reprocess(row) {
+  if (!isDataSourceEnabled(row)) {
+    showError(t('lensAdmin.messages.datasourceDisabled'))
+    return
+  }
+  reprocessConfirmRow.value = row
+}
+
+function closeReprocessConfirmation() {
+  if (reprocessing.value) return
+  reprocessConfirmRow.value = null
+}
+
+async function confirmReprocess() {
+  const row = reprocessConfirmRow.value
+  if (!row || reprocessing.value) return
+  reprocessing.value = true
+  try {
+    const result = await convertDataSource(row.uuid)
+    const taskId = result?.task_id || ''
+    showSuccess(
+      taskId
+        ? `${t('lensAdmin.messages.reprocessStarted')} (${taskId})`
+        : t('lensAdmin.messages.reprocessStarted')
+    )
+    reprocessConfirmRow.value = null
+    await load()
+  } catch (error) {
+    showError(
+      lensNodeErrorMessage(error.response?.data?.detail, t) ||
+        extractErrorMessage(error, t('lensAdmin.messages.reprocessFailed'))
+    )
+  } finally {
+    reprocessing.value = false
   }
 }
 

@@ -318,10 +318,13 @@
         >
           <ul class="divide-y divide-line bg-surface">
             <li
-              class="hidden grid-cols-[1fr_140px_100px_100px_80px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
+              class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
             >
-              <span>{{
-                t('lensAdmin.datasourceDetail.details.colTaskName')
+              <span class="text-left">{{
+                t('lensAdmin.datasourceDetail.details.colTaskType')
+              }}</span>
+              <span class="text-left">{{
+                t('lensAdmin.datasourceDetail.details.colFileName')
               }}</span>
               <span>{{
                 t('lensAdmin.datasourceDetail.details.colStartedAt')
@@ -370,15 +373,17 @@
                   @click="toggleTaskExpand(task)"
                 >
                   <div class="flex items-start justify-between gap-3">
-                    <span
-                      class="min-w-0 flex-1 truncate text-sm font-medium text-ink-900"
-                      :title="task.task_name"
-                    >
-                      {{ task.task_name || '-' }}
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="block truncate text-sm font-medium text-ink-900"
+                      >
+                        {{ taskTypeLabel(task) }}
+                      </span>
                       <span
                         v-if="task.metadata?.filename"
-                        class="font-normal text-ink-500"
-                        >· {{ task.metadata.filename }}</span
+                        class="block truncate text-xs text-ink-500"
+                        :title="task.metadata.filename"
+                        >{{ task.metadata.filename }}</span
                       >
                     </span>
                     <div class="flex shrink-0 items-center gap-2">
@@ -422,7 +427,7 @@
                   </dl>
                 </div>
                 <div
-                  class="hidden grid-cols-[1fr_140px_100px_100px_80px_24px] items-center gap-3 px-4 py-2 text-center text-sm sm:grid"
+                  class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 px-4 py-2 text-sm sm:grid"
                   :class="
                     tasksLoading
                       ? 'cursor-not-allowed opacity-60'
@@ -430,29 +435,31 @@
                   "
                   @click="toggleTaskExpand(task)"
                 >
-                  <span
-                    class="truncate text-left text-sm font-medium text-ink-900"
-                    :title="task.task_name"
-                  >
-                    {{ task.task_name || '-' }}
-                    <span
-                      v-if="task.metadata?.filename"
-                      class="font-normal text-ink-500"
-                      >· {{ task.metadata.filename }}</span
-                    >
+                  <span class="truncate text-left text-ink-700">
+                    {{ taskTypeLabel(task) }}
                   </span>
                   <span
-                    class="whitespace-nowrap text-sm font-medium text-ink-900"
+                    class="truncate text-left text-ink-700"
+                    :title="task.metadata?.filename || ''"
+                  >
+                    {{ task.metadata?.filename || emptyValue }}
+                  </span>
+                  <span
+                    class="whitespace-nowrap text-center text-sm font-medium text-ink-900"
                   >
                     {{ formatDate(task.started_at) }}
                   </span>
                   <div class="flex justify-center">
                     <StatusBadge :status="mapTaskStatus(task.status)" />
                   </div>
-                  <span class="whitespace-nowrap text-sm text-ink-500">
+                  <span
+                    class="whitespace-nowrap text-center text-sm text-ink-500"
+                  >
                     {{ formatTrigger(task) }}
                   </span>
-                  <span class="whitespace-nowrap text-sm text-ink-500">
+                  <span
+                    class="whitespace-nowrap text-center text-sm text-ink-500"
+                  >
                     {{ formatDuration(task.duration) }}
                   </span>
                   <span
@@ -641,7 +648,6 @@
     <template v-if="datasource" #footer>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <BaseButton
-          v-if="isSyncableDatasource"
           variant="outline"
           @click="$emit('toggle-enabled', datasource)"
         >
@@ -664,6 +670,12 @@
             :disabled="datasource.status !== 'active'"
             @click="$emit('sync', datasource)"
             >{{ t('lensAdmin.actions.sync') }}</BaseButton
+          >
+          <BaseButton
+            variant="outline"
+            :disabled="datasource.status !== 'active'"
+            @click="$emit('reprocess', datasource)"
+            >{{ t('lensAdmin.actions.reprocess') }}</BaseButton
           >
           <BaseButton variant="primary" @click="$emit('edit', datasource)">
             {{ t('common.edit') }}
@@ -719,6 +731,7 @@ defineEmits([
   'cancel-sync',
   'close',
   'edit',
+  'reprocess',
   'sync',
   'toggle-enabled',
   'upload'
@@ -978,6 +991,7 @@ async function loadTasks(options = {}) {
     const params = {
       page: currentPage.value,
       page_size: pageSize,
+      task_type: 'lens_datasource_all',
       metadata_fields: TASK_METADATA_FIELDS
     }
     const res = await api.get(`/lens/admin/datasources/${uuid}/sync-tasks/`, {
@@ -1115,6 +1129,16 @@ async function loadExpandedTask(id) {
   }
 }
 
+function taskTypeLabel(task) {
+  if (task?.module === 'lens_datasource_conversion') {
+    return t('lensAdmin.datasourceDetail.details.taskTypeProcessing')
+  }
+  if (task?.module === 'lens_datasource_upload') {
+    return t('lensAdmin.datasourceDetail.details.taskTypeUpload')
+  }
+  return t('lensAdmin.datasourceDetail.details.taskTypeSync')
+}
+
 function formatTrigger(task) {
   const trigger = task?.trigger || task?.metadata?.trigger
   if (trigger === 'manual') {
@@ -1140,7 +1164,9 @@ watch(
     }
     if (tab !== 'details') {
       stopProcessingRefresh()
-      if (isUploadDatasource.value) {
+      // The basic tab lists original upload files, which are derived from the
+      // upload task history, so keep that loaded even outside the records tab.
+      if (tab === 'basic' && isUploadDatasource.value) {
         const uploadContextKey = `${uuid}:upload`
         if (taskListContextKey.value !== uploadContextKey) {
           taskListContextKey.value = uploadContextKey

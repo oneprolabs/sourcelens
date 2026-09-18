@@ -489,19 +489,17 @@ def dispatch_datasource_conversion_async(
     conversion,
     force=False,
 ):
-    """Dispatch managed workspace conversion without running sync adapters."""
+    """Dispatch datasource conversion without running sync adapters."""
 
     datasource = DataSource.objects.select_related("lensnode").get(
         pk=datasource.pk
     )
-    if datasource.source_type not in (
-        DataSource.SourceType.MANAGED_WORKSPACE,
-        DataSource.SourceType.UPLOAD,
-    ):
-        raise DataSourceDispatchError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
     lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
     validate_datasource_lensnode(lensnode)
-    conversion = dict(conversion or {})
+    conversion = {
+        **datasource_conversion_policy(datasource.sync_policy),
+        **dict(conversion or {}),
+    }
     for key, value in datasource_conversion_defaults().items():
         if value and not conversion.get(key):
             conversion[key] = value

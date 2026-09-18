@@ -2435,7 +2435,7 @@ function shouldConfirmCredentialChange(nextUuid, previousUuid) {
 function testConnectionIfVisible() {
   const pluginConnectionStep =
     isPluginSourceType(props.form.source_type) &&
-    activeStepKey.value === 'connection'
+    (activeStepKey.value === 'connection' || activeStepKey.value === 'sync')
   const legacyConnectionStep =
     !isPluginSourceType(props.form.source_type) &&
     !isManagedWorkspace.value &&

@@ -510,16 +510,16 @@ def convert_managed_workspace(
     workspace_path=WORKSPACE_ROOT,
     emit=None,
 ):
-    """Convert files in a managed workspace without synchronizing it."""
+    """Convert files already stored locally without synchronizing them."""
 
-    source_type = command.get("source_type")
-    if source_type not in {"managed_workspace", "upload"}:
+    source_type = str(command.get("source_type") or "")
+    if not source_type:
         raise DataSourceSyncError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
     target = normalize_target_path(
         command.get("target_path"),
         workspace_path,
     )
-    if source_type == "managed_workspace" and not target.is_dir():
+    if not target.is_dir():
         raise DataSourceSyncError("MANAGED_WORKSPACE_DIRECTORY_REQUIRED")
 
     context = _sync_context(command, target)
@@ -2550,7 +2550,11 @@ def _sync_git(command, workspace_path, emit):
 
     _validate_git_tree_size(
         target,
-        max_bytes=int(config.get("git_max_bytes", GIT_MAX_BYTES)),
+        max_bytes=int(
+            command.get("git_max_bytes")
+            or config.get("git_max_bytes")
+            or GIT_MAX_BYTES
+        ),
     )
 
     items = _git_manifest_items(

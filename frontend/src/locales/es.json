@@ -119,7 +119,9 @@
     "datasourceConfigInvalid": "La configuración del origen de datos no es válida. Revísela y vuelva a intentarlo.",
     "datasourceTargetPathInvalid": "La ruta de destino no es válida. Revise el directorio y vuelva a intentarlo.",
     "datasourceTargetPathRequired": "Se requiere una ruta de destino. Configure el directorio y vuelva a intentarlo.",
-    "datasourceGitLayoutMigration": "La estructura del repositorio Git requiere migración. Vuelva a sincronizar o contacte con un administrador."
+    "datasourceGitLayoutMigration": "La estructura del repositorio Git requiere migración. Vuelva a sincronizar o contacte con un administrador.",
+    "datasourceConversionTypeRequired": "Habilite al menos un tipo de conversión (documento, imagen o imagen incrustada) antes de iniciar el procesamiento.",
+    "datasourceConversionNotSupported": "Este origen de datos no se puede procesar. Revise su tipo y contenido e inténtelo de nuevo."
   },
   "lens": {
     "share": {

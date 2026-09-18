@@ -1255,6 +1255,8 @@
       "notRecorded": "未记录",
       "intervalSeconds": "{seconds}s",
       "syncRunning": "正在同步",
+      "processingRunning": "正在处理",
+      "processingProgress": "处理中 {processed}/{total}，已转换 {converted}，失败 {failed}",
       "notSynced": "未同步",
       "lastSync": "最近同步",
       "nextSync": "下次同步",
@@ -1680,7 +1682,13 @@
         "statFolders": "目录",
         "statFiles": "文件",
         "openInTaskManager": "在任务管理中打开",
-        "colTaskName": "任务名称"
+        "colTaskName": "任务名称",
+        "colTaskType": "类型",
+        "colFileName": "文件",
+        "taskType": "任务类型",
+        "taskTypeSync": "同步",
+        "taskTypeUpload": "上传",
+        "taskTypeProcessing": "处理"
       }
     },
     "actions": {
@@ -1691,8 +1699,9 @@
       "sync": "同步",
       "refreshAvailability": "检查路径",
       "uploadFile": "上传文件",
-      "enableDatasource": "恢复同步",
-      "disableDatasource": "暂停同步",
+      "reprocess": "重新处理",
+      "enableDatasource": "恢复",
+      "disableDatasource": "暂停",
       "disableUpload": "停用上传",
       "enableUpload": "启用上传",
       "cancelSync": "取消同步",
@@ -1908,8 +1917,8 @@
       "step1Desc": "设置数据源名称和类型。",
       "step2Title": "连接与资源",
       "step2Desc": "选择连接，并指定需要同步的仓库或资源。",
-      "step3Title": "目标与同步",
-      "step3Desc": "选择执行节点、目标目录和同步策略。",
+      "step3Title": "同步与处理策略",
+      "step3Desc": "配置同步策略与文档内容处理。",
       "summarySource": "数据源",
       "summaryResource": "来源连接",
       "summaryTarget": "同步目标",
@@ -2279,7 +2288,12 @@
       "datasourceDisabled": "数据源已禁用，不能触发同步",
       "syncCancelled": "同步任务已取消",
       "syncCancelFailed": "同步任务取消失败",
-      "availabilityRefreshed": "路径可用性已刷新"
+      "availabilityRefreshed": "路径可用性已刷新",
+      "reprocessTitle": "重新处理数据源",
+      "reprocessConfirm": "使用当前处理策略重新处理该数据源？已按相同策略处理完成的文件会被跳过。",
+      "reprocessConfirmAction": "重新处理",
+      "reprocessStarted": "处理任务已触发",
+      "reprocessFailed": "触发处理任务失败"
     },
     "visibility": {
       "public": "公开",

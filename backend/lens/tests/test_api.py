@@ -5721,6 +5721,43 @@ class LensApiTests(TestCase):
             )
         )
 
+    def test_datasource_serializer_exposes_processing_task_kind(self):
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        TaskExecution.objects.create(
+            task_id="running-datasource-conversion",
+            task_name="datasource_convert:Manual Upload",
+            module="lens_datasource_conversion",
+            status="STARTED",
+            metadata={
+                "datasource_uuid": str(datasource.uuid),
+                "phase": "PARSING_DOCUMENTS",
+                "progress_counts": {
+                    "total": 10,
+                    "processed": 4,
+                    "converted": 3,
+                    "failed": 1,
+                },
+            },
+        )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        current_sync = response.data["current_sync"]
+        self.assertEqual(
+            current_sync["task_module"],
+            "lens_datasource_conversion",
+        )
+        self.assertEqual(current_sync["phase"], "PARSING_DOCUMENTS")
+        self.assertEqual(current_sync["progress_counts"]["processed"], 4)
+
     def test_datasource_sync_statuses_returns_lightweight_page_updates(self):
         schedule = ScheduledTask.objects.create(
             name="Datasource sync",
@@ -5758,6 +5795,7 @@ class LensApiTests(TestCase):
                         "id": task.id,
                         "task_id": task.task_id,
                         "task_name": task.task_name,
+                        "task_module": "lens_datasource",
                         "filename": "",
                         "status": task.status,
                         "started_at": None,
@@ -5943,6 +5981,83 @@ class LensApiTests(TestCase):
         self.assertFalse(
             ScheduledTask.objects.filter(target_id=datasource.uuid).exists()
         )
+
+    @patch("lens.serializers.check_datasource_path")
+    def test_managed_workspace_create_persists_conversion_policy(
+        self, check_path
+    ):
+        check_path.return_value = {
+            "status": "available",
+            "exists": True,
+            "is_directory": True,
+            "message": "Managed workspace directory is available.",
+        }
+        conversion = {
+            "document": True,
+            "image": False,
+            "pdf_render_dpi": 200,
+        }
+
+        response = self.client.post(
+            "/api/lens/admin/datasources/",
+            {
+                "name": "Managed Conversion",
+                "source_type": "managed_workspace",
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "target_path": "/workspace/restores/conversion",
+                "config": {},
+                "sync_policy": {"conversion": conversion},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            response.data["sync_policy"], {"conversion": conversion}
+        )
+        datasource = DataSource.objects.get(uuid=response.data["uuid"])
+        self.assertEqual(datasource.sync_policy, {"conversion": conversion})
+
+    @patch("lens.serializers.check_datasource_path")
+    def test_managed_workspace_rejects_sync_schedule(self, check_path):
+        check_path.return_value = {
+            "status": "available",
+            "exists": True,
+            "is_directory": True,
+            "message": "Managed workspace directory is available.",
+        }
+        response = self.client.post(
+            "/api/lens/admin/datasources/",
+            {
+                "name": "Managed Scheduled",
+                "source_type": "managed_workspace",
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "target_path": "/workspace/restores/scheduled",
+                "config": {},
+                "sync_policy": {"interval_seconds": 3600},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sync_policy", response.data)
+
+    def test_upload_datasource_rejects_sync_schedule(self):
+        response = self.client.post(
+            "/api/lens/admin/datasources/",
+            {
+                "name": "Manual Upload",
+                "source_type": "upload",
+                "plugin_key": "file_upload",
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "config": {},
+                "sync_policy": {"interval_seconds": 3600},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("sync_policy", response.data)
 
     @patch("lens.serializers.check_datasource_path")
     def test_managed_workspace_create_requires_existing_directory(
@@ -6258,7 +6373,35 @@ class LensApiTests(TestCase):
         self.assertEqual(tasks.status_code, 200)
         self.assertEqual(tasks.data["results"][0]["task_id"], task_id)
 
-    def test_non_managed_datasource_conversion_is_rejected(self):
+    def test_managed_workspace_conversion_defaults_to_stored_policy(self):
+        conversion = {
+            "document": True,
+            "image": False,
+            "pdf_render_dpi": 200,
+        }
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+            sync_policy={"conversion": conversion},
+        )
+
+        with patch(
+            "lens.views.datasources.datasource_conversion_task.apply_async"
+        ) as apply_async:
+            response = self.client.post(
+                f"/api/lens/admin/datasources/{datasource.uuid}/convert/",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        apply_async.assert_called_once()
+        dispatched = apply_async.call_args.kwargs["args"][1]
+        self.assertEqual(dispatched, conversion)
+
+    def test_syncable_datasource_conversion_is_accepted(self):
         with patch(
             "lens.views.datasources.datasource_conversion_task.apply_async"
         ) as apply_async:
@@ -6268,12 +6411,8 @@ class LensApiTests(TestCase):
                 format="json",
             )
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(
-            response.data["detail"],
-            "DATASOURCE_CONVERSION_NOT_SUPPORTED",
-        )
-        apply_async.assert_not_called()
+        self.assertEqual(response.status_code, 202, response.data)
+        apply_async.assert_called_once()
 
     def test_managed_workspace_conversion_validates_policy(self):
         datasource = DataSource.objects.create(
@@ -6570,6 +6709,42 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["results"][0]["metadata"], {
             "trigger": "scheduled",
         })
+
+    def test_datasource_task_history_merges_sync_upload_and_conversion(self):
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        for module in (
+            "lens_datasource_upload",
+            "lens_datasource",
+            "lens_datasource_conversion",
+        ):
+            TaskExecution.objects.create(
+                task_id=f"datasource-history-{module}",
+                task_name=f"history:{module}",
+                module=module,
+                status="SUCCESS",
+                metadata={"datasource_uuid": str(datasource.uuid)},
+            )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/sync-tasks/",
+            {"task_type": "lens_datasource_all"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        modules = {row["module"] for row in response.data["results"]}
+        self.assertEqual(
+            modules,
+            {
+                "lens_datasource_upload",
+                "lens_datasource",
+                "lens_datasource_conversion",
+            },
+        )
 
     @patch("lens.views.datasources.list_datasource_files")
     def test_datasource_files_returns_manifest_catalog(self, list_files):

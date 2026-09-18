@@ -1,0 +1,8 @@
+type: improvement
+audience: admin
+en: >-
+  Managed-workspace and upload datasources can now save and reuse their document
+  conversion policy, and a new Reprocess action applies the current policy to the
+  datasource instead of resetting to defaults.
+zh-CN: >-
+  托管工作区与上传类数据源现在可以保存并复用其文档转换策略，并新增「重新处理」操作，按当前策略处理数据源内容，而不再回退到默认值。

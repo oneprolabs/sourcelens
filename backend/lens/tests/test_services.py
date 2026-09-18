@@ -3883,6 +3883,44 @@ class LensServiceTests(TransactionTestCase):
         self.assertNotIn("config", payload)
         self.assertNotIn("sync_policy", payload)
 
+    def test_managed_workspace_conversion_merges_stored_policy(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+            sync_policy={
+                "conversion": {
+                    "document": True,
+                    "image": False,
+                    "pdf_render_dpi": 200,
+                }
+            },
+        )
+
+        with patch("lens.datasource.services._send_lensnode_command") as send:
+            dispatch_datasource_conversion_async(
+                datasource,
+                task_id="managed-conversion",
+                conversion={},
+            )
+
+        stored_payload = send.call_args.args[1]
+        self.assertEqual(stored_payload["conversion"]["pdf_render_dpi"], 200)
+        self.assertFalse(stored_payload["conversion"]["image"])
+        self.assertTrue(stored_payload["conversion"]["document"])
+
+        with patch("lens.datasource.services._send_lensnode_command") as send:
+            dispatch_datasource_conversion_async(
+                datasource,
+                task_id="managed-conversion",
+                conversion={"pdf_render_dpi": 144},
+            )
+
+        override_payload = send.call_args.args[1]
+        self.assertEqual(override_payload["conversion"]["pdf_render_dpi"], 144)
+        self.assertFalse(override_payload["conversion"]["image"])
+
     def test_upload_dispatches_file_and_conversion_policy(
         self,
     ):

@@ -1240,6 +1240,36 @@ def test_sync_git_uses_shallow_clone(tmp_path, monkeypatch):
     assert calls[0][2] == "LENS_SOURCE_GIT_CLONE_FAILED"
 
 
+def test_sync_git_honors_command_max_bytes(tmp_path, monkeypatch):
+    """The configured Git byte budget must come from the sync command."""
+
+    def run_git(args, **kwargs):
+        del args, kwargs
+        target = tmp_path / "repo"
+        target.mkdir(exist_ok=True)
+        (target / "large.bin").write_bytes(b"x" * 2048)
+        return None
+
+    monkeypatch.setattr("lensnode.datasource_sync._run_git", run_git)
+
+    with pytest.raises(
+        DataSourceSyncError,
+        match="LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED",
+    ):
+        _sync_git(
+            {
+                "config": {
+                    "repo_url": "https://github.com/example/repo.git",
+                    "branch": "main",
+                },
+                "target_path": str(tmp_path / "repo"),
+                "git_max_bytes": 1024,
+            },
+            str(tmp_path),
+            None,
+        )
+
+
 def test_sync_git_update_uses_shallow_fetch(tmp_path, monkeypatch):
     """Existing Git datasource updates use shallow fetch and hard reset."""
 
