@@ -1684,6 +1684,7 @@
         "openInTaskManager": "Abrir en el gestor de tareas",
         "colTaskName": "Nombre de la Tarea",
         "colTaskType": "Tipo",
+        "colFileName": "Archivo",
         "taskType": "Tipo de tarea",
         "taskTypeSync": "Sincronización",
         "taskTypeUpload": "Subida",

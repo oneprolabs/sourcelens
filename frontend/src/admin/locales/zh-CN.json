@@ -1682,6 +1682,7 @@
         "openInTaskManager": "在任务管理中打开",
         "colTaskName": "任务名称",
         "colTaskType": "类型",
+        "colFileName": "文件",
         "taskType": "任务类型",
         "taskTypeSync": "同步",
         "taskTypeUpload": "上传",

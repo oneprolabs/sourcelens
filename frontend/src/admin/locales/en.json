@@ -1684,6 +1684,7 @@
         "openInTaskManager": "Open in task manager",
         "colTaskName": "Task Name",
         "colTaskType": "Type",
+        "colFileName": "File",
         "taskType": "Task type",
         "taskTypeSync": "Sync",
         "taskTypeUpload": "Upload",

@@ -313,29 +313,18 @@
         </DrawerSection>
       </div>
       <div v-show="activeTab === 'details'" class="space-y-6">
-        <div class="flex flex-wrap items-center gap-2">
-          <label class="text-sm text-ink-600">
-            {{ t('lensAdmin.datasourceDetail.details.taskType') }}
-          </label>
-          <BaseSelect v-model="taskType" class="w-44 text-sm">
-            <option
-              v-for="option in taskTypeOptions"
-              :key="option.value"
-              :value="option.value"
-            >
-              {{ option.label }}
-            </option>
-          </BaseSelect>
-        </div>
         <div
           class="relative overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
         >
           <ul class="divide-y divide-line bg-surface">
             <li
-              class="hidden grid-cols-[100px_140px_100px_100px_80px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
+              class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
             >
-              <span>{{
+              <span class="text-left">{{
                 t('lensAdmin.datasourceDetail.details.colTaskType')
+              }}</span>
+              <span class="text-left">{{
+                t('lensAdmin.datasourceDetail.details.colFileName')
               }}</span>
               <span>{{
                 t('lensAdmin.datasourceDetail.details.colStartedAt')
@@ -438,7 +427,7 @@
                   </dl>
                 </div>
                 <div
-                  class="hidden grid-cols-[100px_140px_100px_100px_80px_24px] items-center gap-3 px-4 py-2 text-center text-sm sm:grid"
+                  class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 px-4 py-2 text-sm sm:grid"
                   :class="
                     tasksLoading
                       ? 'cursor-not-allowed opacity-60'
@@ -446,27 +435,31 @@
                   "
                   @click="toggleTaskExpand(task)"
                 >
-                  <span class="truncate text-left text-sm text-ink-700">
+                  <span class="truncate text-left text-ink-700">
                     {{ taskTypeLabel(task) }}
-                    <span
-                      v-if="task.metadata?.filename"
-                      class="block truncate font-normal text-ink-500"
-                      :title="task.metadata.filename"
-                      >{{ task.metadata.filename }}</span
-                    >
                   </span>
                   <span
-                    class="whitespace-nowrap text-sm font-medium text-ink-900"
+                    class="truncate text-left text-ink-700"
+                    :title="task.metadata?.filename || ''"
+                  >
+                    {{ task.metadata?.filename || emptyValue }}
+                  </span>
+                  <span
+                    class="whitespace-nowrap text-center text-sm font-medium text-ink-900"
                   >
                     {{ formatDate(task.started_at) }}
                   </span>
                   <div class="flex justify-center">
                     <StatusBadge :status="mapTaskStatus(task.status)" />
                   </div>
-                  <span class="whitespace-nowrap text-sm text-ink-500">
+                  <span
+                    class="whitespace-nowrap text-center text-sm text-ink-500"
+                  >
                     {{ formatTrigger(task) }}
                   </span>
-                  <span class="whitespace-nowrap text-sm text-ink-500">
+                  <span
+                    class="whitespace-nowrap text-center text-sm text-ink-500"
+                  >
                     {{ formatDuration(task.duration) }}
                   </span>
                   <span
@@ -755,23 +748,6 @@ const isUploadDatasource = computed(
     props.datasource?.source_type === 'upload' ||
     props.datasource?.plugin_key === 'file_upload'
 )
-const syncTaskType = computed(() =>
-  isUploadDatasource.value ? 'lens_datasource_upload' : 'lens_datasource'
-)
-const taskTypeOptions = computed(() => [
-  {
-    value: syncTaskType.value,
-    label: t(
-      isUploadDatasource.value
-        ? 'lensAdmin.datasourceDetail.details.taskTypeUpload'
-        : 'lensAdmin.datasourceDetail.details.taskTypeSync'
-    )
-  },
-  {
-    value: 'lens_datasource_conversion',
-    label: t('lensAdmin.datasourceDetail.details.taskTypeProcessing')
-  }
-])
 const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
 const UPLOAD_STATUS_CLASS = {
   uploading: 'border-warning-200 bg-warning-50 text-warning-700',
@@ -819,7 +795,6 @@ const currentPage = ref(1)
 const totalCount = ref(0)
 const totalPages = ref(1)
 const pageSize = 10
-const taskType = ref('lens_datasource')
 const processingRefreshTimer = ref(null)
 const processingRefreshInFlight = ref(false)
 const tasksLoadInFlight = ref(false)
@@ -1016,7 +991,7 @@ async function loadTasks(options = {}) {
     const params = {
       page: currentPage.value,
       page_size: pageSize,
-      task_type: taskType.value,
+      task_type: 'lens_datasource_all',
       metadata_fields: TASK_METADATA_FIELDS
     }
     const res = await api.get(`/lens/admin/datasources/${uuid}/sync-tasks/`, {
@@ -1189,17 +1164,6 @@ watch(
     }
     if (tab !== 'details') {
       stopProcessingRefresh()
-      if (isUploadDatasource.value) {
-        const uploadContextKey = `${uuid}:upload`
-        if (taskListContextKey.value !== uploadContextKey) {
-          taskListContextKey.value = uploadContextKey
-          taskType.value = syncTaskType.value
-          currentPage.value = 1
-          resetTaskList()
-          loadTasks({ silent: true })
-        }
-        return
-      }
       taskRequestSeq.value += 1
       taskListContextKey.value = ''
       tasksLoadInFlight.value = false
@@ -1207,7 +1171,6 @@ watch(
       resetTaskList()
       return
     }
-    taskType.value = syncTaskType.value
     const contextKey = `${uuid}:${tab}`
     if (taskListContextKey.value === contextKey) {
       if (
@@ -1239,19 +1202,6 @@ watch(
   },
   { immediate: true }
 )
-
-watch(taskType, () => {
-  if (activeTab.value !== 'details') return
-  stopProcessingRefresh()
-  taskRequestSeq.value += 1
-  currentPage.value = 1
-  resetTaskList()
-  loadTasks().then((loaded) => {
-    if (loaded && hasProcessingTasks()) {
-      startProcessingRefresh()
-    }
-  })
-})
 
 watch(filesLoadMoreSentinel, observeFilesLoadMoreSentinel)
 

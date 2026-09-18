@@ -1004,19 +1004,25 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
-        sync_module = (
-            "lens_datasource_upload"
-            if (
-                datasource.source_type == DataSource.SourceType.UPLOAD
-                or datasource.plugin_key == "file_upload"
-            )
-            else "lens_datasource"
-        )
         task_type = str(request.query_params.get("task_type") or "").strip()
-        module = task_type if task_type in DATASOURCE_TASK_TYPES else sync_module
+        if task_type == "lens_datasource_all":
+            modules = DATASOURCE_TASK_TYPES
+        elif task_type:
+            modules = (
+                (task_type,) if task_type in DATASOURCE_TASK_TYPES else ()
+            )
+        else:
+            modules = (
+                "lens_datasource_upload"
+                if (
+                    datasource.source_type == DataSource.SourceType.UPLOAD
+                    or datasource.plugin_key == "file_upload"
+                )
+                else "lens_datasource",
+            )
         queryset = (
             TaskExecution.objects.filter(
-                module=module,
+                module__in=modules,
                 metadata__datasource_uuid=str(datasource.uuid),
             )
             .select_related("created_by")

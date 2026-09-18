@@ -6672,6 +6672,42 @@ class LensApiTests(TestCase):
             "trigger": "scheduled",
         })
 
+    def test_datasource_task_history_merges_sync_upload_and_conversion(self):
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        for module in (
+            "lens_datasource_upload",
+            "lens_datasource",
+            "lens_datasource_conversion",
+        ):
+            TaskExecution.objects.create(
+                task_id=f"datasource-history-{module}",
+                task_name=f"history:{module}",
+                module=module,
+                status="SUCCESS",
+                metadata={"datasource_uuid": str(datasource.uuid)},
+            )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/sync-tasks/",
+            {"task_type": "lens_datasource_all"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        modules = {row["module"] for row in response.data["results"]}
+        self.assertEqual(
+            modules,
+            {
+                "lens_datasource_upload",
+                "lens_datasource",
+                "lens_datasource_conversion",
+            },
+        )
+
     @patch("lens.views.datasources.list_datasource_files")
     def test_datasource_files_returns_manifest_catalog(self, list_files):
         list_files.return_value = {

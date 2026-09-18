@@ -25,17 +25,18 @@ test('datasource detail drawer reprocesses any source with the stored policy', a
   assert.match(page, /lensAdmin\.messages\.reprocessConfirm/)
 })
 
-test('sync records separate sync, upload, and processing tasks', async () => {
-  const [drawer, view, api] = await Promise.all([
+test('sync records list sync, upload, and processing tasks in one table', async () => {
+  const [drawer, api] = await Promise.all([
     source('pages/lens/DataSourceDetailDrawer.vue'),
-    source('../backend/lens/views/datasources.py').catch(() => ''),
     source('api/lens.js')
   ])
 
-  assert.match(drawer, /task_type: taskType\.value/)
+  assert.match(drawer, /task_type: 'lens_datasource_all'/)
   assert.match(drawer, /lens_datasource_conversion/)
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.taskTypeProcessing/)
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colTaskType/)
+  assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colFileName/)
   assert.match(drawer, /function taskTypeLabel/)
+  assert.doesNotMatch(drawer, /taskTypeOptions|watch\(taskType/)
   assert.match(api, /task_type/)
 })
