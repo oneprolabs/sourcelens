@@ -1,0 +1,7 @@
+type: fix
+audience: user
+en: >-
+  Isolated the last-opened chat session and agent-rounds setting per browser
+  tab, so a new tab no longer jumps to the session another tab was viewing.
+zh-CN: >-
+  将最近打开的会话与 Agent 轮次设置隔离到各浏览器标签页，新开标签页不再跳到其他标签页正在查看的会话。
