@@ -234,6 +234,7 @@ def test_plugin_sync_does_not_fallback_to_legacy_credentials(monkeypatch):
         ai_gateway_url="http://gateway/api/lens/lensnode/ai-gateway/",
         token="node-token",
         workspace_path="/workspace",
+        git_max_bytes=1024 * 1024 * 1024,
     )
     client.gateway_http_client = object()
     monkeypatch.setattr(
@@ -376,6 +377,7 @@ def test_plugin_sync_reports_cancellation(monkeypatch):
         ai_gateway_url="http://gateway/api/lens/lensnode/ai-gateway/",
         token="node-token",
         workspace_path="/workspace",
+        git_max_bytes=1024 * 1024 * 1024,
     )
     client.gateway_http_client = object()
     monkeypatch.setattr(
@@ -465,6 +467,7 @@ def test_gitlab_plugin_sync_builds_git_command_from_snapshot(monkeypatch):
         ai_gateway_url="http://gateway/api/lens/lensnode/ai-gateway/",
         token="node-token",
         workspace_path="/workspace",
+        git_max_bytes=1024 * 1024 * 1024,
     )
     client.gateway_http_client = object()
     monkeypatch.setattr(

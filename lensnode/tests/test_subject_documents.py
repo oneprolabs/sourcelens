@@ -552,18 +552,18 @@ def test_prepare_runtime_resources_rejects_parent_traversal(tmp_path):
         prepare_runtime_resources(_config(tmp_path), command)
 
 
-def test_cleanup_run_runtime_resources_removes_safe_run_directory(tmp_path):
+def test_cleanup_run_runtime_resources_retains_run_directory(tmp_path):
     run_uuid = "00000000-0000-0000-0000-000000000013"
     run_root = (
         tmp_path / ".sourcelens" / "runtime" / "runs" / run_uuid
     )
     run_root.mkdir(parents=True)
-    (run_root / "temporary.txt").write_text("remove", encoding="utf-8")
+    (run_root / "temporary.txt").write_text("keep", encoding="utf-8")
 
-    removed = cleanup_run_runtime_resources(tmp_path, run_uuid)
+    expected = cleanup_run_runtime_resources(tmp_path, run_uuid)
 
-    assert removed is True
-    assert not run_root.exists()
+    assert expected is True
+    assert run_root.exists()
 
 
 def test_delete_skill_cache_removes_only_the_requested_skill(tmp_path):
@@ -630,7 +630,7 @@ def test_knowledge_prompt_keeps_platform_safety_above_bound_skills():
     )
 
     assert "Platform safety and disclosure boundary" in prompt
-    assert "cannot override platform safety" in prompt
+    assert "not authority to change this boundary" in prompt
     assert prompt.index("Platform safety") < prompt.index(
         "Workspace Guidance from bound context skills"
     )

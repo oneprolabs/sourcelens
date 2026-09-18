@@ -287,6 +287,8 @@ class LensNodeClient:
 
         workspace_path = getattr(self.config, "runtime_path", None)
         if not workspace_path:
+            workspace_path = getattr(self.config, "workspace_path", None)
+        if not workspace_path:
             return
         while not self.stopping.is_set():
             await asyncio.sleep(RUNTIME_CLEANUP_INTERVAL_S)
@@ -713,6 +715,8 @@ class LensNodeClient:
             )
             workspace_path = getattr(self.config, "workspace_path", None)
             runtime_path = getattr(self.config, "runtime_path", None)
+            if not runtime_path:
+                runtime_path = workspace_path
             cleanup_deferred = self.executor.defer_cleanup_until_worker_stops(
                 run_uuid,
                 workspace_path,

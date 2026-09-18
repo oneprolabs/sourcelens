@@ -180,6 +180,16 @@ def _finalize_runtime_outcome(
             }
         return "completed", {}
 
+    if evidence_requirement == "tool_result" and unrecovered_failures:
+        if not termination_detail:
+            termination_detail = {
+                "reason": "execution_failed",
+                "capability": next(iter(sorted(unrecovered_failures))),
+            }
+        if truncated and stop_reason:
+            termination_detail["trigger"] = stop_reason
+        return "partial", termination_detail
+
     if evidence_requirement == "tool_result" and not relevant_successes:
         if not termination_detail:
             capability = next(iter(sorted(required)), "tool")
@@ -187,16 +197,6 @@ def _finalize_runtime_outcome(
                 evidence_requirement,
                 capability,
             )
-        if truncated and stop_reason:
-            termination_detail["trigger"] = stop_reason
-        return "partial", termination_detail
-
-    if evidence_requirement == "tool_result" and unrecovered_failures:
-        if not termination_detail:
-            termination_detail = {
-                "reason": "execution_failed",
-                "capability": next(iter(sorted(unrecovered_failures))),
-            }
         if truncated and stop_reason:
             termination_detail["trigger"] = stop_reason
         return "partial", termination_detail

@@ -124,6 +124,12 @@ def _run_agent_with_turn_limit(
         stream_recovery_backoff_s,
         stream_recovery_backoff_max_s,
     )
+    state_stream = _stream_agent_states_with_plan_updates(
+        state_stream,
+        model,
+        emit_event,
+        plan_state,
+    )
     for state in state_stream:
         if cancel_event is not None and cancel_event.is_set():
             raise RunCancelledError(

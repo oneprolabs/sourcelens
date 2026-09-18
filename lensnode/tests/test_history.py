@@ -6,6 +6,7 @@ from typing import ClassVar
 
 import httpx
 import pytest
+from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -123,7 +124,11 @@ def test_general_chat_uses_route_classifier_before_agent_loop(monkeypatch):
     assert state.command["runtime_route"] == "plan_execute"
     assert state.evidence_requirement == "none"
     assert state.required_capabilities == []
-    assert any(event[0] == "workflow.route.selected" for event in events)
+    assert any(
+        event[0] == "deepagents.runtime.stage.done"
+        and event[1].get("stage") == "routing"
+        for event in events
+    )
 
 
 def test_plan_route_requires_initial_plan_before_business_tool():
@@ -131,7 +136,14 @@ def test_plan_route_requires_initial_plan_before_business_tool():
         required_capabilities=["plugin"],
         require_initial_plan=True,
     )
-    assert middleware._requires_initial_plan("github_repository_get") is True
+    tool = SimpleNamespace(
+        name="github_repository_get",
+        metadata={"capability_family": "plugin"},
+    )
+    assert (
+        middleware._requires_initial_plan("github_repository_get", tool)
+        is True
+    )
 
 
 def test_tool_call_budget_accepts_per_run_override():
@@ -1623,7 +1635,7 @@ def test_route_selection_keeps_pure_model_fallback_direct():
     }
 
 
-def test_wrapup_synthesis_uses_a_bounded_non_reasoning_call():
+def test_wrapup_synthesis_uses_a_non_reasoning_call():
     class Model:
         def __init__(self):
             self.options = None
@@ -1645,7 +1657,6 @@ def test_wrapup_synthesis_uses_a_bounded_non_reasoning_call():
     assert answer == "done"
     assert model.options == {
         "runtime_final_synthesis": True,
-        "max_tokens": 4096,
         "reasoning_effort": "none",
     }
 
@@ -5008,7 +5019,8 @@ def test_agent_middleware_includes_runtime_extensions():
         runtime_middleware=(runtime_extension,),
     )
 
-    assert middleware == [runtime_extension]
+    assert isinstance(middleware[0], TodoListMiddleware)
+    assert middleware[1:] == [runtime_extension]
 
 
 def test_agent_middleware_includes_deferred_mcp_filter():
@@ -5020,7 +5032,8 @@ def test_agent_middleware_includes_deferred_mcp_filter():
         mcp_middleware=deferred,
     )
 
-    assert middleware == [deferred]
+    assert isinstance(middleware[0], TodoListMiddleware)
+    assert middleware[1:] == [deferred]
 
 
 def test_fast_subagent_inherits_deferred_mcp_filter():
@@ -5028,7 +5041,8 @@ def test_fast_subagent_inherits_deferred_mcp_filter():
 
     subagent = agent_runtime._fast_subagent(deferred)
 
-    assert subagent["middleware"] == [deferred]
+    assert isinstance(subagent["middleware"][0], TodoListMiddleware)
+    assert subagent["middleware"][1:] == [deferred]
 
 
 def test_fast_subagent_inherits_runtime_extensions():
@@ -5038,7 +5052,8 @@ def test_fast_subagent_inherits_runtime_extensions():
         runtime_middleware=(runtime_extension,),
     )
 
-    assert subagent["middleware"] == [runtime_extension]
+    assert isinstance(subagent["middleware"][0], TodoListMiddleware)
+    assert subagent["middleware"][1:] == [runtime_extension]
 
 
 def test_smart_subagent_routes_through_the_control_plane(monkeypatch):
@@ -6179,7 +6194,6 @@ def test_token_budget_forces_tool_free_wrapup_from_current_evidence():
     assert "Token 调查预算" not in answer
     assert model.invoked_kwargs == {
         "runtime_final_synthesis": True,
-        "max_tokens": 4096,
         "reasoning_effort": "none",
     }
 
@@ -6502,7 +6516,9 @@ def test_simple_general_chat_route_keeps_subagents_disabled(
     )
 
     assert captured["subagents"] == []
-    assert captured["skills"] == ["skills/income"]
+    # skills= is gated on subagent delegation; bound skill bodies reach the
+    # model through the inlined prompt guidance.
+    assert captured["skills"] is None
     assert any(
         isinstance(item, agent_runtime._NoTaskMiddleware)
         and not item.allow_task_tool
