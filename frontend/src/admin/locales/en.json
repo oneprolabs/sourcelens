@@ -1693,6 +1693,7 @@
       "sync": "Sync",
       "refreshAvailability": "Check path",
       "uploadFile": "Upload file",
+      "reprocess": "Reprocess",
       "enableDatasource": "Resume sync",
       "disableDatasource": "Pause sync",
       "disableUpload": "Disable uploads",
@@ -2281,7 +2282,10 @@
       "datasourceDisabled": "Data source is disabled; sync cannot start",
       "syncCancelled": "Sync task cancelled",
       "syncCancelFailed": "Failed to cancel sync task",
-      "availabilityRefreshed": "Path availability refreshed"
+      "availabilityRefreshed": "Path availability refreshed",
+      "reprocessConfirm": "Reprocess this data source with its current processing policy? Files already converted with the same policy are skipped.",
+      "reprocessStarted": "Processing task triggered",
+      "reprocessFailed": "Failed to trigger processing task"
     },
     "visibility": {
       "public": "Public",

@@ -617,6 +617,14 @@ export async function syncDataSource(uuid, payload = {}) {
   return unwrapResponse(response)
 }
 
+export async function convertDataSource(uuid, payload = {}) {
+  const response = await api.post(
+    `/lens/admin/datasources/${uuid}/convert/`,
+    payload
+  )
+  return unwrapResponse(response)
+}
+
 export async function setDataSourceEnabled(uuid, enabled) {
   const response = await api.post(
     `/lens/admin/datasources/${uuid}/set-enabled/`,

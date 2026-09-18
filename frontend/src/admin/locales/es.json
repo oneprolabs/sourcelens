@@ -1693,6 +1693,7 @@
       "sync": "Sincronizar",
       "refreshAvailability": "Comprobar ruta",
       "uploadFile": "Subir archivo",
+      "reprocess": "Reprocesar",
       "enableDatasource": "Habilitar",
       "disableDatasource": "Desactivar",
       "disableUpload": "Desactivar cargas",
@@ -2281,7 +2282,10 @@
       "datasourceDisabled": "La fuente de datos está deshabilitada; la sincronización no puede iniciarse",
       "syncCancelled": "Tarea de sincronización cancelada",
       "syncCancelFailed": "No se pudo cancelar la tarea de sincronización",
-      "availabilityRefreshed": "Disponibilidad de la ruta actualizada"
+      "availabilityRefreshed": "Disponibilidad de la ruta actualizada",
+      "reprocessConfirm": "¿Reprocesar esta fuente de datos con su política de procesamiento actual? Los archivos ya convertidos con la misma política se omitirán.",
+      "reprocessStarted": "Tarea de procesamiento iniciada",
+      "reprocessFailed": "No se pudo iniciar la tarea de procesamiento"
     },
     "visibility": {
       "public": "Público",

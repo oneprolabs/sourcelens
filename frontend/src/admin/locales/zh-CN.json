@@ -1691,6 +1691,7 @@
       "sync": "同步",
       "refreshAvailability": "检查路径",
       "uploadFile": "上传文件",
+      "reprocess": "重新处理",
       "enableDatasource": "恢复同步",
       "disableDatasource": "暂停同步",
       "disableUpload": "停用上传",
@@ -2279,7 +2280,10 @@
       "datasourceDisabled": "数据源已禁用，不能触发同步",
       "syncCancelled": "同步任务已取消",
       "syncCancelFailed": "同步任务取消失败",
-      "availabilityRefreshed": "路径可用性已刷新"
+      "availabilityRefreshed": "路径可用性已刷新",
+      "reprocessConfirm": "使用当前处理策略重新处理该数据源？已按相同策略处理完成的文件会被跳过。",
+      "reprocessStarted": "处理任务已触发",
+      "reprocessFailed": "触发处理任务失败"
     },
     "visibility": {
       "public": "公开",

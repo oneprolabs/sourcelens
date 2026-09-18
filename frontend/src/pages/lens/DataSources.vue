@@ -327,6 +327,15 @@
                   >
                     {{ t('lensAdmin.actions.uploadFile') }}
                   </BaseButton>
+                  <BaseButton
+                    v-if="!isSyncableSourceType(row.source_type)"
+                    size="sm"
+                    variant="outline"
+                    :disabled="!isDataSourceEnabled(row)"
+                    @click="reprocess(row)"
+                  >
+                    {{ t('lensAdmin.actions.reprocess') }}
+                  </BaseButton>
                   <RowActions :row="row" @edit="startEdit" @delete="remove" />
                 </div>
               </div>
@@ -421,6 +430,7 @@ import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import {
   cancelDataSourceSync,
   checkLensNodeDataSourcePath,
+  convertDataSource,
   createDataSource,
   deleteDataSource,
   getConnectionResources,
@@ -2325,6 +2335,29 @@ async function sync(row) {
     showError(
       lensNodeErrorMessage(error.response?.data?.detail, t) ||
         extractErrorMessage(error, t('lensAdmin.messages.syncFailed'))
+    )
+  }
+}
+
+async function reprocess(row) {
+  if (!isDataSourceEnabled(row)) {
+    showError(t('lensAdmin.messages.datasourceDisabled'))
+    return
+  }
+  if (!window.confirm(t('lensAdmin.messages.reprocessConfirm'))) return
+  try {
+    const result = await convertDataSource(row.uuid)
+    const taskId = result?.task_id || ''
+    showSuccess(
+      taskId
+        ? `${t('lensAdmin.messages.reprocessStarted')} (${taskId})`
+        : t('lensAdmin.messages.reprocessStarted')
+    )
+    await load()
+  } catch (error) {
+    showError(
+      lensNodeErrorMessage(error.response?.data?.detail, t) ||
+        extractErrorMessage(error, t('lensAdmin.messages.reprocessFailed'))
     )
   }
 }
