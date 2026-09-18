@@ -2291,7 +2291,9 @@
       "syncCancelled": "Tarea de sincronización cancelada",
       "syncCancelFailed": "No se pudo cancelar la tarea de sincronización",
       "availabilityRefreshed": "Disponibilidad de la ruta actualizada",
+      "reprocessTitle": "Reprocesar fuente de datos",
       "reprocessConfirm": "¿Reprocesar esta fuente de datos con su política de procesamiento actual? Los archivos ya convertidos con la misma política se omitirán.",
+      "reprocessConfirmAction": "Reprocesar",
       "reprocessStarted": "Tarea de procesamiento iniciada",
       "reprocessFailed": "No se pudo iniciar la tarea de procesamiento"
     },

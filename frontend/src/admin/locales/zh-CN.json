@@ -2289,7 +2289,9 @@
       "syncCancelled": "同步任务已取消",
       "syncCancelFailed": "同步任务取消失败",
       "availabilityRefreshed": "路径可用性已刷新",
+      "reprocessTitle": "重新处理数据源",
       "reprocessConfirm": "使用当前处理策略重新处理该数据源？已按相同策略处理完成的文件会被跳过。",
+      "reprocessConfirmAction": "重新处理",
       "reprocessStarted": "处理任务已触发",
       "reprocessFailed": "触发处理任务失败"
     },

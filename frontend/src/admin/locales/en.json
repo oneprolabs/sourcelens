@@ -2291,7 +2291,9 @@
       "syncCancelled": "Sync task cancelled",
       "syncCancelFailed": "Failed to cancel sync task",
       "availabilityRefreshed": "Path availability refreshed",
+      "reprocessTitle": "Reprocess data source",
       "reprocessConfirm": "Reprocess this data source with its current processing policy? Files already converted with the same policy are skipped.",
+      "reprocessConfirmAction": "Reprocess",
       "reprocessStarted": "Processing task triggered",
       "reprocessFailed": "Failed to trigger processing task"
     },

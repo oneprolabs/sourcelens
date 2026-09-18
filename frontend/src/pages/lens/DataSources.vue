@@ -403,6 +403,41 @@
         @toggle-enabled="toggleDataSourceEnabled"
         @upload="openUpload"
       />
+
+      <BaseModal
+        :show="Boolean(reprocessConfirmRow)"
+        :title="t('lensAdmin.messages.reprocessTitle')"
+        icon-type="warning"
+        :close-on-backdrop="!reprocessing"
+        @close="closeReprocessConfirmation"
+      >
+        <p class="text-sm text-ink-600">
+          {{ t('lensAdmin.messages.reprocessConfirm') }}
+        </p>
+        <p
+          v-if="reprocessConfirmRow"
+          class="mt-2 text-sm font-medium text-ink-900"
+        >
+          {{ reprocessConfirmRow.name }}
+        </p>
+        <template #footer>
+          <BaseButton
+            variant="primary"
+            :loading="reprocessing"
+            @click="confirmReprocess"
+          >
+            {{ t('lensAdmin.messages.reprocessConfirmAction') }}
+          </BaseButton>
+          <BaseButton
+            variant="outline"
+            class="mr-3"
+            :disabled="reprocessing"
+            @click="closeReprocessConfirmation"
+          >
+            {{ t('common.cancel') }}
+          </BaseButton>
+        </template>
+      </BaseModal>
     </div>
   </AdminLayout>
 </template>
@@ -449,6 +484,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { pluginDisplayName } from '@/utils/pluginI18n'
@@ -510,6 +546,8 @@ const pluginIconUrls = ref({})
 const llmConfigOptions = ref([])
 const selectedDataSource = ref(null)
 const uploadTarget = ref(null)
+const reprocessConfirmRow = ref(null)
+const reprocessing = ref(false)
 const pendingUploadFiles = ref([])
 const uploadBaselineNames = ref([])
 const uploadFileInput = ref(null)
@@ -2358,12 +2396,23 @@ async function sync(row) {
   }
 }
 
-async function reprocess(row) {
+function reprocess(row) {
   if (!isDataSourceEnabled(row)) {
     showError(t('lensAdmin.messages.datasourceDisabled'))
     return
   }
-  if (!window.confirm(t('lensAdmin.messages.reprocessConfirm'))) return
+  reprocessConfirmRow.value = row
+}
+
+function closeReprocessConfirmation() {
+  if (reprocessing.value) return
+  reprocessConfirmRow.value = null
+}
+
+async function confirmReprocess() {
+  const row = reprocessConfirmRow.value
+  if (!row || reprocessing.value) return
+  reprocessing.value = true
   try {
     const result = await convertDataSource(row.uuid)
     const taskId = result?.task_id || ''
@@ -2372,12 +2421,15 @@ async function reprocess(row) {
         ? `${t('lensAdmin.messages.reprocessStarted')} (${taskId})`
         : t('lensAdmin.messages.reprocessStarted')
     )
+    reprocessConfirmRow.value = null
     await load()
   } catch (error) {
     showError(
       lensNodeErrorMessage(error.response?.data?.detail, t) ||
         extractErrorMessage(error, t('lensAdmin.messages.reprocessFailed'))
     )
+  } finally {
+    reprocessing.value = false
   }
 }
 

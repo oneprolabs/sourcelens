@@ -23,6 +23,22 @@ test('datasource detail drawer reprocesses any source with the stored policy', a
   assert.match(page, /@reprocess="reprocess"/)
   assert.match(page, /convertDataSource/)
   assert.match(page, /lensAdmin\.messages\.reprocessConfirm/)
+  assert.doesNotMatch(page, /window\.confirm/)
+})
+
+test('reprocess uses a modal confirmation instead of a native prompt', async () => {
+  const page = await source('pages/lens/DataSources.vue')
+
+  assert.match(
+    page,
+    /import BaseModal from '@\/components\/ui\/BaseModal\.vue'/
+  )
+  assert.match(page, /reprocessConfirmRow/)
+  assert.match(page, /:show="Boolean\(reprocessConfirmRow\)"/)
+  assert.match(page, /lensAdmin\.messages\.reprocessTitle/)
+  assert.match(page, /lensAdmin\.messages\.reprocessConfirmAction/)
+  assert.match(page, /async function confirmReprocess/)
+  assert.match(page, /function closeReprocessConfirmation/)
 })
 
 test('sync records list sync, upload, and processing tasks in one table', async () => {
