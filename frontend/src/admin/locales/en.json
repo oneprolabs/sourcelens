@@ -1682,7 +1682,12 @@
         "statFolders": "Folders",
         "statFiles": "Files",
         "openInTaskManager": "Open in task manager",
-        "colTaskName": "Task Name"
+        "colTaskName": "Task Name",
+        "colTaskType": "Type",
+        "taskType": "Task type",
+        "taskTypeSync": "Sync",
+        "taskTypeUpload": "Upload",
+        "taskTypeProcessing": "Processing"
       }
     },
     "actions": {

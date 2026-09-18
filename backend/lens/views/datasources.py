@@ -71,6 +71,12 @@ from rest_framework.response import Response
 
 from .base import BaseAdminViewSet
 
+DATASOURCE_TASK_TYPES = (
+    "lens_datasource",
+    "lens_datasource_upload",
+    "lens_datasource_conversion",
+)
+
 
 def _finalize_datasource_cancellation(task, datasource, reason, user=None):
     """Terminate a datasource task locally and immediately.
@@ -990,7 +996,7 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["get"], url_path="sync-tasks")
     def sync_tasks(self, request, uuid=None):
-        """List sync task executions for this datasource (paginated)."""
+        """List sync and conversion task executions for this datasource."""
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.adapters.django.serializers import (
@@ -998,7 +1004,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
         datasource = self.get_object()
-        module = (
+        sync_module = (
             "lens_datasource_upload"
             if (
                 datasource.source_type == DataSource.SourceType.UPLOAD
@@ -1006,6 +1012,8 @@ class DataSourceViewSet(BaseAdminViewSet):
             )
             else "lens_datasource"
         )
+        task_type = str(request.query_params.get("task_type") or "").strip()
+        module = task_type if task_type in DATASOURCE_TASK_TYPES else sync_module
         queryset = (
             TaskExecution.objects.filter(
                 module=module,
@@ -1029,17 +1037,16 @@ class DataSourceViewSet(BaseAdminViewSet):
             .order_by("-created_at")
         )
         page = self.paginate_queryset(queryset)
+        serializer_args = {
+            "many": True,
+            "context": {"request": request},
+        }
         if page is not None:
-            serializer = TaskExecutionListSerializer(
-                page,
-                many=True,
-                context={"request": request},
-            )
+            serializer = TaskExecutionListSerializer(page, **serializer_args)
             return self.get_paginated_response(serializer.data)
         serializer = TaskExecutionListSerializer(
             queryset,
-            many=True,
-            context={"request": request},
+            **serializer_args,
         )
         return Response(serializer.data)
 

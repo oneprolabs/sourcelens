@@ -1680,7 +1680,12 @@
         "statFolders": "目录",
         "statFiles": "文件",
         "openInTaskManager": "在任务管理中打开",
-        "colTaskName": "任务名称"
+        "colTaskName": "任务名称",
+        "colTaskType": "类型",
+        "taskType": "任务类型",
+        "taskTypeSync": "同步",
+        "taskTypeUpload": "上传",
+        "taskTypeProcessing": "处理"
       }
     },
     "actions": {

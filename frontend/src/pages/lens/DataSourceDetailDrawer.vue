@@ -313,15 +313,29 @@
         </DrawerSection>
       </div>
       <div v-show="activeTab === 'details'" class="space-y-6">
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="text-sm text-ink-600">
+            {{ t('lensAdmin.datasourceDetail.details.taskType') }}
+          </label>
+          <BaseSelect v-model="taskType" class="w-44 text-sm">
+            <option
+              v-for="option in taskTypeOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </BaseSelect>
+        </div>
         <div
           class="relative overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
         >
           <ul class="divide-y divide-line bg-surface">
             <li
-              class="hidden grid-cols-[1fr_140px_100px_100px_80px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
+              class="hidden grid-cols-[100px_140px_100px_100px_80px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-center text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
             >
               <span>{{
-                t('lensAdmin.datasourceDetail.details.colTaskName')
+                t('lensAdmin.datasourceDetail.details.colTaskType')
               }}</span>
               <span>{{
                 t('lensAdmin.datasourceDetail.details.colStartedAt')
@@ -370,15 +384,17 @@
                   @click="toggleTaskExpand(task)"
                 >
                   <div class="flex items-start justify-between gap-3">
-                    <span
-                      class="min-w-0 flex-1 truncate text-sm font-medium text-ink-900"
-                      :title="task.task_name"
-                    >
-                      {{ task.task_name || '-' }}
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="block truncate text-sm font-medium text-ink-900"
+                      >
+                        {{ taskTypeLabel(task) }}
+                      </span>
                       <span
                         v-if="task.metadata?.filename"
-                        class="font-normal text-ink-500"
-                        >· {{ task.metadata.filename }}</span
+                        class="block truncate text-xs text-ink-500"
+                        :title="task.metadata.filename"
+                        >{{ task.metadata.filename }}</span
                       >
                     </span>
                     <div class="flex shrink-0 items-center gap-2">
@@ -422,7 +438,7 @@
                   </dl>
                 </div>
                 <div
-                  class="hidden grid-cols-[1fr_140px_100px_100px_80px_24px] items-center gap-3 px-4 py-2 text-center text-sm sm:grid"
+                  class="hidden grid-cols-[100px_140px_100px_100px_80px_24px] items-center gap-3 px-4 py-2 text-center text-sm sm:grid"
                   :class="
                     tasksLoading
                       ? 'cursor-not-allowed opacity-60'
@@ -430,15 +446,13 @@
                   "
                   @click="toggleTaskExpand(task)"
                 >
-                  <span
-                    class="truncate text-left text-sm font-medium text-ink-900"
-                    :title="task.task_name"
-                  >
-                    {{ task.task_name || '-' }}
+                  <span class="truncate text-left text-sm text-ink-700">
+                    {{ taskTypeLabel(task) }}
                     <span
                       v-if="task.metadata?.filename"
-                      class="font-normal text-ink-500"
-                      >· {{ task.metadata.filename }}</span
+                      class="block truncate font-normal text-ink-500"
+                      :title="task.metadata.filename"
+                      >{{ task.metadata.filename }}</span
                     >
                   </span>
                   <span
@@ -741,6 +755,23 @@ const isUploadDatasource = computed(
     props.datasource?.source_type === 'upload' ||
     props.datasource?.plugin_key === 'file_upload'
 )
+const syncTaskType = computed(() =>
+  isUploadDatasource.value ? 'lens_datasource_upload' : 'lens_datasource'
+)
+const taskTypeOptions = computed(() => [
+  {
+    value: syncTaskType.value,
+    label: t(
+      isUploadDatasource.value
+        ? 'lensAdmin.datasourceDetail.details.taskTypeUpload'
+        : 'lensAdmin.datasourceDetail.details.taskTypeSync'
+    )
+  },
+  {
+    value: 'lens_datasource_conversion',
+    label: t('lensAdmin.datasourceDetail.details.taskTypeProcessing')
+  }
+])
 const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
 const UPLOAD_STATUS_CLASS = {
   uploading: 'border-warning-200 bg-warning-50 text-warning-700',
@@ -788,6 +819,7 @@ const currentPage = ref(1)
 const totalCount = ref(0)
 const totalPages = ref(1)
 const pageSize = 10
+const taskType = ref('lens_datasource')
 const processingRefreshTimer = ref(null)
 const processingRefreshInFlight = ref(false)
 const tasksLoadInFlight = ref(false)
@@ -984,6 +1016,7 @@ async function loadTasks(options = {}) {
     const params = {
       page: currentPage.value,
       page_size: pageSize,
+      task_type: taskType.value,
       metadata_fields: TASK_METADATA_FIELDS
     }
     const res = await api.get(`/lens/admin/datasources/${uuid}/sync-tasks/`, {
@@ -1121,6 +1154,16 @@ async function loadExpandedTask(id) {
   }
 }
 
+function taskTypeLabel(task) {
+  if (task?.module === 'lens_datasource_conversion') {
+    return t('lensAdmin.datasourceDetail.details.taskTypeProcessing')
+  }
+  if (task?.module === 'lens_datasource_upload') {
+    return t('lensAdmin.datasourceDetail.details.taskTypeUpload')
+  }
+  return t('lensAdmin.datasourceDetail.details.taskTypeSync')
+}
+
 function formatTrigger(task) {
   const trigger = task?.trigger || task?.metadata?.trigger
   if (trigger === 'manual') {
@@ -1150,6 +1193,7 @@ watch(
         const uploadContextKey = `${uuid}:upload`
         if (taskListContextKey.value !== uploadContextKey) {
           taskListContextKey.value = uploadContextKey
+          taskType.value = syncTaskType.value
           currentPage.value = 1
           resetTaskList()
           loadTasks({ silent: true })
@@ -1163,6 +1207,7 @@ watch(
       resetTaskList()
       return
     }
+    taskType.value = syncTaskType.value
     const contextKey = `${uuid}:${tab}`
     if (taskListContextKey.value === contextKey) {
       if (
@@ -1194,6 +1239,19 @@ watch(
   },
   { immediate: true }
 )
+
+watch(taskType, () => {
+  if (activeTab.value !== 'details') return
+  stopProcessingRefresh()
+  taskRequestSeq.value += 1
+  currentPage.value = 1
+  resetTaskList()
+  loadTasks().then((loaded) => {
+    if (loaded && hasProcessingTasks()) {
+      startProcessingRefresh()
+    }
+  })
+})
 
 watch(filesLoadMoreSentinel, observeFilesLoadMoreSentinel)
 

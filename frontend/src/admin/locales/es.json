@@ -1682,7 +1682,12 @@
         "statFolders": "Carpetas",
         "statFiles": "Archivos",
         "openInTaskManager": "Abrir en el gestor de tareas",
-        "colTaskName": "Nombre de la Tarea"
+        "colTaskName": "Nombre de la Tarea",
+        "colTaskType": "Tipo",
+        "taskType": "Tipo de tarea",
+        "taskTypeSync": "Sincronización",
+        "taskTypeUpload": "Subida",
+        "taskTypeProcessing": "Procesamiento"
       }
     },
     "actions": {
