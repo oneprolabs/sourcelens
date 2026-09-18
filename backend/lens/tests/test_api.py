@@ -6363,7 +6363,7 @@ class LensApiTests(TestCase):
         dispatched = apply_async.call_args.kwargs["args"][1]
         self.assertEqual(dispatched, conversion)
 
-    def test_non_managed_datasource_conversion_is_rejected(self):
+    def test_syncable_datasource_conversion_is_accepted(self):
         with patch(
             "lens.views.datasources.datasource_conversion_task.apply_async"
         ) as apply_async:
@@ -6373,12 +6373,8 @@ class LensApiTests(TestCase):
                 format="json",
             )
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(
-            response.data["detail"],
-            "DATASOURCE_CONVERSION_NOT_SUPPORTED",
-        )
-        apply_async.assert_not_called()
+        self.assertEqual(response.status_code, 202, response.data)
+        apply_async.assert_called_once()
 
     def test_managed_workspace_conversion_validates_policy(self):
         datasource = DataSource.objects.create(

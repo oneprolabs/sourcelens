@@ -631,17 +631,9 @@ class DataSourceViewSet(BaseAdminViewSet):
 
     @action(detail=True, methods=["post"])
     def convert(self, request, uuid=None):
-        """Enqueue explicit conversion for a managed workspace."""
+        """Enqueue explicit conversion for a datasource."""
 
         datasource = self.get_object()
-        if datasource.source_type not in (
-            DataSource.SourceType.MANAGED_WORKSPACE,
-            DataSource.SourceType.UPLOAD,
-        ):
-            return Response(
-                {"detail": "DATASOURCE_CONVERSION_NOT_SUPPORTED"},
-                status=status.HTTP_409_CONFLICT,
-            )
         if datasource.status == DataSource.Status.DISABLED:
             return Response(
                 {"detail": "DATASOURCE_DISABLED"},

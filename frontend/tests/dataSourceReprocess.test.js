@@ -5,16 +5,22 @@ import test from 'node:test'
 const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), 'utf8')
 
-test('datasource page reprocesses managed and upload sources with the stored policy', async () => {
-  const [page, api] = await Promise.all([
+test('datasource detail drawer reprocesses any source with the stored policy', async () => {
+  const [page, drawer, api] = await Promise.all([
     source('pages/lens/DataSources.vue'),
+    source('pages/lens/DataSourceDetailDrawer.vue'),
     source('api/lens.js')
   ])
 
   assert.match(api, /export async function convertDataSource/)
   assert.match(api, /datasources\/\$\{uuid\}\/convert\//)
+  assert.match(drawer, /lensAdmin\.actions\.reprocess/)
+  assert.match(drawer, /'reprocess'/)
+  assert.doesNotMatch(
+    drawer,
+    /v-if="isSyncableDatasource"[\s\S]{0,400}reprocess/
+  )
+  assert.match(page, /@reprocess="reprocess"/)
   assert.match(page, /convertDataSource/)
-  assert.match(page, /isSyncableSourceType\(row\.source_type\)/)
-  assert.match(page, /lensAdmin\.actions\.reprocess/)
   assert.match(page, /lensAdmin\.messages\.reprocessConfirm/)
 })

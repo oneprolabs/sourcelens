@@ -641,7 +641,6 @@
     <template v-if="datasource" #footer>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <BaseButton
-          v-if="isSyncableDatasource"
           variant="outline"
           @click="$emit('toggle-enabled', datasource)"
         >
@@ -664,6 +663,12 @@
             :disabled="datasource.status !== 'active'"
             @click="$emit('sync', datasource)"
             >{{ t('lensAdmin.actions.sync') }}</BaseButton
+          >
+          <BaseButton
+            variant="outline"
+            :disabled="datasource.status !== 'active'"
+            @click="$emit('reprocess', datasource)"
+            >{{ t('lensAdmin.actions.reprocess') }}</BaseButton
           >
           <BaseButton variant="primary" @click="$emit('edit', datasource)">
             {{ t('common.edit') }}
@@ -719,6 +724,7 @@ defineEmits([
   'cancel-sync',
   'close',
   'edit',
+  'reprocess',
   'sync',
   'toggle-enabled',
   'upload'

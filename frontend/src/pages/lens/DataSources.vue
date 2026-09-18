@@ -327,15 +327,6 @@
                   >
                     {{ t('lensAdmin.actions.uploadFile') }}
                   </BaseButton>
-                  <BaseButton
-                    v-if="!isSyncableSourceType(row.source_type)"
-                    size="sm"
-                    variant="outline"
-                    :disabled="!isDataSourceEnabled(row)"
-                    @click="reprocess(row)"
-                  >
-                    {{ t('lensAdmin.actions.reprocess') }}
-                  </BaseButton>
                   <RowActions :row="row" @edit="startEdit" @delete="remove" />
                 </div>
               </div>
@@ -405,6 +396,7 @@
         :plugin-icon-urls="pluginIconUrls"
         :lensnodes="lensnodes"
         @cancel-sync="cancelSync"
+        @reprocess="reprocess"
         @close="closeDataSourceDetail"
         @edit="startEdit"
         @sync="sync"
