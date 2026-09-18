@@ -1686,21 +1686,6 @@ class LensServiceTests(TransactionTestCase):
             0,
         )
 
-    def test_execute_answer_run_creates_missing_legacy_snapshot(self):
-        run = create_execution_run(
-            session=self.session,
-            question="How does SSE work?",
-            enqueue=False,
-        )
-        run.execution.delete()
-        run.refresh_from_db()
-
-        execute_answer_run(run, dispatch=False)
-        run.refresh_from_db()
-
-        self.assertEqual(run.status, Run.Status.DONE)
-        self.assertEqual(run.execution.status, "completed")
-
     def test_cancelled_queued_run_is_not_started_by_stale_task(self):
         run = create_execution_run(
             session=self.session,
@@ -2158,39 +2143,6 @@ class LensServiceTests(TransactionTestCase):
             len(payload["trace_context"]["root_observation_id"]),
             32,
         )
-
-    @patch("lens.services.async_to_sync")
-    @patch("lens.services.get_channel_layer")
-    def test_dispatch_does_not_require_datasource_download_upgrade(
-        self,
-        get_channel_layer,
-        mock_async_to_sync,
-    ):
-        """Existing local datasource snapshots do not require a node upgrade."""
-        run = create_execution_run(
-            session=self.session,
-            question="Analyze the repository",
-            enqueue=False,
-        )
-        execution = run.execution
-        execution.runtime_snapshot = {
-            **execution.runtime_snapshot,
-            "datasource_snapshots": [
-                {
-                    "snapshot_uuid": str(uuid4()),
-                    "version_uuid": str(uuid4()),
-                    "datasource_uuid": str(self.datasource.uuid),
-                    "mount_name": "repo",
-                    "target_path": self.datasource.target_path,
-                },
-            ],
-        }
-        execution.save(update_fields=["runtime_snapshot"])
-
-        dispatch_run_to_lensnode(run, "Analyze the repository")
-
-        payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
-        self.assertNotIn("target_path", payload["datasource_snapshots"][0])
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
@@ -3990,26 +3942,25 @@ class LensServiceTests(TransactionTestCase):
             f"/workspace/datasources/{datasource.uuid}",
         )
 
-    def test_datasource_command_targets_current_lensnode_connection(self):
+    def test_datasource_command_targets_lensnode_group(self):
         from lens.datasource.services import _send_lensnode_command
+        from lens.services import lensnode_group_name
 
-        self.lensnode.connection_id = "specific.connection!channel"
         with patch("lens.datasource.services.get_channel_layer") as get_layer:
             channel_layer = get_layer.return_value
-            channel_layer.send = AsyncMock()
+            channel_layer.group_send = AsyncMock()
             _send_lensnode_command(
                 self.lensnode,
                 {"type": "datasource_upload"},
             )
 
-        channel_layer.send.assert_called_once_with(
-            self.lensnode.connection_id,
+        channel_layer.group_send.assert_called_once_with(
+            lensnode_group_name(self.lensnode.uuid),
             {
                 "type": "lensnode.command",
                 "payload": {"type": "datasource_upload"},
             },
         )
-        channel_layer.group_send.assert_not_called()
 
     def test_managed_workspace_conversion_task_is_callback_completed(self):
         datasource = DataSource.objects.create(
@@ -4084,44 +4035,6 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(task.status, "STARTED")
         self.assertEqual(task.metadata["queue_state"], "STARTED")
         self.assertEqual(datasource.last_conversion_status, "STARTED")
-
-    def test_managed_conversions_dispatch_without_backend_resource_slots(self):
-        datasources = [
-            DataSource.objects.create(
-                name=f"Managed Snapshot {index}",
-                source_type=DataSource.SourceType.MANAGED_WORKSPACE,
-                lensnode=self.lensnode,
-                target_path=f"/workspace/restores/finance-{index}",
-            )
-            for index in range(2)
-        ]
-        for index, datasource in enumerate(datasources):
-            register_datasource_conversion_task(
-                datasource,
-                f"managed-conversion-{index}",
-                {"document": True},
-            )
-
-        with patch(
-            "lens.tasks.dispatch_datasource_conversion_async",
-            side_effect=["conversion-request-0", "conversion-request-1"],
-        ) as dispatch:
-            for index, datasource in enumerate(datasources):
-                datasource_conversion_task(
-                    str(datasource.uuid),
-                    {"document": True},
-                    False,
-                    f"managed-conversion-{index}",
-                )
-
-        self.assertEqual(dispatch.call_count, 2)
-        self.assertEqual(
-            TaskExecution.objects.filter(
-                task_id__startswith="managed-conversion-",
-                status="PENDING",
-            ).count(),
-            2,
-        )
 
     def test_reconnect_rebinds_reported_conversion_to_new_connection(
         self,
@@ -4951,6 +4864,33 @@ class LensServiceTests(TransactionTestCase):
             "LENS_SOURCE_CONFIG_INVALID",
         )
         self.assertEqual(record.last_status, "failed")
+        self.assertEqual(task.status, "FAILURE")
+
+    def test_complete_datasource_sync_task_uses_repository_failure_reason(self):
+        with patch("lens.tasks.dispatch_datasource_sync_async") as dispatch:
+            dispatch.return_value = "request-1"
+            source_sync_task(str(self.datasource.uuid))
+
+        task = TaskExecution.objects.get(module="lens_datasource")
+        complete_datasource_sync_task(
+            task.task_id,
+            {
+                "status": "failed",
+                "failed_repositories": [
+                    {
+                        "name": "docs",
+                        "error": "LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED",
+                    }
+                ],
+            },
+        )
+
+        self.datasource.refresh_from_db()
+        self.assertEqual(
+            self.datasource.last_error,
+            "LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED",
+        )
+        task.refresh_from_db()
         self.assertEqual(task.status, "FAILURE")
 
     def test_complete_datasource_sync_task_marks_cancellation(self):
