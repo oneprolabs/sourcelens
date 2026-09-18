@@ -408,6 +408,7 @@
         :show="Boolean(reprocessConfirmRow)"
         :title="t('lensAdmin.messages.reprocessTitle')"
         icon-type="warning"
+        max-width="md"
         :close-on-backdrop="!reprocessing"
         @close="closeReprocessConfirmation"
       >
