@@ -1264,7 +1264,7 @@ function formFromRow(row) {
     credential_configured: !!row.credential_configured,
     connection_uuid: row.connection || '',
     plugin_key: row.plugin_key || '',
-    conversion_document: row.sync_policy?.conversion?.document === true,
+    conversion_document: row.sync_policy?.conversion?.document !== false,
     conversion_document_model_ref:
       row.sync_policy?.conversion?.document_model_ref || '',
     conversion_image: row.sync_policy?.conversion?.image === true,
@@ -1527,12 +1527,18 @@ async function save() {
 }
 
 function buildPayload() {
-  const managedWorkspace = form.value.source_type === 'managed_workspace'
+  const sourceType = normalizedSourceType(form.value.source_type)
+  const managedWorkspace = sourceType === 'managed_workspace'
+  const conversionOnlyPolicy = ['managed_workspace', 'upload'].includes(
+    sourceType
+  )
   const payload = {
     name: form.value.name,
-    source_type: normalizedSourceType(form.value.source_type),
+    source_type: sourceType,
     config: managedWorkspace ? {} : buildDatasourceConfig(),
-    sync_policy: managedWorkspace ? {} : buildDatasourceSyncPolicy(),
+    sync_policy: conversionOnlyPolicy
+      ? buildDatasourceConversionPolicy()
+      : buildDatasourceSyncPolicy(),
     status: form.value.status || 'active',
     credential_uuid: shouldUseDatasourceCredential()
       ? form.value.credential_uuid
@@ -1662,7 +1668,7 @@ function buildDatasourceConfig() {
   return config
 }
 
-function buildDatasourceSyncPolicy() {
+function buildDatasourceConversion() {
   const conversion = {
     document: form.value.conversion_document === true,
     image: form.value.conversion_image === true,
@@ -1710,6 +1716,15 @@ function buildDatasourceSyncPolicy() {
   if (conversion.image && form.value.conversion_vision_model_ref) {
     conversion.vision_model_ref = form.value.conversion_vision_model_ref
   }
+  return conversion
+}
+
+function buildDatasourceConversionPolicy() {
+  return { conversion: buildDatasourceConversion() }
+}
+
+function buildDatasourceSyncPolicy() {
+  const conversion = buildDatasourceConversion()
   if (syncPolicyMode.value === 'crontab') {
     return {
       mode: 'crontab',

@@ -647,7 +647,12 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_DISABLED"},
                 status=status.HTTP_409_CONFLICT,
             )
-        serializer = DataSourceConversionRequestSerializer(data=request.data)
+        payload = dict(request.data)
+        if "conversion" not in payload:
+            stored = (datasource.sync_policy or {}).get("conversion")
+            if stored:
+                payload["conversion"] = stored
+        serializer = DataSourceConversionRequestSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         conversion = serializer.validated_data["conversion"]
         force = serializer.validated_data["force"]

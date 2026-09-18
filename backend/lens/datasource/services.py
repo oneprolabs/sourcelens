@@ -501,7 +501,10 @@ def dispatch_datasource_conversion_async(
         raise DataSourceDispatchError("DATASOURCE_CONVERSION_NOT_SUPPORTED")
     lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
     validate_datasource_lensnode(lensnode)
-    conversion = dict(conversion or {})
+    conversion = {
+        **datasource_conversion_policy(datasource.sync_policy),
+        **dict(conversion or {}),
+    }
     for key, value in datasource_conversion_defaults().items():
         if value and not conversion.get(key):
             conversion[key] = value
