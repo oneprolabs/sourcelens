@@ -3394,6 +3394,18 @@ class LensServiceTests(TransactionTestCase):
             "scanning",
         )
 
+    def test_lensnode_hello_does_not_auto_create_upload_datasource(self):
+        token = issue_lensnode_token(self.lensnode)
+
+        async_to_sync(self._exercise_lensnode_websocket)(token)
+
+        self.assertFalse(
+            DataSource.objects.filter(
+                lensnode=self.lensnode,
+                plugin_key="file_upload",
+            ).exists()
+        )
+
     def test_lensnode_reconnect_rebinds_active_conversion(self):
         datasource = DataSource.objects.create(
             name="Managed Snapshot",
