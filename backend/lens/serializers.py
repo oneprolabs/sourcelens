@@ -2511,7 +2511,7 @@ class DataSourceConversionRequestSerializer(serializers.Serializer):
             conversion.get(key) for key in ["document", "image", "embedded_image"]
         ):
             raise serializers.ValidationError(
-                {"conversion": ("At least one conversion type must be enabled")}
+                {"conversion": "DATASOURCE_CONVERSION_TYPE_REQUIRED"}
             )
         attrs["conversion"] = conversion
         return attrs

@@ -119,7 +119,9 @@
     "datasourceConfigInvalid": "The datasource configuration is invalid. Check it and try again.",
     "datasourceTargetPathInvalid": "The target path is invalid. Check the datasource directory and try again.",
     "datasourceTargetPathRequired": "A target path is required. Configure the datasource directory and try again.",
-    "datasourceGitLayoutMigration": "The Git repository layout requires migration. Sync again or contact an administrator."
+    "datasourceGitLayoutMigration": "The Git repository layout requires migration. Sync again or contact an administrator.",
+    "datasourceConversionTypeRequired": "Enable at least one conversion type (document, image, or embedded image) before starting processing.",
+    "datasourceConversionNotSupported": "This datasource cannot be processed. Check its type and content, then try again."
   },
   "lens": {
     "share": {

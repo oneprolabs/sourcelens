@@ -119,7 +119,9 @@
     "datasourceConfigInvalid": "数据源配置无效，请检查后重试。",
     "datasourceTargetPathInvalid": "目标路径无效，请检查数据源目录后重试。",
     "datasourceTargetPathRequired": "缺少目标路径，请配置数据源目录后重试。",
-    "datasourceGitLayoutMigration": "Git 仓库目录结构需要迁移，请重新同步或联系管理员。"
+    "datasourceGitLayoutMigration": "Git 仓库目录结构需要迁移，请重新同步或联系管理员。",
+    "datasourceConversionTypeRequired": "请至少启用一种转换类型（文档、图片或文档内嵌图片）后再开始处理。",
+    "datasourceConversionNotSupported": "该数据源暂不支持处理，请检查数据源类型与内容后重试。"
   },
   "lens": {
     "share": {

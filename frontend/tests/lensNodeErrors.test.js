@@ -44,3 +44,12 @@ test('falls back when the empty datasource has no resolvable name', () => {
 
   assert.equal(message, 'lensNodeErrors.datasourceUploadRequired')
 })
+
+test('maps a conversion guard to a translated message', () => {
+  const message = lensNodeErrorMessage(
+    'DATASOURCE_CONVERSION_TYPE_REQUIRED',
+    (key) => key
+  )
+
+  assert.equal(message, 'lensNodeErrors.datasourceConversionTypeRequired')
+})
