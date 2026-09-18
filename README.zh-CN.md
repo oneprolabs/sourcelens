@@ -81,7 +81,7 @@ curl -fsSL \
 ```bash
 curl -fsSL \
   https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh \
-  | sudo bash -s -- --channel cn --download-source gitee
+  | sudo bash -s -- --channel cn --download-source gitee --yes
 ```
 
 ### 3. 验证

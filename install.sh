@@ -126,7 +126,7 @@ DOCKER_MIRROR="${SOURCELENS_DOCKER_MIRROR:-}"
 
 HTTPS="${SOURCELENS_HTTPS:-false}"
 ADMIN_USERNAME="${SOURCELENS_ADMIN_USER:-admin}"
-ADMIN_EMAIL="${SOURCELENS_ADMIN_EMAIL:-}"
+ADMIN_EMAIL="${SOURCELENS_ADMIN_EMAIL:-admin@sourcelens.com}"
 ASSUME_YES=0
 [[ "${SOURCELENS_YES:-}" == "1" ]] && ASSUME_YES=1
 FORCE=0
@@ -196,7 +196,7 @@ Options:
   -r, --registry REG       Override the application image registry prefix
       --domain HOST        Public hostname / IP (default: auto-detect)
       --admin-user USER    Initial admin username (default: admin)
-      --admin-email EMAIL  Initial admin email (default: admin@<domain>)
+      --admin-email EMAIL  Initial admin email (default: admin@sourcelens.com)
       --https              Configure URLs for HTTPS behind a TLS proxy
       --docker-mirror URL  Configure a Docker Hub registry mirror (linux)
   -y, --yes                Accept install defaults and skip model setup
@@ -465,9 +465,29 @@ detect_download_source() {
 # ---------------------------------------------------------------------------
 # Docker & Docker Compose
 # ---------------------------------------------------------------------------
+docker_missing_message() {
+  cat >&2 <<'EOF'
+ERROR: Docker or Docker Compose V2 is missing.
+
+Install required dependencies:
+
+Ubuntu:
+  sudo apt install -y docker.io docker-compose-v2
+
+CentOS/RHEL:
+  sudo yum install -y docker docker-compose-plugin
+
+Start Docker:
+  sudo systemctl enable --now docker
+
+Then run the installer again.
+EOF
+  exit 1
+}
+
 check_docker() {
   if ! command -v docker >/dev/null 2>&1; then
-    abort "Docker is not installed. Install Docker (https://docs.docker.com/engine/install/) or Docker Desktop, then re-run this installer."
+    docker_missing_message
   fi
   DOCKER_VERSION="$(docker --version 2>/dev/null | sed -n 's/^Docker version \([0-9][0-9.]*\).*/\1/p')"
   log_info "Docker: ${DOCKER_VERSION:-unknown}"
@@ -513,11 +533,11 @@ check_compose() {
   if docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD=(docker compose)
   elif command -v docker-compose >/dev/null 2>&1; then
-    abort "Docker Compose v1 (docker-compose) is installed, but Docker Compose V2 (docker compose) is required: the compose files use V2-only features (top-level 'name' field, 'depends_on.condition' health gating). Install the Compose V2 plugin and re-run."
+    docker_missing_message
   else
-    abort "Docker Compose is not installed. Docker Compose V2 (docker compose) is required; install the plugin and re-run."
+    docker_missing_message
   fi
-  "${COMPOSE_CMD[@]}" version >/dev/null 2>&1 || abort "Docker Compose is not usable"
+  "${COMPOSE_CMD[@]}" version >/dev/null 2>&1 || docker_missing_message
   log_ok "Compose: $("${COMPOSE_CMD[@]}" version | head -n 1)"
 }
 
@@ -552,7 +572,7 @@ configure() {
     [[ -z "${DOMAIN}" ]] && DOMAIN="127.0.0.1"
   fi
   [[ "${DOMAIN}" =~ ^[A-Za-z0-9._:-]+$ ]] || abort "invalid domain/host: ${DOMAIN}"
-  if [[ -z "${ADMIN_EMAIL}" ]]; then ADMIN_EMAIL="admin@${DOMAIN}"; fi
+  if [[ -z "${ADMIN_EMAIL}" ]]; then ADMIN_EMAIL="admin@sourcelens.com"; fi
   if [[ "${HTTPS}" == "true" ]]; then SCHEME="https"; fi
 }
 
@@ -781,7 +801,11 @@ prepare_model_setup_overlay() {
   local command_src="${SOURCE_DIR%/}/${command_rel}"
   local overlay_dir="${INSTALL_DIR}/docker/model-setup"
   local overlay="${INSTALL_DIR}/${MODEL_SETUP_OVERRIDE}"
-  rm -f "${overlay}" "${overlay_dir}/setup_ai_model.py"
+  rm -f "${overlay}" "${overlay_dir}/setup_ai_model.py" \
+    "${overlay_dir}/agione.py" "${overlay_dir}/agione_runtime.py" \
+    "${overlay_dir}/apps.py" "${overlay_dir}/agione_view.py" \
+    "${overlay_dir}/urls.py" "${overlay_dir}/lens_llm.py" \
+    "${overlay_dir}/lens_gateway.py"
   [[ -n "${SOURCE_DIR}" && -f "${command_src}" ]] || return 0
 
   mkdir -p "${overlay_dir}"
@@ -1595,15 +1619,6 @@ configure_ai_model() {
     log_warn "No interactive terminal is available; AI model setup was skipped"
     return 0
   fi
-  # The installer owns the opt-in (default No, plain Enter skips); the wizard
-  # itself then goes straight to provider selection.
-  if ! confirm "Configure a model now?" no; then
-    skip_message="AI model setup skipped; configure it later in the "
-    skip_message+="SourceLens management console"
-    log_warn "${skip_message}"
-    return 0
-  fi
-
   if ! run_model_setup_wizard; then
     log_warn "Interactive AI model setup did not complete"
   fi

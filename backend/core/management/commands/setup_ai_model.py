@@ -27,6 +27,7 @@ from agentcore_metering.adapters.django.services.runtime_config import (
     validate_llm_config,
 )
 
+
 FIELD_LABELS = {
     "api_base": "API endpoint",
     "api_version": "API version",
@@ -79,6 +80,14 @@ class Command(BaseCommand):
         self.stdout.write(
             "SourceLens needs an AI model before assistants can run."
         )
+        if not self._confirm("Configure a model now?", default=True):
+            self.stdout.write(
+                self.style.WARNING(
+                    "AI model setup skipped. You can configure it later in "
+                    "the SourceLens management console."
+                )
+            )
+            return
         self.stdout.write(
             "Press Ctrl+C at any time, or Esc in a menu, to skip."
         )
@@ -258,7 +267,10 @@ class Command(BaseCommand):
         previous = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            char = sys.stdin.read(1)
+            if hasattr(sys.stdin, "buffer"):
+                char = os.read(fd, 1).decode("utf-8", "ignore")
+            else:
+                char = sys.stdin.read(1)
             if char == "\x03":
                 raise KeyboardInterrupt
             if char in {"\r", "\n"}:
@@ -268,10 +280,12 @@ class Command(BaseCommand):
             if char == "\x1b":
                 # Esc alone sends one byte; arrow keys send an ESC-prefixed
                 # burst, so only wait for the rest when it is already there.
-                ready, _, _ = select.select([fd], [], [], 0.05)
-                if not ready:
-                    return "escape"
-                sequence = os.read(fd, 2).decode("utf-8", "ignore")
+                sequence = ""
+                for _ in range(2):
+                    ready, _, _ = select.select([fd], [], [], 0.05)
+                    if not ready:
+                        break
+                    sequence += os.read(fd, 1).decode("utf-8", "ignore")
                 if sequence == "[A":
                     return "up"
                 if sequence == "[B":
@@ -331,22 +345,54 @@ class Command(BaseCommand):
     def _confirm(self, prompt, default):
         """Read a yes/no answer with an explicit default."""
 
-        suffix = " [Yes/no]: " if default else " [yes/No]: "
+        suffix = " [y/n]: "
         while True:
             answer = self._input(prompt + suffix).strip().lower()
             if not answer:
                 return default
-            if answer == "yes":
+            if answer in {"y", "yes"}:
                 return True
-            if answer == "no":
+            if answer in {"n", "no"}:
                 return False
-            self.stdout.write(self.style.WARNING("Enter yes or no."))
+            self.stdout.write(self.style.WARNING("Enter y or n."))
 
     @staticmethod
     def _input(prompt):
-        """Read a non-secret answer from the attached terminal."""
+        """Read a visible answer while allowing Esc to abort immediately."""
 
-        return input(prompt)
+        fd = sys.stdin.fileno()
+        previous = termios.tcgetattr(fd)
+        value = []
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+        try:
+            tty.setraw(fd)
+            while True:
+                char = sys.stdin.read(1)
+                if char in {"\r", "\n"}:
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    return "".join(value)
+                if char == "\x03":
+                    raise KeyboardInterrupt
+                if char == "\x04":
+                    raise EOFError
+                if char == "\x1b":
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    raise SetupAborted
+                if char in {"\x7f", "\b"}:
+                    if value:
+                        value.pop()
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                    continue
+                if char.isprintable():
+                    value.append(char)
+                    sys.stdout.write(char)
+                    sys.stdout.flush()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, previous)
 
     @staticmethod
     def _secret_input(prompt):

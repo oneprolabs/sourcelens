@@ -141,6 +141,18 @@ def test_option_menu_escape_aborts_setup(monkeypatch):
         command._select_option("Providers", ["OpenAI", "Anthropic"])
 
 
+def test_confirm_accepts_y_n_and_defaults_to_yes(monkeypatch):
+    """The setup prompt uses short answers and defaults to yes."""
+
+    answers = iter(["y", "n", ""])
+    monkeypatch.setattr(Command, "_input", lambda self, prompt: next(answers))
+    command = Command(stdout=StringIO())
+
+    assert command._confirm("Configure a model now?", True) is True
+    assert command._confirm("Configure a model now?", True) is False
+    assert command._confirm("Configure a model now?", True) is True
+
+
 def test_read_key_maps_quit_and_escape(monkeypatch):
     """The key reader recognises q as quit and a lone Esc as escape."""
 
@@ -210,3 +222,27 @@ def test_secret_input_displays_masks_and_supports_backspace(monkeypatch):
     assert "abc" not in terminal_output.getvalue()
     assert terminal_output.getvalue().count("*") == 4
     assert restored
+
+
+def test_visible_input_escape_aborts_configuration(monkeypatch):
+    """Esc exits visible text prompts instead of being echoed as ^[."""
+
+    terminal_input = FakeTerminalInput("\x1b")
+    terminal_output = StringIO()
+    monkeypatch.setattr(sys, "stdin", terminal_input)
+    monkeypatch.setattr(sys, "stdout", terminal_output)
+    monkeypatch.setattr(
+        "core.management.commands.setup_ai_model.termios.tcgetattr",
+        lambda fd: [fd],
+    )
+    monkeypatch.setattr(
+        "core.management.commands.setup_ai_model.termios.tcsetattr",
+        lambda fd, when, value: None,
+    )
+    monkeypatch.setattr(
+        "core.management.commands.setup_ai_model.tty.setraw",
+        lambda fd: None,
+    )
+
+    with pytest.raises(SetupAborted):
+        Command._input("API endpoint: ")

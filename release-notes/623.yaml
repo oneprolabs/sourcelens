@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Improved first-run AI model setup with keyboard navigation, immediate Esc
+  cancellation, clearer confirmation prompts, and actionable Docker dependency
+  guidance.
+zh-CN: >-
+  改进首次 AI 模型配置流程，支持键盘导航和 Esc 立即退出，明确确认提示，
+  并提供可操作的 Docker 依赖安装说明。

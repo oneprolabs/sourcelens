@@ -27,7 +27,6 @@ app = Celery("core")
 # The 'namespace="CELERY"' option restricts loading to settings that
 # start with 'CELERY_'. Therefore, all Celery-related settings in
 # 'core/settings.py' must begin with 'CELERY_'.
-logger.info("Loading Celery configuration from Django settings")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
 # Update the result backend to use Django database
