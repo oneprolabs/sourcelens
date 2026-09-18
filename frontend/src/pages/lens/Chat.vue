@@ -2048,7 +2048,7 @@ const question = ref('')
 const AGENT_ROUNDS_STORAGE_KEY = 'lens.chat.agentRounds'
 const agentRounds = ref(
   typeof window !== 'undefined'
-    ? window.localStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
+    ? window.sessionStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
     : ''
 )
 const attachments = ref([])
@@ -2078,7 +2078,7 @@ const sessionCreationInProgress = ref(false)
 
 watch(agentRounds, (value) => {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
+    window.sessionStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
   }
 })
 const streamController = ref(null)

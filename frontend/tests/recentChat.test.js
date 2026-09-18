@@ -74,3 +74,37 @@ test('restore sessions only within the selected assistant accessible list', () =
   assert.equal(pickRecentSession(sessions, recent, 'code'), '')
   assert.equal(pickRecentSession([], recent, 'docs'), '')
 })
+
+test('defaults to sessionStorage so browser windows stay isolated', () => {
+  const localStorage = memoryStorage()
+  const sessionStorage = memoryStorage()
+  const key = 'sourcelens:last-chat:7'
+  localStorage.setItem(
+    key,
+    JSON.stringify({ assistantSlug: 'legacy', sessionUuid: 'old' })
+  )
+
+  const previousWindow = globalThis.window
+  globalThis.window = { localStorage, sessionStorage }
+  try {
+    saveRecentChat({ pk: 7 }, 'current', 'session-7')
+    assert.deepEqual(JSON.parse(sessionStorage.getItem(key)), {
+      assistantSlug: 'current',
+      sessionUuid: 'session-7'
+    })
+    assert.deepEqual(JSON.parse(localStorage.getItem(key)), {
+      assistantSlug: 'legacy',
+      sessionUuid: 'old'
+    })
+    assert.deepEqual(readRecentChat({ pk: 7 }), {
+      assistantSlug: 'current',
+      sessionUuid: 'session-7'
+    })
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalThis.window
+    } else {
+      globalThis.window = previousWindow
+    }
+  }
+})

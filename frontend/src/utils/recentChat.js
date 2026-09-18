@@ -6,7 +6,7 @@ function storageKey(user) {
 
 export function readRecentChat(user, storage) {
   try {
-    storage ||= window.localStorage
+    storage ||= window.sessionStorage
     const key = storageKey(user)
     if (!key) return null
     const value = JSON.parse(storage.getItem(key) || 'null')
@@ -30,7 +30,7 @@ export function readRecentChat(user, storage) {
 
 export function saveRecentChat(user, assistantSlug, sessionUuid = '', storage) {
   try {
-    storage ||= window.localStorage
+    storage ||= window.sessionStorage
     const key = storageKey(user)
     if (!key || !assistantSlug) return
     storage.setItem(key, JSON.stringify({ assistantSlug, sessionUuid }))
