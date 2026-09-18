@@ -1164,6 +1164,18 @@ watch(
     }
     if (tab !== 'details') {
       stopProcessingRefresh()
+      // The basic tab lists original upload files, which are derived from the
+      // upload task history, so keep that loaded even outside the records tab.
+      if (tab === 'basic' && isUploadDatasource.value) {
+        const uploadContextKey = `${uuid}:upload`
+        if (taskListContextKey.value !== uploadContextKey) {
+          taskListContextKey.value = uploadContextKey
+          currentPage.value = 1
+          resetTaskList()
+          loadTasks({ silent: true })
+        }
+        return
+      }
       taskRequestSeq.value += 1
       taskListContextKey.value = ''
       tasksLoadInFlight.value = false

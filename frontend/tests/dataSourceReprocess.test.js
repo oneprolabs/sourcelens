@@ -33,10 +33,24 @@ test('sync records list sync, upload, and processing tasks in one table', async 
 
   assert.match(drawer, /task_type: 'lens_datasource_all'/)
   assert.match(drawer, /lens_datasource_conversion/)
-  assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.taskTypeProcessing/)
+  assert.match(
+    drawer,
+    /lensAdmin\.datasourceDetail\.details\.taskTypeProcessing/
+  )
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colTaskType/)
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colFileName/)
   assert.match(drawer, /function taskTypeLabel/)
   assert.doesNotMatch(drawer, /taskTypeOptions|watch\(taskType/)
   assert.match(api, /task_type/)
+})
+
+test('basic tab keeps upload task history for the original-file list', async () => {
+  const drawer = await source('pages/lens/DataSourceDetailDrawer.vue')
+
+  assert.match(drawer, /originalUploadFiles/)
+  assert.match(drawer, /lensAdmin\.datasourceDetail\.originalFiles/)
+  assert.match(
+    drawer,
+    /tab === 'basic' && isUploadDatasource\.value[\s\S]{0,240}loadTasks/
+  )
 })
