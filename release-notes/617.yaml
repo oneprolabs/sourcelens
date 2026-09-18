@@ -1,0 +1,10 @@
+type: fix
+audience: admin
+en: >-
+  Fixed datasource syncs binding to the wrong LensNode or reporting a generic
+  failure: the executing LensNode and target directory are now saved with the
+  datasource, repository-level error reasons are surfaced, and generated Git
+  metadata no longer counts against the size limit.
+zh-CN: >-
+  修复数据源同步可能绑定到错误的 LensNode 或只报通用失败的问题：现在会随数据源保存实际执行的
+  LensNode 与目标目录，展示仓库级失败原因，且生成的 Git 元数据不再计入大小限制。

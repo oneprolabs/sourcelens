@@ -19,6 +19,8 @@ from .datasource.services import (
     DATASOURCE_UPLOAD_CHUNK_BYTES,
     DATASOURCE_UPLOAD_CHUNK_WINDOW,
     DataSourceDispatchError,
+    DataSourcePathError,
+    datasource_default_target_path,
     datasource_upload_ack_key,
     datasource_upload_ready_key,
     dispatch_datasource_conversion_async,
@@ -892,6 +894,32 @@ def _is_global_task_enabled(task_type, default=True):
     return bool(record.enabled)
 
 
+def _bind_datasource_execution_node(datasource, lensnode):
+    """Persist the LensNode that stores a datasource's runtime content."""
+
+    update_fields = []
+    if datasource.lensnode_id != lensnode.id:
+        datasource.lensnode = lensnode
+        update_fields.append("lensnode")
+    if (
+        not datasource.target_path
+        and datasource.source_type != DataSource.SourceType.MANAGED_WORKSPACE
+    ):
+        try:
+            default_path = datasource_default_target_path(
+                lensnode,
+                datasource.uuid,
+            )
+        except DataSourcePathError:
+            default_path = ""
+        if default_path:
+            datasource.target_path = default_path
+            update_fields.append("target_path")
+    if update_fields:
+        update_fields.append("updated_at")
+        datasource.save(update_fields=update_fields)
+
+
 @shared_task(bind=True, name="lens.source_sync", queue="lens")
 def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     """Celery entrypoint for dispatching datasource sync to a LensNode."""
@@ -1000,6 +1028,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
                     ttl_s=get_datasource_sync_timeout_s(),
                 )
             execution_node = resolve_datasource_lensnode(datasource)
+            _bind_datasource_execution_node(datasource, execution_node)
             if not (task_execution.metadata or {}).get("lensnode_uuid"):
                 TaskTracker.update_task_status(
                     task_id,
@@ -1542,9 +1571,7 @@ def datasource_upload_task(
         )
         _delete_upload_storage(task_metadata)
         return 0
-    if datasource.lensnode_id != execution_node.uuid:
-        datasource.lensnode = execution_node
-        datasource.save(update_fields=["lensnode", "updated_at"])
+    _bind_datasource_execution_node(datasource, execution_node)
     try:
         lock_key = f"lens:datasource-sync:{datasource.uuid}"
         if cache.get(lock_key) != task_id:
@@ -1946,9 +1973,18 @@ def complete_datasource_sync_task(task_id, result):
     status_value = str(result.get("status") or "failed").lower()
     success = status_value == "success"
     cancelled = status_value == "cancelled"
-    error = result.get("error") or (
-        "DATASOURCE_SYNC_CANCELLED" if cancelled else "LENS_SOURCE_SYNC_FAILED"
-    )
+    error = result.get("error")
+    if not error and result.get("failed_repositories"):
+        error = "; ".join(
+            str(item.get("error") or "LENS_SOURCE_SYNC_FAILED")
+            for item in result["failed_repositories"]
+        )
+    if not error:
+        error = (
+            "DATASOURCE_SYNC_CANCELLED"
+            if cancelled
+            else "LENS_SOURCE_SYNC_FAILED"
+        )
     changed = result.get("changed")
     if changed is None:
         changed = result.get("synced")

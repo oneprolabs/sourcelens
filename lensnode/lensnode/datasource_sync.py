@@ -3152,6 +3152,8 @@ def _validate_git_tree_size(target, max_bytes=GIT_MAX_BYTES):
     for path in target.rglob("*"):
         if not path.is_file() or path.is_symlink():
             continue
+        if _is_generated_datasource_path(target, path):
+            continue
         files += 1
         try:
             total_bytes += path.stat().st_size

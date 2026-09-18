@@ -780,6 +780,19 @@ def test_validate_git_tree_size_enforces_file_ceiling(tmp_path, monkeypatch):
         _validate_git_tree_size(target)
 
 
+def test_validate_git_tree_size_ignores_generated_paths(tmp_path):
+    """Git metadata must not count against the resource budget."""
+
+    target = tmp_path / "repo"
+    (target / ".git" / "objects" / "pack").mkdir(parents=True)
+    (target / ".git" / "objects" / "pack" / "pack.pack").write_bytes(
+        b"x" * 4096
+    )
+    (target / "one.txt").write_text("content", encoding="utf-8")
+
+    _validate_git_tree_size(target, max_bytes=1024)
+
+
 def test_git_remote_branches_parses_heads():
     """Remote branch discovery returns branch names."""
 
