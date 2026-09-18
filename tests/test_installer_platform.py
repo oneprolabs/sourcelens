@@ -453,22 +453,17 @@ class InstallerPlatformTests(unittest.TestCase):
                 directory,
             )
 
-    def test_ai_model_setup_prompt_defaults_to_no(self):
+    def test_ai_model_setup_delegates_confirmation_to_wizard(self):
         result = run_installer_function(
             'LOG_FILE=""; ASSUME_YES=0; '
             'model_setup_is_available() { return 0; }; '
             'model_is_configured() { return 1; }; '
             'model_setup_has_terminal() { return 0; }; '
-            'confirm() { printf "CONFIRM:%s default=%s\\n" "$1" "$2"; '
-            'return 1; }; '
             'run_model_setup_wizard() { printf "WIZARD\\n"; }; '
             "configure_ai_model"
         )
 
-        self.assertIn(
-            "CONFIRM:Configure a model now? default=no", result.stdout
-        )
-        self.assertNotIn("WIZARD", result.stdout)
+        self.assertIn("WIZARD", result.stdout)
 
     def test_ai_model_setup_runs_wizard_when_confirmed(self):
         result = run_installer_function(
