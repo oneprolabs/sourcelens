@@ -188,6 +188,32 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
 | `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` | 统一任务管理 |
 | `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` | 飞书通知 |
 
+### LensNode 运行时依赖（deepagents）
+
+`lensnode/` 基于 `deepagents`（精确 pin）+ `langchain` 栈运行 agent loop。
+**运行时契约由 lensnode 自己拥有**，不依赖上游的隐式注入：
+
+- 必需中间件在 `agent_runtime/assembly.py` 显式挂载：主 agent 与
+  general-purpose subagent 都显式加 `TodoListMiddleware`（否则
+  `CapabilityBoundaryMiddleware` 的初始计划门禁会因缺少 `write_todos` 死锁）。
+- 行为与工具规范由 `system_prompts.py::_agent_operating_guidance()` 通过
+  lensnode 自己的 `system_prompt` 注入；**不要**使用上游 `BASE_AGENT_PROMPT`
+  （已弃用、0.9.0 移除），也不要依赖中间件默认 `system_prompt`。
+
+**升级 deepagents 的步骤**：同步放宽 `langchain` / `langchain-core` /
+`langchain-anthropic` 的上界 → `uv lock` / `uv sync` → 跑 lensnode 全量测试。
+`lensnode/tests/test_runtime_contract.py` 是护栏，必须绿：它构建真实 graph，
+断言必需中间件（`TodoListMiddleware`/`FilesystemMiddleware`/`SubAgentMiddleware`）、
+必需工具（`write_todos` 与文件/execute 工具）、system prompt 标记与
+`deepagents` 最低版本。契约失败时应改 lensnode 自有代码，而不是重新依赖上游注入。
+
+> **测试不在 CI 运行**：`.github/workflows/build_and_deploy.yml` 只构建/部署镜像，
+> 不跑 lensnode 测试。升级时需在 `lensnode/` 下手动执行
+> `.venv/bin/python -m pytest`（或 `uv run pytest`）。
+
+决策记录与已知上游变更（0.7 移除项、0.9.0 计划移除等）见
+[`docs/decisions/002-lensnode-runtime-contract.md`](docs/decisions/002-lensnode-runtime-contract.md)。
+
 ### 定时任务机制（Celery Beat）
 
 - **Task 发现**：`core/celery.py` 调用 `app.autodiscover_tasks()`，自动加载所有 INSTALLED_APPS 中各 app 的 `tasks.py`

@@ -1,6 +1,7 @@
 """Deep Agent middleware and subagent assembly."""
 
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
+from langchain.agents.middleware import TodoListMiddleware
 
 from .restrictions import NoTaskMiddleware as _NoTaskMiddleware
 from .system_prompts import _is_general_chat
@@ -19,7 +20,10 @@ def _agent_middleware(
 ):
     """Return task-specific middleware for one Deep Agent run."""
 
-    middleware = []
+    # deepagents 0.7 dropped its default TodoListMiddleware, but the run
+    # depends on the write_todos tool: the capability boundary requires an
+    # initial plan before any business tool. Restore it explicitly.
+    middleware = [TodoListMiddleware()]
     if summarizer is not None:
         middleware.append(summarizer)
     middleware.extend(runtime_middleware)
@@ -65,15 +69,15 @@ def _fast_subagent(
         **GENERAL_PURPOSE_SUBAGENT,
         "system_prompt": parallel + GENERAL_PURPOSE_SUBAGENT["system_prompt"],
     }
-    middleware = [
+    middleware = [TodoListMiddleware()]
+    middleware.extend(
         item
         for item in (
             trace_middleware,
             mcp_middleware,
         )
         if item is not None
-    ]
+    )
     middleware.extend(runtime_middleware)
-    if middleware:
-        subagent["middleware"] = middleware
+    subagent["middleware"] = middleware
     return subagent

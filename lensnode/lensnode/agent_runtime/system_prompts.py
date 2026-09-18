@@ -40,13 +40,43 @@ def _system_prompt(
             "integration may help; matching tools will be available on the "
             "next turn."
         )
-    return prompt
+    return prompt + "\n\n" + _agent_operating_guidance()
 
 
 def _is_general_chat(command):
     """Return whether this command should run as General Chat."""
 
     return command.get("task") == "general_chat"
+
+
+def _agent_operating_guidance():
+    """Return the runtime-owned operating contract for every run mode.
+
+    deepagents 0.7 stopped appending its authored base prompt and the
+    tool-usage prose its middleware used to inject, so LensNode states this
+    guidance directly instead of depending on upstream prompt text that can
+    change or disappear between releases.
+    """
+
+    return (
+        "Operating contract:\n"
+        "- Be concise and direct. Do not open with preamble or restate the "
+        "request; begin with the work or the answer.\n"
+        "- Understand before acting: read the relevant evidence first, then "
+        "act, then verify the result against the request. A first attempt is "
+        "rarely complete, so iterate until the task is genuinely done.\n"
+        "- If an action fails the same way twice, stop and analyze why "
+        "instead of repeating it. When blocked, say what is missing and ask "
+        "one focused question rather than guessing.\n"
+        "- For multi-step work, keep the plan tool updated and give brief "
+        "progress notes between steps.\n"
+        "- When a shell/execute tool is available, prefer the dedicated "
+        "search and file tools over shell find, grep, cat, head, or tail. "
+        "When you do run shell commands, use absolute paths instead of cd, "
+        "join dependent commands with && and independent ones with ; (never "
+        "raw newlines outside quotes), and set an explicit timeout for "
+        "long-running commands.\n"
+    )
 
 
 def _platform_safety_boundary():

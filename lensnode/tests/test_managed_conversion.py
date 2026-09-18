@@ -57,7 +57,7 @@ def test_managed_conversion_writes_sidecars_and_skips_unchanged(
     document = tmp_path / "report.docx"
     original = b"external document bytes"
     document.write_bytes(original)
-    (tmp_path / "notes.csv").write_text("Not a supported document.")
+    (tmp_path / "notes.bin").write_bytes(b"\x00\x01\x02 unsupported")
 
     first = convert_managed_workspace(
         conversion_command(tmp_path),
