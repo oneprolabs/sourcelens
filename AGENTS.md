@@ -102,6 +102,7 @@ docker-compose -f docker-compose.dev.yml up -d
 | `backend-api` | `sourcelens-api-dev` | **自动重载，无需重启** | 改动 Python 代码后 API 自动重启加载 |
 | `backend-worker` | `sourcelens-worker-dev` | **必须手动重启** | Celery worker 不会热加载，任务代码改动后须重启 |
 | `backend-scheduler` | `sourcelens-scheduler-dev` | 同 worker，按需重启 | Celery Beat，调度/任务代码改动后重启 |
+| `lensnode` | `sourcelens-lensnode-dev` | **必须手动重启** | Python 服务，挂载的 `lensnode/lensnode` 不会热加载，代码改动后须重启 |
 
 **唯一需要重启 `backend-api` 的场景**：新增了 migrations 文件并需要作用于
 数据库时，重启容器以执行迁移。
@@ -113,9 +114,12 @@ docker restart sourcelens-api-dev
 # worker / scheduler 代码改动后必须重启
 docker restart sourcelens-worker-dev
 docker restart sourcelens-scheduler-dev
+
+# lensnode 代码改动后必须重启（挂载的 Python 代码不会热加载）
+docker restart sourcelens-lensnode-dev
 ```
 
-> 速记：**改普通代码** → api 自动生效、worker 手动重启；
+> 速记：**改普通代码** → api 自动生效、worker / scheduler / lensnode 手动重启；
 > **加 migration** → 额外重启 api。
 
 ### Docker 生产构建（蓝绿零停机）

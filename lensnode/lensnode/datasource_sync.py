@@ -2550,7 +2550,11 @@ def _sync_git(command, workspace_path, emit):
 
     _validate_git_tree_size(
         target,
-        max_bytes=int(config.get("git_max_bytes", GIT_MAX_BYTES)),
+        max_bytes=int(
+            command.get("git_max_bytes")
+            or config.get("git_max_bytes")
+            or GIT_MAX_BYTES
+        ),
     )
 
     items = _git_manifest_items(
