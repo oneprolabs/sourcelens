@@ -1,0 +1,10 @@
+type: fix
+audience: user
+en: >-
+  Stop auto-creating a file upload datasource for every LensNode; create one
+  from the data source page when you need it.
+zh-CN: >-
+  不再为每个 LensNode 自动创建文件上传数据源；需要时可在数据源页面手动创建。
+es: >-
+  Se dejó de crear automáticamente una fuente de datos de carga para cada
+  LensNode; créala desde la página de fuentes de datos cuando la necesites.
