@@ -1,0 +1,8 @@
+type: fix
+audience: user
+en: >-
+  Runs that reach their token budget now finish with a best-effort answer
+  instead of failing with a gateway error.
+zh-CN: >-
+  达到 token 预算上限的任务现在会基于已有证据给出尽力而为的回答，而不再
+  以网关错误失败。

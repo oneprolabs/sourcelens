@@ -17,9 +17,12 @@ from lensnode.agent_runtime.summarization import (
     build_summarization_middleware,
 )
 from lensnode.gateway_model import (
+    GatewayHTTPError,
     GatewayStreamError,
     LensGatewayChatModel,
     RunCancelledError,
+    RunTokenBudgetBusyError,
+    RunTokenBudgetExhaustedError,
     _message_from_gateway,
     _message_to_gateway,
     describe_image_result,
@@ -1026,6 +1029,123 @@ def test_final_synthesis_is_preserved_when_it_crosses_hard_budget(monkeypatch):
     assert model.stop_reason == "token_capped"
 
 
+def test_gateway_budget_exhausted_409_is_typed(monkeypatch):
+    def handler(_request):
+        return httpx.Response(
+            409,
+            json={
+                "code": "RUN_TOKEN_BUDGET_EXHAUSTED",
+                "detail": "The parent Run token budget has been exhausted.",
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=lambda _content: None,
+    )
+
+    with pytest.raises(RunTokenBudgetExhaustedError) as raised:
+        model._generate([HumanMessage(content="hi")])
+
+    assert raised.value.code == "RUN_TOKEN_BUDGET_EXHAUSTED"
+    assert isinstance(raised.value.__cause__, httpx.HTTPStatusError)
+
+
+def test_gateway_budget_busy_409_is_typed(monkeypatch):
+    def handler(_request):
+        return httpx.Response(
+            409,
+            json={
+                "code": "RUN_TOKEN_BUDGET_BUSY",
+                "detail": "Another model call is reserving this Run budget.",
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=lambda _content: None,
+    )
+
+    with pytest.raises(RunTokenBudgetBusyError) as raised:
+        model._generate([HumanMessage(content="hi")])
+
+    assert raised.value.code == "RUN_TOKEN_BUDGET_BUSY"
+
+
+def test_gateway_http_code_is_preserved_for_other_failures(monkeypatch):
+    def handler(_request):
+        return httpx.Response(
+            502,
+            json={"code": "MODEL_EMPTY_RESPONSE"},
+        )
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=lambda _content: None,
+    )
+
+    with pytest.raises(GatewayHTTPError) as raised:
+        model._generate([HumanMessage(content="hi")])
+
+    assert raised.value.code == "MODEL_EMPTY_RESPONSE"
+    assert raised.value.status_code == 502
+
+
+def test_budget_gates_apply_without_general_chat_gates(monkeypatch):
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": "",
+                    "finish_reason": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_workspace",
+                                "arguments": '{"query":"x"}',
+                            },
+                        }
+                    ],
+                },
+                "usage": {"total_tokens": 110},
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    wrapup_event = threading.Event()
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        general_chat_execution_gates=False,
+        token_budget_gates_enabled=True,
+        token_budget_max_tokens=100,
+        token_budget_final_reserve_tokens=10,
+        token_budget_wrapup_event=wrapup_event,
+    )
+
+    message = model._generate(
+        [HumanMessage(content="hi")]
+    ).generations[0].message
+
+    assert message.tool_calls == []
+    assert message.response_metadata["token_capped"] is True
+    assert wrapup_event.is_set()
+    assert model.stop_reason == "token_capped"
+
+
 def test_repeated_tool_call_set_warns_then_stops(monkeypatch):
     requests = []
 
@@ -1379,10 +1499,14 @@ def test_legacy_runtime_keeps_tool_calls_outside_general_chat_gates(
         )
 
     _install_transport(monkeypatch, handler)
+    # Budget gating is now independent of the General Chat gates. Opting out
+    # of both keeps the legacy pass-through behavior with no cap or wrap-up.
     model = LensGatewayChatModel(
         model_ref="model-ref",
         ai_gateway_url="http://gateway/ai/",
         token="token",
+        general_chat_execution_gates=False,
+        token_budget_gates_enabled=False,
         token_budget_max_tokens=1,
         token_budget_final_reserve_tokens=1,
         token_budget_wrapup_event=wrapup_event,

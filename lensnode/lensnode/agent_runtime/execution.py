@@ -7,7 +7,11 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..agent_tools import SELF_REPORTING_TOOLS
-from ..gateway_model import GatewayStreamError, RunCancelledError
+from ..gateway_model import (
+    GatewayStreamError,
+    RunCancelledError,
+    RunTokenBudgetExhaustedError,
+)
 from .messages import (
     extract_streamed_plan_steps as _extract_streamed_plan_steps,
     extract_final_message as _extract_final_message,
@@ -130,7 +134,16 @@ def _run_agent_with_turn_limit(
         emit_event,
         plan_state,
     )
-    for state in state_stream:
+    budget_exhausted = False
+
+    def _iterate_states():
+        nonlocal budget_exhausted
+        try:
+            yield from state_stream
+        except RunTokenBudgetExhaustedError:
+            budget_exhausted = True
+
+    for state in _iterate_states():
         if cancel_event is not None and cancel_event.is_set():
             raise RunCancelledError(
                 "Run was cancelled; stopping the agent loop."
@@ -196,6 +209,15 @@ def _run_agent_with_turn_limit(
             truncated = True
             truncation_reason = "turn_limit"
             break
+
+    if budget_exhausted:
+        # The gateway rejected the next call at the Run budget cap before
+        # the local reserve fired. Stop issuing calls and synthesize from
+        # the evidence already collected instead of failing the Run.
+        truncated = True
+        truncation_reason = "token_budget_wrapup"
+        if emit_event is not None:
+            emit_event("deepagents.agent.token_budget", {})
 
     answer = _extract_final_message(last_state or {})
     force_wrapup = truncation_reason in {

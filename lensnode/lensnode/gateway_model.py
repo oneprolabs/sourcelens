@@ -99,6 +99,92 @@ class RunCancelledError(RuntimeError):
     code = "RUN_CANCELLED"
 
 
+class RunTokenBudgetExhaustedError(RuntimeError):
+    """Raised when the gateway rejects a call for Run budget exhaustion.
+
+    The parent Run has consumed its whole token budget. The agent loop
+    treats this as a cutoff signal, not a transport failure, so it can
+    synthesize a final answer from the evidence already collected.
+    """
+
+    code = "RUN_TOKEN_BUDGET_EXHAUSTED"
+
+    def __init__(self, detail=""):
+        super().__init__(
+            f"{self.code}: {detail}" if detail else self.code
+        )
+
+
+class RunTokenBudgetBusyError(RuntimeError):
+    """Raised when another model call holds the Run budget reservation."""
+
+    code = "RUN_TOKEN_BUDGET_BUSY"
+
+    def __init__(self, detail=""):
+        super().__init__(
+            f"{self.code}: {detail}" if detail else self.code
+        )
+
+
+class GatewayHTTPError(RuntimeError):
+    """Raised for a gateway HTTP failure that carries a contract code."""
+
+    def __init__(self, status_code, code):
+        self.status_code = status_code
+        self.code = code
+        super().__init__(f"AI gateway HTTP {status_code} ({code})")
+
+
+def _gateway_response_code(response):
+    """Return the bounded contract code from a gateway error body.
+
+    A streamed error response has no buffered content yet, so read it
+    explicitly before parsing; any failure degrades to "no code".
+    """
+
+    try:
+        content = response.content
+    except httpx.ResponseNotRead:
+        try:
+            content = response.read()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+    try:
+        payload = json.loads(content)
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("code") or "")[:128]
+
+
+def _raise_for_gateway_status(response):
+    """Raise a typed error for a gateway HTTP failure response.
+
+    The control plane returns bounded ``{"code", "detail"}`` bodies for
+    its own rejections. Surfacing the code keeps run failures classifiable
+    while avoiding leaking provider text into the run error.
+    """
+
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        code = _gateway_response_code(response)
+        if code == "RUN_TOKEN_BUDGET_EXHAUSTED":
+            raise RunTokenBudgetExhaustedError(
+                "The parent Run token budget has been exhausted."
+            ) from exc
+        if code == "RUN_TOKEN_BUDGET_BUSY":
+            raise RunTokenBudgetBusyError(
+                "Another model call is reserving this Run budget."
+            ) from exc
+        if code:
+            raise GatewayHTTPError(exc.response.status_code, code) from exc
+        raise
+
+
 def _normalize_stream_error(error):
     """Map transient HTTP transport failures to a recoverable stream error."""
 
@@ -220,6 +306,10 @@ class LensGatewayChatModel(BaseChatModel):
     emit_observation: Optional[Any] = None
     observation_name: str = "agent"
     general_chat_execution_gates: bool = False
+    # Budget gating is independent of the General Chat execution gates: the
+    # control plane enforces a Run budget for every task, so the runtime must
+    # be able to wrap up gracefully for knowledge_qa and code_analysis too.
+    token_budget_gates_enabled: bool = True
     token_budget_max_tokens: int = 200000
     token_budget_final_reserve_tokens: int = 40000
     token_budget_warn_ratio: float = 0.8
@@ -774,7 +864,7 @@ class LensGatewayChatModel(BaseChatModel):
                     json=payload,
                     timeout=self.request_timeout_s,
                 )
-                response.raise_for_status()
+                _raise_for_gateway_status(response)
                 data = response.json()
         except Exception as exc:
             self._finish_model_observation(
@@ -880,7 +970,7 @@ class LensGatewayChatModel(BaseChatModel):
                 json={**payload, "stream": True},
                 timeout=self.request_timeout_s,
             ) as response:
-                response.raise_for_status()
+                _raise_for_gateway_status(response)
                 buffer = ""
                 for chunk in response.iter_text():
                     self._check_cancelled()
@@ -1169,7 +1259,7 @@ class LensGatewayChatModel(BaseChatModel):
                 shared_hard_stop = False
             limit = (
                 max(int(self.token_budget_max_tokens or 0), 0)
-                if self.general_chat_execution_gates
+                if self.token_budget_gates_enabled
                 else 0
             )
             warn_ratio = min(
@@ -1187,7 +1277,7 @@ class LensGatewayChatModel(BaseChatModel):
                 and cumulative["total_tokens"] >= work_limit
             )
             hard_stop = (
-                self.general_chat_execution_gates
+                self.token_budget_gates_enabled
                 and (shared_hard_stop or bool(
                 limit and cumulative["total_tokens"] >= limit
                 ))
@@ -1884,7 +1974,7 @@ def describe_image_result(
             json=payload,
             timeout=120,
         )
-        response.raise_for_status()
+        _raise_for_gateway_status(response)
         data = response.json()
     message = data.get("message") or {}
     return {
