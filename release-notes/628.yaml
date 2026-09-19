@@ -1,0 +1,8 @@
+type: fix
+audience: user
+en: >-
+  Markdown code blocks now wrap long lines instead of overflowing, and
+  more languages are syntax-highlighted.
+zh-CN: >-
+  Markdown 代码块现在会自动换行显示长行，不再横向溢出，并支持更多语言
+  的语法高亮。

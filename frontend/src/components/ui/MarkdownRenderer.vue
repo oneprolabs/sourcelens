@@ -16,25 +16,11 @@
 <script setup>
 import { computed } from 'vue'
 import { marked } from 'marked'
-import hljs from 'highlight.js/lib/core'
+import hljs from 'highlight.js/lib/common'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '@/utils/clipboard'
 import { sanitizeHtml, escapeHtml } from '@/utils/sanitize'
 import { renderMindmap } from '@/utils/mindmap'
-
-// Import common languages for syntax highlighting
-import javascript from 'highlight.js/lib/languages/javascript'
-import python from 'highlight.js/lib/languages/python'
-import bash from 'highlight.js/lib/languages/bash'
-import json from 'highlight.js/lib/languages/json'
-import xml from 'highlight.js/lib/languages/xml'
-
-// Register languages
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('xml', xml)
 
 const props = defineProps({
   content: {
@@ -55,18 +41,6 @@ const MINDMAP_ZOOM_STEP = 0.15
 const mindmapPointers = new WeakMap()
 const mindmapState = new WeakMap()
 
-const languageLabels = {
-  bash: 'Bash',
-  javascript: 'JavaScript',
-  js: 'JavaScript',
-  json: 'JSON',
-  python: 'Python',
-  py: 'Python',
-  sh: 'Bash',
-  shell: 'Bash',
-  xml: 'XML'
-}
-
 // Configure marked. marked v16 removed the `highlight` option, so syntax
 // highlighting runs in a custom code renderer instead. Emitting the
 // `hljs` class lets the global highlight.js theme style the block (dark
@@ -77,24 +51,7 @@ renderer.code = ({ text, lang }) => {
   if (declaredLanguage.toLowerCase() === 'mindmap') {
     return renderMindmap(text)
   }
-  const language =
-    props.enableHighlight &&
-    declaredLanguage &&
-    hljs.getLanguage(declaredLanguage)
-      ? declaredLanguage
-      : ''
-  const label = declaredLanguage
-    ? languageLabels[declaredLanguage.toLowerCase()] || declaredLanguage
-    : ''
-  let body
-  try {
-    body = language
-      ? hljs.highlight(text, { language }).value
-      : escapeHtml(text)
-  } catch (err) {
-    body = escapeHtml(text)
-  }
-  const languageClass = language ? ` language-${escapeHtml(language)}` : ''
+  const { body, label, languageClass } = highlightCode(text, declaredLanguage)
   const languageLabel = label
     ? `<span class="markdown-code-language">${escapeHtml(label)}</span>`
     : ''
@@ -109,6 +66,46 @@ renderer.code = ({ text, lang }) => {
     `<pre><code class="hljs${languageClass}">${body}</code></pre>` +
     '</div>'
   )
+}
+
+// Resolve one code block to highlighted HTML, a display label, and the
+// `language-*` class. A declared, registered language is highlighted;
+// everything else stays escaped plain text so no wrong grammar is applied
+// (auto-detection mislabels short snippets often enough to avoid it).
+function highlightCode(text, declaredLanguage) {
+  if (!props.enableHighlight) {
+    return {
+      body: escapeHtml(text),
+      label: declaredLanguage,
+      languageClass: ''
+    }
+  }
+  const registered = declaredLanguage
+    ? hljs.getLanguage(declaredLanguage)
+    : null
+  if (!registered) {
+    return {
+      body: escapeHtml(text),
+      label: declaredLanguage,
+      languageClass: ''
+    }
+  }
+  try {
+    return {
+      body: hljs.highlight(text, {
+        language: declaredLanguage,
+        ignoreIllegals: true
+      }).value,
+      label: registered.name || declaredLanguage,
+      languageClass: ` language-${escapeHtml(declaredLanguage.toLowerCase())}`
+    }
+  } catch (err) {
+    return {
+      body: escapeHtml(text),
+      label: declaredLanguage,
+      languageClass: ''
+    }
+  }
 }
 
 const renderTable = renderer.table.bind(renderer)
@@ -618,15 +615,18 @@ function setMindmapZoom(mindmap, zoom, focusX, focusY) {
 .markdown-content :deep(pre) {
   @apply m-0 max-w-full overflow-x-auto border-0 p-4 text-sm;
   background: #f3f3f3;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   tab-size: 4;
 }
 
 .markdown-content :deep(pre code) {
-  @apply block min-w-full w-max bg-transparent p-0 font-mono;
+  @apply block w-full bg-transparent p-0 font-mono;
   color: #18181b;
-  white-space: pre;
-  word-break: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-content :deep(.markdown-code-block) {
