@@ -36,7 +36,10 @@ from lensnode.agent_runtime.prompts import command_answer_language
 from lensnode.agent_runtime.system_prompts import _smart_collaboration_system_prompt
 from lensnode.checkpoint import CheckpointResumeError, ResumeState
 from lensnode.delegation_events import delegation_events
-from lensnode.gateway_model import GatewayStreamError
+from lensnode.gateway_model import (
+    GatewayStreamError,
+    RunTokenBudgetExhaustedError,
+)
 
 
 def test_runtime_answer_composes_execution_phases(monkeypatch):
@@ -2711,9 +2714,15 @@ def test_knowledge_qa_skips_execution_gates_for_direct_runs(
         options["general_chat_execution_gates"] is False
         for options in model_options
     )
+    # Budget gating is armed for every metered run, independent of the
+    # General Chat execution gates, so knowledge_qa can wrap up gracefully.
+    assert all(
+        options["token_budget_gates_enabled"] is True
+        for options in model_options
+    )
     for options in run_options:
         assert options["wrapup_event"] is None
-        assert options["token_budget_wrapup_event"] is None
+        assert options["token_budget_wrapup_event"] is not None
         assert "capability_stop_event" not in options
         assert options["input_checkpoint_seeded"] is True
         assert options["stream_recovery_attempts"] == 1
@@ -6192,6 +6201,40 @@ def test_token_budget_forces_tool_free_wrapup_from_current_evidence():
     assert "budget synthesis" in answer
     assert "token budget" not in answer.lower()
     assert "Token 调查预算" not in answer
+    assert model.invoked_kwargs == {
+        "runtime_final_synthesis": True,
+        "reasoning_effort": "none",
+    }
+
+
+def test_gateway_budget_exhaustion_forces_tool_free_wrapup():
+    # The gateway can reject the next call at the hard cap before the local
+    # reserve fires (e.g. knowledge_qa runs with no execution gates). That
+    # rejection must become a wrap-up synthesis, not a failed Run.
+    messages = [{"role": "user", "content": "q"}]
+    prefix = [_Msg("human", "q")]
+
+    class _BudgetExhaustedAgent:
+        def stream(self, _inp, stream_mode=None, config=None):
+            state = list(prefix)
+            for index in range(2):
+                state = state + [_Msg("ai", f"finding {index + 1}")]
+                yield {"messages": list(state)}
+            raise RunTokenBudgetExhaustedError("budget exhausted")
+
+    model = _FakeWrapupModel("budget synthesis")
+
+    answer, truncated, termination_reason = _run_agent_with_turn_limit(
+        _BudgetExhaustedAgent(),
+        messages,
+        max_turns=5,
+        model=model,
+        answer_language="English",
+    )
+
+    assert truncated is True
+    assert termination_reason == "token_budget_wrapup"
+    assert "budget synthesis" in answer
     assert model.invoked_kwargs == {
         "runtime_final_synthesis": True,
         "reasoning_effort": "none",

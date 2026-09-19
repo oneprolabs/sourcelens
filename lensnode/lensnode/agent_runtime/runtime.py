@@ -861,10 +861,14 @@ class LensDeepAgentRuntime:
             self.config,
             state.command,
         )
-        budget_gates_enabled = (
+        execution_gates_enabled = (
             state.runtime_mode.execution_gates
             or bool(state.command.get("parent_run_uuid"))
         )
+        # The control plane enforces a token budget for every task, so the
+        # graceful wrap-up reserve must be armed whenever a finite budget is
+        # in effect — not only for General Chat or delegated runs.
+        budget_gates_enabled = bool(state.token_budget["max_tokens"])
         state.token_budget_wrapup_event = (
             threading.Event()
             if budget_gates_enabled
@@ -906,7 +910,8 @@ class LensDeepAgentRuntime:
             trace_context=state.trace_context,
             emit_observation=state.emit_trace_observation,
             observation_name="agent",
-            general_chat_execution_gates=budget_gates_enabled,
+            general_chat_execution_gates=execution_gates_enabled,
+            token_budget_gates_enabled=budget_gates_enabled,
             token_budget_max_tokens=state.token_budget["max_tokens"],
             token_budget_final_reserve_tokens=state.token_budget[
                 "final_reserve_tokens"
