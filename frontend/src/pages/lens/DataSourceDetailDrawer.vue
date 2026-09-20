@@ -692,6 +692,7 @@ import { useI18n } from 'vue-i18n'
 import { format } from 'date-fns'
 
 import api from '@/api'
+import { listDataSourceSyncTasks } from '@/api/lens'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
 import { taskManagementApi } from '@/admin/api/taskManagement'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
@@ -715,7 +716,8 @@ import {
   dataSourceRepositories,
   dataSourceRepositoryUrl,
   isOrganizationDataSource,
-  isDataSourceSyncing
+  isDataSourceSyncing,
+  latestUploadTasksByFilename
 } from './datasourceHelpers'
 import DataSourceFileTree from './components/DataSourceFileTree.vue'
 import { useShortDateTime } from './useShortDateTime'
@@ -748,7 +750,6 @@ const isUploadDatasource = computed(
     props.datasource?.source_type === 'upload' ||
     props.datasource?.plugin_key === 'file_upload'
 )
-const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
 const UPLOAD_STATUS_CLASS = {
   uploading: 'border-warning-200 bg-warning-50 text-warning-700',
   processed: 'border-success-200 bg-success-50 text-success-700'
@@ -760,29 +761,17 @@ function uploadFileStatus(task) {
   return 'processed'
 }
 
-const originalUploadFiles = computed(() => {
-  const latest = new Map()
-  tasks.value.forEach((task) => {
-    const metadata = task?.metadata || {}
-    if (!metadata.filename || metadata.deleted) return
-    if (FAILED_UPLOAD_STATUSES.has(String(task?.status || '').toUpperCase()))
-      return
-    // A deduplicated re-upload changed nothing on disk: keep the original
-    // file's row (and its processing state) instead of a "duplicate" row.
-    if (metadata.duplicate) return
-    // Tasks arrive newest first, so the first surviving row per filename is
-    // the latest real upload; the is_latest_version flag goes stale once a
-    // duplicate re-upload supersedes the task that actually stored the file.
-    if (!latest.has(metadata.filename))
-      latest.set(metadata.filename, {
-        name: metadata.filename,
-        size: Number(metadata.byte_size) || 0,
-        uploadedAt: task.created_at,
-        status: uploadFileStatus(task)
-      })
+const originalUploadFiles = computed(() =>
+  [...latestUploadTasksByFilename(uploadTasks.value).values()].map((task) => {
+    const metadata = task.metadata || {}
+    return {
+      name: metadata.filename,
+      size: Number(metadata.byte_size) || 0,
+      uploadedAt: task.created_at,
+      status: uploadFileStatus(task)
+    }
   })
-  return [...latest.values()]
-})
+)
 
 function formatFileSize(bytes) {
   if (!bytes) return '-'
@@ -800,6 +789,9 @@ const processingRefreshInFlight = ref(false)
 const tasksLoadInFlight = ref(false)
 const taskRequestSeq = ref(0)
 const taskListContextKey = ref('')
+
+const uploadTasks = ref([])
+const uploadTasksRequestSeq = ref(0)
 
 const files = ref([])
 const filesLoading = ref(false)
@@ -972,6 +964,29 @@ function observeFilesLoadMoreSentinel() {
 
 function hasProcessingTasks() {
   return tasks.value.some((task) => isProcessingStatus(task.status))
+}
+
+function resetUploadTasks() {
+  uploadTasksRequestSeq.value += 1
+  uploadTasks.value = []
+}
+
+async function loadUploadTasks() {
+  const requestSeq = uploadTasksRequestSeq.value + 1
+  uploadTasksRequestSeq.value = requestSeq
+  const uuid = props.datasource?.uuid
+  if (!uuid) {
+    uploadTasks.value = []
+    return
+  }
+  try {
+    const list = await listDataSourceSyncTasks(uuid)
+    if (requestSeq !== uploadTasksRequestSeq.value) return
+    uploadTasks.value = list
+  } catch {
+    if (requestSeq !== uploadTasksRequestSeq.value) return
+    uploadTasks.value = []
+  }
 }
 
 async function loadTasks(options = {}) {
@@ -1160,19 +1175,18 @@ watch(
       tasksLoadInFlight.value = false
       tasksLoading.value = false
       resetTaskList()
+      resetUploadTasks()
       return
     }
     if (tab !== 'details') {
       stopProcessingRefresh()
-      // The basic tab lists original upload files, which are derived from the
-      // upload task history, so keep that loaded even outside the records tab.
+      // The basic tab lists the datasource's current upload targets, derived
+      // from the same upload task history the editor uses.
       if (tab === 'basic' && isUploadDatasource.value) {
         const uploadContextKey = `${uuid}:upload`
         if (taskListContextKey.value !== uploadContextKey) {
           taskListContextKey.value = uploadContextKey
-          currentPage.value = 1
-          resetTaskList()
-          loadTasks({ silent: true })
+          loadUploadTasks()
         }
         return
       }

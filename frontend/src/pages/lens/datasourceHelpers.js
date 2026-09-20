@@ -128,3 +128,33 @@ export function isDataSourceSyncing(row) {
 export function isDataSourceEnabled(row) {
   return row?.status !== 'disabled'
 }
+
+const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
+
+export function latestUploadTasksByFilename(tasks) {
+  const latestFiles = new Map()
+  const deletedNames = new Set()
+  ;(Array.isArray(tasks) ? tasks : []).forEach((task) => {
+    const metadata = task?.metadata || {}
+    const name = metadata.filename
+    if (!name || latestFiles.has(name) || deletedNames.has(name)) return
+    // Tasks arrive newest first: the first task per filename is the latest
+    // version. A deleted latest version means the file is gone, so never
+    // fall back to an older upload of the same name.
+    if (metadata.deleted) {
+      deletedNames.add(name)
+      return
+    }
+    // A deduplicated re-upload stored nothing: keep the row (and processing
+    // state) of the upload that actually put the file on disk.
+    if (metadata.duplicate) return
+    // A failed upload stored nothing; fall back to the previous version that
+    // actually stored a file. The is_latest_version flag goes stale after a
+    // deduplicated retry, so rely on ordering instead.
+    if (FAILED_UPLOAD_STATUSES.has(String(task?.status || '').toUpperCase())) {
+      return
+    }
+    latestFiles.set(name, task)
+  })
+  return latestFiles
+}
