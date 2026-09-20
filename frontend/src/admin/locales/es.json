@@ -1440,6 +1440,25 @@
           }
         },
         "datasourceFields": {}
+      },
+      "typesafe": {
+        "displayName": "TypeSafe AI",
+        "description": "Conecta un endpoint de TypeSafe AI System One para exponer decisiones acotadas Noul (sí/no), Choice y Score como herramientas de solo lectura del asistente. Se admite una ruta base, por ejemplo Vercel AI Gateway.",
+        "connectionFields": {
+          "endpoint": {
+            "title": "Endpoint de TypeSafe API",
+            "description": "Endpoint HTTPS de una API System One compatible con TypeSafe. Se permite una ruta base, por ejemplo https://ai-gateway.vercel.sh/typesafe."
+          },
+          "token": {
+            "title": "API Token",
+            "description": "API Token de TypeSafe, o una clave de Vercel AI Gateway al usar el gateway."
+          },
+          "model": {
+            "title": "Modelo Jev",
+            "description": "Versión de modelo fija. Use typesafe-ai/jev para Vercel AI Gateway."
+          }
+        },
+        "datasourceFields": {}
       }
     },
     "connections": {

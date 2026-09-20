@@ -204,6 +204,7 @@ def test_pool_closes_every_origin_client_and_rejects_new_bindings():
     ("github", "https://decision.example/v1/systemone", {"json": {}}),
     ("typesafe", "https://decision.example/admin", {"json": {}}),
     ("typesafe", "https://decision.example/v1/systemone?x=1", {"json": {}}),
+    ("typesafe", "https://decision.example/v1/systemone/extra", {"json": {}}),
     ("typesafe", "https://other.example/v1/systemone", {"json": {}}),
     ("typesafe", "https://decision.example/v1/systemone",
      {"json": {}, "params": {}}),
@@ -245,3 +246,34 @@ def test_decision_post_allows_body_within_the_bounded_size():
     finally:
         pool.close()
     assert [request.url.path for request in seen] == ["/v1/systemone"]
+
+
+def test_decision_post_allows_a_gateway_base_path():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={}, request=request)
+
+    pool = PluginHttpClientPool(
+        timeout=15,
+        verify=True,
+        client_factory=lambda **options: httpx.Client(
+            transport=httpx.MockTransport(handler), **options
+        ),
+    )
+    try:
+        client = pool.bind(
+            "typesafe", "connection-1", ["https://ai-gateway.vercel.sh"]
+        )
+        with client.stream(
+            "POST",
+            "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+            json={"state": "x"},
+        ) as response:
+            assert response.status_code == 200
+    finally:
+        pool.close()
+    assert [request.url.path for request in seen] == [
+        "/typesafe/v1/systemone"
+    ]

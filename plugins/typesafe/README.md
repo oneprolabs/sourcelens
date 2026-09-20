@@ -12,8 +12,11 @@ The Connection form contains three administrator-supplied fields:
 - **API token** — required and stored as an encrypted secret.
 
 The endpoint and model presets remain editable so an administrator can point to
-a compatible gateway or model alias. The runtime removes credentials from
-snapshots and sends only the selected typed question to `/v1/systemone`.
+a compatible gateway or model alias. The endpoint accepts an optional base path
+so a gateway can be targeted; for the Vercel AI Gateway set the endpoint to
+`https://ai-gateway.vercel.sh/typesafe` and the model to `typesafe-ai/jev`. The
+runtime removes credentials from snapshots and sends only the selected typed
+question to `/v1/systemone`.
 
 The tools are:
 

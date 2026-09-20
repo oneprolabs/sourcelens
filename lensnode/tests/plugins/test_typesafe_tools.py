@@ -141,6 +141,30 @@ def test_tools_use_real_pool_and_authorized_snapshot(kind, criteria, answer):
     assert "test-token" not in json.dumps([result, events])
 
 
+def test_gateway_base_path_builds_the_system_one_url():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json=payload())
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = RUNTIME.execute_tool(
+            "typesafe_noul",
+            client,
+            ARGUMENTS,
+            "test-token",
+            "https://ai-gateway.vercel.sh/typesafe",
+            {"model": "typesafe-ai/jev"},
+        )
+    assert result["ok"] is True
+    assert len(seen) == 1
+    assert str(seen[0].url) == (
+        "https://ai-gateway.vercel.sh/typesafe/v1/systemone"
+    )
+    assert json.loads(seen[0].content)["model"] == "typesafe-ai/jev"
+
+
 @pytest.mark.parametrize("status,expected", [
     (401, "ACCESS_DENIED"), (422, "ARGUMENTS_INVALID"),
     (302, "REDIRECT_REJECTED"), (500, "REQUEST_FAILED"),
