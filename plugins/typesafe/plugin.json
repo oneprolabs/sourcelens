@@ -4,7 +4,7 @@
   "protocol_version": 1,
   "capability_family": "plugin",
   "display_name": "TypeSafe AI",
-  "icon": "assets/icon.svg",
+  "icon": "assets/icon.png",
   "description": "Evaluate bounded typed decisions with TypeSafe AI Jev without replacing the primary Agent model.",
   "assistant_guidance": {
     "summary": "Use TypeSafe AI for bounded Noul, Choice, or Score decisions when a structured decision is more reliable than free-form model text.",
@@ -44,7 +44,7 @@
         "type": "string",
         "format": "uri",
         "title": "TypeSafe API endpoint",
-        "description": "HTTPS root endpoint for a TypeSafe-compatible System One API. Preset to the public TypeSafe service.",
+        "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed, for example the Vercel AI Gateway base https://ai-gateway.vercel.sh/typesafe. Preset to the public TypeSafe service.",
         "default": "https://api.typesafe.ai",
         "write_to": "endpoint"
       },
@@ -58,7 +58,7 @@
       "model": {
         "type": "string",
         "title": "Jev model",
-        "description": "Pinned model version used for reproducible decisions.",
+        "description": "Pinned model version used for reproducible decisions. Use typesafe-ai/jev when connecting through the Vercel AI Gateway.",
         "default": "jev-1.13.0",
         "write_to": "config.model"
       }

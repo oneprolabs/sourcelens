@@ -1440,6 +1440,25 @@
           }
         },
         "datasourceFields": {}
+      },
+      "typesafe": {
+        "displayName": "TypeSafe AI",
+        "description": "Evaluate bounded typed decisions with TypeSafe AI Jev without replacing the primary Agent model.",
+        "connectionFields": {
+          "endpoint": {
+            "title": "TypeSafe API endpoint",
+            "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed, for example the Vercel AI Gateway base https://ai-gateway.vercel.sh/typesafe. Preset to the public TypeSafe service."
+          },
+          "token": {
+            "title": "API token",
+            "description": "A TypeSafe API token. It is encrypted after saving and never included in a Run snapshot."
+          },
+          "model": {
+            "title": "Jev model",
+            "description": "Pinned model version used for reproducible decisions. Use typesafe-ai/jev when connecting through the Vercel AI Gateway."
+          }
+        },
+        "datasourceFields": {}
       }
     },
     "connections": {

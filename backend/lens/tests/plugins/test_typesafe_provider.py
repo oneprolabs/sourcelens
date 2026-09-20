@@ -56,11 +56,33 @@ class TypesafeConnectionProviderTests(TestCase):
         )
         for endpoint in (
             "http://api.typesafe.ai",
-            "https://api.typesafe.ai/v1",
+            "https://api.typesafe.ai/v1?x=1",
+            "https://api.typesafe.ai/../v1",
+            "https://user@api.typesafe.ai",
         ):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaises(ValueError):
                     self.provider.validate_connection(endpoint, {})
+
+    def test_accepts_a_base_path_for_gateways(self):
+        for endpoint, expected in (
+            (
+                "https://ai-gateway.vercel.sh/typesafe",
+                "https://ai-gateway.vercel.sh/typesafe",
+            ),
+            (
+                "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+                "https://ai-gateway.vercel.sh/typesafe",
+            ),
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(
+                    self.provider.validate_connection(
+                        endpoint,
+                        {"model": "typesafe-ai/jev"},
+                    ),
+                    expected,
+                )
 
     def test_accepts_manual_model_with_default_preset(self):
         self.assertEqual(

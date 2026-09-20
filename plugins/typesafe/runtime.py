@@ -1,6 +1,7 @@
 """LensNode runtime for the TypeSafe AI decision Plugin."""
 
 import json
+import re
 import time
 from math import isfinite
 from typing import Annotated
@@ -16,17 +17,20 @@ PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "typesafe"
 PLUGIN_VERSION = "1.0.0"
 TYPESAFE_MODEL = "jev-1.13.0"
+TYPESAFE_API_SUFFIX = "/v1/systemone"
 REQUEST_MAX_BYTES = 1_000_000
 RESPONSE_MAX_BYTES = 1_000_000
 MAX_STATE_LENGTH = 100_000
 MAX_INSTRUCTIONS_LENGTH = 2_000
 MAX_CRITERIA_LENGTH = 32_000
+MAX_ENDPOINT_LENGTH = 512
+PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._~-]{1,128}")
 
 
 def http_origins(endpoint):
     """Return the configured origin approved for pooled HTTP."""
 
-    return (_endpoint(endpoint),)
+    return (_origin(_endpoint(endpoint)),)
 
 
 def build_tool(definition, executor):
@@ -219,25 +223,55 @@ def _model(config):
 
 
 def _endpoint(value):
-    """Return the safe HTTPS endpoint or reject the snapshot."""
+    """Return the safe HTTPS base endpoint or reject the snapshot."""
 
+    text = str(value or "").strip()
     try:
-        parsed = urlsplit(str(value or "").strip())
+        parsed = urlsplit(text)
         parsed.port
     except ValueError as exc:
         raise PluginRuntimeError("TYPESAFE_SNAPSHOT_MISMATCH") from exc
-    normalized = urlunsplit((parsed.scheme.lower(), parsed.netloc, "", "", ""))
+    path = _base_path(parsed.path)
     if (
-        parsed.scheme.lower() != "https"
+        len(text) > MAX_ENDPOINT_LENGTH
+        or parsed.scheme.lower() != "https"
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.path not in {"", "/"}
         or parsed.query
         or parsed.fragment
+        or path is None
     ):
         raise PluginRuntimeError("TYPESAFE_SNAPSHOT_MISMATCH")
+    return urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc, path, "", "")
+    )
+
+
+def _base_path(path):
+    """Return a safe base path prefix or None for an invalid path."""
+
+    if path in {"", "/"}:
+        return ""
+    segments = path.strip("/").split("/")
+    if any(
+        not segment
+        or segment in {".", ".."}
+        or PATH_SEGMENT_PATTERN.fullmatch(segment) is None
+        for segment in segments
+    ):
+        return None
+    normalized = "/" + "/".join(segments)
+    if normalized.endswith(TYPESAFE_API_SUFFIX):
+        normalized = normalized[: -len(TYPESAFE_API_SUFFIX)]
     return normalized
+
+
+def _origin(endpoint):
+    """Return the scheme and authority for one canonical endpoint."""
+
+    parsed = urlsplit(endpoint)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def _text(value, maximum):

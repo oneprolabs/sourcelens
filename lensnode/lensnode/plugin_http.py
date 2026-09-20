@@ -116,7 +116,7 @@ class PluginHttpClient:
             self._plugin_key == "typesafe"
             and method == "POST"
             and urlsplit(url_value).scheme == "https"
-            and urlsplit(url_value).path == "/v1/systemone"
+            and urlsplit(url_value).path.endswith("/v1/systemone")
             and not urlsplit(url_value).query
         )
         if method not in {"GET", "HEAD"} and not evaluation:

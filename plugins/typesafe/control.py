@@ -1,6 +1,7 @@
 """Control-plane contracts for the TypeSafe AI decision Plugin."""
 
 import json
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 from lens.plugins.contracts import ToolProviderError
@@ -14,9 +15,12 @@ PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "typesafe"
 PLUGIN_VERSION = "1.0.0"
 TYPESAFE_MODEL = "jev-1.13.0"
+TYPESAFE_API_SUFFIX = "/v1/systemone"
 MAX_STATE_LENGTH = 100_000
 MAX_INSTRUCTIONS_LENGTH = 2_000
 MAX_CRITERIA_LENGTH = 32_000
+MAX_ENDPOINT_LENGTH = 512
+PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._~-]{1,128}")
 
 
 class TypeSafeConnectionProvider(DatasourceProvider):
@@ -88,24 +92,47 @@ class TypeSafeToolProvider:
 
 
 def _parse_endpoint(value, error_type):
-    """Return a canonical HTTPS endpoint or raise the given error."""
+    """Return a canonical HTTPS base endpoint or raise the given error."""
 
+    text = str(value or "").strip()
     try:
-        parsed = urlsplit(str(value or "").strip())
+        parsed = urlsplit(text)
         parsed.port
     except ValueError as exc:
         raise error_type("TYPESAFE_ENDPOINT_INVALID") from exc
-    normalized = urlunsplit((parsed.scheme.lower(), parsed.netloc, "", "", ""))
+    path = _base_path(parsed.path)
     if (
-        parsed.scheme.lower() != "https"
+        len(text) > MAX_ENDPOINT_LENGTH
+        or parsed.scheme.lower() != "https"
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
-        or parsed.path not in {"", "/"}
+        or path is None
     ):
         raise error_type("TYPESAFE_ENDPOINT_INVALID")
+    return urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc, path, "", "")
+    )
+
+
+def _base_path(path):
+    """Return a safe base path prefix or None for an invalid path."""
+
+    if path in {"", "/"}:
+        return ""
+    segments = path.strip("/").split("/")
+    if any(
+        not segment
+        or segment in {".", ".."}
+        or PATH_SEGMENT_PATTERN.fullmatch(segment) is None
+        for segment in segments
+    ):
+        return None
+    normalized = "/" + "/".join(segments)
+    if normalized.endswith(TYPESAFE_API_SUFFIX):
+        normalized = normalized[: -len(TYPESAFE_API_SUFFIX)]
     return normalized
 
 

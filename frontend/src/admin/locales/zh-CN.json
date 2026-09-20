@@ -1438,6 +1438,25 @@
           }
         },
         "datasourceFields": {}
+      },
+      "typesafe": {
+        "displayName": "TypeSafe AI",
+        "description": "连接 TypeSafe AI System One 端点，将 Noul（是/否）、Choice、Score 等有界决策暴露为助手只读工具。支持基础路径，例如 Vercel AI Gateway。",
+        "connectionFields": {
+          "endpoint": {
+            "title": "TypeSafe API 地址",
+            "description": "TypeSafe 兼容 System One API 的 HTTPS 地址。允许包含基础路径，例如 https://ai-gateway.vercel.sh/typesafe。"
+          },
+          "token": {
+            "title": "API Token",
+            "description": "TypeSafe API Token；使用 Vercel AI Gateway 时填写网关 Key。"
+          },
+          "model": {
+            "title": "Jev 模型",
+            "description": "固定使用的模型版本；通过 Vercel AI Gateway 调用时使用 typesafe-ai/jev。"
+          }
+        },
+        "datasourceFields": {}
       }
     },
     "connections": {
