@@ -318,6 +318,22 @@ def register_periodic_tasks():
     )
 
     TASK_REGISTRY.add(
+        name="lens-datasource-upload-dispatch",
+        task="lens.dispatch_pending_uploads",
+        schedule=5,
+        queue="lens",
+        enabled=True,
+    )
+
+    TASK_REGISTRY.add(
+        name="lens-datasource-upload-cleanup",
+        task="lens.cleanup_abandoned_uploads",
+        schedule=3600,
+        queue="lens",
+        enabled=True,
+    )
+
+    TASK_REGISTRY.add(
         name="lens-session-title-timeout",
         task="lens.expire_stale_session_titles",
         schedule=60,
