@@ -87,6 +87,8 @@ from lens.services import (
 from lens.tasks import (
     _datasource_capacity_available,
     _datasource_capacity_slot_key,
+    _format_byte_size,
+    _format_duration,
     _queue_datasource_task,
     _update_upload_task_metadata,
     acquire_datasource_lock,
@@ -5130,7 +5132,7 @@ class LensServiceTests(TransactionTestCase):
         release_datasource_lock(self.datasource.uuid, token="capacity-1")
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
 
-    def test_queue_capacity_is_bounded_under_concurrent_admission(self):
+    def test_queue_never_drops_tasks_when_capacity_is_exhausted(self):
         self.lensnode.labels = {"datasource_sync_capacity": 1}
         self.lensnode.save(update_fields=["labels"])
         task_ids = [f"concurrent-queue-{index}" for index in range(8)]
@@ -5146,15 +5148,10 @@ class LensServiceTests(TransactionTestCase):
                 },
             )
 
-        def queue_task(task_id):
-            close_old_connections()
-            try:
-                return _queue_datasource_task(task_id, "capacity wait")
-            finally:
-                close_old_connections()
-
-        with ThreadPoolExecutor(max_workers=len(task_ids)) as executor:
-            results = list(executor.map(queue_task, task_ids))
+        results = [
+            _queue_datasource_task(task_id, "capacity wait")
+            for task_id in task_ids
+        ]
 
         queued = TaskExecution.objects.filter(
             task_id__in=task_ids,
@@ -5163,11 +5160,25 @@ class LensServiceTests(TransactionTestCase):
         failed = TaskExecution.objects.filter(
             task_id__in=task_ids,
             status="FAILURE",
-            error="DATASOURCE_QUEUE_FULL",
         ).count()
-        self.assertEqual(queued, 4)
-        self.assertEqual(failed, 4)
-        self.assertEqual(sum(results), 4)
+        self.assertEqual(queued, len(task_ids))
+        self.assertEqual(failed, 0)
+        self.assertTrue(all(results))
+
+    def test_format_byte_size_uses_adaptive_units(self):
+        self.assertEqual(_format_byte_size(0), "0 B")
+        self.assertEqual(_format_byte_size(512), "512 B")
+        self.assertEqual(_format_byte_size(2048), "2.0 KB")
+        self.assertEqual(_format_byte_size(12471006), "11.9 MB")
+        self.assertEqual(_format_byte_size(3 * 1024**3), "3.0 GB")
+
+    def test_format_duration_is_compact(self):
+        self.assertEqual(_format_duration(0), "0s")
+        self.assertEqual(_format_duration(45), "45s")
+        self.assertEqual(_format_duration(90), "1m 30s")
+        self.assertEqual(_format_duration(120), "2m")
+        self.assertEqual(_format_duration(3600), "1h")
+        self.assertEqual(_format_duration(5400), "1h 30m")
 
     def test_datasource_capacity_reclaims_revoked_task_slot(self):
         self.lensnode.labels = {"datasource_sync_capacity": 1}
@@ -5227,6 +5238,14 @@ class LensServiceTests(TransactionTestCase):
 
         task.refresh_from_db()
         self.assertEqual(task.status, "SUCCESS")
+        self.assertEqual(
+            task.metadata.get("progress_message_code"),
+            "datasource_upload_completed",
+        )
+        self.assertEqual(
+            task.metadata.get("progress_message"),
+            "Upload completed.",
+        )
         self.assertIsNone(
             cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0))
         )
@@ -5426,6 +5445,10 @@ class LensServiceTests(TransactionTestCase):
         )
         task.refresh_from_db()
         self.assertEqual(task.status, "SUCCESS")
+        self.assertEqual(
+            task.metadata.get("progress_message_code"),
+            "datasource_upload_duplicate",
+        )
 
         updated = _update_upload_task_metadata(
             task.task_id,
@@ -5823,6 +5846,69 @@ class LensServiceTests(TransactionTestCase):
             task.metadata["queue_heartbeat_at"],
             (timezone.now() - timedelta(minutes=1)).isoformat(),
         )
+
+    def test_cleanup_keeps_queued_task_with_live_heartbeat(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "long-queued-upload",
+            "report.zip",
+            metadata={"storage_name": "datasource-uploads/x/report.zip"},
+        )
+        metadata = dict(task.metadata or {})
+        metadata.update(
+            {
+                "admission_state": "QUEUED",
+                "queue_state": "QUEUED",
+                "queue_heartbeat_at": (
+                    timezone.now() - timedelta(minutes=10)
+                ).isoformat(),
+            }
+        )
+        task.metadata = metadata
+        task.created_at = timezone.now() - timedelta(hours=3)
+        task.save(update_fields=["metadata", "created_at"])
+
+        with patch("lens.tasks.datasource_upload_task.apply_async") as requeue:
+            cleanup_stale_datasource_sync_tasks()
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "PENDING")
+        requeue.assert_called_once()
+
+    def test_cleanup_fails_queued_task_with_dead_heartbeat(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "dead-queued-upload",
+            "report.zip",
+            metadata={"storage_name": "datasource-uploads/x/report.zip"},
+        )
+        metadata = dict(task.metadata or {})
+        metadata.update(
+            {
+                "admission_state": "QUEUED",
+                "queue_state": "QUEUED",
+                "queue_heartbeat_at": (
+                    timezone.now() - timedelta(hours=2)
+                ).isoformat(),
+            }
+        )
+        task.metadata = metadata
+        task.created_at = timezone.now() - timedelta(hours=3)
+        task.save(update_fields=["metadata", "created_at"])
+
+        with (
+            patch("lens.tasks.datasource_upload_task.apply_async") as requeue,
+            patch(
+                "lens.services.cancel_datasource_upload_on_lensnode"
+            ) as cancel,
+        ):
+            cleanup_stale_datasource_sync_tasks()
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "DATASOURCE_QUEUE_TIMEOUT")
+        requeue.assert_not_called()
+        cancel.assert_called_once_with(self.lensnode, "dead-queued-upload")
 
     def test_cleanup_fails_queued_task_for_missing_datasource(self):
         task = register_datasource_upload_task(

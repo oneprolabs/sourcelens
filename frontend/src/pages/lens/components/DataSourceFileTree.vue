@@ -4,21 +4,19 @@
       v-for="node in nodes"
       :key="`${node.type}:${node.path}`"
       :node="node"
+      :on-toggle="onToggle"
+      :on-load-more="onLoadMore"
     />
   </ul>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-
-import { buildDataSourceFileTree } from '../dataSourceFileTree'
-
 import DataSourceFileTreeNode from './DataSourceFileTreeNode.vue'
 
-const props = defineProps({
-  files: { type: Array, default: () => [] },
-  ariaLabel: { type: String, default: '' }
+defineProps({
+  nodes: { type: Array, default: () => [] },
+  ariaLabel: { type: String, default: '' },
+  onToggle: { type: Function, default: null },
+  onLoadMore: { type: Function, default: null }
 })
-
-const nodes = computed(() => buildDataSourceFileTree(props.files))
 </script>

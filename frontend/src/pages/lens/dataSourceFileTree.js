@@ -38,7 +38,8 @@ export function buildDataSourceFileTree(files) {
           type: 'directory',
           name,
           path,
-          children: []
+          children: [],
+          loaded: true
         }
         children.push(directory)
       }

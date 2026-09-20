@@ -1884,6 +1884,45 @@ class DataSourceVersionSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _datasource_task_payload(task):
+    """Serialize one datasource task execution for list responses."""
+
+    if task is None:
+        return None
+    metadata = task.metadata or {}
+    return {
+        "id": task.id,
+        "task_id": task.task_id,
+        "task_name": task.task_name,
+        "task_module": task.module,
+        "filename": metadata.get("filename", ""),
+        "status": task.status,
+        "started_at": task.started_at,
+        "created_at": task.created_at,
+        "progress_step": metadata.get("progress_step", ""),
+        "progress_message": metadata.get("progress_message", ""),
+        "progress_message_code": metadata.get("progress_message_code", ""),
+        "progress_percent": metadata.get("progress_percent", None),
+        "phase": metadata.get("phase", ""),
+        "overall_progress_percent": metadata.get(
+            "overall_progress_percent", None
+        ),
+        "phase_progress": metadata.get("phase_progress", {}),
+        "progress_counts": metadata.get("progress_counts", {}),
+        "last_substantive_progress_at": metadata.get(
+            "last_substantive_progress_at", None
+        ),
+        "datasource_upload_offset": metadata.get(
+            "datasource_upload_offset", None
+        ),
+        "datasource_upload_total": metadata.get(
+            "datasource_upload_total", None
+        ),
+        "upload_eta_seconds": metadata.get("upload_eta_seconds", None),
+        "error": task.error or "",
+    }
+
+
 class DataSourceSerializer(serializers.ModelSerializer):
     """Datasource serializer."""
 
@@ -2295,44 +2334,30 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 .order_by("-created_at")
                 .first()
             )
-        if task is None:
-            return None
-        return {
-            "id": task.id,
-            "task_id": task.task_id,
-            "task_name": task.task_name,
-            "task_module": task.module,
-            "filename": (task.metadata or {}).get("filename", ""),
-            "status": task.status,
-            "started_at": task.started_at,
-            "created_at": task.created_at,
-            "progress_step": (task.metadata or {}).get("progress_step", ""),
-            "progress_message": (task.metadata or {}).get(
-                "progress_message",
-                "",
-            ),
-            "progress_percent": (task.metadata or {}).get(
-                "progress_percent",
-                None,
-            ),
-            "phase": (task.metadata or {}).get("phase", ""),
-            "overall_progress_percent": (task.metadata or {}).get(
-                "overall_progress_percent",
-                None,
-            ),
-            "phase_progress": (task.metadata or {}).get(
-                "phase_progress",
-                {},
-            ),
-            "progress_counts": (task.metadata or {}).get(
-                "progress_counts",
-                {},
-            ),
-            "last_substantive_progress_at": (task.metadata or {}).get(
-                "last_substantive_progress_at",
-                None,
-            ),
-        }
+        return _datasource_task_payload(task)
+
+    def get_last_task(self, datasource):
+        """Return the most recent datasource task, terminal or not."""
+
+        last_task_by_uuid = self.context.get("datasource_last_task_by_uuid")
+        if last_task_by_uuid is not None:
+            task = last_task_by_uuid.get(str(datasource.uuid))
+        else:
+            from agentcore_task.adapters.django.models import TaskExecution
+
+            task = (
+                TaskExecution.objects.filter(
+                    module__in=[
+                        "lens_datasource",
+                        "lens_datasource_conversion",
+                        "lens_datasource_upload",
+                    ],
+                    metadata__datasource_uuid=str(datasource.uuid),
+                )
+                .order_by("-created_at")
+                .first()
+            )
+        return _datasource_task_payload(task)
 
     def get_sync_state(self, datasource):
         """Return datasource sync status independent from enabled state."""

@@ -121,7 +121,25 @@
     "datasourceTargetPathRequired": "Se requiere una ruta de destino. Configure el directorio y vuelva a intentarlo.",
     "datasourceGitLayoutMigration": "La estructura del repositorio Git requiere migración. Vuelva a sincronizar o contacte con un administrador.",
     "datasourceConversionTypeRequired": "Habilite al menos un tipo de conversión (documento, imagen o imagen incrustada) antes de iniciar el procesamiento.",
-    "datasourceConversionNotSupported": "Este origen de datos no se puede procesar. Revise su tipo y contenido e inténtelo de nuevo."
+    "datasourceConversionNotSupported": "Este origen de datos no se puede procesar. Revise su tipo y contenido e inténtelo de nuevo.",
+    "datasourceSyncOrphaned": "La sincronización se interrumpió antes de que el nodo informara un resultado. Vuelva a sincronizar.",
+    "datasourceQueueTimeout": "Se esperó demasiado por capacidad de datos. Inténtelo más tarde.",
+    "datasourceNotFound": "La fuente de datos ya no existe.",
+    "datasourceUploadLinkInvalid": "El archivo contiene enlaces simbólicos, no admitidos. Vuelva a empaquetarlo sin enlaces e inténtelo de nuevo.",
+    "datasourceUploadOrphaned": "La carga se interrumpió antes de terminar. Vuelva a subir el archivo.",
+    "datasourceUploadTimeout": "La carga agotó el tiempo de espera. Vuelva a subir el archivo.",
+    "datasourceUploadFailed": "La carga falló. Inténtelo de nuevo.",
+    "datasourceUploadContentInvalid": "No se pudo leer el contenido del archivo. Revíselo e inténtelo de nuevo.",
+    "datasourceUploadTooLarge": "El archivo supera el límite de tamaño de carga.",
+    "datasourceUploadFileLimit": "El archivo contiene demasiados ficheros.",
+    "datasourceUploadSizeLimit": "El archivo extraído supera el límite de tamaño.",
+    "datasourceUploadFileExists": "El archivo comprimido ya contiene un fichero con el mismo nombre.",
+    "datasourceUploadArchiveInvalid": "El archivo comprimido no es válido o no es compatible.",
+    "datasourceUploadArchivePathInvalid": "El archivo comprimido contiene una ruta no segura.",
+    "datasourceUploadNotSupported": "Esta fuente de datos no admite la carga de archivos.",
+    "datasourceConversionOrphaned": "El procesamiento se interrumpió antes de que el nodo informara un resultado. Vuelva a procesar.",
+    "datasourceConversionFailed": "El procesamiento falló. Revise la fuente e inténtelo de nuevo.",
+    "datasourceConversionTimeout": "El procesamiento agotó el tiempo de espera. Inténtelo más tarde."
   },
   "lens": {
     "share": {

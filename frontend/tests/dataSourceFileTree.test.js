@@ -31,11 +31,13 @@ test('datasource files are grouped into sorted directory nodes', () => {
       type: 'directory',
       name: 'team',
       path: 'team',
+      loaded: true,
       children: [
         {
           type: 'directory',
           name: 'backend',
           path: 'team/backend',
+          loaded: true,
           children: [
             {
               type: 'file',
@@ -49,6 +51,7 @@ test('datasource files are grouped into sorted directory nodes', () => {
           type: 'directory',
           name: 'frontend',
           path: 'team/frontend',
+          loaded: true,
           children: [
             {
               type: 'file',
@@ -77,6 +80,7 @@ test('datasource file tree normalizes separators and ignores empty paths', () =>
       type: 'directory',
       name: 'docs',
       path: 'docs',
+      loaded: true,
       children: [
         {
           type: 'file',
@@ -104,9 +108,11 @@ test('datasource detail renders the paginated file rows as a tree', async () => 
   const tree = await source('pages/lens/components/DataSourceFileTree.vue')
   const node = await source('pages/lens/components/DataSourceFileTreeNode.vue')
 
-  assert.match(drawer, /<DataSourceFileTree[\s\S]*:files="files"/)
+  assert.match(drawer, /<DataSourceFileTree[\s\S]*:nodes="fileNodes"/)
+  assert.match(drawer, /buildDataSourceFileTree/)
   assert.match(tree, /role="tree"/)
-  assert.match(tree, /buildDataSourceFileTree/)
+  assert.match(tree, /v-for="node in nodes"/)
+  assert.match(tree, /:on-toggle="onToggle"/)
   assert.match(node, /aria-expanded/)
   assert.match(node, /role="group"/)
   assert.match(node, /sm:hidden/)

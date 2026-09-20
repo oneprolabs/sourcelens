@@ -78,6 +78,7 @@ from .limits import (
 )
 from .messages import (
     activity_from_event as _activity_from_event,
+    build_classifier_messages as _build_classifier_messages,
     build_initial_messages as _build_initial_messages,
     detail_lines as _detail_lines,
     extract_final_message as _extract_final_message,
@@ -107,6 +108,7 @@ from .routing import (
     _message_needs_retrieval,
     _normalize_route_evidence_capabilities,
     _parse_route_decision,
+    _parse_route_decision_or_none,
     _select_general_chat_route,
 )
 from .scenarios import SCENARIOS

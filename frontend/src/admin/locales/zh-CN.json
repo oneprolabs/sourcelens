@@ -1262,6 +1262,18 @@
       "nextSync": "下次同步",
       "followCrontab": "按 Crontab 触发"
     },
+    "taskProgress": {
+      "datasource_upload_completed": "上传完成",
+      "datasource_upload_duplicate": "已跳过重复文件",
+      "datasource_upload_progress": "正在上传 {uploaded} / {total}（{percent}%）",
+      "datasource_upload_progress_eta": "正在上传 {uploaded} / {total}（{percent}%，剩余约 {eta}）",
+      "eta_seconds": "{n} 秒",
+      "eta_minutes": "{n} 分钟",
+      "eta_hours": "{n} 小时",
+      "datasource_sync_completed": "同步完成",
+      "datasource_conversion_completed": "处理完成",
+      "datasource_task_cancelled": "已取消"
+    },
     "datasourceSearch": {
       "all": "全部",
       "pluginType": "插件类型",

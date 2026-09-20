@@ -275,6 +275,13 @@
                   <p v-if="isDataSourceSyncing(row)" class="truncate">
                     {{ datasourceProgressLabel(row) }}
                   </p>
+                  <p
+                    v-else-if="completedTaskResult(row)"
+                    class="truncate"
+                    :class="completedTaskClass(row)"
+                  >
+                    {{ completedTaskLabel(row) }}
+                  </p>
                   <p v-else-if="isSyncableSourceType(row.source_type)">
                     {{ t('lensAdmin.table.lastSync') }}:
                     {{ formatDateTime(row.last_synced_at) }}
@@ -509,6 +516,7 @@ import {
   mergeRefreshedDirectories
 } from './directoryRefresh'
 import {
+  collectCompletedTaskResults,
   mergeDataSourceSyncStatuses,
   nextSyncStatusRefreshDelay
 } from './dataSourceSyncRefresh'
@@ -578,6 +586,9 @@ const dynamicRefreshInFlight = ref(false)
 const dynamicRefreshStartedAt = ref(0)
 const dynamicRefreshDelay = ref(5000)
 const dynamicRefreshSnapshot = ref('')
+const completedTaskByUuid = ref({})
+const watchedTaskIds = new Set()
+const sessionStartedAt = Date.now()
 
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(totalDataSources.value / pageSize.value))
@@ -901,9 +912,76 @@ function datasourceTaskKind(row) {
   return 'sync'
 }
 
+function localizedTaskProgress(task, fallback = '') {
+  const code = task?.progress_message_code
+  if (code) {
+    const key = `lensAdmin.taskProgress.${code}`
+    const translated = t(key)
+    if (translated !== key) return translated
+  }
+  const errorMessage = lensNodeErrorMessage(task?.error, t)
+  if (errorMessage) return errorMessage
+  return task?.progress_message || fallback
+}
+
+function formatTaskBytes(bytes) {
+  const value = Number(bytes) || 0
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function formatTaskEta(seconds) {
+  if (seconds < 60) {
+    return t('lensAdmin.taskProgress.eta_seconds', {
+      n: Math.max(1, Math.round(seconds))
+    })
+  }
+  if (seconds < 3600) {
+    return t('lensAdmin.taskProgress.eta_minutes', {
+      n: Math.round(seconds / 60)
+    })
+  }
+  return t('lensAdmin.taskProgress.eta_hours', {
+    n: Math.round(seconds / 3600)
+  })
+}
+
+function uploadProgressText(task) {
+  const total = Number(task?.datasource_upload_total) || 0
+  if (total <= 0) return ''
+  const offset = Math.min(Number(task?.datasource_upload_offset) || 0, total)
+  const rawPercent = Number(task?.progress_percent)
+  const percent = Number.isFinite(rawPercent)
+    ? Math.round(rawPercent)
+    : Math.round((offset * 100) / total)
+  const params = {
+    uploaded: formatTaskBytes(offset),
+    total: formatTaskBytes(total),
+    percent
+  }
+  const eta = Number(task?.upload_eta_seconds)
+  if (Number.isFinite(eta) && eta > 0) {
+    return t('lensAdmin.taskProgress.datasource_upload_progress_eta', {
+      ...params,
+      eta: formatTaskEta(eta)
+    })
+  }
+  return t('lensAdmin.taskProgress.datasource_upload_progress', params)
+}
+
 function datasourceProgressLabel(row) {
   const task = row.current_sync || {}
   const kind = datasourceTaskKind(row)
+  if (kind === 'upload') {
+    const uploadProgress = uploadProgressText(task)
+    if (uploadProgress) {
+      return [task.filename, uploadProgress].filter(Boolean).join(' · ')
+    }
+  }
   const fallback =
     kind === 'processing'
       ? t('lensAdmin.table.processingRunning')
@@ -922,11 +1000,61 @@ function datasourceProgressLabel(row) {
           failed
         })
       : ''
-  const progress = task.progress_message || task.progress_step || fallback
+  const progress = localizedTaskProgress(task) || task.progress_step || fallback
   const parts = []
   if (kind === 'upload' && task.filename) parts.push(task.filename)
   parts.push(detail || progress)
   return parts.join(' · ')
+}
+
+function applyCompletedTaskResults(statuses) {
+  completedTaskByUuid.value = collectCompletedTaskResults(
+    statuses,
+    watchedTaskIds,
+    completedTaskByUuid.value,
+    sessionStartedAt
+  )
+}
+
+function completedTaskResult(row) {
+  return completedTaskByUuid.value[row?.uuid] || null
+}
+
+function completedTaskStatusText(task) {
+  const status = String(task.status || '').toUpperCase()
+  if (status === 'SUCCESS') {
+    const module = String(task.task_module || task.module || '')
+    if (module === 'lens_datasource_upload') {
+      return localizedTaskProgress(
+        task,
+        t('lensAdmin.taskProgress.datasource_upload_completed')
+      )
+    }
+    if (module === 'lens_datasource_conversion') {
+      return t('lensAdmin.taskProgress.datasource_conversion_completed')
+    }
+    return t('lensAdmin.taskProgress.datasource_sync_completed')
+  }
+  if (status === 'REVOKED') {
+    return t('lensAdmin.taskProgress.datasource_task_cancelled')
+  }
+  const message = lensNodeErrorMessage(task.error, t)
+  if (message) return message
+  return task.progress_message || t('common.status.failed')
+}
+
+function completedTaskLabel(row) {
+  const task = completedTaskResult(row)
+  if (!task) return ''
+  const parts = []
+  if (task.filename) parts.push(task.filename)
+  parts.push(completedTaskStatusText(task))
+  return parts.join(' · ')
+}
+
+function completedTaskClass(row) {
+  const status = completedTaskResult(row)?.status
+  return status === 'SUCCESS' ? 'text-success-700' : 'text-danger-700'
 }
 
 function isGitSourceType(sourceType) {
@@ -1122,6 +1250,7 @@ async function refreshDataSourceRows() {
       changed
     )
     dataSources.value = mergeDataSourceSyncStatuses(dataSources.value, statuses)
+    applyCompletedTaskResults(statuses)
     const selectedUuid = selectedDataSource.value?.uuid
     selectedDataSource.value =
       dataSources.value.find((row) => row.uuid === selectedUuid) ||

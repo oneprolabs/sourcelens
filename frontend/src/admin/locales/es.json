@@ -1264,6 +1264,18 @@
       "nextSync": "Próxima sincronización",
       "followCrontab": "Seguir crontab"
     },
+    "taskProgress": {
+      "datasource_upload_completed": "Carga completada",
+      "datasource_upload_duplicate": "Archivo duplicado omitido",
+      "datasource_upload_progress": "Subiendo {uploaded} / {total} ({percent}%)",
+      "datasource_upload_progress_eta": "Subiendo {uploaded} / {total} ({percent}%, quedan ~{eta})",
+      "eta_seconds": "{n} s",
+      "eta_minutes": "{n} min",
+      "eta_hours": "{n} h",
+      "datasource_sync_completed": "Sincronización completada",
+      "datasource_conversion_completed": "Procesamiento completado",
+      "datasource_task_cancelled": "Cancelado"
+    },
     "datasourceSearch": {
       "all": "Todos",
       "pluginType": "Tipo de plugin",
