@@ -1,0 +1,9 @@
+type: fix
+audience: admin
+en: >-
+  Fixed file uploads returning a 500 on standalone installations by running
+  Redis without disk persistence, so a failed snapshot can no longer disable
+  all writes.
+zh-CN: >-
+  修复独立部署下上传文件返回 500 的问题：Redis 改为不落盘持久化，
+  避免快照失败导致写入被禁用。
