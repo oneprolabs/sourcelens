@@ -121,7 +121,25 @@
     "datasourceTargetPathRequired": "A target path is required. Configure the datasource directory and try again.",
     "datasourceGitLayoutMigration": "The Git repository layout requires migration. Sync again or contact an administrator.",
     "datasourceConversionTypeRequired": "Enable at least one conversion type (document, image, or embedded image) before starting processing.",
-    "datasourceConversionNotSupported": "This datasource cannot be processed. Check its type and content, then try again."
+    "datasourceConversionNotSupported": "This datasource cannot be processed. Check its type and content, then try again.",
+    "datasourceSyncOrphaned": "Datasource sync was interrupted before the node reported a result. Retry the sync.",
+    "datasourceQueueTimeout": "Waited too long for datasource capacity. Retry later.",
+    "datasourceNotFound": "The datasource no longer exists.",
+    "datasourceUploadLinkInvalid": "The archive contains symbolic links, which are not supported. Repackage it without links and try again.",
+    "datasourceUploadOrphaned": "The upload was interrupted before completion. Upload the file again.",
+    "datasourceUploadTimeout": "The upload timed out. Upload the file again.",
+    "datasourceUploadFailed": "The upload failed. Try again.",
+    "datasourceUploadContentInvalid": "The uploaded file content could not be read. Check the file and try again.",
+    "datasourceUploadTooLarge": "The file exceeds the upload size limit.",
+    "datasourceUploadFileLimit": "The archive contains too many files.",
+    "datasourceUploadSizeLimit": "The extracted archive exceeds the size limit.",
+    "datasourceUploadFileExists": "The archive already contains a file with the same name.",
+    "datasourceUploadArchiveInvalid": "The archive is invalid or unsupported.",
+    "datasourceUploadArchivePathInvalid": "The archive contains an unsafe path.",
+    "datasourceUploadNotSupported": "This datasource does not support file upload.",
+    "datasourceConversionOrphaned": "Processing was interrupted before the node reported a result. Retry processing.",
+    "datasourceConversionFailed": "Processing failed. Check the datasource and try again.",
+    "datasourceConversionTimeout": "Processing timed out. Retry later."
   },
   "lens": {
     "share": {

@@ -53,3 +53,26 @@ test('maps a conversion guard to a translated message', () => {
 
   assert.equal(message, 'lensNodeErrors.datasourceConversionTypeRequired')
 })
+
+test('maps datasource upload failures to translated messages', () => {
+  const cases = {
+    DATASOURCE_UPLOAD_LINK_INVALID: 'datasourceUploadLinkInvalid',
+    DATASOURCE_UPLOAD_ORPHANED: 'datasourceUploadOrphaned',
+    DATASOURCE_UPLOAD_TIMEOUT: 'datasourceUploadTimeout',
+    DATASOURCE_UPLOAD_TOO_LARGE: 'datasourceUploadTooLarge',
+    DATASOURCE_QUEUE_TIMEOUT: 'datasourceQueueTimeout'
+  }
+  Object.entries(cases).forEach(([code, key]) => {
+    assert.equal(
+      lensNodeErrorMessage(code, (name) => name),
+      `lensNodeErrors.${key}`
+    )
+  })
+})
+
+test('returns no message for an unmapped error code', () => {
+  assert.equal(
+    lensNodeErrorMessage('SOME_UNKNOWN_CODE', (key) => key),
+    ''
+  )
+})

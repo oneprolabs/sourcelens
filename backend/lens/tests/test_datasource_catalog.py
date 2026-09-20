@@ -69,6 +69,49 @@ class DatasourceCatalogTests(SimpleTestCase):
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["results"][0]["converted_at"], "today")
 
+    def test_hidden_and_macos_artifacts_are_omitted(self):
+        """Hidden files and macOS archive artifacts never reach the catalog."""
+
+        root = self.storage / "datasources/example/items/one"
+        root.mkdir(parents=True)
+        self.items.append(SimpleNamespace(
+            uuid="one", storage_key="datasources/example/items/one"
+        ))
+        (root / "manifest.json").write_text(json.dumps({"items": [
+            {"local_path": "keep.txt", "status": "synced"},
+            {"local_path": ".DS_Store", "status": "synced"},
+            {"local_path": "sub/.hidden.txt", "status": "synced"},
+            {"local_path": "__MACOSX/keep.txt", "status": "synced"},
+        ]}))
+        result = list_datasource_files(self.datasource)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["results"][0]["path"], "keep.txt")
+
+    def test_directory_browsing_lists_immediate_children(self):
+        """Browsing returns one directory level with directories first."""
+
+        root = self.storage / "datasources/example/items/one"
+        root.mkdir(parents=True)
+        self.items.append(SimpleNamespace(
+            uuid="one", storage_key="datasources/example/items/one"
+        ))
+        (root / "manifest.json").write_text(json.dumps({"items": [
+            {"local_path": "docs/a.md", "status": "synced"},
+            {"local_path": "docs/b.md", "status": "synced"},
+            {"local_path": "root.md", "status": "synced"},
+        ]}))
+        result = list_datasource_files(self.datasource)
+        self.assertEqual(
+            [entry["path"] for entry in result["results"]],
+            ["docs", "root.md"],
+        )
+        self.assertEqual(result["results"][0]["type"], "directory")
+        children = list_datasource_files(self.datasource, directory="docs")
+        self.assertEqual(
+            [entry["path"] for entry in children["results"]],
+            ["docs/a.md", "docs/b.md"],
+        )
+
     def test_storage_key_cannot_escape_storage(self):
         """Reject malformed keys instead of listing another directory."""
 

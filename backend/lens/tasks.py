@@ -131,7 +131,6 @@ SESSION_TITLE_TASK_NAME = "lens.generate_session_title.v2"
 DATASOURCE_CANCELLING_STATUS = "CANCELLING"
 DATASOURCE_QUEUE_HEARTBEAT_SECONDS = 30
 DATASOURCE_QUEUE_TIMEOUT_SECONDS = 30 * 60
-DATASOURCE_QUEUE_CAPACITY_MULTIPLIER = 4
 DATASOURCE_QUEUE_PRIORITIES = {
     "manual": 100,
     "initial": 80,
@@ -666,36 +665,18 @@ def _refresh_datasource_lock(datasource_uuid, token, ttl_s):
     return cache.touch(key, timeout=ttl_s)
 
 
-@transaction.atomic
 def _queue_datasource_task(task_id, message):
     """Keep a datasource task pending while it waits for node capacity.
 
     The heartbeat lets the periodic sweeper re-dispatch the task if the single
     in-flight retry message is ever lost (worker restart, broker expiry), so
-    the wait never depends on one delicate self-scheduled message.
+    the wait never depends on one delicate self-scheduled message. The wait is
+    bounded by the queue timeout the sweeper enforces, so a task is never
+    dropped just because many others are already waiting.
     """
 
     from agentcore_task.adapters.django import TaskTracker
-    from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
-
-    task = TaskExecution.objects.filter(task_id=task_id).first()
-    metadata = dict(task.metadata or {}) if task is not None else {}
-    lensnode_uuid = str(metadata.get("lensnode_uuid") or "")
-    if lensnode_uuid:
-        node = LensNode.objects.select_for_update().filter(
-            uuid=lensnode_uuid
-        ).first()
-        capacity = _datasource_capacity(node)
-        queued_count = TaskExecution.objects.filter(
-            module__in=DATASOURCE_OPERATION_MODULES,
-            status__in=[TaskStatus.PENDING, *LEGACY_DATASOURCE_ACTIVE_STATUSES],
-            metadata__lensnode_uuid=lensnode_uuid,
-            metadata__admission_state=DATASOURCE_QUEUED,
-        ).exclude(task_id=task_id).count()
-        if queued_count >= capacity * DATASOURCE_QUEUE_CAPACITY_MULTIPLIER:
-            _fail_queued_datasource_task(task, "DATASOURCE_QUEUE_FULL")
-            return False
 
     TaskTracker.update_task_status(
         task_id,
@@ -854,6 +835,42 @@ def _requeue_stale_queued_datasource_tasks(now):
         task.save(update_fields=["metadata"])
         requeued += 1
     return requeued
+
+
+def _stale_queued_datasource_task_ids(now):
+    """Return queued tasks whose retry heartbeat has stopped advancing.
+
+    A queued task stays alive as long as the periodic sweeper keeps
+    re-dispatching it; each successful re-dispatch refreshes
+    ``queue_heartbeat_at``. Only tasks whose heartbeat has been silent for
+    longer than the queue timeout plus the longest retry backoff are treated
+    as dead, so a large backlog that is still making progress is never
+    dropped for merely waiting.
+    """
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    threshold = DATASOURCE_QUEUE_TIMEOUT_SECONDS + max(
+        DATASOURCE_QUEUE_BACKOFF_SECONDS
+    )
+    cutoff = now - timedelta(seconds=threshold)
+    stale_ids = []
+    queued = TaskExecution.objects.filter(
+        module__in=DATASOURCE_OPERATION_MODULES,
+        status=TaskStatus.PENDING,
+        metadata__admission_state=DATASOURCE_QUEUED,
+        created_at__lt=cutoff,
+    ).only("pk", "created_at", "metadata")
+    for task in queued:
+        heartbeat = _parse_iso_datetime(
+            (task.metadata or {}).get("queue_heartbeat_at")
+        )
+        if heartbeat is None:
+            heartbeat = task.created_at
+        if heartbeat is not None and heartbeat < cutoff:
+            stale_ids.append(task.pk)
+    return stale_ids
 
 
 def _fail_queued_datasource_task(task, error):
@@ -1500,6 +1517,32 @@ def _stream_datasource_upload(
     return "sent"
 
 
+def _format_byte_size(num_bytes):
+    """Format a byte count with an adaptive unit."""
+
+    value = float(max(0, int(num_bytes)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
+
+
+def _format_duration(seconds):
+    """Format a duration as a compact human string."""
+
+    total = max(0, int(round(seconds)))
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
 def _begin_datasource_upload_transfer(
     datasource,
     task_id,
@@ -1630,15 +1673,38 @@ def datasource_upload_task(
     cache.delete(datasource_upload_ready_key(task_id))
     cache.delete(datasource_upload_ack_key(task_id))
 
+    progress_sample = {"started": None, "offset": 0}
+
     def report_progress(offset, total):
-        _update_upload_task_metadata(
-            task_id,
-            {
-                "datasource_upload_offset": offset,
-                "datasource_upload_total": total,
-                "progress_message": f"Uploaded {offset} of {total} bytes.",
-            },
+        total = max(0, int(total))
+        offset = max(0, int(offset))
+        if total:
+            offset = min(offset, total)
+        percent = int(offset * 100 / total) if total else 0
+        now = time.monotonic()
+        if progress_sample["started"] is None:
+            progress_sample["started"] = now
+            progress_sample["offset"] = offset
+        elapsed = now - progress_sample["started"]
+        transferred = offset - progress_sample["offset"]
+        eta = None
+        if 0 < offset < total and elapsed > 0 and transferred > 0:
+            eta = (total - offset) * elapsed / transferred
+        message = (
+            f"Uploading {_format_byte_size(offset)} of "
+            f"{_format_byte_size(total)} ({percent}%"
         )
+        if eta is not None:
+            message += f", ~{_format_duration(eta)} left"
+        update = {
+            "datasource_upload_offset": offset,
+            "datasource_upload_total": total,
+            "progress_percent": percent,
+            "progress_message": message + ")",
+        }
+        if eta is not None:
+            update["upload_eta_seconds"] = int(round(eta))
+        _update_upload_task_metadata(task_id, update)
 
     try:
         while time.monotonic() < deadline:
@@ -1902,11 +1968,17 @@ def complete_datasource_upload_task(
         (
             "Duplicate file skipped."
             if result.get("duplicate")
-            else "Managed workspace upload completed."
+            else "Upload completed."
         )
         if task_status == TaskStatus.SUCCESS
         else error
     )
+    if task_status == TaskStatus.SUCCESS:
+        completion_metadata["progress_message_code"] = (
+            "datasource_upload_duplicate"
+            if result.get("duplicate")
+            else "datasource_upload_completed"
+        )
     return TaskTracker.update_task_status(
         task_id,
         task_status,
@@ -2434,9 +2506,6 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
     conversion_cutoff = now - timedelta(seconds=get_datasource_conversion_timeout_s())
     upload_cutoff = now - timedelta(seconds=get_datasource_upload_timeout_s())
     cutoff = now - timedelta(seconds=timeout_s)
-    queue_cutoff = now - timedelta(
-        seconds=DATASOURCE_QUEUE_TIMEOUT_SECONDS
-    )
     running_statuses = _datasource_active_statuses(TaskStatus)
     executing_statuses = [
         status for status in running_statuses if status != TaskStatus.PENDING
@@ -2467,11 +2536,7 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
             status__in=executing_statuses,
             started_at__lt=upload_cutoff,
         )
-        | Q(
-            status=TaskStatus.PENDING,
-            metadata__admission_state=DATASOURCE_QUEUED,
-            created_at__lt=queue_cutoff,
-        )
+        | Q(pk__in=_stale_queued_datasource_task_ids(now))
     )
 
     failed_count = 0
@@ -2620,7 +2685,6 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
         "queued": queued_tasks.count(),
         "oldest_age_seconds": oldest_age,
         "queue_timeout_seconds": DATASOURCE_QUEUE_TIMEOUT_SECONDS,
-        "queue_capacity_multiplier": DATASOURCE_QUEUE_CAPACITY_MULTIPLIER,
         "nodes": {},
     }
     for node in LensNode.objects.filter(

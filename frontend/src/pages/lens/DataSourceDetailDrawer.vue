@@ -603,7 +603,7 @@
             }}</span>
           </div>
           <div
-            v-if="filesLoading && !files.length"
+            v-if="filesLoading && !fileNodes.length"
             class="px-4 py-8 text-center text-sm text-ink-500"
           >
             {{ t('common.loading') }}
@@ -615,30 +615,35 @@
             {{ filesError }}
           </div>
           <div
-            v-else-if="!files.length"
+            v-else-if="!fileNodes.length"
             class="px-4 py-8 text-center text-sm text-ink-500"
           >
             {{ t('lensAdmin.datasourceDetail.files.empty') }}
           </div>
-          <DataSourceFileTree
-            v-else
-            :files="files"
-            :aria-label="t('lensAdmin.datasourceDetail.tabs.files')"
-          />
-          <div ref="filesLoadMoreSentinel" class="h-px" aria-hidden="true" />
-          <div
-            v-if="filesLoading && files.length"
-            class="sr-only"
-            aria-live="polite"
-          >
-            {{ t('common.loading') }}
-          </div>
+          <template v-else>
+            <DataSourceFileTree
+              :nodes="fileNodes"
+              :aria-label="t('lensAdmin.datasourceDetail.tabs.files')"
+              :on-toggle="toggleFileNode"
+              :on-load-more="loadMoreFileNode"
+            />
+            <div v-if="filesHasMore" class="px-4 py-3 text-center">
+              <BaseButton
+                variant="outline"
+                size="sm"
+                :loading="filesLoading"
+                @click="loadMoreRootFiles"
+              >
+                {{ t('common.loadMore') }}
+              </BaseButton>
+            </div>
+          </template>
         </div>
         <div
-          v-if="files.length && !filesLoading && !filesHasMore"
+          v-if="fileNodes.length && !filesLoading && !filesHasMore"
           class="text-center text-xs text-ink-500"
         >
-          {{ filesCount ? `${files.length} / ${filesCount}` : '' }}
+          {{ filesCount ? `${fileNodes.length} / ${filesCount}` : '' }}
         </div>
       </div>
     </div>
@@ -720,6 +725,7 @@ import {
   latestUploadTasksByFilename
 } from './datasourceHelpers'
 import DataSourceFileTree from './components/DataSourceFileTree.vue'
+import { buildDataSourceFileTree } from './dataSourceFileTree'
 import { useShortDateTime } from './useShortDateTime'
 
 const props = defineProps({
@@ -793,19 +799,20 @@ const taskListContextKey = ref('')
 const uploadTasks = ref([])
 const uploadTasksRequestSeq = ref(0)
 
-const files = ref([])
+const fileNodes = ref([])
+const searchFileEntries = ref([])
 const filesLoading = ref(false)
 const filesError = ref('')
 const filesCount = ref(0)
 const filePage = ref(1)
-const filesHasMore = ref(true)
-const filesLoadMoreSentinel = ref(null)
-let filesLoadMoreObserver = null
+const filesHasMore = ref(false)
 const fileQuery = ref('')
 const fileSyncStatus = ref('')
 const fileConversionStatus = ref('')
 const fileListContextKey = ref('')
 const fileRequestSeq = ref(0)
+
+const FILE_PAGE_SIZE = 100
 
 const expandedTaskId = ref(null)
 const expandedTask = ref(null)
@@ -876,14 +883,62 @@ function resetTaskList() {
 }
 
 function resetFileList() {
-  files.value = []
+  fileNodes.value = []
+  searchFileEntries.value = []
   filesCount.value = 0
   filePage.value = 1
-  filesHasMore.value = true
+  filesHasMore.value = false
   filesError.value = ''
 }
 
-async function loadFiles({ append = false } = {}) {
+const fileSearchActive = computed(() =>
+  Boolean(
+    fileQuery.value.trim() || fileSyncStatus.value || fileConversionStatus.value
+  )
+)
+
+function mapFileNode(entry) {
+  if (entry?.type === 'directory') {
+    return {
+      type: 'directory',
+      name: entry.name || '',
+      path: entry.path || '',
+      children: null,
+      loaded: false,
+      loading: false,
+      hasMore: false,
+      page: 0,
+      error: ''
+    }
+  }
+  return {
+    type: 'file',
+    name: entry?.name || '',
+    path: entry?.path || '',
+    file: entry
+  }
+}
+
+async function fetchFileEntries({ directory = '', page = 1 } = {}) {
+  const uuid = props.datasource?.uuid
+  const res = await api.get(`/lens/admin/datasources/${uuid}/files/`, {
+    params: {
+      page,
+      page_size: FILE_PAGE_SIZE,
+      directory,
+      query: fileQuery.value,
+      sync_status: fileSyncStatus.value,
+      conversion_status: fileConversionStatus.value
+    }
+  })
+  const data = extractResponseData(res) || {}
+  return {
+    results: Array.isArray(data.results) ? data.results : [],
+    count: Number(data.count) || 0
+  }
+}
+
+async function loadFiles() {
   const requestSeq = fileRequestSeq.value + 1
   fileRequestSeq.value = requestSeq
   const uuid = props.datasource?.uuid
@@ -894,26 +949,28 @@ async function loadFiles({ append = false } = {}) {
   filesLoading.value = true
   filesError.value = ''
   try {
-    const res = await api.get(`/lens/admin/datasources/${uuid}/files/`, {
-      params: {
-        page: filePage.value,
-        page_size: pageSize,
-        query: fileQuery.value,
-        sync_status: fileSyncStatus.value,
-        conversion_status: fileConversionStatus.value
-      }
+    const { results, count } = await fetchFileEntries({
+      directory: '',
+      page: 1
     })
-    const data = extractResponseData(res) || {}
     if (
       requestSeq !== fileRequestSeq.value ||
       uuid !== props.datasource?.uuid
     ) {
       return
     }
-    const results = Array.isArray(data.results) ? data.results : []
-    files.value = append ? [...files.value, ...results] : results
-    filesCount.value = Number(data.count) || 0
-    filesHasMore.value = Boolean(data.next) || results.length === pageSize
+    if (fileSearchActive.value) {
+      searchFileEntries.value = results
+      fileNodes.value = buildDataSourceFileTree(results)
+      filesCount.value = count
+      filePage.value = 1
+      filesHasMore.value = count > results.length
+      return
+    }
+    fileNodes.value = results.map(mapFileNode)
+    filesCount.value = count
+    filePage.value = 1
+    filesHasMore.value = count > results.length
   } catch (error) {
     if (
       requestSeq !== fileRequestSeq.value ||
@@ -926,40 +983,85 @@ async function loadFiles({ append = false } = {}) {
   } finally {
     if (requestSeq === fileRequestSeq.value) {
       filesLoading.value = false
-      // Re-arm the sentinel after appending rows. It can remain intersecting
-      // when the new batch does not fill the drawer viewport.
-      setTimeout(observeFilesLoadMoreSentinel, 0)
     }
   }
 }
 
 function searchFiles() {
+  fileRequestSeq.value += 1
   resetFileList()
   loadFiles()
 }
 
-function loadMoreFiles() {
+async function loadMoreRootFiles() {
   if (filesLoading.value || !filesHasMore.value) return
-  filePage.value += 1
-  loadFiles({ append: true })
+  const requestSeq = fileRequestSeq.value
+  filesLoading.value = true
+  filesError.value = ''
+  const nextPage = filePage.value + 1
+  try {
+    const { results, count } = await fetchFileEntries({
+      directory: '',
+      page: nextPage
+    })
+    if (requestSeq !== fileRequestSeq.value) return
+    filePage.value = nextPage
+    filesCount.value = count
+    if (fileSearchActive.value) {
+      searchFileEntries.value = [...searchFileEntries.value, ...results]
+      fileNodes.value = buildDataSourceFileTree(searchFileEntries.value)
+      filesHasMore.value = searchFileEntries.value.length < count
+      return
+    }
+    fileNodes.value = [...fileNodes.value, ...results.map(mapFileNode)]
+    filesHasMore.value = fileNodes.value.length < count
+  } catch (error) {
+    filesError.value = extractErrorMessage(error, t('common.error'))
+  } finally {
+    if (requestSeq === fileRequestSeq.value) {
+      filesLoading.value = false
+    }
+  }
 }
 
-function observeFilesLoadMoreSentinel() {
-  filesLoadMoreObserver?.disconnect()
-  filesLoadMoreObserver = null
-  if (
-    !filesLoadMoreSentinel.value ||
-    typeof IntersectionObserver === 'undefined'
-  ) {
-    return
+async function toggleFileNode(node) {
+  if (!node || node.loaded || node.loading) return
+  node.loading = true
+  node.error = ''
+  try {
+    const { results, count } = await fetchFileEntries({
+      directory: node.path,
+      page: 1
+    })
+    node.children = results.map(mapFileNode)
+    node.page = 1
+    node.loaded = true
+    node.hasMore = node.children.length < count
+  } catch (error) {
+    node.error = extractErrorMessage(error, t('common.error'))
+  } finally {
+    node.loading = false
   }
-  filesLoadMoreObserver = new IntersectionObserver(
-    ([entry]) => {
-      if (entry.isIntersecting) loadMoreFiles()
-    },
-    { rootMargin: '240px' }
-  )
-  filesLoadMoreObserver.observe(filesLoadMoreSentinel.value)
+}
+
+async function loadMoreFileNode(node) {
+  if (!node || node.loading || !node.hasMore) return
+  node.loading = true
+  node.error = ''
+  const nextPage = (node.page || 1) + 1
+  try {
+    const { results, count } = await fetchFileEntries({
+      directory: node.path,
+      page: nextPage
+    })
+    node.page = nextPage
+    node.children = [...(node.children || []), ...results.map(mapFileNode)]
+    node.hasMore = node.children.length < count
+  } catch (error) {
+    node.error = extractErrorMessage(error, t('common.error'))
+  } finally {
+    node.loading = false
+  }
 }
 
 function hasProcessingTasks() {
@@ -1229,10 +1331,6 @@ watch(
   { immediate: true }
 )
 
-watch(filesLoadMoreSentinel, observeFilesLoadMoreSentinel)
-
-onBeforeUnmount(() => filesLoadMoreObserver?.disconnect())
-
 watch(
   () => [props.datasource?.uuid, props.show, activeTab.value],
   ([uuid, visible, tab]) => {
@@ -1245,7 +1343,6 @@ watch(
     const contextKey = `${uuid}:${tab}`
     if (fileListContextKey.value === contextKey) return
     fileListContextKey.value = contextKey
-    filePage.value = 1
     loadFiles()
   },
   { immediate: true }

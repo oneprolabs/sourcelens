@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import subprocess
+import tarfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from pathlib import Path
@@ -277,6 +278,7 @@ def test_list_datasource_files_returns_safe_paginated_manifest_items(tmp_path):
     assert result["count"] == 1
     assert result["results"] == [
         {
+            "type": "file",
             "path": "report.pdf",
             "name": "Report",
             "extension": "pdf",
@@ -311,6 +313,127 @@ def test_list_datasource_files_lists_managed_workspace_files(tmp_path):
     assert result["count"] == 1
     assert result["results"][0]["path"] == "notes.txt"
     assert result["results"][0]["conversion_status"] == "not_converted"
+
+
+def test_list_datasource_files_hides_hidden_and_macos_artifacts(tmp_path):
+    """Hidden files and macOS archive artifacts never reach the catalog."""
+
+    target = tmp_path / "managed"
+    target.mkdir()
+    (target / "notes.txt").write_text("notes", encoding="utf-8")
+    (target / "sub").mkdir()
+    (target / "sub" / "keep.txt").write_text("keep", encoding="utf-8")
+    (target / ".DS_Store").write_bytes(b"junk")
+    (target / "sub" / ".hidden.txt").write_text("hidden", encoding="utf-8")
+    macosx = target / "__MACOSX" / "notes.txt"
+    macosx.parent.mkdir()
+    macosx.write_bytes(b"junk")
+
+    result = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "source_type": "managed_workspace",
+            "target_path": str(target),
+        },
+        workspace_path=tmp_path,
+    )
+
+    assert [entry["path"] for entry in result["results"]] == [
+        "sub",
+        "notes.txt",
+    ]
+    assert result["results"][0]["type"] == "directory"
+
+
+def test_list_datasource_files_lists_one_directory_level(tmp_path):
+    """Browsing a directory returns immediate children with dirs first."""
+
+    target = tmp_path / "managed"
+    target.mkdir()
+    (target / "root.txt").write_text("root", encoding="utf-8")
+    sub = target / "sub"
+    sub.mkdir()
+    (sub / "keep.txt").write_text("keep", encoding="utf-8")
+    (sub / "nested").mkdir()
+    (sub / "nested" / "deep.txt").write_text("deep", encoding="utf-8")
+
+    root = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "source_type": "managed_workspace",
+            "target_path": str(target),
+        },
+        workspace_path=tmp_path,
+    )
+    assert [entry["path"] for entry in root["results"]] == [
+        "sub",
+        "root.txt",
+    ]
+
+    children = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "source_type": "managed_workspace",
+            "target_path": str(target),
+            "directory": "sub",
+        },
+        workspace_path=tmp_path,
+    )
+    assert [entry["path"] for entry in children["results"]] == [
+        "sub/nested",
+        "sub/keep.txt",
+    ]
+    assert children["results"][0]["type"] == "directory"
+    assert children["results"][1]["type"] == "file"
+
+
+def test_list_datasource_files_lists_manifest_directory_children(tmp_path):
+    """Manifest-backed datasources browse one directory level at a time."""
+
+    target = tmp_path / "catalog"
+    target.mkdir()
+    (target / ".sourcelens-datasource.json").write_text(
+        json.dumps({"datasource_uuid": "datasource-1"}),
+        encoding="utf-8",
+    )
+    (target / "docs").mkdir()
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"local_path": "docs/a.md", "status": "synced"},
+                    {"local_path": "docs/b.md", "status": "synced"},
+                    {"local_path": "root.md", "status": "synced"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    root = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+        },
+        workspace_path=tmp_path,
+    )
+    assert [entry["path"] for entry in root["results"]] == [
+        "docs",
+        "root.md",
+    ]
+
+    children = list_datasource_files(
+        {
+            "datasource_uuid": "datasource-1",
+            "target_path": str(target),
+            "directory": "docs",
+        },
+        workspace_path=tmp_path,
+    )
+    assert [entry["path"] for entry in children["results"]] == [
+        "docs/a.md",
+        "docs/b.md",
+    ]
 
 
 def test_list_datasource_files_normalizes_unchanged_sync_status(tmp_path):
@@ -484,6 +607,120 @@ def test_managed_workspace_upload_extracts_archive_into_named_directory(
     assert result["uploaded"] == "package.zip"
     assert not (root / "package.zip").exists()
     assert (root / "package" / "nested" / "guide.pdf").read_bytes() == b"pdf"
+
+
+def _strip_zip_utf8_flag(data):
+    """Clear the ZIP UTF-8 flag to mimic macOS Finder archives."""
+
+    result = bytearray(data)
+    for signature, offset in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        start = 0
+        while True:
+            index = result.find(signature, start)
+            if index < 0:
+                break
+            position = index + offset
+            flags = int.from_bytes(result[position : position + 2], "little")
+            result[position : position + 2] = (flags & ~0x800).to_bytes(
+                2, "little"
+            )
+            start = position + 2
+    return bytes(result)
+
+
+def test_managed_workspace_upload_recovers_zip_name_encoding(
+    tmp_path,
+    monkeypatch,
+):
+    """UTF-8 ZIP names without the flag bit are not left as mojibake."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    name = "贵州茅台 2025 年年度报告.pdf"
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr(name, b"pdf")
+    payload = _strip_zip_utf8_flag(archive.getvalue())
+
+    upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "package.zip",
+            "content_base64": base64.b64encode(payload).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-1"
+    assert (root / "package" / name).read_bytes() == b"pdf"
+
+
+def test_managed_workspace_upload_skips_zip_symlink_members(
+    tmp_path,
+    monkeypatch,
+):
+    """Symlink entries are skipped instead of failing the whole archive."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr("real.txt", b"data")
+        link = zipfile.ZipInfo("link.txt")
+        link.external_attr = 0o120777 << 16
+        package.writestr(link, "real.txt")
+
+    upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "package.zip",
+            "content_base64": base64.b64encode(archive.getvalue()).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-1" / "package"
+    assert (root / "real.txt").read_bytes() == b"data"
+    assert not (root / "link.txt").exists()
+
+
+def test_managed_workspace_upload_skips_tar_symlink_members(
+    tmp_path,
+    monkeypatch,
+):
+    """Symlink entries in a tar archive are skipped, not fatal."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as package:
+        payload = b"data"
+        entry = tarfile.TarInfo("real.txt")
+        entry.size = len(payload)
+        package.addfile(entry, io.BytesIO(payload))
+        link = tarfile.TarInfo("link.txt")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "real.txt"
+        package.addfile(link)
+
+    upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "package.tar",
+            "content_base64": base64.b64encode(archive.getvalue()).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    root = tmp_path / "datasources" / "uuid-1" / "package"
+    assert (root / "real.txt").read_bytes() == b"data"
+    assert not (root / "link.txt").exists()
 
 
 def test_managed_workspace_upload_stores_single_document(tmp_path, monkeypatch):

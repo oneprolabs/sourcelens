@@ -369,6 +369,47 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
     except (TypeError, ValueError) as exc:
         raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
 
+    if query or sync_status or conversion_status:
+        return _search_datasource_files(
+            target,
+            source_type,
+            query,
+            sync_status,
+            conversion_status,
+            page,
+            page_size,
+        )
+
+    directory = _normalize_catalog_directory(
+        command.get("directory"), target
+    )
+    if source_type in {"managed_workspace", "upload"}:
+        directories, files = _managed_workspace_children(target, directory)
+    else:
+        directories, files = _manifest_children(target, directory)
+    directories.sort(key=lambda entry: entry["name"].lower())
+    files.sort(key=lambda entry: entry["path"].lower())
+    candidates = directories + files
+    start = (page - 1) * page_size
+    return {
+        "count": len(candidates),
+        "page": page,
+        "page_size": page_size,
+        "results": candidates[start : start + page_size],
+    }
+
+
+def _search_datasource_files(
+    target,
+    source_type,
+    query,
+    sync_status,
+    conversion_status,
+    page,
+    page_size,
+):
+    """Return a flat, filtered catalog across the whole datasource."""
+
     candidates = []
     if source_type in {"managed_workspace", "upload"}:
         manifest_items = _managed_workspace_catalog_items(target)
@@ -378,7 +419,7 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
         )
     for item in manifest_items:
         local_path = manifest_store.manifest_local_path(item)
-        if not local_path:
+        if not local_path or _is_hidden_catalog_path(local_path):
             continue
         display_path = Path(local_path).as_posix()
         public_status = _public_sync_status(item.get("status"))
@@ -406,6 +447,123 @@ def list_datasource_files(command, workspace_path=WORKSPACE_ROOT):
         "results": [
             entry for _path, entry in page_items
         ],
+    }
+
+
+def _normalize_catalog_directory(value, target):
+    """Return a safe datasource-relative directory path."""
+
+    raw = str(value or "").strip().replace("\\", "/")
+    parts = [part for part in raw.split("/") if part not in {"", "."}]
+    if any(part == ".." for part in parts):
+        raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID")
+    directory = "/".join(parts)
+    if directory and _is_hidden_catalog_path(directory):
+        return ""
+    target_path = Path(target).resolve()
+    base = (target_path / directory).resolve() if directory else target_path
+    try:
+        base.relative_to(target_path)
+    except ValueError as exc:
+        raise DataSourceSyncError("DATASOURCE_FILE_QUERY_INVALID") from exc
+    return directory
+
+
+def _managed_workspace_children(target, directory):
+    """List immediate child directories and files without a deep walk."""
+
+    target_path = Path(target)
+    base = target_path / directory if directory else target_path
+    directories = []
+    files = []
+    try:
+        entries = sorted(
+            os.scandir(base), key=lambda item: item.name.lower()
+        )
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return directories, files
+    for entry in entries:
+        name = entry.name
+        if _is_hidden_catalog_path(name):
+            continue
+        if name in {
+            manifest_store.MANIFEST_FILE,
+            manifest_store.MARKER_FILE,
+        }:
+            continue
+        if name.endswith(".sourcelens") and entry.is_dir(follow_symlinks=False):
+            continue
+        relative = f"{directory}/{name}" if directory else name
+        if entry.is_dir(follow_symlinks=False):
+            directories.append(_datasource_directory_entry(relative, name))
+            continue
+        if not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            modified = datetime.fromtimestamp(
+                entry.stat().st_mtime, timezone.utc
+            ).isoformat()
+        except OSError:
+            modified = ""
+        item = {
+            "local_path": relative,
+            "name": name,
+            "file_extension": Path(name).suffix.lstrip(".").lower(),
+            "status": "synced",
+            "metadata": {"modified_time": modified},
+        }
+        file_entry = _datasource_file_entry(target, item, "synced")
+        if file_entry is not None:
+            files.append(file_entry)
+    return directories, files
+
+
+def _manifest_children(target, directory):
+    """List immediate children of a manifest directory without a deep walk."""
+
+    manifest_items = manifest_store.manifest_items(
+        manifest_store.read_manifest(target)
+    )
+    prefix = f"{directory}/" if directory else ""
+    directories = {}
+    files = []
+    for item in manifest_items:
+        local_path = manifest_store.manifest_local_path(item)
+        if not local_path or _is_hidden_catalog_path(local_path):
+            continue
+        if prefix and not local_path.startswith(prefix):
+            continue
+        remainder = local_path[len(prefix):]
+        if not remainder:
+            continue
+        head, separator, _rest = remainder.partition("/")
+        if separator:
+            path = f"{prefix}{head}"
+            directories.setdefault(
+                head, _datasource_directory_entry(path, head)
+            )
+            continue
+        file_entry = _datasource_file_entry(
+            target, item, _public_sync_status(item.get("status"))
+        )
+        if file_entry is not None:
+            files.append(file_entry)
+    return list(directories.values()), files
+
+
+def _datasource_directory_entry(relative_path, name):
+    """Return a catalog entry describing one subdirectory."""
+
+    return {
+        "type": "directory",
+        "path": relative_path,
+        "name": name,
+        "extension": "",
+        "sync_status": "",
+        "conversion_status": "",
+        "source_updated_at": "",
+        "converted_at": "",
+        "conversion_error": "",
     }
 
 
@@ -453,6 +611,15 @@ def _is_datasource_catalog_internal_path(target, path):
     return any(part.endswith(".sourcelens") for part in relative.parts)
 
 
+def _is_hidden_catalog_path(relative_path):
+    """Return whether a catalog path is hidden or a macOS archive artifact."""
+
+    return any(
+        part.startswith(".") or part == "__MACOSX"
+        for part in Path(relative_path).parts
+    )
+
+
 def _datasource_file_entry(target, item, sync_status=None):
     """Return safe catalog data for one manifest item."""
 
@@ -467,6 +634,7 @@ def _datasource_file_entry(target, item, sync_status=None):
     conversion = _read_datasource_conversion(path)
     metadata = item.get("metadata") or {}
     return {
+        "type": "file",
         "path": Path(local_path).as_posix(),
         "name": str(item.get("name") or Path(local_path).name),
         "extension": str(
@@ -1176,8 +1344,35 @@ def _upload_extraction_limits(limits):
     )
 
 
+def _zip_member_name(info):
+    """Recover a ZIP member name written without the UTF-8 flag.
+
+    The ZIP spec falls back to CP437 for entries that do not set the
+    UTF-8 general-purpose bit, but some tools (notably macOS Finder)
+    write UTF-8 bytes without setting it. Re-encode to the original
+    bytes and retry the common encodings so names do not turn into
+    mojibake.
+    """
+
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        raw = name.encode("cp437")
+    except UnicodeEncodeError:
+        return name
+    for encoding in ("utf-8", "gbk"):
+        try:
+            decoded = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if decoded and decoded != name:
+            return decoded
+    return name
+
+
 def _extract_zip_archive(archive_path, root, limits=None):
-    """Extract a ZIP archive without permitting unsafe members."""
+    """Extract a ZIP archive, skipping links and unsafe members."""
 
     extracted = []
     extracted_bytes = 0
@@ -1186,15 +1381,15 @@ def _extract_zip_archive(archive_path, root, limits=None):
         for info in archive.infolist():
             if info.is_dir():
                 continue
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                continue
             if len(extracted) >= max_files:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_LIMIT")
             extracted_bytes += info.file_size
             if extracted_bytes > max_bytes:
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_SIZE_LIMIT")
-            mode = (info.external_attr >> 16) & 0o170000
-            if mode == 0o120000:
-                raise DataSourceSyncError("DATASOURCE_UPLOAD_LINK_INVALID")
-            path = _archive_member_path(root, info.filename)
+            path = _archive_member_path(root, _zip_member_name(info))
             if path.exists():
                 raise DataSourceSyncError("DATASOURCE_UPLOAD_FILE_EXISTS")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1205,7 +1400,7 @@ def _extract_zip_archive(archive_path, root, limits=None):
 
 
 def _extract_tar_archive(archive_path, root, limits=None):
-    """Extract a tar archive without permitting unsafe members."""
+    """Extract a tar archive, skipping links and unsafe members."""
 
     extracted = []
     extracted_bytes = 0
@@ -1213,7 +1408,7 @@ def _extract_tar_archive(archive_path, root, limits=None):
     with tarfile.open(archive_path, "r:*") as archive:
         for member in archive.getmembers():
             if member.issym() or member.islnk():
-                raise DataSourceSyncError("DATASOURCE_UPLOAD_LINK_INVALID")
+                continue
             if not member.isfile():
                 continue
             if len(extracted) >= max_files:

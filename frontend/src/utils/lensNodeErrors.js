@@ -18,7 +18,32 @@ const LENSNODE_ERROR_KEYS = {
   DOCUMENT_ATTACHMENT_UNAVAILABLE: 'documentUnavailable',
   ATTACHMENT_UNREADABLE: 'attachmentUnreadable',
   DATASOURCE_CONVERSION_TYPE_REQUIRED: 'datasourceConversionTypeRequired',
-  DATASOURCE_CONVERSION_NOT_SUPPORTED: 'datasourceConversionNotSupported'
+  DATASOURCE_CONVERSION_NOT_SUPPORTED: 'datasourceConversionNotSupported',
+  LENS_SOURCE_SYNC_TIMEOUT: 'datasourceSyncTimeout',
+  LENS_SOURCE_CREDENTIAL_INVALID: 'datasourceCredentialInvalid',
+  LENS_SOURCE_CONFIG_INVALID: 'datasourceConfigInvalid',
+  LENS_SOURCE_TARGET_PATH_INVALID: 'datasourceTargetPathInvalid',
+  LENS_SOURCE_TARGET_PATH_REQUIRED: 'datasourceTargetPathRequired',
+  DATASOURCE_SYNC_ORPHANED: 'datasourceSyncOrphaned',
+  DATASOURCE_QUEUE_TIMEOUT: 'datasourceQueueTimeout',
+  DATASOURCE_NOT_FOUND: 'datasourceNotFound',
+  DATASOURCE_DISABLED: 'datasourceDisabled',
+  DATASOURCE_UPLOAD_LINK_INVALID: 'datasourceUploadLinkInvalid',
+  DATASOURCE_UPLOAD_ORPHANED: 'datasourceUploadOrphaned',
+  DATASOURCE_UPLOAD_TIMEOUT: 'datasourceUploadTimeout',
+  DATASOURCE_UPLOAD_FAILED: 'datasourceUploadFailed',
+  DATASOURCE_UPLOAD_CONTENT_INVALID: 'datasourceUploadContentInvalid',
+  DATASOURCE_UPLOAD_TOO_LARGE: 'datasourceUploadTooLarge',
+  DATASOURCE_UPLOAD_FILE_LIMIT: 'datasourceUploadFileLimit',
+  DATASOURCE_UPLOAD_SIZE_LIMIT: 'datasourceUploadSizeLimit',
+  DATASOURCE_UPLOAD_FILE_EXISTS: 'datasourceUploadFileExists',
+  DATASOURCE_UPLOAD_FILE_REQUIRED: 'datasourceUploadRequired',
+  DATASOURCE_UPLOAD_ARCHIVE_INVALID: 'datasourceUploadArchiveInvalid',
+  DATASOURCE_UPLOAD_ARCHIVE_PATH_INVALID: 'datasourceUploadArchivePathInvalid',
+  DATASOURCE_UPLOAD_NOT_SUPPORTED: 'datasourceUploadNotSupported',
+  DATASOURCE_CONVERSION_ORPHANED: 'datasourceConversionOrphaned',
+  DATASOURCE_CONVERSION_FAILED: 'datasourceConversionFailed',
+  DATASOURCE_CONVERSION_TIMEOUT: 'datasourceConversionTimeout'
 }
 
 const DATASOURCE_UNAVAILABLE_PREFIX = 'DATASOURCE_UNAVAILABLE'

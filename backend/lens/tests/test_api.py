@@ -5785,7 +5785,7 @@ class LensApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertLessEqual(len(queries), 3)
+        self.assertLessEqual(len(queries), 4)
         self.assertEqual(
             response.data,
             [
@@ -5802,12 +5802,40 @@ class LensApiTests(TestCase):
                         "created_at": task.created_at,
                         "progress_step": "",
                         "progress_message": "Indexing files",
+                        "progress_message_code": "",
                         "progress_percent": 42,
                         "phase": "",
                         "overall_progress_percent": None,
                         "phase_progress": {},
                         "progress_counts": {},
                         "last_substantive_progress_at": None,
+                        "datasource_upload_offset": None,
+                        "datasource_upload_total": None,
+                        "upload_eta_seconds": None,
+                        "error": "",
+                    },
+                    "last_task": {
+                        "id": task.id,
+                        "task_id": task.task_id,
+                        "task_name": task.task_name,
+                        "task_module": "lens_datasource",
+                        "filename": "",
+                        "status": task.status,
+                        "started_at": None,
+                        "created_at": task.created_at,
+                        "progress_step": "",
+                        "progress_message": "Indexing files",
+                        "progress_message_code": "",
+                        "progress_percent": 42,
+                        "phase": "",
+                        "overall_progress_percent": None,
+                        "phase_progress": {},
+                        "progress_counts": {},
+                        "last_substantive_progress_at": None,
+                        "datasource_upload_offset": None,
+                        "datasource_upload_total": None,
+                        "upload_eta_seconds": None,
+                        "error": "",
                     },
                     "sync_state": {
                         "enabled": schedule.enabled,
@@ -6768,7 +6796,12 @@ class LensApiTests(TestCase):
 
         response = self.client.get(
             f"/api/lens/admin/datasources/{self.datasource.uuid}/files/",
-            {"query": "MIW", "page": 1, "page_size": 20},
+            {
+                "query": "MIW",
+                "directory": "MIW Production Export",
+                "page": 1,
+                "page_size": 20,
+            },
         )
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -6779,6 +6812,10 @@ class LensApiTests(TestCase):
         )
         self.assertNotIn("/workspace", response.data["results"][0]["path"])
         list_files.assert_called_once()
+        self.assertEqual(
+            list_files.call_args.kwargs["directory"],
+            "MIW Production Export",
+        )
 
     def test_datasource_files_degrades_to_empty_on_channel_layer_loss(self):
         with patch(

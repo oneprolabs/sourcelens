@@ -22,6 +22,15 @@ def _read_json(path, root):
     return value if isinstance(value, dict) else {}
 
 
+def _is_hidden_catalog_path(relative_path):
+    """Return whether a catalog path is hidden or a macOS archive artifact."""
+
+    return any(
+        part.startswith(".") or part == "__MACOSX"
+        for part in PurePosixPath(relative_path).parts
+    )
+
+
 def list_stored_datasource_files(datasource, page=1, page_size=20, **filters):
     """Return manifest entries without requiring a node or target path."""
 
@@ -42,6 +51,8 @@ def list_stored_datasource_files(datasource, page=1, page_size=20, **filters):
             relative = record.get("local_path") or record.get("file")
             if not relative:
                 continue
+            if _is_hidden_catalog_path(relative):
+                continue
             path = PurePosixPath(relative)
             if path.is_absolute() or ".." in path.parts:
                 continue
@@ -59,6 +70,7 @@ def list_stored_datasource_files(datasource, page=1, page_size=20, **filters):
             if len(items) > 1:
                 display_path = f"{item.uuid}/{display_path}"
             entries.append({
+                "type": "file",
                 "path": display_path,
                 "name": str(record.get("name") or path.name),
                 "extension": str(
@@ -74,18 +86,84 @@ def list_stored_datasource_files(datasource, page=1, page_size=20, **filters):
                 "conversion_error": conversion.get("error", ""),
             })
     query = str(filters.get("query") or "").strip().lower()
-    entries = [
-        entry for entry in entries
-        if query in entry["path"].lower()
-        and all(
-            not filters.get(key)
-            or entry[key].lower() == str(filters[key]).strip().lower()
-            for key in ("sync_status", "conversion_status")
-        )
-    ]
-    entries.sort(key=lambda entry: entry["path"].lower())
+    sync_status = str(filters.get("sync_status") or "").strip().lower()
+    conversion_status = str(
+        filters.get("conversion_status") or ""
+    ).strip().lower()
+    if query or sync_status or conversion_status:
+        entries = [
+            entry for entry in entries
+            if query in entry["path"].lower()
+            and all(
+                not value or entry[key].lower() == value
+                for key, value in (
+                    ("sync_status", sync_status),
+                    ("conversion_status", conversion_status),
+                )
+            )
+        ]
+        entries.sort(key=lambda entry: entry["path"].lower())
+        start = (page - 1) * page_size
+        return {
+            "count": len(entries), "page": page, "page_size": page_size,
+            "results": entries[start:start + page_size],
+        }
+
+    directory = _normalize_directory(filters.get("directory"))
+    prefix = f"{directory}/" if directory else ""
+    directories = {}
+    files = []
+    for entry in entries:
+        path = entry["path"]
+        if prefix and not path.startswith(prefix):
+            continue
+        remainder = path[len(prefix):]
+        if not remainder:
+            continue
+        head, separator, _rest = remainder.partition("/")
+        if separator:
+            directories.setdefault(head, _directory_entry(prefix + head, head))
+            continue
+        files.append(entry)
+    candidates = sorted(
+        directories.values(), key=lambda entry: entry["name"].lower()
+    )
+    candidates.extend(sorted(files, key=lambda entry: entry["path"].lower()))
     start = (page - 1) * page_size
     return {
-        "count": len(entries), "page": page, "page_size": page_size,
-        "results": entries[start:start + page_size],
+        "count": len(candidates), "page": page, "page_size": page_size,
+        "results": candidates[start:start + page_size],
+    }
+
+
+def _normalize_directory(value):
+    """Return a safe datasource-relative directory path."""
+
+    parts = [
+        part for part in str(value or "").strip().replace("\\", "/").split("/")
+        if part not in {"", "."}
+    ]
+    if any(part == ".." for part in parts):
+        from .services import DataSourcePathError
+
+        raise DataSourcePathError("DATASOURCE_FILE_QUERY_INVALID")
+    directory = "/".join(parts)
+    if directory and _is_hidden_catalog_path(directory):
+        return ""
+    return directory
+
+
+def _directory_entry(relative_path, name):
+    """Return a catalog entry describing one subdirectory."""
+
+    return {
+        "type": "directory",
+        "path": relative_path,
+        "name": name,
+        "extension": "",
+        "sync_status": "",
+        "conversion_status": "",
+        "source_updated_at": "",
+        "converted_at": "",
+        "conversion_error": "",
     }

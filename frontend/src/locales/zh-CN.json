@@ -121,7 +121,25 @@
     "datasourceTargetPathRequired": "缺少目标路径，请配置数据源目录后重试。",
     "datasourceGitLayoutMigration": "Git 仓库目录结构需要迁移，请重新同步或联系管理员。",
     "datasourceConversionTypeRequired": "请至少启用一种转换类型（文档、图片或文档内嵌图片）后再开始处理。",
-    "datasourceConversionNotSupported": "该数据源暂不支持处理，请检查数据源类型与内容后重试。"
+    "datasourceConversionNotSupported": "该数据源暂不支持处理，请检查数据源类型与内容后重试。",
+    "datasourceSyncOrphaned": "数据源同步在节点返回结果前中断，请重试同步。",
+    "datasourceQueueTimeout": "等待数据源处理资源超时，请稍后重试。",
+    "datasourceNotFound": "数据源已不存在。",
+    "datasourceUploadLinkInvalid": "压缩包包含符号链接，暂不支持。请去除链接后重新打包上传。",
+    "datasourceUploadOrphaned": "上传在完成前中断，请重新上传该文件。",
+    "datasourceUploadTimeout": "上传超时，请重新上传该文件。",
+    "datasourceUploadFailed": "上传失败，请重试。",
+    "datasourceUploadContentInvalid": "上传文件内容无法读取，请检查文件后重试。",
+    "datasourceUploadTooLarge": "文件超过上传大小限制。",
+    "datasourceUploadFileLimit": "压缩包内文件数量超过限制。",
+    "datasourceUploadSizeLimit": "解压后大小超过限制。",
+    "datasourceUploadFileExists": "压缩包内已存在同名文件。",
+    "datasourceUploadArchiveInvalid": "压缩包无效或不受支持。",
+    "datasourceUploadArchivePathInvalid": "压缩包包含不安全的路径。",
+    "datasourceUploadNotSupported": "该数据源不支持文件上传。",
+    "datasourceConversionOrphaned": "处理在节点返回结果前中断，请重试处理。",
+    "datasourceConversionFailed": "处理失败，请检查数据源后重试。",
+    "datasourceConversionTimeout": "处理超时，请稍后重试。"
   },
   "lens": {
     "share": {

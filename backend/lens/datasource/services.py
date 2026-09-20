@@ -334,6 +334,7 @@ def list_datasource_files(datasource, page=1, page_size=20, **filters):
             "target_path": target_path,
             "page": page,
             "page_size": page_size,
+            "directory": filters.get("directory") or "",
             "query": filters.get("query") or "",
             "sync_status": filters.get("sync_status") or "",
             "conversion_status": filters.get("conversion_status") or "",

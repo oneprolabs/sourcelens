@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import uuid as uuid_mod
+from datetime import timedelta
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -76,6 +77,39 @@ DATASOURCE_TASK_TYPES = (
     "lens_datasource_upload",
     "lens_datasource_conversion",
 )
+
+
+def _latest_datasource_tasks(TaskExecution, datasource_uuids):
+    """Return the most recent task per datasource within the last day."""
+
+    recent_cutoff = timezone.now() - timedelta(days=1)
+    last_task_by_uuid = {}
+    recent_tasks = (
+        TaskExecution.objects.filter(
+            module__in=DATASOURCE_TASK_TYPES,
+            metadata__datasource_uuid__in=datasource_uuids,
+            created_at__gte=recent_cutoff,
+        )
+        .only(
+            "id",
+            "task_id",
+            "task_name",
+            "module",
+            "status",
+            "created_at",
+            "started_at",
+            "error",
+            "metadata",
+        )
+        .order_by("-created_at")
+    )
+    for task in recent_tasks:
+        datasource_uuid = str(
+            (task.metadata or {}).get("datasource_uuid") or ""
+        )
+        if datasource_uuid and datasource_uuid not in last_task_by_uuid:
+            last_task_by_uuid[datasource_uuid] = task
+    return last_task_by_uuid
 
 
 def _finalize_datasource_cancellation(task, datasource, reason, user=None):
@@ -232,7 +266,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         return Response(DataSourceVersionSerializer(rows, many=True).data)
 
     @staticmethod
-    def _sync_serializer_context(datasources):
+    def _sync_serializer_context(datasources, include_last_task=False):
         """Bulk-load task and schedule state for datasource serialization."""
 
         from agentcore_task.adapters.django.models import TaskExecution
@@ -242,10 +276,13 @@ class DataSourceViewSet(BaseAdminViewSet):
         current_sync_by_uuid = {}
         sync_state_by_uuid = {}
         if not datasource_uuids:
-            return {
+            context = {
                 "datasource_current_sync_by_uuid": current_sync_by_uuid,
                 "datasource_sync_state_by_uuid": sync_state_by_uuid,
             }
+            if include_last_task:
+                context["datasource_last_task_by_uuid"] = {}
+            return context
 
         active_statuses = [
             TaskStatus.PENDING,
@@ -270,6 +307,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 "status",
                 "created_at",
                 "started_at",
+                "error",
                 "metadata",
             )
             .order_by("-created_at")
@@ -281,6 +319,15 @@ class DataSourceViewSet(BaseAdminViewSet):
             if datasource_uuid and datasource_uuid not in current_sync_by_uuid:
                 current_sync_by_uuid[datasource_uuid] = task
 
+        context = {
+            "datasource_current_sync_by_uuid": current_sync_by_uuid,
+            "datasource_sync_state_by_uuid": sync_state_by_uuid,
+        }
+        if include_last_task:
+            context["datasource_last_task_by_uuid"] = (
+                _latest_datasource_tasks(TaskExecution, datasource_uuids)
+            )
+
         schedules = ScheduledTask.objects.filter(
             task_type=ScheduledTask.TaskType.SOURCE_SYNC,
             target_type="datasource",
@@ -289,10 +336,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         for record in schedules:
             sync_state_by_uuid[str(record.target_id)] = record
 
-        return {
-            "datasource_current_sync_by_uuid": current_sync_by_uuid,
-            "datasource_sync_state_by_uuid": sync_state_by_uuid,
-        }
+        return context
 
     def list(self, request, *args, **kwargs):
         """List datasources with sync state loaded in a fixed query count."""
@@ -921,6 +965,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 datasource,
                 page=page,
                 page_size=page_size,
+                directory=request.query_params.get("directory") or "",
                 query=request.query_params.get("query") or "",
                 sync_status=request.query_params.get("sync_status") or "",
                 conversion_status=(
@@ -994,13 +1039,16 @@ class DataSourceViewSet(BaseAdminViewSet):
         }
         datasources.sort(key=lambda item: order[str(item.uuid)])
         context = self.get_serializer_context()
-        context.update(self._sync_serializer_context(datasources))
+        context.update(
+            self._sync_serializer_context(datasources, include_last_task=True)
+        )
         serializer = self.get_serializer(context=context)
         return Response(
             [
                 {
                     "uuid": str(datasource.uuid),
                     "current_sync": serializer.get_current_sync(datasource),
+                    "last_task": serializer.get_last_task(datasource),
                     "sync_state": serializer.get_sync_state(datasource),
                     "last_synced_at": datasource.last_synced_at,
                     "last_error": datasource.last_error,
