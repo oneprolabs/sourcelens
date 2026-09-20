@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import re
 import threading
 from datetime import datetime, timezone
 
@@ -16,6 +17,40 @@ LOGGER = logging.getLogger("lensnode")
 WATCHDOG_INTERVAL_S = 5
 
 RUN_TIMEOUT_SECONDS = 3600
+_TRANSIENT_STATUS_PATTERN = re.compile(r"\b(?:408|429|5\d{2})\b")
+
+
+def _is_transient_provider_error(exc):
+    """Return whether an untyped provider failure is safe to classify."""
+
+    status_code = getattr(exc, "status_code", None)
+    try:
+        status_code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    if status_code in {408, 429} or (
+        status_code is not None and 500 <= status_code < 600
+    ):
+        return True
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return (
+        any(
+            marker in name or marker in message
+            for marker in (
+                "badgateway",
+                "serviceunavailable",
+                "rate_limit",
+                "ratelimit",
+                "timeout",
+                "connection",
+                "service is too busy",
+                "service unavailable",
+                "temporarily unavailable",
+            )
+        )
+        or bool(_TRANSIENT_STATUS_PATTERN.search(message))
+    )
 
 
 def _run_timeout_seconds(command):
@@ -100,6 +135,10 @@ def _failure_error_code(exc):
     message = str(exc).lower()
     if isinstance(exc, TimeoutError) or "timeout" in name or "timeout" in message:
         return "MODEL_TIMEOUT"
+    if "model_unavailable" in name or "model_unavailable" in message:
+        return "MODEL_UNAVAILABLE"
+    if _is_transient_provider_error(exc):
+        return "MODEL_UNAVAILABLE"
     stream_error_markers = [
         "chunked",
         "incomplete",

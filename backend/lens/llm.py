@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .llm_resilience import call_and_track_with_fallback
+
 
 VISION_SUPPORTED = "supported"
 VISION_UNSUPPORTED = "unsupported"
@@ -50,9 +52,8 @@ def _metered_chat_model_class():
             """Generate one chat response through LLMTracker."""
 
             del stop, run_manager, kwargs
-            from agentcore_metering.adapters.django import LLMTracker
 
-            content, usage = LLMTracker.call_and_track(
+            content, usage = call_and_track_with_fallback(
                 messages=[_message_to_dict(message) for message in messages],
                 model_uuid=self.model_ref,
                 node_name=self.node_name,

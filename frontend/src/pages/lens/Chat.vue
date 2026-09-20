@@ -3025,6 +3025,9 @@ function mapRunError(code) {
   if (c.includes('TIMEOUT')) {
     return t('lens.chat.errorModelTimeout')
   }
+  if (c.includes('MODEL_UNAVAILABLE')) {
+    return t('lens.chat.errorModelUnavailable')
+  }
   if (c.includes('DISCONNECT') || c.includes('ORPHAN')) {
     return t('lens.chat.errorNodeLost')
   }

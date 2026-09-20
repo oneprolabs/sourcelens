@@ -300,6 +300,8 @@ class LensGatewayChatModel(BaseChatModel):
     # Receives cumulative OpenAI-compatible tool-call argument snapshots.
     # The runtime uses this only for safe, user-visible plan progress.
     on_tool_call_delta: Optional[Any] = None
+    # Called when the control plane switches models before any output.
+    on_model_retry: Optional[Any] = None
     cancel_event: Optional[Any] = None
     run_uuid: str = ""
     trace_context: dict[str, Any] = Field(default_factory=dict)
@@ -1046,6 +1048,9 @@ class LensGatewayChatModel(BaseChatModel):
                                 usage = data.get("usage") or {}
                                 tool_calls = data.get("tool_calls") or []
                                 finish_reason = data.get("finish_reason")
+                            elif data.get("type") == "retry":
+                                if self.on_model_retry is not None:
+                                    self.on_model_retry(data)
                             elif data.get("type") == "error":
                                 error = data.get("error") or {}
                                 raise GatewayStreamError(
