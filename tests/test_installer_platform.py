@@ -155,14 +155,17 @@ class InstallerPlatformTests(unittest.TestCase):
             self.assertIn(
                 "postgresql_data:/var/lib/postgresql/data", content
             )
-            self.assertIn("redis_data:/data", content)
             self.assertIn("\nvolumes:\n", content)
 
-    def test_redis_healthcheck_uses_stable_working_directory(self):
+    def test_redis_runs_ephemeral_with_memory_cap(self):
         content = COMPOSE.read_text()
 
-        self.assertIn("working_dir: /tmp", content)
-        self.assertIn("command: redis-server --dir /data", content)
+        self.assertNotIn("working_dir: /tmp", content)
+        self.assertNotIn("./data/redis:/data", content)
+        self.assertIn('"--save", ""', content)
+        self.assertIn('"--maxmemory", "512mb"', content)
+        self.assertIn("--maxmemory-policy", content)
+        self.assertIn("noeviction", content)
 
     def test_windows_compose_paths_use_cygpath(self):
         result = run_installer_function(
