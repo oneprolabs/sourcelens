@@ -751,7 +751,7 @@ class RunLifecycleTests(TransactionTestCase):
         self.assertIsNone(run.execution.dispatch_id)
         enqueue.assert_called_once_with(run.uuid, 2)
 
-    def test_admitted_run_without_checkpoint_readiness_fails_closed(self):
+    def test_admitted_run_without_checkpoint_readiness_keeps_awaiting(self):
         self.lensnode.labels["run_admission_checkpoint_v1"] = True
         self.lensnode.save(update_fields=["labels"])
         run = self._run(
@@ -774,11 +774,11 @@ class RunLifecycleTests(TransactionTestCase):
         run.refresh_from_db()
         run.execution.refresh_from_db()
         self.assertEqual(count, 0)
-        self.assertEqual(run.status, Run.Status.FAILED)
-        self.assertEqual(run.error, "LENSNODE_CHECKPOINT_NOT_READY")
+        self.assertEqual(run.status, Run.Status.RUNNING)
+        self.assertIsNotNone(run.resume_by)
         self.assertEqual(
             run.execution.status,
-            RunExecution.Status.FAILED,
+            RunExecution.Status.RUNNING,
         )
         dispatch.assert_not_called()
 

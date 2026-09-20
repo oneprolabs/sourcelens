@@ -1,0 +1,7 @@
+type: fix
+audience: user
+en: >-
+  Fixed cold-start Runs being marked as failed while a LensNode is still
+  preparing its durable checkpoint.
+zh-CN: >-
+  修复 LensNode 冷启动准备持久化检查点时，Run 被错误标记为失败的问题。
