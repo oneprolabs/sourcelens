@@ -1,0 +1,8 @@
+type: fix
+audience: user
+en: >-
+  Datasource file listings now return an empty result instead of a server error
+  when the realtime channel is temporarily unavailable, and run cancellation no
+  longer fails the request when the channel is down.
+zh-CN: >-
+  当实时通道临时不可用时，数据源文件列表返回空结果而不是服务器错误；通道中断时取消运行也不再导致请求失败。

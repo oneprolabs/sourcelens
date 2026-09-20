@@ -6780,6 +6780,31 @@ class LensApiTests(TestCase):
         self.assertNotIn("/workspace", response.data["results"][0]["path"])
         list_files.assert_called_once()
 
+    def test_datasource_files_degrades_to_empty_on_channel_layer_loss(self):
+        with patch(
+            "lens.datasource.services.async_to_sync",
+            side_effect=ConnectionError("Connection closed by server"),
+        ):
+            response = self.client.get(
+                f"/api/lens/admin/datasources/{self.datasource.uuid}/files/",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["results"], [])
+        self.assertEqual(response.data["count"], 0)
+
+    def test_send_lensnode_command_maps_channel_layer_failure(self):
+        from lens.datasource.services import _send_lensnode_command
+
+        with patch(
+            "lens.datasource.services.async_to_sync",
+            side_effect=ConnectionError("Connection closed by server"),
+        ):
+            with self.assertRaises(DataSourceDispatchError) as ctx:
+                _send_lensnode_command(self.lensnode, {"type": "probe"})
+
+        self.assertEqual(str(ctx.exception), "LENS_CHANNEL_LAYER_UNAVAILABLE")
+
     def test_disabled_datasource_rejects_manual_sync(self):
         self.datasource.status = DataSource.Status.DISABLED
         self.datasource.save(update_fields=["status", "updated_at"])

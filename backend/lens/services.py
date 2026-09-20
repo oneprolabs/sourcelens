@@ -2947,6 +2947,32 @@ def rewrite_query(run):
     }
 
 
+def _publish_lensnode_message(
+    channel_layer, lensnode_uuid, message, *, best_effort=False
+):
+    """Publish one channel-layer message.
+
+    Failures become a ``LensNodeDispatchError`` unless ``best_effort`` is set,
+    in which case they are logged and swallowed so fire-and-forget commands
+    never surface as request failures.
+    """
+
+    try:
+        async_to_sync(channel_layer.group_send)(
+            lensnode_group_name(lensnode_uuid),
+            message,
+        )
+    except Exception as exc:
+        logger.warning(
+            "LensNode command dispatch failed lensnode=%s: %s",
+            lensnode_uuid,
+            exc,
+        )
+        if best_effort:
+            return
+        raise LensNodeDispatchError("LENS_CHANNEL_LAYER_UNAVAILABLE") from exc
+
+
 def dispatch_run_to_lensnode(
     run,
     rewritten_question,
@@ -3052,8 +3078,9 @@ def dispatch_run_to_lensnode(
     )
     last_trace_sequence = int(trace_cursor["last_sequence"] or 0)
     last_trace_attempt = int(trace_cursor["last_attempt"] or 0)
-    async_to_sync(channel_layer.group_send)(
-        lensnode_group_name(run.lensnode.uuid),
+    _publish_lensnode_message(
+        channel_layer,
+        run.lensnode.uuid,
         {
             "type": "lensnode.command",
             "payload": {
@@ -3146,8 +3173,9 @@ def cancel_run_on_lensnode(run):
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return None
-    async_to_sync(channel_layer.group_send)(
-        lensnode_group_name(run.lensnode.uuid),
+    _publish_lensnode_message(
+        channel_layer,
+        run.lensnode.uuid,
         {
             "type": "lensnode.command",
             "payload": {
@@ -3155,6 +3183,7 @@ def cancel_run_on_lensnode(run):
                 "run_uuid": str(run.uuid),
             },
         },
+        best_effort=True,
     )
     return None
 
@@ -3209,8 +3238,9 @@ def cancel_datasource_sync_on_lensnode(lensnode, task_id):
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return None
-    async_to_sync(channel_layer.group_send)(
-        lensnode_group_name(lensnode.uuid),
+    _publish_lensnode_message(
+        channel_layer,
+        lensnode.uuid,
         {
             "type": "lensnode.command",
             "payload": {
@@ -3218,6 +3248,7 @@ def cancel_datasource_sync_on_lensnode(lensnode, task_id):
                 "task_id": str(task_id),
             },
         },
+        best_effort=True,
     )
     return None
 
@@ -3236,8 +3267,9 @@ def cancel_datasource_conversion_on_lensnode(lensnode, task_id):
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return None
-    async_to_sync(channel_layer.group_send)(
-        lensnode_group_name(lensnode.uuid),
+    _publish_lensnode_message(
+        channel_layer,
+        lensnode.uuid,
         {
             "type": "lensnode.command",
             "payload": {
@@ -3245,6 +3277,7 @@ def cancel_datasource_conversion_on_lensnode(lensnode, task_id):
                 "task_id": str(task_id),
             },
         },
+        best_effort=True,
     )
     return None
 
