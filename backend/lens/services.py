@@ -679,17 +679,9 @@ def resume_awaiting_runs_for_lensnode(
                     continue
                 if execution.status != RunExecution.Status.RUNNING:
                     continue
-                recovery_error = None
                 if not supports_run_checkpoint_resume(lensnode):
-                    recovery_error = "LENSNODE_RESUME_UNSUPPORTED"
-                elif (
-                    supports_run_admission_checkpoint(lensnode)
-                    and execution.checkpoint_ready_at is None
-                ):
-                    recovery_error = "LENSNODE_CHECKPOINT_NOT_READY"
-                if recovery_error:
                     run.status = Run.Status.FAILED
-                    run.error = recovery_error
+                    run.error = "LENSNODE_RESUME_UNSUPPORTED"
                     run.resume_by = None
                     run.finished_at = now
                     run.save(
@@ -706,10 +698,29 @@ def resume_awaiting_runs_for_lensnode(
                     execution.save(update_fields=["status", "finished_at"])
                     fail_running_steps_for_runs([run.id])
                     logger.error(
-                        "run resume rejected run_uuid=%s lensnode_uuid=%s " "reason=%s",
+                        "run resume rejected run_uuid=%s lensnode_uuid=%s "
+                        "reason=LENSNODE_RESUME_UNSUPPORTED",
                         run.uuid,
                         lensnode_uuid,
-                        recovery_error,
+                    )
+                    continue
+                if (
+                    supports_run_admission_checkpoint(lensnode)
+                    and execution.checkpoint_ready_at is None
+                ):
+                    # The node admitted the run but has not published its
+                    # durable checkpoint yet (e.g. a cold-start model/KB
+                    # load). Keep it parked rather than failing: the run is
+                    # still being prepared, and resuming without a
+                    # checkpoint is unsafe. The checkpoint-ready
+                    # acknowledgement clears resume_by and the node carries
+                    # on with the run; the awaiting-resume deadline bounds
+                    # the wait if the checkpoint never arrives.
+                    logger.info(
+                        "run resume deferred until checkpoint ready "
+                        "run_uuid=%s lensnode_uuid=%s",
+                        run.uuid,
+                        lensnode_uuid,
                     )
                     continue
                 run.status = Run.Status.STREAMING
