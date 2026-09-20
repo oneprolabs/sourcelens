@@ -6054,6 +6054,52 @@ class LensServiceTests(TransactionTestCase):
             str(self.lensnode.uuid),
         )
 
+    def test_lensnode_health_marks_command_unresponsive_node(self):
+        self.lensnode.status = LensNode.Status.ONLINE
+        self.lensnode.last_heartbeat_at = timezone.now()
+        self.lensnode.labels = {"health_probe_v1": True}
+        self.lensnode.save(
+            update_fields=["status", "last_heartbeat_at", "labels"]
+        )
+
+        with patch("lens.tasks._probe_lensnode", return_value=False):
+            marked = lensnode_health_task()
+
+        self.lensnode.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(self.lensnode.status, LensNode.Status.UNRESPONSIVE)
+
+    def test_lensnode_health_recovers_command_responsive_node(self):
+        self.lensnode.status = LensNode.Status.UNRESPONSIVE
+        self.lensnode.last_heartbeat_at = timezone.now()
+        self.lensnode.labels = {"health_probe_v1": True}
+        self.lensnode.save(
+            update_fields=["status", "last_heartbeat_at", "labels"]
+        )
+
+        with patch("lens.tasks._probe_lensnode", return_value=True):
+            marked = lensnode_health_task()
+
+        self.lensnode.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(self.lensnode.status, LensNode.Status.ONLINE)
+
+    def test_lensnode_health_keeps_legacy_node_online(self):
+        self.lensnode.status = LensNode.Status.ONLINE
+        self.lensnode.last_heartbeat_at = timezone.now()
+        self.lensnode.labels = {}
+        self.lensnode.save(
+            update_fields=["status", "last_heartbeat_at", "labels"]
+        )
+
+        with patch("lens.tasks._probe_lensnode") as probe:
+            marked = lensnode_health_task()
+
+        self.lensnode.refresh_from_db()
+        self.assertEqual(marked, 0)
+        self.assertEqual(self.lensnode.status, LensNode.Status.ONLINE)
+        probe.assert_not_called()
+
     def test_register_periodic_tasks_adds_lens_entries(self):
         TASK_REGISTRY.clear()
 

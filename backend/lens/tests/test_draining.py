@@ -74,6 +74,23 @@ class LensNodeDrainingTests(TransactionTestCase):
         status = async_to_sync(self._connect_send_draining)(token)
         self.assertEqual(status, LensNode.Status.DRAINING)
 
+    def test_health_probe_ack_is_persisted_for_control_plane(self):
+        token = issue_lensnode_token(self.lensnode)
+        acknowledged = async_to_sync(self._connect_send_probe_ack)(token)
+        self.assertTrue(acknowledged)
+
+    def test_heartbeat_does_not_hide_an_unresponsive_node(self):
+        token = issue_lensnode_token(self.lensnode)
+        status = async_to_sync(
+            self._connect_send_heartbeat_while_unresponsive
+        )(token)
+        self.assertEqual(status, LensNode.Status.UNRESPONSIVE)
+
+    def test_revoked_token_closes_connection_on_heartbeat(self):
+        token = issue_lensnode_token(self.lensnode)
+        closed = async_to_sync(self._connect_revoke_then_heartbeat)(token)
+        self.assertTrue(closed)
+
     async def _connect_send_draining(self, token):
         from channels.db import database_sync_to_async
         from channels.testing import WebsocketCommunicator
@@ -93,3 +110,66 @@ class LensNodeDrainingTests(TransactionTestCase):
         )()
         await communicator.disconnect()
         return status
+
+    async def _connect_send_probe_ack(self, token):
+        from channels.testing import WebsocketCommunicator
+        from django.core.cache import cache
+
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/lens/lensnodes/?token={token}",
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.receive_json_from()
+        await communicator.send_json_to(
+            {"type": "health_probe_ack", "request_id": "probe-1"}
+        )
+        await communicator.receive_nothing(timeout=1)
+        acknowledged = cache.get(
+            f"lens:lensnode_health:{self.lensnode.uuid}:probe-1"
+        )
+        await communicator.disconnect()
+        return acknowledged
+
+    async def _connect_send_heartbeat_while_unresponsive(self, token):
+        from channels.db import database_sync_to_async
+        from channels.testing import WebsocketCommunicator
+
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/lens/lensnodes/?token={token}",
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.receive_json_from()
+        await database_sync_to_async(LensNode.objects.filter(
+            uuid=self.lensnode.uuid
+        ).update)(status=LensNode.Status.UNRESPONSIVE)
+        await communicator.send_json_to({"type": "heartbeat"})
+        response = await communicator.receive_json_from()
+        self.assertEqual(response["type"], "heartbeat_ack")
+        status = await database_sync_to_async(
+            lambda: LensNode.objects.get(uuid=self.lensnode.uuid).status
+        )()
+        await communicator.disconnect()
+        return status
+
+    async def _connect_revoke_then_heartbeat(self, token):
+        from channels.db import database_sync_to_async
+        from channels.testing import WebsocketCommunicator
+
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/lens/lensnodes/?token={token}",
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.receive_json_from()
+        await database_sync_to_async(LensNode.objects.filter(
+            uuid=self.lensnode.uuid
+        ).update)(token_revoked=True)
+        await communicator.send_json_to({"type": "heartbeat"})
+        output = await communicator.receive_output(timeout=1)
+        await communicator.disconnect()
+        return output["type"] == "websocket.close" and output["code"] == 4401

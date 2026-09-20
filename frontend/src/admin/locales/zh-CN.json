@@ -921,6 +921,7 @@
     },
     "fleet": {
       "online": "在线节点",
+      "unresponsive": "无响应节点",
       "offline": "离线节点",
       "draining": "排空中节点",
       "activeRuns": "运行中 Run",
@@ -1244,7 +1245,7 @@
       "cleanup": "节点清理",
       "cleanupDesc": "清理长时间未结束的运行记录。",
       "health": "节点健康检查",
-      "healthDesc": "将超时未心跳的在线节点标记为离线。",
+      "healthDesc": "将心跳超时的节点标记为离线，并检测停止响应命令的节点。",
       "retention": "Run 保留清理",
       "retentionDesc": "删除超过保留天数的历史运行记录。"
     },
@@ -1837,7 +1838,9 @@
       "retentionTitle": "Run 保留天数",
       "retentionDesc": "Run 与执行记录保留天数，超过后由清理任务处理。",
       "offlineTitle": "节点离线阈值",
-      "offlineDesc": "超过该秒数未收到心跳时，健康检查将节点标记为离线。",
+      "offlineDesc": "超过该秒数未收到心跳时，健康检查将节点标记为离线；命令探针会单独检测无响应节点。",
+      "probeTimeoutTitle": "命令探针超时",
+      "probeTimeoutDesc": "健康检查等待命令通道响应的时间；超时后将节点标记为无响应。",
       "cleanupIntervalTitle": "清理任务间隔",
       "cleanupIntervalDesc": "节点清理任务的执行间隔，单位为秒。",
       "healthIntervalTitle": "健康检查间隔",

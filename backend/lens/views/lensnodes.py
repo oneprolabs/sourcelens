@@ -91,6 +91,9 @@ class LensNodeViewSet(BaseAdminViewSet):
         node_summary = LensNode.objects.aggregate(
             total=Count("pk"),
             online=Count("pk", filter=Q(status=LensNode.Status.ONLINE)),
+            unresponsive=Count(
+                "pk", filter=Q(status=LensNode.Status.UNRESPONSIVE)
+            ),
             offline=Count("pk", filter=Q(status=LensNode.Status.OFFLINE)),
             draining=Count("pk", filter=Q(status=LensNode.Status.DRAINING)),
         )

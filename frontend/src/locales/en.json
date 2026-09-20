@@ -70,6 +70,7 @@
       "inactive": "Disabled",
       "cancelled": "Cancelled",
       "online": "Online",
+      "unresponsive": "Unresponsive",
       "offline": "Offline",
       "draining": "Draining",
       "approved": "Approved",
@@ -1312,7 +1313,7 @@
       "cleanup": "LensNode Cleanup",
       "cleanupDesc": "Clean up runs that have been stuck for too long.",
       "health": "LensNode Health Check",
-      "healthDesc": "Mark online nodes offline when their heartbeat times out.",
+      "healthDesc": "Mark stale nodes offline and detect nodes that stop responding to commands.",
       "retention": "Run Retention Cleanup",
       "retentionDesc": "Delete historical runs older than the retention window."
     }

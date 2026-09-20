@@ -277,6 +277,7 @@ const defaultSettings = {
   'lensnode.defaults.timeout': 600,
   'retention.run_days': 90,
   'lensnode.health.offline_threshold_s': 120,
+  'lensnode.health.probe_timeout_s': 5,
   'lensnode_cleanup.interval_seconds': 3600,
   'lensnode_health.interval_seconds': 60,
   'run_retention.interval_seconds': 86400,
@@ -368,6 +369,14 @@ const settingDefinitions = computed(() => {
       group: 'health',
       label: t('lensAdmin.settings.offlineTitle'),
       description: t('lensAdmin.settings.offlineDesc'),
+      type: 'number',
+      unit: t('lensAdmin.settings.secondsUnit')
+    },
+    {
+      key: 'lensnode.health.probe_timeout_s',
+      group: 'health',
+      label: t('lensAdmin.settings.probeTimeoutTitle'),
+      description: t('lensAdmin.settings.probeTimeoutDesc'),
       type: 'number',
       unit: t('lensAdmin.settings.secondsUnit')
     },

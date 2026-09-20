@@ -407,6 +407,11 @@ const healthSummary = computed(() => [
     dotClass: 'bg-ink-400'
   },
   {
+    label: t('lensAdmin.fleet.unresponsive'),
+    value: fleetSummaryData.value.unresponsive,
+    dotClass: 'bg-danger-500'
+  },
+  {
     label: t('lensAdmin.fleet.draining'),
     value: fleetSummaryData.value.draining,
     dotClass: 'bg-warning-500'

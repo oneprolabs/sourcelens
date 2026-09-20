@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import timedelta
 
@@ -148,6 +149,8 @@ DATASOURCE_OPERATION_MODULES = [
     "lens_datasource_conversion",
     "lens_datasource_upload",
 ]
+LENSNODE_HEALTH_PROBE_TIMEOUT_S_DEFAULT = 5
+LENSNODE_HEALTH_PROBE_WORKERS = 16
 LEGACY_DATASOURCE_ACTIVE_STATUSES = ("pending", "running", "started", "retry")
 LEGACY_DATASOURCE_COMPLETED_STATUSES = ("success", "failed", "failure", "revoked")
 
@@ -3173,7 +3176,7 @@ def retry_awaiting_run_resume(run_uuid):
 
 @shared_task(name="lens.lensnode_health", queue="lens")
 def lensnode_health_task():
-    """Mark stale online LensNodes offline based on heartbeat age."""
+    """Check LensNode heartbeats and command-channel round trips."""
 
     if not _is_global_task_enabled(ScheduledTask.TaskType.LENSNODE_HEALTH):
         return 0
@@ -3188,11 +3191,24 @@ def lensnode_health_task():
         key="lensnode.health.offline_threshold_s"
     ).first()
     threshold_s = int(setting.value if setting else 60)
+    probe_setting = GlobalSetting.objects.filter(
+        key="lensnode.health.probe_timeout_s"
+    ).first()
+    try:
+        probe_timeout_s = max(
+            int(probe_setting.value),
+            1,
+        )
+    except (AttributeError, TypeError, ValueError):
+        probe_timeout_s = LENSNODE_HEALTH_PROBE_TIMEOUT_S_DEFAULT
     now = timezone.now()
     cutoff = now - timedelta(seconds=threshold_s)
     stale_nodes = list(
         LensNode.objects.filter(
-            status=LensNode.Status.ONLINE,
+            status__in=[
+                LensNode.Status.ONLINE,
+                LensNode.Status.UNRESPONSIVE,
+            ],
             last_heartbeat_at__lt=cutoff,
         ).only("pk", "uuid")
     )
@@ -3202,7 +3218,10 @@ def lensnode_health_task():
     for node in stale_nodes:
         transitioned = LensNode.objects.filter(
             pk=node.pk,
-            status=LensNode.Status.ONLINE,
+            status__in=[
+                LensNode.Status.ONLINE,
+                LensNode.Status.UNRESPONSIVE,
+            ],
             last_heartbeat_at__lt=cutoff,
         ).update(
             status=LensNode.Status.OFFLINE,
@@ -3214,17 +3233,162 @@ def lensnode_health_task():
             updated += 1
             schedule_lensnode_disconnect_grace_check(node.uuid, now)
 
+    responsive_nodes = LensNode.objects.filter(
+        status__in=[LensNode.Status.ONLINE, LensNode.Status.UNRESPONSIVE],
+        last_heartbeat_at__gte=cutoff,
+    ).only(
+        "pk",
+        "uuid",
+        "status",
+        "connection_id",
+        "last_heartbeat_at",
+        "labels",
+    )
+    unresponsive = 0
+    recovered = 0
+    probe_jobs = []
+    for node in responsive_nodes:
+        if not _supports_health_probe(node):
+            continue
+        probe_started_at = timezone.now()
+        started = LensNode.objects.filter(
+            pk=node.pk,
+            status__in=[
+                LensNode.Status.ONLINE,
+                LensNode.Status.UNRESPONSIVE,
+            ],
+            connection_id=node.connection_id,
+            last_heartbeat_at__gte=cutoff,
+        ).update(
+            last_health_probe_at=probe_started_at,
+            updated_at=probe_started_at,
+        )
+        if not started:
+            continue
+        probe_jobs.append((node, probe_started_at))
+
+    worker_count = min(LENSNODE_HEALTH_PROBE_WORKERS, len(probe_jobs))
+    with ThreadPoolExecutor(max_workers=worker_count or 1) as executor:
+        futures = {
+            executor.submit(_probe_lensnode, node, probe_timeout_s): (
+                node,
+                probe_started_at,
+            )
+            for node, probe_started_at in probe_jobs
+        }
+        for future in as_completed(futures):
+            node, probe_started_at = futures[future]
+            try:
+                probe_ok = future.result()
+            except Exception:
+                logger.warning(
+                    "LensNode health probe worker failed lensnode=%s",
+                    node.uuid,
+                    exc_info=True,
+                )
+                probe_ok = None
+            if probe_ok is None:
+                continue
+            target_status = (
+                LensNode.Status.ONLINE
+                if probe_ok
+                else LensNode.Status.UNRESPONSIVE
+            )
+            probe_completed_at = timezone.now()
+            update = {
+                "status": target_status,
+                "last_health_probe_at": probe_completed_at,
+                "updated_at": probe_completed_at,
+            }
+            if probe_ok:
+                update["last_health_probe_success_at"] = probe_completed_at
+            transitioned = LensNode.objects.filter(
+                pk=node.pk,
+                status__in=[
+                    LensNode.Status.ONLINE,
+                    LensNode.Status.UNRESPONSIVE,
+                ],
+                connection_id=node.connection_id,
+                last_health_probe_at=probe_started_at,
+            ).update(**update)
+            if transitioned and node.status != target_status:
+                if probe_ok:
+                    recovered += 1
+                else:
+                    unresponsive += 1
+
     datasource_sync_metrics = cleanup_stale_datasource_sync_tasks()
 
     record.last_status = ScheduledTask.Status.SUCCESS
     record.last_metrics = {
         "offline": updated,
+        "unresponsive": unresponsive,
+        "recovered": recovered,
         "threshold_s": threshold_s,
+        "probe_timeout_s": probe_timeout_s,
         "datasource_sync": datasource_sync_metrics,
     }
     record.last_run_at = timezone.now()
     record.save(update_fields=["last_status", "last_metrics", "last_run_at"])
-    return updated
+    return updated + unresponsive + recovered
+
+
+def _supports_health_probe(lensnode):
+    """Return whether a LensNode advertises the health probe protocol."""
+
+    return bool((lensnode.labels or {}).get("health_probe_v1"))
+
+
+def _probe_lensnode(lensnode, timeout_s):
+    """Return probe result, or None when infrastructure is unavailable."""
+
+    try:
+        channel_layer = get_channel_layer()
+    except Exception:
+        logger.warning(
+            "LensNode health probe channel layer unavailable",
+            exc_info=True,
+        )
+        return None
+    if channel_layer is None:
+        return None
+    request_id = uuid.uuid4().hex
+    cache_key = f"lens:lensnode_health:{lensnode.uuid}:{request_id}"
+    try:
+        cache.delete(cache_key)
+        async_to_sync(channel_layer.group_send)(
+            lensnode_group_name(lensnode.uuid),
+            {
+                "type": "lensnode.command",
+                "payload": {
+                    "type": "health_probe",
+                    "request_id": request_id,
+                },
+            },
+        )
+    except Exception:
+        logger.warning(
+            "LensNode health probe dispatch failed lensnode=%s",
+            lensnode.uuid,
+            exc_info=True,
+        )
+        return None
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            if cache.get(cache_key):
+                cache.delete(cache_key)
+                return True
+        except Exception:
+            logger.warning(
+                "LensNode health probe result lookup failed lensnode=%s",
+                lensnode.uuid,
+                exc_info=True,
+            )
+            return None
+        time.sleep(DATASOURCE_RESULT_POLL_S)
+    return False
 
 
 @shared_task(name="lens.lensnode_cleanup", queue="lens")

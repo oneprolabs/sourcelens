@@ -54,6 +54,7 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         """Authenticate a LensNode by token and add it to its command group."""
 
         token = self._query_token()
+        self._token_hash = hash_lensnode_token(token) if token else ""
         self.lensnode = await self._authenticate_lensnode(token)
         if self.lensnode is None:
             await self.close(code=4401)
@@ -99,6 +100,8 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_hello(content)
         elif frame_type == "heartbeat":
             await self._handle_heartbeat(content)
+        elif frame_type == "health_probe_ack":
+            await self._handle_health_probe_ack(content)
         elif frame_type == "node_draining":
             await self._handle_node_draining(content)
         elif frame_type == "run_event":
@@ -264,6 +267,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         schedule_lensnode_disconnect_grace_check(lensnode_uuid, disconnected_at)
 
     async def _handle_hello(self, content):
+        if not await self._is_token_valid():
+            await self.close(code=4401)
+            return
         active_runs = content.get("active_runs") or []
         active_datasource_operations = content.get("active_datasource_operations")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
@@ -285,6 +291,9 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "hello_ack"})
 
     async def _handle_heartbeat(self, content):
+        if not await self._is_token_valid():
+            await self.close(code=4401)
+            return
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self._update_lensnode_report(content, require_versions=False)
         await self.send_json(
@@ -292,6 +301,35 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 "type": "heartbeat_ack",
                 "ts": timezone.now().isoformat(),
             }
+        )
+
+    async def _handle_health_probe_ack(self, content):
+        """Record a command-channel round-trip acknowledgement."""
+
+        if not await self._is_token_valid():
+            await self.close(code=4401)
+            return
+        request_id = str(content.get("request_id") or "")
+        if not request_id:
+            return
+        await database_sync_to_async(self._cache_health_probe_ack)(request_id)
+
+    @database_sync_to_async
+    def _is_token_valid(self):
+        """Return whether this connection still has an active node token."""
+
+        return LensNode.objects.filter(
+            pk=self.lensnode.pk,
+            auth_token_hash=getattr(self, "_token_hash", ""),
+            enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+            token_revoked=False,
+        ).exists()
+
+    def _cache_health_probe_ack(self, request_id):
+        cache.set(
+            f"lens:lensnode_health:{self.lensnode.uuid}:{request_id}",
+            True,
+            timeout=30,
         )
 
     async def _handle_node_draining(self, content):
@@ -322,31 +360,43 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         """Persist LensNode-reported workspace, task, and version metadata."""
 
         lensnode = LensNode.objects.get(pk=self.lensnode.pk)
-        lensnode.status = LensNode.Status.ONLINE
-        lensnode.connection_id = self.channel_name
-        lensnode.last_heartbeat_at = timezone.now()
+        now = timezone.now()
+        report = {
+            "connection_id": self.channel_name,
+            "last_heartbeat_at": now,
+            "disconnected_at": None,
+            "updated_at": now,
+        }
         # A hello/heartbeat proves the node is back — clear any disconnect
         # stamp so a pending grace check no-ops.
-        lensnode.disconnected_at = None
         if content.get("workspace_path") is not None:
-            lensnode.workspace_path = content.get("workspace_path", "")
+            report["workspace_path"] = content.get("workspace_path", "")
         if content.get("available_dirs") is not None:
-            lensnode.available_dirs = content.get("available_dirs") or []
+            report["available_dirs"] = content.get("available_dirs") or []
         if content.get("tasks") is not None:
-            lensnode.tasks = content.get("tasks") or []
+            report["tasks"] = content.get("tasks") or []
         if content.get("labels") is not None:
-            lensnode.labels = content.get("labels") or {}
+            report["labels"] = content.get("labels") or {}
         if content.get("metrics") is not None:
-            lensnode.last_metrics = content.get("metrics") or {}
+            report["last_metrics"] = content.get("metrics") or {}
         if content.get("active_datasource_operations") is not None:
-            lensnode.active_datasource_operations = (
+            report["active_datasource_operations"] = (
                 content.get("active_datasource_operations") or []
             )
         if require_versions or content.get("protocol_version") is not None:
-            lensnode.protocol_version = content.get("protocol_version", "")
+            report["protocol_version"] = content.get("protocol_version", "")
         if require_versions or content.get("agent_version") is not None:
-            lensnode.agent_version = content.get("agent_version", "")
-        lensnode.save()
+            report["agent_version"] = content.get("agent_version", "")
+        LensNode.objects.filter(pk=lensnode.pk).update(**report)
+        if lensnode.status != LensNode.Status.UNRESPONSIVE:
+            LensNode.objects.filter(
+                pk=lensnode.pk,
+                status__in=[
+                    LensNode.Status.ONLINE,
+                    LensNode.Status.OFFLINE,
+                    LensNode.Status.DRAINING,
+                ],
+            ).update(status=LensNode.Status.ONLINE, updated_at=now)
         self.lensnode = lensnode
 
     async def _handle_run_event(self, content):

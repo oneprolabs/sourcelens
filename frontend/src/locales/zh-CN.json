@@ -70,6 +70,7 @@
       "inactive": "禁用",
       "cancelled": "已取消",
       "online": "在线",
+      "unresponsive": "无响应",
       "offline": "离线",
       "draining": "停止接单",
       "approved": "已审批",
@@ -1312,7 +1313,7 @@
       "cleanup": "LensNode 清理",
       "cleanupDesc": "清理长时间未结束的运行记录。",
       "health": "LensNode 健康检查",
-      "healthDesc": "将超时未心跳的在线节点标记为离线。",
+      "healthDesc": "将心跳超时的节点标记为离线，并检测停止响应命令的节点。",
       "retention": "Run 保留清理",
       "retentionDesc": "删除超过保留天数的历史运行记录。"
     }
