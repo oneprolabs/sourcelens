@@ -1,0 +1,9 @@
+type: fix
+audience: admin
+en: >-
+  The admin LLM configuration now shows friendly names for OpenAI
+  Compatible, Meta Llama, Amazon Nova, and NVIDIA NIM providers instead
+  of their raw provider ids.
+zh-CN: >-
+  管理端 LLM 配置现在为 OpenAI Compatible、Meta Llama、Amazon Nova 和
+  NVIDIA NIM 显示友好名称，而不再展示原始 provider id。
