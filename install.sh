@@ -978,28 +978,22 @@ patch_compose() {
 patch_platform_compose() {
   local compose="$1"
   if [[ "${PLATFORM}" == "windows" ]]; then
-    local pg_pattern="" redis_pattern="" log_pattern=""
+    local pg_pattern="" log_pattern=""
     pg_pattern='s#^([[:space:]]*)-[[:space:]]+\./data/postgresql/'
     pg_pattern+='data:/var/lib/postgresql/data[[:space:]]*$#'
     pg_pattern+='\1- postgresql_data:/var/lib/postgresql/data#'
-    redis_pattern='s#^([[:space:]]*)-[[:space:]]+\./data/redis:'
-    redis_pattern+='/data[[:space:]]*$#\1- redis_data:/data#'
     log_pattern='/^[[:space:]]*-[[:space:]]+\.\/data\/logs\/'
     log_pattern+='(postgresql|redis):\/var\/log\/'
     log_pattern+='(postgresql|redis)[[:space:]]*$/d'
     sed_inplace "${compose}" -E "${pg_pattern}"
-    sed_inplace "${compose}" -E "${redis_pattern}"
     sed_inplace "${compose}" -E "${log_pattern}"
     {
       printf '\nvolumes:\n'
       printf '  postgresql_data:\n'
-      printf '  redis_data:\n'
     } >>"${compose}"
     grep -q 'postgresql_data:/var/lib/postgresql/data' "${compose}" \
       || abort "failed to configure PostgreSQL storage on Windows"
-    grep -q 'redis_data:/data' "${compose}" \
-      || abort "failed to configure Redis storage on Windows"
-    log_info "PostgreSQL and Redis use Docker volumes on Windows"
+    log_info "PostgreSQL uses a Docker volume on Windows"
     return 0
   fi
   [[ "${PLATFORM}" == "macos" ]] || return 0
@@ -1065,8 +1059,8 @@ generate_certs() {
 create_dirs() {
   log_step "Creating directories"
   mkdir -p "${INSTALL_DIR}"/{data,logs}
-  mkdir -p "${INSTALL_DIR}/data"/{django/staticfiles,storage,document-attachments,deliverables,workspace,postgresql/data,redis}
-  mkdir -p "${INSTALL_DIR}/data"/logs/{api,worker,scheduler,nginx,postgresql,redis}
+  mkdir -p "${INSTALL_DIR}/data"/{django/staticfiles,storage,document-attachments,deliverables,workspace,postgresql/data}
+  mkdir -p "${INSTALL_DIR}/data"/logs/{api,worker,scheduler,nginx,postgresql}
   log_ok "Directories created under ${INSTALL_DIR}"
 }
 

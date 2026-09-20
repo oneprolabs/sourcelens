@@ -151,10 +151,7 @@ services:
     image: redis:alpine
     container_name: sourcelens-redis-dev
     restart: unless-stopped
-    command: redis-server
-    volumes:
-      - ./data.dev/redis:/data
-      - ./data.dev/logs/redis:/var/log/redis
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     networks:
       - backend_network
     healthcheck:
