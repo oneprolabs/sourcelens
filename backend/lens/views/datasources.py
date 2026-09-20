@@ -927,7 +927,21 @@ class DataSourceViewSet(BaseAdminViewSet):
                     request.query_params.get("conversion_status") or ""
                 ),
             )
-        except (DataSourcePathError, DataSourceDispatchError) as exc:
+        except DataSourceDispatchError as exc:
+            if str(exc) == "LENS_CHANNEL_LAYER_UNAVAILABLE":
+                return Response(
+                    {
+                        "count": 0,
+                        "page": page,
+                        "page_size": page_size,
+                        "results": [],
+                    }
+                )
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except DataSourcePathError as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

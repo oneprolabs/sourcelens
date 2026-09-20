@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import time
 import uuid
@@ -12,6 +13,8 @@ from django.utils import timezone
 from ..models import DataSource, DataSourceCredential, GlobalSetting, LensNode
 from ..plugins.snapshots import create_datasource_sync_snapshot
 from ..services import lensnode_group_name
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_ROOT = "/workspace"
 DATASOURCE_SYNC_TIMEOUT_SETTING = "lens.datasource_sync.timeout_s"
@@ -163,10 +166,20 @@ def _send_lensnode_command(lensnode, payload):
         "type": "lensnode.command",
         "payload": payload,
     }
-    async_to_sync(channel_layer.group_send)(
-        lensnode_group_name(lensnode.uuid),
-        message,
-    )
+    try:
+        async_to_sync(channel_layer.group_send)(
+            lensnode_group_name(lensnode.uuid),
+            message,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Datasource command dispatch failed lensnode=%s: %s",
+            lensnode.uuid,
+            exc,
+        )
+        raise DataSourceDispatchError(
+            "LENS_CHANNEL_LAYER_UNAVAILABLE"
+        ) from exc
 
 
 def _lensnode_gateway_config():

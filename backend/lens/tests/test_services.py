@@ -71,6 +71,7 @@ from lens.services import (
     build_clarification_continuation_question,
     build_run_history,
     build_run_history_artifacts,
+    cancel_run_on_lensnode,
     create_delegated_run,
     create_execution_run,
     create_run_execution_snapshot,
@@ -211,6 +212,44 @@ class LensServiceTests(TransactionTestCase):
             session=self.session, question="Another question", enqueue=False
         )
         self.assertEqual(default_run.execution.agent_rounds, "flash")
+
+    @patch(
+        "lens.services.async_to_sync",
+        side_effect=ConnectionError("Connection closed by server"),
+    )
+    @patch("lens.services.get_channel_layer")
+    def test_dispatch_run_maps_channel_layer_failure(
+        self, get_channel_layer, _async_to_sync
+    ):
+        """A channel-layer loss becomes a dispatch error, not a raw crash."""
+
+        run = create_execution_run(
+            session=self.session, question="Probe", enqueue=False
+        )
+        create_run_execution_snapshot(run, agent_rounds="balanced")
+
+        with self.assertRaises(LensNodeDispatchError) as ctx:
+            dispatch_run_to_lensnode(run, "Probe")
+
+        self.assertEqual(
+            str(ctx.exception), "LENS_CHANNEL_LAYER_UNAVAILABLE"
+        )
+
+    @patch(
+        "lens.services.async_to_sync",
+        side_effect=ConnectionError("Connection closed by server"),
+    )
+    @patch("lens.services.get_channel_layer")
+    def test_cancel_run_swallows_channel_layer_failure(
+        self, get_channel_layer, _async_to_sync
+    ):
+        """Cancel is fire-and-forget and must not raise on channel loss."""
+
+        run = create_execution_run(
+            session=self.session, question="Probe", enqueue=False
+        )
+
+        self.assertIsNone(cancel_run_on_lensnode(run))
 
     def test_request_rounds_reject_invalid_choices(self):
         """Reject invalid tiers before creating a Run."""
