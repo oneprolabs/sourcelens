@@ -922,6 +922,7 @@
     },
     "fleet": {
       "online": "Online nodes",
+      "unresponsive": "Unresponsive nodes",
       "offline": "Offline nodes",
       "draining": "Draining nodes",
       "activeRuns": "Active runs",
@@ -1246,7 +1247,7 @@
       "cleanup": "LensNode Cleanup",
       "cleanupDesc": "Clean up runs that have been stuck for too long.",
       "health": "LensNode Health Check",
-      "healthDesc": "Mark online nodes offline when their heartbeat times out.",
+      "healthDesc": "Mark stale nodes offline and detect nodes that stop responding to commands.",
       "retention": "Run Retention Cleanup",
       "retentionDesc": "Delete historical runs older than the retention window."
     },
@@ -1839,7 +1840,9 @@
       "retentionTitle": "Run Retention Days",
       "retentionDesc": "How many days to keep Runs and execution records before cleanup.",
       "offlineTitle": "Node Offline Threshold",
-      "offlineDesc": "If no heartbeat is received within this many seconds, health checks mark the node offline.",
+      "offlineDesc": "If no heartbeat is received within this many seconds, health checks mark the node offline. Command probes separately detect unresponsive nodes.",
+      "probeTimeoutTitle": "Command Probe Timeout",
+      "probeTimeoutDesc": "How long a health check waits for a command-channel response before marking a node unresponsive.",
       "cleanupIntervalTitle": "Cleanup interval",
       "cleanupIntervalDesc": "Execution interval for the LensNode cleanup task, in seconds.",
       "healthIntervalTitle": "Health check interval",

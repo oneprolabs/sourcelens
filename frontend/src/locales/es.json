@@ -70,6 +70,7 @@
       "inactive": "Desactivado",
       "cancelled": "Cancelado",
       "online": "En línea",
+      "unresponsive": "Sin respuesta",
       "offline": "Sin conexión",
       "draining": "Drenando",
       "approved": "Aprobado",
@@ -1312,7 +1313,7 @@
       "cleanup": "Limpieza del Nodo Lens",
       "cleanupDesc": "Limpia ejecuciones que han estado atascadas por demasiado tiempo.",
       "health": "Comprobación de estado de LensNode",
-      "healthDesc": "Marcar nodos en línea como fuera de línea cuando su latido (heartbeat) expira.",
+      "healthDesc": "Marcar nodos obsoletos como desconectados y detectar nodos que dejan de responder a comandos.",
       "retention": "Ejecutar limpieza de retención",
       "retentionDesc": "Eliminar ejecuciones históricas más antiguas que la ventana de retención."
     }

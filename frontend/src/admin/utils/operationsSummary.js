@@ -1,5 +1,5 @@
 const RUN_STATUSES = ['running', 'streaming', 'queued', 'failed', 'done']
-const FLEET_HEALTH_STATUSES = ['online', 'offline', 'draining']
+const FLEET_HEALTH_STATUSES = ['online', 'unresponsive', 'offline', 'draining']
 const FLEET_WORKLOAD_FIELDS = [
   ['active_run_count', 'active_runs'],
   ['queued_run_count', 'queued_runs'],

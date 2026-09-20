@@ -26,6 +26,7 @@ class LensNode(TimestampedUUIDModel):
 
     class Status(models.TextChoices):
         ONLINE = "online", "Online"
+        UNRESPONSIVE = "unresponsive", "Unresponsive"
         OFFLINE = "offline", "Offline"
         DRAINING = "draining", "Draining"
 
@@ -59,6 +60,8 @@ class LensNode(TimestampedUUIDModel):
     token_revoked = models.BooleanField(default=False)
     last_authenticated_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    last_health_probe_at = models.DateTimeField(null=True, blank=True)
+    last_health_probe_success_at = models.DateTimeField(null=True, blank=True)
     # Set when the node's WebSocket drops, cleared on reconnect. A blue/green
     # API deploy recycles the container the node is connected to, so a
     # disconnect is not by itself proof the node's runs failed. Its runs are

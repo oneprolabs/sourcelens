@@ -922,6 +922,7 @@
     },
     "fleet": {
       "online": "Nodos en línea",
+      "unresponsive": "Nodos sin respuesta",
       "offline": "Nodos sin conexión",
       "draining": "Drenando nodos",
       "activeRuns": "Ejecuciones activas",
@@ -1246,7 +1247,7 @@
       "cleanup": "Limpieza del Nodo Lens",
       "cleanupDesc": "Limpia ejecuciones que han estado atascadas por demasiado tiempo.",
       "health": "Comprobación de estado de LensNode",
-      "healthDesc": "Marcar nodos en línea como fuera de línea cuando su latido (heartbeat) expira.",
+      "healthDesc": "Marcar nodos obsoletos como desconectados y detectar nodos que dejan de responder a comandos.",
       "retention": "Ejecutar limpieza de retención",
       "retentionDesc": "Eliminar ejecuciones históricas más antiguas que la ventana de retención."
     },
@@ -1839,7 +1840,9 @@
       "retentionTitle": "Días de retención de ejecuciones",
       "retentionDesc": "Cuántos días mantener los registros de Ejecuciones y ejecución antes de la limpieza.",
       "offlineTitle": "Umbral de nodo fuera de línea",
-      "offlineDesc": "Si no se recibe latido dentro de estos segundos, las comprobaciones de salud marcan el nodo como fuera de línea.",
+      "offlineDesc": "Si no se recibe latido dentro de estos segundos, las comprobaciones lo marcan como desconectado. Las sondas de comandos detectan por separado los nodos sin respuesta.",
+      "probeTimeoutTitle": "Tiempo de espera de la sonda de comandos",
+      "probeTimeoutDesc": "Cuánto espera la comprobación de salud una respuesta del canal de comandos antes de marcar el nodo sin respuesta.",
       "cleanupIntervalTitle": "Intervalo de limpieza",
       "cleanupIntervalDesc": "Intervalo de ejecución para la tarea de limpieza de LensNode, en segundos.",
       "healthIntervalTitle": "Intervalo de comprobación de salud",

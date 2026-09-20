@@ -119,6 +119,7 @@ class LensNodeClient:
         self.heartbeat_count = 0
         self.last_report_signature = None
         self.running_tasks = {}
+        self._background_tasks = set()
         self.admitted_runs = set()
         self.execution_queue = LensNodeExecutionQueue(
             max_standard_concurrency=getattr(
@@ -174,6 +175,14 @@ class LensNodeClient:
                 "Dropped outbound frame after event loop shutdown",
                 exc_info=True,
             )
+
+    def _spawn_background_task(self, coroutine):
+        """Run a control-plane operation without blocking frame reception."""
+
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _enqueue(self, payload):
         """Append an outbound frame to the durable outbox.
@@ -355,6 +364,13 @@ class LensNodeClient:
                     await self.websocket.close()
                 except Exception:
                     LOGGER.exception("Failed to close LensNode websocket")
+            for task in list(self._background_tasks):
+                task.cancel()
+            if self._background_tasks:
+                await asyncio.gather(
+                    *self._background_tasks,
+                    return_exceptions=True,
+                )
             for task in list(self.running_tasks.values()):
                 task.cancel()
             if self.running_tasks:
@@ -614,6 +630,15 @@ class LensNodeClient:
                 getattr(self.config, "workspace_path", None),
                 message.get("skill_uuid"),
             )
+        elif message_type == "health_probe":
+            request_id = str(message.get("request_id") or "")
+            if request_id:
+                self._enqueue(
+                    {
+                        "type": "health_probe_ack",
+                        "request_id": request_id,
+                    }
+                )
         elif message_type == "list_dirs":
             await self._handle_list_dirs(message)
         elif message_type == "datasource_check_path":
@@ -621,7 +646,9 @@ class LensNodeClient:
         elif message_type == "datasource_list_files":
             await self._handle_datasource_list_files(message)
         elif message_type == "datasource_test_connection":
-            await self._handle_datasource_test_connection(message)
+            self._spawn_background_task(
+                self._handle_datasource_test_connection(message)
+            )
         elif message_type == "datasource_sync":
             await self._start_datasource_sync(message)
         elif message_type == "plugin_datasource_sync":
@@ -976,6 +1003,16 @@ class LensNodeClient:
                 "status": "failed",
                 "message_code": str(exc),
                 "message": str(exc),
+            }
+        except Exception:
+            LOGGER.exception(
+                "Datasource connection test failed request_id=%s",
+                request_id,
+            )
+            result = {
+                "status": "failed",
+                "message_code": "DATASOURCE_CONNECTION_FAILED",
+                "message": "Datasource connection test failed",
             }
         self._enqueue(
             {
@@ -2085,6 +2122,7 @@ class LensNodeClient:
                         ),
                         "run_document_attachments": True,
                         "session_datasource_download_v1": True,
+                        "health_probe_v1": True,
                         "run_checkpoint_resume": checkpoint_resume_ready,
                         "run_admission_checkpoint_v1": True,
                         "run_checkpoint_ttl_hours": checkpoint_ttl_hours(),

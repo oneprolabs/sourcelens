@@ -154,3 +154,17 @@ def test_thread_enqueue_ignores_closed_event_loop():
     client._enqueue_from_thread(loop, {"type": "run_output"})
 
     assert not client._outbox
+
+
+def test_health_probe_is_acknowledged_without_starting_a_command():
+    client = _make_client()
+
+    asyncio.run(
+        client._handle_message(
+            '{"type":"health_probe","request_id":"probe-1"}'
+        )
+    )
+
+    assert list(client._outbox) == [
+        {"type": "health_probe_ack", "request_id": "probe-1"}
+    ]

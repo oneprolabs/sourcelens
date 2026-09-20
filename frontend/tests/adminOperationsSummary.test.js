@@ -51,6 +51,7 @@ test('fleet summary derives health but not missing workload from a complete page
 
   assert.deepEqual(summary, {
     online: 1,
+    unresponsive: 0,
     offline: 0,
     draining: 0,
     active_runs: null,
@@ -64,6 +65,7 @@ test('fleet summary preserves server-provided workload totals', () => {
     count: 1,
     fleet_summary: {
       online: 1,
+      unresponsive: 0,
       offline: 0,
       draining: 0,
       active_runs: 2,
