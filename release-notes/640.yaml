@@ -1,0 +1,11 @@
+type: improvement
+audience: user
+en: >-
+  Datasource files now browse lazily directory by directory, hidden and macOS
+  archive files stay out of listings, and uploads show progress percentage and
+  remaining time with a localized result. Waiting datasource tasks now queue
+  instead of being dropped, archives with symbolic links or non-UTF8 member
+  names upload correctly, and route classification tolerates weak model output.
+zh-CN: >-
+  数据源文件改为按目录懒加载浏览，隐藏文件与 macOS 归档残留不再显示；上传显示百分比与预计剩余时间，并保留本地化的成功/失败结果。
+  等待中的数据源任务改为排队而不再被丢弃；含符号链接或非 UTF8 文件名的压缩包可正常上传；路由分类对弱模型输出更稳健。
