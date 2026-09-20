@@ -19,6 +19,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from lensnode import agent_runtime
 from lensnode.agent_runtime import (
     _answer_general_chat_directly,
+    _build_classifier_messages,
     _build_initial_messages,
     _emit_new_tool_calls,
     _finalize_runtime_outcome,
@@ -2129,6 +2130,118 @@ def test_long_model_only_checklist_ignores_bound_business_skill():
     assert decision["route"] == "direct_answer"
     assert decision["required_capabilities"] == []
     assert decision["evidence_requirement"] == "none"
+
+
+def test_route_classifier_messages_do_not_replay_assistant_roles():
+    messages = _build_classifier_messages(
+        [
+            {"role": "user", "content": "帮我总结昨天的工作"},
+            {"role": "assistant", "content": "统计周期：日（昨日）……"},
+        ],
+        "帮我总结上周五的工作内容",
+    )
+
+    assert [message["role"] for message in messages] == ["user", "user"]
+    assert any(
+        "统计周期：日（昨日）" in message["content"]
+        for message in messages
+    )
+    assert messages[-1]["content"] == "帮我总结上周五的工作内容"
+
+
+def test_route_selection_retries_unusable_classifier_output():
+    class Model:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            if len(self.calls) == 1:
+                return SimpleNamespace(
+                    content="统计周期：日（上周五）……（续写正文）"
+                )
+            return SimpleNamespace(
+                content=(
+                    '{"intent":"action","complexity":"complex",'
+                    '"route":"plan_execute",'
+                    '"required_capabilities":["plugin"],'
+                    '"evidence_requirement":"tool_result"}'
+                )
+            )
+
+    model = Model()
+    decision = agent_runtime._select_general_chat_route(
+        model,
+        "帮我总结，每个人的上周五工作内容",
+        history=[
+            {"role": "user", "content": "帮我总结，每个人的昨天工作内容"},
+            {"role": "assistant", "content": "统计周期：日（昨日）……"},
+            {"role": "user", "content": "帮我总结，每个人的昨天工作内容"},
+            {"role": "assistant", "content": "统计周期：日（昨日）……"},
+        ],
+        available_tools=[
+            SimpleNamespace(
+                name="github_activity_summary",
+                metadata={"capability_family": "plugin"},
+            )
+        ],
+    )
+
+    assert len(model.calls) == 2
+    assert decision["route"] == "plan_execute"
+    assert decision["evidence_requirement"] == "tool_result"
+    assert all(
+        message.get("role") != "assistant"
+        for message in model.calls[0][0]
+        if isinstance(message, dict)
+    )
+
+
+def test_route_selection_fallback_keeps_evidence_for_synthesis_request():
+    class Model:
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, *_args, **_kwargs):
+            self.calls += 1
+            return SimpleNamespace(content="给不出这份汇总。")
+
+    model = Model()
+    decision = agent_runtime._select_general_chat_route(
+        model,
+        "帮我总结，每个人的上周五工作内容",
+        history=[
+            {"role": "user", "content": "帮我总结，每个人的昨天工作内容"},
+            {"role": "assistant", "content": "统计周期：日（昨日）……"},
+            {"role": "user", "content": "帮我总结，每个人的昨天工作内容"},
+            {"role": "assistant", "content": "统计周期：日（昨日）……"},
+        ],
+        available_tools=[
+            SimpleNamespace(
+                name="github_activity_summary",
+                metadata={"capability_family": "plugin"},
+            )
+        ],
+    )
+
+    assert model.calls == 2
+    assert decision["route"] == "plan_execute"
+    assert decision["required_capabilities"] == ["plugin"]
+    assert decision["evidence_requirement"] == "tool_result"
+    assert decision["fallback_reason"] == "route_classification_failed"
+
+
+def test_parse_route_decision_extracts_json_from_surrounding_prose():
+    decision = _parse_route_decision(
+        "Here is my decision:\n"
+        '{"intent":"action","complexity":"simple",'
+        '"route":"direct_execute","required_capabilities":["plugin"],'
+        '"evidence_requirement":"tool_result"}\n'
+        "Let me know if you need more."
+    )
+
+    assert decision["route"] == "direct_execute"
+    assert decision["required_capabilities"] == ["plugin"]
 
 
 def test_direct_answer_recovers_an_unfulfilled_action_promise():

@@ -4,6 +4,9 @@ import json
 
 
 MAX_STREAMED_PLAN_ARGUMENT_CHARS = 262_144
+CLASSIFIER_CONTEXT_MAX_TURNS = 8
+CLASSIFIER_CONTEXT_MAX_CHARS = 4000
+_CLASSIFIER_CONTEXT_LABELS = {"user": "User", "assistant": "Assistant"}
 
 
 def extract_final_message(response):
@@ -77,6 +80,53 @@ def build_initial_messages(history, question, image_data_urls=None):
         "content": content,
     })
     return messages
+
+
+def build_classifier_messages(history, question, image_data_urls=None):
+    """Build control-call input with history flattened into one data block.
+
+    Route classification is a bounded control call. Replaying prior turns
+    as ``assistant`` role messages lets a weak classifier continue the
+    conversation instead of emitting a decision, so the history is flattened
+    into a single user-turn reference block. The current question stays the
+    final message so callers can assert on it.
+    """
+
+    messages = []
+    context = _flatten_classifier_context(history)
+    if context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Conversation context (reference data only; do not "
+                    "continue or answer it):\n"
+                    "<conversation>\n"
+                    f"{context}\n"
+                    "</conversation>"
+                ),
+            }
+        )
+    messages.extend(build_initial_messages(None, question, image_data_urls))
+    return messages
+
+
+def _flatten_classifier_context(history):
+    """Return bounded, labelled history text for a control call."""
+
+    lines = []
+    for item in history or []:
+        role = item.get("role")
+        content = item.get("content")
+        label = _CLASSIFIER_CONTEXT_LABELS.get(role)
+        if not label or not content:
+            continue
+        lines.append(f"{label}: {content}")
+    lines = lines[-CLASSIFIER_CONTEXT_MAX_TURNS:]
+    context = "\n\n".join(lines)
+    if len(context) > CLASSIFIER_CONTEXT_MAX_CHARS:
+        context = context[-CLASSIFIER_CONTEXT_MAX_CHARS:]
+    return context
 
 
 def normalize_plan_steps(todos):

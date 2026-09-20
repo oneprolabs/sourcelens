@@ -12,7 +12,7 @@ from .capability_protocol import (
     CAPABILITY_FAMILY_ORDER,
     EVIDENCE_CAPABILITY_FAMILIES,
 )
-from .messages import build_initial_messages as _build_initial_messages
+from .messages import build_classifier_messages as _build_classifier_messages
 
 LOGGER = logging.getLogger("lensnode")
 ROUTE_LENGTH_FINISH_REASONS = {
@@ -57,6 +57,69 @@ RETRIEVAL_GATE_PROMPT = (
 )
 
 
+_THINK_BLOCK_PATTERN = re.compile(
+    r"<think\b[^>]*>.*?</think\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_OPEN_THINK_PATTERN = re.compile(r"<think\b[^>]*>", re.IGNORECASE)
+_FENCED_BLOCK_PATTERN = re.compile(
+    r"^```(?:json)?\s*\n?(.*?)\n?\s*```$",
+    re.DOTALL,
+)
+
+
+def _strip_reasoning_and_fences(text):
+    """Remove think blocks and one wrapping markdown fence from a reply."""
+
+    text = _THINK_BLOCK_PATTERN.sub("", text)
+    open_match = _OPEN_THINK_PATTERN.search(text)
+    if open_match:
+        text = text[: open_match.start()]
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    fence_match = _FENCED_BLOCK_PATTERN.match(text)
+    if fence_match:
+        return fence_match.group(1).strip()
+    return text
+
+
+def _extract_json_object(text):
+    """Return the first balanced JSON object in text, or None."""
+
+    text = _strip_reasoning_and_fences(str(text or ""))
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    value = json.loads(text[start : index + 1])
+                except (TypeError, json.JSONDecodeError):
+                    return None
+                return value if isinstance(value, dict) else None
+    return None
+
+
 def _message_needs_retrieval(model, question, history=None):
     """Return whether a message requires workspace or document retrieval.
 
@@ -68,7 +131,7 @@ def _message_needs_retrieval(model, question, history=None):
 
     messages = [
         SystemMessage(content=RETRIEVAL_GATE_PROMPT),
-        *_build_initial_messages(history, question),
+        *_build_classifier_messages(history, question),
     ]
     try:
         response = model.invoke(
@@ -83,17 +146,7 @@ def _message_needs_retrieval(model, question, history=None):
         LOGGER.warning("Retrieval gate classification failed", exc_info=True)
         return True
     text = str(getattr(response, "content", "") or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    try:
-        value = json.loads(text)
-    except (TypeError, json.JSONDecodeError):
-        return True
+    value = _extract_json_object(text)
     if not isinstance(value, dict):
         return True
     return value.get("needs_retrieval") is not False
@@ -103,27 +156,31 @@ def _parse_route_decision(content, fallback=None):
     """Parse a bounded runtime route decision with a safe fallback."""
 
     if fallback is None:
-        fallback = {
-            "intent": "informational",
-            "complexity": "simple",
-            "route": "direct_answer",
-            "required_capabilities": [],
-            "evidence_requirement": "none",
-        }
-    text = str(content or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    try:
-        value = json.loads(text)
-    except (TypeError, json.JSONDecodeError):
+        fallback = _default_route_decision()
+    decision = _parse_route_decision_or_none(content)
+    if decision is None:
         return fallback
+    return decision
+
+
+def _default_route_decision():
+    """Return the conservative pure-model route decision."""
+
+    return {
+        "intent": "informational",
+        "complexity": "simple",
+        "route": "direct_answer",
+        "required_capabilities": [],
+        "evidence_requirement": "none",
+    }
+
+
+def _parse_route_decision_or_none(content):
+    """Parse a route decision, returning None when it is unusable."""
+
+    value = _extract_json_object(content)
     if not isinstance(value, dict):
-        return fallback
+        return None
 
     route = value.get("route")
     complexity = value.get("complexity")
@@ -134,7 +191,7 @@ def _parse_route_decision(content, fallback=None):
         "direct_execute",
         "plan_execute",
     }:
-        return fallback
+        return None
     if complexity not in {"simple", "complex"}:
         complexity = "complex" if route == "plan_execute" else "simple"
     if intent not in {"informational", "action", "clarification"}:
@@ -291,14 +348,12 @@ def _select_general_chat_route(
         "Available tool inventory:\n"
         f"{json.dumps(tool_inventory, ensure_ascii=False)}"
     )
-    messages = [
-        SystemMessage(content=prompt),
-        *_build_initial_messages(
-            history,
-            question,
-            image_data_urls,
-        ),
-    ]
+    messages = _route_classifier_messages(
+        prompt,
+        history,
+        question,
+        image_data_urls,
+    )
     for attempt in range(2):
         try:
             response = _invoke_route_classifier(
@@ -315,31 +370,68 @@ def _select_general_chat_route(
                 "Route classification exhausted output in reasoning; "
                 "retrying with compact context"
             )
-            messages = [
-                SystemMessage(
-                    content=_compact_route_classification_prompt(
-                        context_skill_contents,
-                        available_tools,
-                        has_bound_skills=has_bound_skills,
-                    )
-                ),
-                *_build_initial_messages(
-                    None,
-                    question,
-                    image_data_urls,
-                ),
-            ]
+            messages = _compact_route_messages(
+                context_skill_contents,
+                available_tools,
+                has_bound_skills=has_bound_skills,
+                question=question,
+                image_data_urls=image_data_urls,
+            )
             continue
-        decision = _parse_route_decision(
+        decision = _parse_route_decision_or_none(
             getattr(response, "content", ""),
-            fallback=fallback,
         )
-        return _normalize_route_evidence_capabilities(
-            decision,
+        if decision is not None:
+            return _normalize_route_evidence_capabilities(
+                decision,
+                available_tools,
+                has_bound_skills=has_bound_skills,
+            )
+        if attempt:
+            break
+        LOGGER.warning(
+            "Route classification returned no usable decision; "
+            "retrying with compact context"
+        )
+        messages = _compact_route_messages(
+            context_skill_contents,
             available_tools,
             has_bound_skills=has_bound_skills,
+            question=question,
+            image_data_urls=image_data_urls,
         )
     return fallback
+
+
+def _route_classifier_messages(prompt, history, question, image_data_urls):
+    """Build classifier messages with history flattened as reference data."""
+
+    return [
+        SystemMessage(content=prompt),
+        *_build_classifier_messages(history, question, image_data_urls),
+    ]
+
+
+def _compact_route_messages(
+    context_skill_contents,
+    available_tools,
+    *,
+    has_bound_skills,
+    question,
+    image_data_urls,
+):
+    """Build the history-free retry messages for a failed classification."""
+
+    return [
+        SystemMessage(
+            content=_compact_route_classification_prompt(
+                context_skill_contents,
+                available_tools,
+                has_bound_skills=has_bound_skills,
+            )
+        ),
+        *_build_classifier_messages(None, question, image_data_urls),
+    ]
 
 
 def _invoke_route_classifier(model, messages):
@@ -473,8 +565,15 @@ def _fallback_route_decision(
             )
         )
     )
+    # A synthesis request with evidence capabilities is treated as needing
+    # evidence even without an explicit external-evidence keyword, so a
+    # "总结…工作内容" style request is never silently downgraded to a
+    # tool-free answer when the classifier is unusable.
+    requires_evidence = external_evidence or (
+        complex_synthesis and bool(evidence_capabilities)
+    )
 
-    if external_evidence:
+    if requires_evidence:
         required = list(evidence_capabilities)
         if artifact_requested:
             required.append("artifact_delivery")
