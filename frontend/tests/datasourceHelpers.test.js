@@ -6,7 +6,8 @@ import {
   dataSourceRepositories,
   dataSourceRepository,
   dataSourceRepositoryUrl,
-  isOrganizationDataSource
+  isOrganizationDataSource,
+  latestUploadTasksByFilename
 } from '../src/pages/lens/datasourceHelpers.js'
 
 test('plugin repository fields are used as the datasource resource', () => {
@@ -110,4 +111,55 @@ test('legacy and Feishu datasource URLs remain directly readable', () => {
     ),
     'https://example.feishu.cn/drive/folder/folder-token'
   )
+})
+
+function uploadTask(filename, status, metadata = {}) {
+  return { status, metadata: { filename, ...metadata } }
+}
+
+test('deleted uploads are dropped from the latest-file baseline', () => {
+  const files = latestUploadTasksByFilename([
+    uploadTask('report.pdf', 'SUCCESS', { deleted: true, byte_size: 10 })
+  ])
+
+  assert.equal(files.size, 0)
+})
+
+test('a deleted latest version never falls back to an older upload', () => {
+  const files = latestUploadTasksByFilename([
+    uploadTask('report.pdf', 'SUCCESS', { deleted: true }),
+    uploadTask('report.pdf', 'SUCCESS', { upload_version: 1 })
+  ])
+
+  assert.equal(files.has('report.pdf'), false)
+})
+
+test('a failed latest version falls back to the previous upload', () => {
+  const files = latestUploadTasksByFilename([
+    uploadTask('report.pdf', 'FAILURE', { upload_version: 2 }),
+    uploadTask('report.pdf', 'SUCCESS', { upload_version: 1, byte_size: 42 })
+  ])
+
+  assert.equal(files.get('report.pdf').metadata.upload_version, 1)
+})
+
+test('a deduplicated re-upload keeps the upload that stored the file', () => {
+  const files = latestUploadTasksByFilename([
+    uploadTask('report.pdf', 'SUCCESS', { duplicate: true }),
+    uploadTask('report.pdf', 'SUCCESS', { upload_version: 1, byte_size: 42 })
+  ])
+
+  assert.equal(files.get('report.pdf').metadata.upload_version, 1)
+})
+
+test('the newest successful upload wins per filename', () => {
+  const files = latestUploadTasksByFilename([
+    uploadTask('report.pdf', 'SUCCESS', { upload_version: 2, byte_size: 20 }),
+    uploadTask('report.pdf', 'SUCCESS', { upload_version: 1, byte_size: 10 }),
+    uploadTask('notes.txt', 'SUCCESS', { byte_size: 5 })
+  ])
+
+  assert.equal(files.size, 2)
+  assert.equal(files.get('report.pdf').metadata.byte_size, 20)
+  assert.equal(files.get('notes.txt').metadata.byte_size, 5)
 })

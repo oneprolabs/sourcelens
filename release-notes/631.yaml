@@ -1,0 +1,10 @@
+type: fix
+audience: user
+en: >-
+  Datasource file lists now hide files whose latest upload was deleted,
+  and correctly fall back to the previous upload when the newest one
+  failed or only re-uploaded a duplicate, so the list matches what is
+  actually stored.
+zh-CN: >-
+  数据源文件列表现在会隐藏最新版本已删除的文件，并在最新上传失败或仅为
+  重复上传时正确回退到上一个有效版本，使列表与实际存储保持一致。

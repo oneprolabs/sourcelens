@@ -65,9 +65,10 @@ test('basic tab keeps upload task history for the original-file list', async () 
 
   assert.match(drawer, /originalUploadFiles/)
   assert.match(drawer, /lensAdmin\.datasourceDetail\.originalFiles/)
+  assert.match(drawer, /latestUploadTasksByFilename/)
   assert.match(
     drawer,
-    /tab === 'basic' && isUploadDatasource\.value[\s\S]{0,240}loadTasks/
+    /tab === 'basic' && isUploadDatasource\.value[\s\S]{0,240}loadUploadTasks/
   )
 })
 

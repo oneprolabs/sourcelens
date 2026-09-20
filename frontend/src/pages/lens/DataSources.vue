@@ -501,6 +501,7 @@ import {
   isDataSourceEnabled,
   isOrganizationDataSource,
   isDataSourceSyncing,
+  latestUploadTasksByFilename,
   syncTagClass
 } from './datasourceHelpers'
 import {
@@ -773,7 +774,6 @@ function searchFilterLabel(filter) {
 
 const SYNC_STATUS_REFRESH_BASE_DELAY_MS = 5000
 const SYNC_STATUS_REFRESH_MAX_DURATION_MS = 5 * 60 * 1000
-const FAILED_UPLOAD_STATUSES = new Set(['FAILURE', 'REVOKED', 'CANCELLING'])
 
 const formatDateTime = useShortDateTime()
 
@@ -1231,29 +1231,12 @@ async function startEdit(row) {
   if (row?.plugin_key === 'file_upload' && row.uuid) {
     try {
       const tasks = await listDataSourceSyncTasks(row.uuid)
-      const latestFiles = new Map()
-      tasks
-        .filter(
-          (task) =>
-            !FAILED_UPLOAD_STATUSES.has(
-              String(task?.status || '').toUpperCase()
-            )
-        )
-        .forEach((task) => {
-          // Newest first: the first non-failed task per filename is the
-          // latest upload that actually stored the file. The
-          // is_latest_version flag goes stale after a deduplicated retry.
-          const metadata = task.metadata || {}
-          const name = metadata.filename
-          if (name && !latestFiles.has(name)) {
-            latestFiles.set(name, metadata)
-          }
-        })
+      const latestFiles = latestUploadTasksByFilename(tasks)
       uploadBaselineNames.value = [...latestFiles.keys()]
       pendingUploadFiles.value = [...latestFiles.entries()].map(
-        ([name, metadata]) => ({
+        ([name, task]) => ({
           name,
-          size: Number(metadata.byte_size) || 0,
+          size: Number(task.metadata?.byte_size) || 0,
           lastModified: 0,
           existing: true
         })
