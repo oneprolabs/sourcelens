@@ -1,0 +1,9 @@
+type: fix
+audience: admin
+en: >-
+  LensNodes that stay connected but stop answering commands are now detected
+  with a command-channel health check and shown as "unresponsive" instead of
+  "online", so a stuck node is visible before its commands time out.
+zh-CN: >-
+  现在通过命令通道健康检查识别“仍保持连接但不再响应命令”的 LensNode，
+  并将其状态显示为“无响应”而非“在线”，使卡住的节点在命令超时前即可被发现。
