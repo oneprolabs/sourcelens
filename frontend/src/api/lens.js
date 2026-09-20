@@ -640,18 +640,149 @@ export async function refreshDataSourceAvailability(uuid) {
   return unwrapResponse(response)
 }
 
-export async function uploadDataSourceFile(uuid, file) {
-  const formData = new FormData()
-  const files = Array.isArray(file) ? file : [file]
-  files.forEach((item) => {
-    formData.append(files.length > 1 ? 'files' : 'file', item)
+const DATASOURCE_UPLOAD_FALLBACK_CHUNK = 2 * 1024 * 1024
+const DATASOURCE_UPLOAD_REQUEST_TIMEOUT = 120000
+const DATASOURCE_UPLOAD_RETRY_LIMIT = 3
+
+function isRetryableUploadError(error) {
+  const status = error?.response?.status
+  return !status || status === 408 || status === 429 || status >= 500
+}
+
+function waitBeforeUploadRetry(attempt) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 1000 * 2 ** attempt)
   })
-  const response = await api.post(
-    `/lens/admin/datasources/${uuid}/upload/`,
-    formData,
-    { headers: { 'Content-Type': 'multipart/form-data' } }
+}
+
+async function uploadDataSourceFileChunked(uuid, file) {
+  const initResponse = await api.post(
+    `/lens/admin/datasources/${uuid}/uploads/chunked/init/`,
+    {
+      filename: file.name,
+      byte_size: file.size,
+      content_type: file.type || ''
+    }
   )
-  return unwrapResponse(response)
+  const session = unwrapResponse(initResponse) || {}
+  const taskId = session.task_id
+  if (!taskId) throw new Error('DATASOURCE_UPLOAD_SESSION_NOT_FOUND')
+  const chunkSize =
+    Number(session.chunk_size) || DATASOURCE_UPLOAD_FALLBACK_CHUNK
+  const total = Number(session.byte_size) || file.size
+  let completing = false
+  try {
+    let offset = Number(session.offset) || 0
+    while (offset < total) {
+      let nextOffset
+      for (
+        let attempt = 0;
+        attempt < DATASOURCE_UPLOAD_RETRY_LIMIT;
+        attempt += 1
+      ) {
+        try {
+          const form = new FormData()
+          form.append('offset', String(offset))
+          form.append(
+            'chunk',
+            file.slice(offset, offset + chunkSize),
+            file.name
+          )
+          const chunkResponse = await api.post(
+            `/lens/admin/datasources/${uuid}/uploads/chunked/${taskId}/chunk/`,
+            form,
+            {
+              headers: { 'Content-Type': 'multipart/form-data' },
+              timeout: DATASOURCE_UPLOAD_REQUEST_TIMEOUT
+            }
+          )
+          const next = unwrapResponse(chunkResponse) || {}
+          nextOffset = Number(next.offset)
+          break
+        } catch (error) {
+          const errorPayload =
+            error?.response?.data?.data ?? error?.response?.data
+          const serverOffset = Number(errorPayload?.offset)
+          if (
+            error?.response?.status === 409 &&
+            Number.isFinite(serverOffset) &&
+            serverOffset > offset &&
+            serverOffset <= total
+          ) {
+            nextOffset = serverOffset
+            break
+          }
+          if (
+            !isRetryableUploadError(error) ||
+            attempt === DATASOURCE_UPLOAD_RETRY_LIMIT - 1
+          ) {
+            throw error
+          }
+          await waitBeforeUploadRetry(attempt)
+        }
+      }
+      if (
+        !Number.isSafeInteger(nextOffset) ||
+        nextOffset <= offset ||
+        nextOffset > total
+      ) {
+        throw new Error('DATASOURCE_UPLOAD_OFFSET_INVALID')
+      }
+      offset = nextOffset
+    }
+    completing = true
+    let completeResponse
+    for (
+      let attempt = 0;
+      attempt < DATASOURCE_UPLOAD_RETRY_LIMIT;
+      attempt += 1
+    ) {
+      try {
+        completeResponse = await api.post(
+          `/lens/admin/datasources/${uuid}/uploads/chunked/${taskId}/complete/`,
+          null,
+          { timeout: DATASOURCE_UPLOAD_REQUEST_TIMEOUT }
+        )
+        break
+      } catch (error) {
+        if (
+          !isRetryableUploadError(error) ||
+          attempt === DATASOURCE_UPLOAD_RETRY_LIMIT - 1
+        ) {
+          throw error
+        }
+        await waitBeforeUploadRetry(attempt)
+      }
+    }
+    return unwrapResponse(completeResponse)
+  } catch (error) {
+    if (!completing) {
+      try {
+        await api.post(
+          `/lens/admin/datasources/${uuid}/uploads/chunked/${taskId}/abort/`
+        )
+      } catch (abortError) {
+        console.warn('Failed to abort datasource upload:', abortError)
+      }
+    }
+    throw error
+  }
+}
+
+export async function uploadDataSourceFile(uuid, file) {
+  const files = Array.isArray(file) ? file : [file]
+  const uploads = []
+  for (const item of files) {
+    uploads.push(await uploadDataSourceFileChunked(uuid, item))
+  }
+  const first = uploads[0] || {}
+  return {
+    uuid,
+    task_id: first.task_id || '',
+    filename: first.filename || '',
+    uploads,
+    status: first.status || 'PENDING'
+  }
 }
 
 export async function listDataSourceSyncTasks(uuid) {

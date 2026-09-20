@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 import uuid
@@ -1385,6 +1386,16 @@ def _delete_upload_storage(metadata):
         )
 
 
+def _upload_storage_sha256(storage_name):
+    """Return the SHA-256 digest for a stored upload file."""
+
+    digest = hashlib.sha256()
+    with default_storage.open(storage_name, "rb") as handle:
+        for piece in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(piece)
+    return digest.hexdigest()
+
+
 def _upload_task_is_terminal(task_id):
     """Return whether an upload task already reached a terminal status."""
 
@@ -1589,7 +1600,8 @@ def datasource_upload_task(
     from agentcore_task.constants import TaskStatus
 
     task_id = task_id or self.request.id
-    task = TaskExecution.objects.get(task_id=task_id)
+    with transaction.atomic():
+        task = TaskExecution.objects.select_for_update().get(task_id=task_id)
     if task.status in TaskStatus.get_completed_statuses():
         _delete_upload_storage(task.metadata)
         return 0
@@ -1710,6 +1722,10 @@ def datasource_upload_task(
         _update_upload_task_metadata(task_id, update)
 
     try:
+        if not sha256:
+            sha256 = _upload_storage_sha256(storage_name)
+            task_metadata["sha256"] = sha256
+            _update_upload_task_metadata(task_id, {"sha256": sha256})
         while time.monotonic() < deadline:
             try:
                 ready = _begin_datasource_upload_transfer(
@@ -1989,6 +2005,135 @@ def complete_datasource_upload_task(
         error=error or None,
         metadata=completion_metadata,
     )
+
+
+def _dispatch_upload_task(task_id, datasource_uuid, storage_name, filename):
+    """Serialize publishing of a completed upload across dispatchers."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    with transaction.atomic():
+        task = TaskExecution.objects.select_for_update().filter(
+            task_id=task_id,
+            module="lens_datasource_upload",
+            status=TaskStatus.PENDING,
+            metadata__chunked_session=True,
+        ).first()
+        if task is None:
+            return False
+        metadata = dict(task.metadata or {})
+        if metadata.get("upload_enqueued"):
+            return False
+        if not metadata.get("upload_dispatch_pending"):
+            return False
+        datasource_upload_task.apply_async(
+            args=[datasource_uuid, storage_name, filename],
+            task_id=task_id,
+            retry=False,
+        )
+        metadata["upload_dispatch_pending"] = False
+        metadata["upload_enqueued"] = True
+        task.metadata = metadata
+        task.save(update_fields=["metadata"])
+    return True
+
+
+def _dispatch_pending_uploads():
+    """Publish completed uploads from their durable pending records."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    pending = TaskExecution.objects.filter(
+        module="lens_datasource_upload",
+        status=TaskStatus.PENDING,
+        metadata__chunked_session=True,
+        metadata__upload_dispatch_pending=True,
+    )
+    dispatched = 0
+    for task in pending:
+        metadata = dict(task.metadata or {})
+        storage_name = str(metadata.get("storage_name") or "")
+        filename = str(metadata.get("filename") or "")
+        datasource_uuid = str(metadata.get("datasource_uuid") or "")
+        if not storage_name or not filename or not datasource_uuid:
+            continue
+        try:
+            if _dispatch_upload_task(
+                task.task_id,
+                datasource_uuid,
+                storage_name,
+                filename,
+            ):
+                dispatched += 1
+        except Exception:
+            logger.exception(
+                "Failed to dispatch pending upload task %s", task.task_id
+            )
+    return dispatched
+
+
+@shared_task(name="lens.dispatch_pending_uploads", queue="lens")
+def dispatch_pending_uploads():
+    """Publish completed uploads independently of HTTP request deadlines."""
+
+    return _dispatch_pending_uploads()
+
+
+@shared_task(name="lens.cleanup_abandoned_uploads", queue="lens")
+def cleanup_abandoned_upload_tasks():
+    """Discard chunked upload sessions that were never completed.
+
+    A browser crash or a dropped connection can leave a pending session
+    with a partial file on storage. Only sessions still PENDING, older
+    than the retention window, and never handed to the transfer worker
+    are reclaimed; enqueued tasks are left for the Celery worker.
+    """
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    setting = GlobalSetting.objects.filter(
+        key="lens.datasource_upload.session_ttl_seconds"
+    ).first()
+    try:
+        ttl = max(int(setting.value), 3600)
+    except (AttributeError, TypeError, ValueError):
+        ttl = 24 * 3600
+    cutoff = timezone.now() - timedelta(seconds=ttl)
+    candidates = TaskExecution.objects.filter(
+        module="lens_datasource_upload",
+        status=TaskStatus.PENDING,
+        created_at__lt=cutoff,
+    )
+    cleaned = 0
+    for candidate in candidates:
+        with transaction.atomic():
+            task = TaskExecution.objects.select_for_update().filter(
+                pk=candidate.pk,
+                status=TaskStatus.PENDING,
+            ).first()
+            if task is None:
+                continue
+            metadata = dict(task.metadata or {})
+            if (
+                metadata.get("upload_enqueued")
+                or metadata.get("upload_dispatch_pending")
+                or not metadata.get("chunked_session")
+            ):
+                continue
+            if metadata.get("storage_name"):
+                _delete_upload_storage(metadata)
+            TaskTracker.update_task_status(
+                task.task_id,
+                TaskStatus.REVOKED,
+                error="DATASOURCE_UPLOAD_ABANDONED",
+                metadata={"progress_message": "DATASOURCE_UPLOAD_ABANDONED"},
+            )
+            cleaned += 1
+    return cleaned
 
 
 def resolve_datasource_conversion_task_id(request_id, content):

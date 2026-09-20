@@ -16,6 +16,7 @@ from agentcore_task.adapters.django.models import TaskExecution
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core.files.storage import FileSystemStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import close_old_connections, connection
 from django.test import (
@@ -6295,6 +6296,293 @@ class LensApiTests(TestCase):
             {"first.zip", "second.zip"},
         )
         self.assertTrue(all(row["status"] == "PENDING" for row in rows))
+
+    def _create_upload_datasource(self, name="Chunked Upload"):
+        return DataSource.objects.create(
+            name=name,
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+            target_path=f"/workspace/datasources/{name}",
+        )
+
+    def _init_chunked_upload(self, datasource, filename, byte_size):
+        return self.client.post(
+            f"/api/lens/admin/datasources/{datasource.uuid}"
+            f"/uploads/chunked/init/",
+            {
+                "filename": filename,
+                "byte_size": byte_size,
+                "content_type": "application/pdf",
+            },
+            format="json",
+        )
+
+    def _post_chunk(self, datasource, task_id, offset, data):
+        return self.client.post(
+            f"/api/lens/admin/datasources/{datasource.uuid}"
+            f"/uploads/chunked/{task_id}/chunk/",
+            {
+                "offset": offset,
+                "chunk": SimpleUploadedFile(
+                    "chunk", data, content_type="application/octet-stream"
+                ),
+            },
+            format="multipart",
+        )
+
+    def test_chunked_upload_assembles_file_and_queues_task(self):
+        datasource = self._create_upload_datasource()
+        payload = b"chunked-pdf-content"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with (
+                patch(
+                    "lens.views.datasources.default_storage", storage
+                ),
+                patch(
+                    "lens.views.datasources.datasource_upload_task.apply_async"
+                ) as apply_async,
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", len(payload)
+                )
+                self.assertEqual(init.status_code, 201, init.data)
+                task_id = init.data["task_id"]
+                self.assertEqual(init.data["offset"], 0)
+                self.assertGreater(init.data["chunk_size"], 0)
+
+                first = self._post_chunk(
+                    datasource, task_id, 0, payload[:7]
+                )
+                self.assertEqual(first.status_code, 200, first.data)
+                self.assertEqual(first.data["offset"], 7)
+
+                second = self._post_chunk(
+                    datasource, task_id, 7, payload[7:]
+                )
+                self.assertEqual(second.status_code, 200, second.data)
+                self.assertEqual(second.data["offset"], len(payload))
+
+                apply_async.assert_not_called()
+                complete = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/complete/"
+                )
+                self.assertEqual(complete.status_code, 202, complete.data)
+                self.assertEqual(complete.data["task_id"], task_id)
+                self.assertEqual(complete.data["filename"], "report.pdf")
+
+                task = TaskExecution.objects.get(task_id=task_id)
+                storage_name = task.metadata["storage_name"]
+                apply_async.assert_not_called()
+                self.assertEqual(task.module, "lens_datasource_upload")
+                self.assertEqual(task.status, "PENDING")
+                self.assertEqual(task.created_by, self.user)
+                self.assertEqual(task.metadata["byte_size"], len(payload))
+                self.assertEqual(task.metadata["upload_version"], 1)
+                self.assertTrue(task.metadata["is_latest_version"])
+                self.assertTrue(task.metadata["upload_dispatch_pending"])
+                self.assertNotIn("upload_enqueued", task.metadata)
+                self.assertNotIn("sha256", task.metadata)
+                with storage.open(storage_name, "rb") as handle:
+                    self.assertEqual(handle.read(), payload)
+
+    def test_chunked_upload_complete_does_not_contact_broker(self):
+        datasource = self._create_upload_datasource("Dispatch Retry Upload")
+        payload = b"chunked-pdf-content"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with patch(
+                "lens.views.datasources.default_storage", storage
+            ), patch(
+                "lens.views.datasources.datasource_upload_task.apply_async",
+                side_effect=RuntimeError("broker unavailable"),
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", len(payload)
+                )
+                task_id = init.data["task_id"]
+                self._post_chunk(datasource, task_id, 0, payload)
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/complete/"
+                )
+
+            self.assertEqual(response.status_code, 202, response.data)
+            task = TaskExecution.objects.get(task_id=task_id)
+            self.assertTrue(task.metadata["upload_dispatch_pending"])
+            self.assertNotIn("upload_enqueued", task.metadata)
+
+    def test_chunked_upload_rejects_bytes_beyond_declared_size(self):
+        datasource = self._create_upload_datasource("Declared Size Upload")
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "lens.views.datasources.default_storage",
+                FileSystemStorage(location=tmp),
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", 5
+                )
+                task_id = init.data["task_id"]
+                response = self._post_chunk(
+                    datasource, task_id, 0, b"too-large"
+                )
+
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(
+                    response.data["detail"],
+                    "DATASOURCE_UPLOAD_SIZE_MISMATCH",
+                )
+                self.assertEqual(response.data["offset"], 0)
+
+    def test_chunked_upload_rejects_offset_mismatch(self):
+        datasource = self._create_upload_datasource("Offset Upload")
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "lens.views.datasources.default_storage",
+                FileSystemStorage(location=tmp),
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", 20
+                )
+                task_id = init.data["task_id"]
+                response = self._post_chunk(datasource, task_id, 5, b"data")
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertEqual(
+                    response.data["detail"],
+                    "DATASOURCE_UPLOAD_OFFSET_INVALID",
+                )
+
+    def test_chunked_upload_complete_requires_full_size(self):
+        datasource = self._create_upload_datasource("Short Upload")
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "lens.views.datasources.default_storage",
+                FileSystemStorage(location=tmp),
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", 20
+                )
+                task_id = init.data["task_id"]
+                self._post_chunk(datasource, task_id, 0, b"short")
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/complete/"
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(
+                    response.data["detail"],
+                    "DATASOURCE_UPLOAD_SIZE_MISMATCH",
+                )
+
+    def test_chunked_upload_abort_discards_session(self):
+        datasource = self._create_upload_datasource("Abort Upload")
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with patch(
+                "lens.views.datasources.default_storage", storage
+            ):
+                init = self._init_chunked_upload(
+                    datasource, "report.pdf", 20
+                )
+                task_id = init.data["task_id"]
+                self._post_chunk(datasource, task_id, 0, b"partial")
+                storage_name = TaskExecution.objects.get(
+                    task_id=task_id
+                ).metadata["storage_name"]
+
+                abort = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/abort/"
+                )
+                self.assertEqual(abort.status_code, 204)
+                self.assertFalse(storage.exists(storage_name))
+                task = TaskExecution.objects.get(task_id=task_id)
+                self.assertEqual(task.status, "REVOKED")
+
+    def test_chunked_upload_complete_retry_after_worker_finished(self):
+        datasource = self._create_upload_datasource()
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with patch("lens.views.datasources.default_storage", storage):
+                task_id = self._complete_chunked_upload(
+                    datasource, "report.pdf", b"content"
+                )
+                task = TaskExecution.objects.get(task_id=task_id)
+                storage.delete(task.metadata["storage_name"])
+                task.status = "SUCCESS"
+                task.save(update_fields=["status"])
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/complete/"
+                )
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["task_id"], task_id)
+        task.refresh_from_db()
+        self.assertEqual(task.status, "SUCCESS")
+        self.assertEqual(task.metadata["upload_version"], 1)
+
+    def test_chunked_upload_cannot_mutate_submitted_session(self):
+        datasource = self._create_upload_datasource()
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with patch("lens.views.datasources.default_storage", storage):
+                task_id = self._complete_chunked_upload(
+                    datasource, "report.pdf", b"content"
+                )
+                chunk = self._post_chunk(datasource, task_id, 0, b"changed")
+                self.assertEqual(chunk.status_code, 409, chunk.data)
+                abort = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}"
+                    f"/uploads/chunked/{task_id}/abort/"
+                )
+                self.assertEqual(abort.status_code, 409, abort.data)
+                task = TaskExecution.objects.get(task_id=task_id)
+                with storage.open(task.metadata["storage_name"], "rb") as f:
+                    self.assertEqual(f.read(), b"content")
+                self.assertEqual(task.status, "PENDING")
+
+    def test_chunked_upload_supersedes_previous_version(self):
+        datasource = self._create_upload_datasource("Versioned Upload")
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = FileSystemStorage(location=tmp)
+            with (
+                patch(
+                    "lens.views.datasources.default_storage", storage
+                ),
+                patch(
+                    "lens.views.datasources.datasource_upload_task.apply_async"
+                ),
+            ):
+                first_task_id = self._complete_chunked_upload(
+                    datasource, "report.pdf", b"v1"
+                )
+                second_task_id = self._complete_chunked_upload(
+                    datasource, "report.pdf", b"v2"
+                )
+
+        first = TaskExecution.objects.get(task_id=first_task_id)
+        second = TaskExecution.objects.get(task_id=second_task_id)
+        self.assertFalse(first.metadata["is_latest_version"])
+        self.assertEqual(first.metadata["upload_version"], 1)
+        self.assertTrue(second.metadata["is_latest_version"])
+        self.assertEqual(second.metadata["upload_version"], 2)
+
+    def _complete_chunked_upload(self, datasource, filename, payload):
+        init = self._init_chunked_upload(
+            datasource, filename, len(payload)
+        )
+        task_id = init.data["task_id"]
+        self._post_chunk(datasource, task_id, 0, payload)
+        complete = self.client.post(
+            f"/api/lens/admin/datasources/{datasource.uuid}"
+            f"/uploads/chunked/{task_id}/complete/"
+        )
+        self.assertEqual(complete.status_code, 202, complete.data)
+        return task_id
 
     def test_datasource_upload_rejects_unsupported_source_and_file(self):
         unsupported = SimpleUploadedFile(

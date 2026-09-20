@@ -92,6 +92,7 @@ from lens.tasks import (
     _queue_datasource_task,
     _update_upload_task_metadata,
     acquire_datasource_lock,
+    cleanup_abandoned_upload_tasks,
     cleanup_stale_datasource_sync_tasks,
     complete_datasource_conversion_task,
     complete_datasource_sync_task,
@@ -100,6 +101,7 @@ from lens.tasks import (
     datasource_conversion_task,
     datasource_lock,
     datasource_upload_task,
+    dispatch_pending_uploads,
     lensnode_health_task,
     reconcile_orphaned_datasource_conversions,
     register_datasource_conversion_task,
@@ -5273,15 +5275,16 @@ class LensServiceTests(TransactionTestCase):
             metadata={
                 "storage_name": storage_name,
                 "upload_version": 1,
-                "sha256": hashlib.sha256(content).hexdigest(),
                 "total_bytes": len(content),
             },
         )
         sent = []
+        sent_sha256 = []
 
         def fake_begin(
             node, task_id, filename, total, sha256, upload_version=1
         ):
+            sent_sha256.append(sha256)
             cache.set(
                 datasource_upload_ready_key(task_id),
                 {"offset": 0, "total_bytes": total, "duplicate": False},
@@ -5318,6 +5321,7 @@ class LensServiceTests(TransactionTestCase):
             sum(length for _, length in sent),
             len(content),
         )
+        self.assertEqual(sent_sha256, [hashlib.sha256(content).hexdigest()])
         task.refresh_from_db()
         self.assertEqual(task.status, "STARTED")
         default_storage.delete(storage_name)
@@ -5874,6 +5878,117 @@ class LensServiceTests(TransactionTestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, "PENDING")
         requeue.assert_called_once()
+
+    def test_cleanup_revokes_abandoned_chunked_upload(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "abandoned-upload",
+            "report.pdf",
+            metadata={
+                "storage_name": "datasource-uploads/x/report.pdf",
+                "chunked_session": True,
+            },
+        )
+        TaskExecution.objects.filter(task_id=task.task_id).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+
+        with patch("lens.tasks._delete_upload_storage") as delete:
+            cleaned = cleanup_abandoned_upload_tasks()
+
+        self.assertEqual(cleaned, 1)
+        delete.assert_called_once()
+        task.refresh_from_db()
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.error, "DATASOURCE_UPLOAD_ABANDONED")
+
+    def test_cleanup_keeps_enqueued_and_single_shot_uploads(self):
+        enqueued = register_datasource_upload_task(
+            self.datasource,
+            "enqueued-upload",
+            "report.pdf",
+            metadata={
+                "storage_name": "datasource-uploads/x/enqueued.pdf",
+                "chunked_session": True,
+                "upload_enqueued": True,
+            },
+        )
+        single_shot = register_datasource_upload_task(
+            self.datasource,
+            "single-shot-upload",
+            "report.pdf",
+            metadata={"storage_name": "datasource-uploads/x/shot.pdf"},
+        )
+        TaskExecution.objects.filter(
+            task_id__in=[enqueued.task_id, single_shot.task_id]
+        ).update(created_at=timezone.now() - timedelta(days=2))
+
+        cleaned = cleanup_abandoned_upload_tasks()
+
+        self.assertEqual(cleaned, 0)
+        enqueued.refresh_from_db()
+        single_shot.refresh_from_db()
+        self.assertEqual(enqueued.status, "PENDING")
+        self.assertEqual(single_shot.status, "PENDING")
+
+    def test_dispatch_pending_upload_retries_broker_failure(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "pending-dispatch-upload",
+            "report.pdf",
+            metadata={
+                "storage_name": "datasource-uploads/x/report.pdf",
+                "chunked_session": True,
+                "upload_dispatch_pending": True,
+            },
+        )
+
+        with patch(
+            "lens.tasks.datasource_upload_task.apply_async"
+        ) as apply_async:
+            dispatched = dispatch_pending_uploads()
+            self.assertEqual(dispatch_pending_uploads(), 0)
+
+        self.assertEqual(dispatched, 1)
+        apply_async.assert_called_once_with(
+            args=[
+                str(self.datasource.uuid),
+                "datasource-uploads/x/report.pdf",
+                "report.pdf",
+            ],
+            task_id=task.task_id,
+            retry=False,
+        )
+        task.refresh_from_db()
+        self.assertFalse(task.metadata["upload_dispatch_pending"])
+        self.assertTrue(task.metadata["upload_enqueued"])
+
+    def test_dispatch_failure_keeps_completed_upload_for_retry(self):
+        task = register_datasource_upload_task(
+            self.datasource,
+            "dispatch-failure-upload",
+            "report.pdf",
+            metadata={
+                "storage_name": "datasource-uploads/x/report.pdf",
+                "chunked_session": True,
+                "upload_dispatch_pending": True,
+            },
+        )
+        TaskExecution.objects.filter(pk=task.pk).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+        with patch(
+            "lens.tasks.datasource_upload_task.apply_async",
+            side_effect=RuntimeError("broker unavailable"),
+        ), patch("lens.tasks._delete_upload_storage") as delete:
+            self.assertEqual(dispatch_pending_uploads(), 0)
+            self.assertEqual(cleanup_abandoned_upload_tasks(), 0)
+            delete.assert_not_called()
+        task.refresh_from_db()
+        self.assertTrue(task.metadata["upload_dispatch_pending"])
+        self.assertEqual(task.status, "PENDING")
+        with patch("lens.tasks.datasource_upload_task.apply_async"):
+            self.assertEqual(dispatch_pending_uploads(), 1)
 
     def test_cleanup_fails_queued_task_with_dead_heartbeat(self):
         task = register_datasource_upload_task(

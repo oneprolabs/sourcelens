@@ -1,0 +1,9 @@
+type: feature
+audience: user
+en: >-
+  Datasource files now upload in resumable chunks, so large files continue from
+  the last received chunk after a dropped connection instead of restarting, and
+  an upload that finishes while the task broker is briefly unavailable is still
+  queued once the broker recovers.
+zh-CN: >-
+  数据源文件改为分块断点续传上传：大文件在网络中断后从已接收的分块继续，无需重新上传；任务队列短暂不可用时完成的上传会在恢复后自动入队。

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import uuid as uuid_mod
 from datetime import timedelta
@@ -13,6 +14,7 @@ from django.db.models import Prefetch, Q
 from django.utils import timezone
 from lens.datasource.services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
+    DATASOURCE_UPLOAD_HTTP_CHUNK_BYTES,
     get_datasource_upload_limits,
     DataSourceDispatchError,
     DataSourcePathError,
@@ -71,6 +73,8 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .base import BaseAdminViewSet
+
+logger = logging.getLogger(__name__)
 
 DATASOURCE_TASK_TYPES = (
     "lens_datasource",
@@ -736,11 +740,10 @@ class DataSourceViewSet(BaseAdminViewSet):
 
         return Response(get_datasource_upload_limits())
 
-    @action(detail=True, methods=["post"], url_path="upload")
-    def upload(self, request, uuid=None):
-        """Queue one or more files as independent upload tasks."""
+    @staticmethod
+    def _upload_support_error(datasource):
+        """Return a rejection response when a datasource rejects uploads."""
 
-        datasource = self.get_object()
         if not (
             datasource.source_type == DataSource.SourceType.UPLOAD
             or (
@@ -757,6 +760,87 @@ class DataSourceViewSet(BaseAdminViewSet):
                 {"detail": "DATASOURCE_DISABLED"},
                 status=status.HTTP_409_CONFLICT,
             )
+        return None
+
+    @staticmethod
+    def _upload_filename_error(filename):
+        """Return a rejection response for an unsafe or unsupported name."""
+
+        if not filename or filename in {".", ".."}:
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        lowered_filename = filename.lower()
+        if not any(
+            lowered_filename.endswith(extension)
+            for extension in DATASOURCE_UPLOAD_EXTENSIONS
+        ):
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return None
+
+    @staticmethod
+    def _previous_upload(datasource, filename, task_id):
+        """Return the prior upload count and latest row for one filename."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        rows = TaskExecution.objects.filter(
+            module="lens_datasource_upload",
+            metadata__datasource_uuid=str(datasource.uuid),
+            metadata__filename=filename,
+        ).exclude(task_id=task_id).order_by("-created_at")
+        return rows.count(), rows.first()
+
+    @staticmethod
+    def _active_upload_task(
+        datasource, task_id, for_update=False, include_completed=False
+    ):
+        """Return the active chunked-upload task for a datasource."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+        from agentcore_task.constants import TaskStatus
+
+        if not task_id:
+            return None
+        queryset = TaskExecution.objects.filter(
+            task_id=task_id,
+            module="lens_datasource_upload",
+            metadata__datasource_uuid=str(datasource.uuid),
+            metadata__chunked_session=True,
+        )
+        if not include_completed:
+            queryset = queryset.filter(status=TaskStatus.PENDING)
+        if for_update:
+            queryset = queryset.select_for_update()
+        return queryset.first()
+
+    @staticmethod
+    def _upload_task_response(datasource, task_id, metadata):
+        """Return the queued-upload payload shared by upload endpoints."""
+
+        filename = str(metadata.get("filename") or "")
+        return {
+            "uuid": str(datasource.uuid),
+            "task_id": task_id,
+            "filename": filename,
+            "uploads": [
+                {"task_id": task_id, "filename": filename, "status": "PENDING"}
+            ],
+            "status": "PENDING",
+        }
+
+    @action(detail=True, methods=["post"], url_path="upload")
+    def upload(self, request, uuid=None):
+        """Queue one or more files as independent upload tasks."""
+
+        datasource = self.get_object()
+        support_error = self._upload_support_error(datasource)
+        if support_error is not None:
+            return support_error
         uploads = request.FILES.getlist("files") or request.FILES.getlist(
             "file"
         )
@@ -766,7 +850,6 @@ class DataSourceViewSet(BaseAdminViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         limits = get_datasource_upload_limits()
-        from agentcore_task.adapters.django.models import TaskExecution
         queued = []
         for uploaded in uploads:
             if uploaded.size > limits["max_bytes"]:
@@ -775,31 +858,13 @@ class DataSourceViewSet(BaseAdminViewSet):
                     status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 )
             filename = os.path.basename(str(uploaded.name or "")).strip()
-            if not filename or filename in {".", ".."}:
-                return Response(
-                    {"detail": "DATASOURCE_UPLOAD_FILENAME_INVALID"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            lowered_filename = filename.lower()
-            if not any(
-                lowered_filename.endswith(extension)
-                for extension in DATASOURCE_UPLOAD_EXTENSIONS
-            ):
-                return Response(
-                    {"detail": "DATASOURCE_UPLOAD_FILE_TYPE_UNSUPPORTED"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            filename_error = self._upload_filename_error(filename)
+            if filename_error is not None:
+                return filename_error
             task_id = uuid_mod.uuid4().hex
-            previous = TaskExecution.objects.filter(
-                module="lens_datasource_upload",
-                metadata__datasource_uuid=str(datasource.uuid),
-                metadata__filename=filename,
-            ).count()
-            previous_task = TaskExecution.objects.filter(
-                module="lens_datasource_upload",
-                metadata__datasource_uuid=str(datasource.uuid),
-                metadata__filename=filename,
-            ).order_by("-created_at").first()
+            previous, previous_task = self._previous_upload(
+                datasource, filename, task_id
+            )
             if previous_task is not None:
                 previous_metadata = dict(previous_task.metadata or {})
                 previous_metadata["is_latest_version"] = False
@@ -842,6 +907,268 @@ class DataSourceViewSet(BaseAdminViewSet):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @action(detail=True, methods=["post"], url_path="uploads/chunked/init")
+    def upload_init(self, request, uuid=None):
+        """Open a chunked upload session for one datasource file."""
+
+        datasource = self.get_object()
+        support_error = self._upload_support_error(datasource)
+        if support_error is not None:
+            return support_error
+        filename = os.path.basename(
+            str(request.data.get("filename") or "")
+        ).strip()
+        filename_error = self._upload_filename_error(filename)
+        if filename_error is not None:
+            return filename_error
+        try:
+            byte_size = int(request.data.get("byte_size"))
+        except (TypeError, ValueError):
+            byte_size = 0
+        if byte_size <= 0:
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        limits = get_datasource_upload_limits()
+        if byte_size > limits["max_bytes"]:
+            return Response(
+                {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        content_type = str(request.data.get("content_type") or "")
+        task_id = uuid_mod.uuid4().hex
+        storage_name = default_storage.save(
+            f"datasource-uploads/{datasource.uuid}/{task_id}/{filename}",
+            ContentFile(b""),
+        )
+        register_datasource_upload_task(
+            datasource,
+            task_id,
+            filename,
+            created_by=request.user,
+            byte_size=byte_size,
+            content_type=content_type,
+            metadata={
+                "storage_name": storage_name,
+                "total_bytes": byte_size,
+                "chunked_session": True,
+            },
+        )
+        return Response(
+            {
+                "task_id": task_id,
+                "filename": filename,
+                "offset": 0,
+                "byte_size": byte_size,
+                "chunk_size": DATASOURCE_UPLOAD_HTTP_CHUNK_BYTES,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"uploads/chunked/(?P<task_id>[^/.]+)/chunk",
+    )
+    def upload_chunk(self, request, uuid=None, task_id=None):
+        """Append one received chunk to a chunked upload session."""
+
+        datasource = self.get_object()
+        with transaction.atomic():
+            task = self._active_upload_task(
+                datasource,
+                task_id,
+                for_update=True,
+                include_completed=True,
+            )
+            if task is None:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_SESSION_NOT_FOUND"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if task.status != "PENDING":
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_ALREADY_COMPLETED"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if (task.metadata or {}).get("upload_dispatch_pending") or (
+                task.metadata or {}
+            ).get("upload_enqueued"):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_ALREADY_COMPLETED"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            chunk = request.FILES.get("chunk")
+            if chunk is None:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_FILE_REQUIRED"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                offset = int(request.data.get("offset"))
+            except (TypeError, ValueError):
+                offset = -1
+            metadata = task.metadata or {}
+            storage_name = str(metadata.get("storage_name") or "")
+            if not storage_name or not default_storage.exists(storage_name):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_SESSION_NOT_FOUND"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            current = default_storage.size(storage_name)
+            if offset != current:
+                return Response(
+                    {
+                        "detail": "DATASOURCE_UPLOAD_OFFSET_INVALID",
+                        "offset": current,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            incoming = chunk.size or 0
+            expected = int(metadata.get("byte_size") or 0)
+            if current + incoming > expected:
+                return Response(
+                    {
+                        "detail": "DATASOURCE_UPLOAD_SIZE_MISMATCH",
+                        "offset": current,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            limits = get_datasource_upload_limits()
+            if current + incoming > limits["max_bytes"]:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_TOO_LARGE"},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
+            with default_storage.open(storage_name, "r+b") as handle:
+                handle.seek(offset)
+                for piece in chunk.chunks():
+                    handle.write(piece)
+            return Response({"offset": current + incoming})
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"uploads/chunked/(?P<task_id>[^/.]+)/complete",
+    )
+    def upload_complete(self, request, uuid=None, task_id=None):
+        """Finalize a fully received chunked upload and queue its task."""
+
+        datasource = self.get_object()
+        with transaction.atomic():
+            DataSource.objects.select_for_update().get(pk=datasource.pk)
+            task = self._active_upload_task(
+                datasource, task_id, for_update=True, include_completed=True
+            )
+            if task is None:
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_SESSION_NOT_FOUND"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            metadata = dict(task.metadata or {})
+            if metadata.get("upload_enqueued"):
+                return Response(
+                    self._upload_task_response(datasource, task_id, metadata),
+                    status=status.HTTP_202_ACCEPTED,
+                )
+            if metadata.get("upload_dispatch_pending"):
+                return Response(
+                    self._upload_task_response(datasource, task_id, metadata),
+                    status=status.HTTP_202_ACCEPTED,
+                )
+            if task.status != "PENDING":
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_SESSION_NOT_FOUND"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            storage_name = str(metadata.get("storage_name") or "")
+            expected = int(metadata.get("byte_size") or 0)
+            if (
+                not storage_name
+                or not default_storage.exists(storage_name)
+                or default_storage.size(storage_name) != expected
+            ):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_SIZE_MISMATCH"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            filename = str(metadata.get("filename") or "")
+            previous, previous_task = self._previous_upload(
+                datasource, filename, task_id
+            )
+            if previous_task is not None:
+                previous_metadata = dict(previous_task.metadata or {})
+                previous_metadata["is_latest_version"] = False
+                previous_task.metadata = previous_metadata
+                previous_task.save(update_fields=["metadata"])
+            metadata.update(
+                {
+                    "upload_version": previous + 1,
+                    "is_latest_version": True,
+                    "upload_dispatch_pending": True,
+                }
+            )
+            task.metadata = metadata
+            task.save(update_fields=["metadata"])
+
+        return Response(
+            self._upload_task_response(datasource, task_id, metadata),
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"uploads/chunked/(?P<task_id>[^/.]+)/abort",
+    )
+    def upload_abort(self, request, uuid=None, task_id=None):
+        """Discard an unfinished chunked upload session."""
+
+        datasource = self.get_object()
+        with transaction.atomic():
+            task = self._active_upload_task(
+                datasource,
+                task_id,
+                for_update=True,
+                include_completed=True,
+            )
+            if task is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            if task.status != "PENDING":
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_ALREADY_COMPLETED"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if (task.metadata or {}).get("upload_dispatch_pending") or (
+                task.metadata or {}
+            ).get("upload_enqueued"):
+                return Response(
+                    {"detail": "DATASOURCE_UPLOAD_ALREADY_COMPLETED"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            storage_name = str(
+                (task.metadata or {}).get("storage_name") or ""
+            )
+            if storage_name:
+                try:
+                    if default_storage.exists(storage_name):
+                        default_storage.delete(storage_name)
+                except Exception:
+                    logger.exception(
+                        "Failed to delete abandoned upload %s", storage_name
+                    )
+            from agentcore_task.adapters.django import TaskTracker
+            from agentcore_task.constants import TaskStatus
+
+            TaskTracker.update_task_status(
+                task_id,
+                TaskStatus.REVOKED,
+                error="DATASOURCE_UPLOAD_CANCELLED",
+                metadata={"progress_message": "DATASOURCE_UPLOAD_CANCELLED"},
+            )
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], url_path="set-enabled")
     def set_enabled(self, request, uuid=None):
