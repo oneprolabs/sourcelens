@@ -1123,6 +1123,7 @@ import { useToast } from '@/composables/useToast'
 
 const PROVIDER_LABELS = {
   openai: 'OpenAI',
+  openai_compatible: 'OpenAI Compatible',
   azure_openai: 'Azure OpenAI',
   gemini: 'Google Gemini',
   anthropic: 'Anthropic',
@@ -1134,6 +1135,9 @@ const PROVIDER_LABELS = {
   moonshot: 'Moonshot (Kimi)',
   zai: 'Z.AI (GLM)',
   volcengine: 'Volcengine (Doubao)',
+  meta_llama: 'Meta Llama',
+  amazon_nova: 'Amazon Nova',
+  nvidia_nim: 'NVIDIA NIM',
   openrouter: 'OpenRouter'
 }
 
