@@ -24,6 +24,7 @@ ALLOWED_HANDLERS = frozenset(
 )
 READ_ONLY_TOOL_CAPABILITIES = frozenset(
     {
+        "decision.evaluate",
         "issue.read",
         "jira.issue.search",
         "repository.read",

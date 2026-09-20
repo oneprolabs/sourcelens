@@ -1,8 +1,10 @@
 from contextlib import contextmanager
 
+import httpx
 import pytest
 
 from lensnode.plugin_http import (
+    PLUGIN_HTTP_JSON_MAX_BYTES,
     PluginHttpClientError,
     PluginHttpClientPool,
 )
@@ -196,3 +198,50 @@ def test_pool_closes_every_origin_client_and_rejects_new_bindings():
     assert all(item.is_closed for item in clients)
     with pytest.raises(PluginHttpClientError):
         pool.bind("github", "connection-1", ["https://api.github.com"])
+
+
+@pytest.mark.parametrize("plugin,url,kwargs", [
+    ("github", "https://decision.example/v1/systemone", {"json": {}}),
+    ("typesafe", "https://decision.example/admin", {"json": {}}),
+    ("typesafe", "https://decision.example/v1/systemone?x=1", {"json": {}}),
+    ("typesafe", "https://other.example/v1/systemone", {"json": {}}),
+    ("typesafe", "https://decision.example/v1/systemone",
+     {"json": {}, "params": {}}),
+    ("typesafe", "https://decision.example/v1/systemone",
+     {"json": {"x": "a" * PLUGIN_HTTP_JSON_MAX_BYTES}}),
+])
+def test_decision_post_permission_is_bounded(plugin, url, kwargs):
+    pool = PluginHttpClientPool(timeout=15, verify=True)
+    client = pool.bind(plugin, "connection-1", ["https://decision.example"])
+    with pytest.raises(PluginHttpClientError):
+        with client.stream("POST", url, **kwargs):
+            pass
+
+
+def test_decision_post_allows_body_within_the_bounded_size():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={}, request=request)
+
+    pool = PluginHttpClientPool(
+        timeout=15,
+        verify=True,
+        client_factory=lambda **options: httpx.Client(
+            transport=httpx.MockTransport(handler), **options
+        ),
+    )
+    try:
+        client = pool.bind(
+            "typesafe", "connection-1", ["https://decision.example"]
+        )
+        with client.stream(
+            "POST",
+            "https://decision.example/v1/systemone",
+            json={"state": "x" * 200_000},
+        ) as response:
+            assert response.status_code == 200
+    finally:
+        pool.close()
+    assert [request.url.path for request in seen] == ["/v1/systemone"]
