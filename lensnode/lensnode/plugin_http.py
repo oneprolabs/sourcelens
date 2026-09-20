@@ -1,10 +1,14 @@
 """Host-controlled HTTP clients for trusted Plugin runtimes."""
 
+import json
 import threading
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import httpx
+
+
+PLUGIN_HTTP_JSON_MAX_BYTES = 1_000_000
 
 
 class PluginHttpClientError(ValueError):
@@ -107,14 +111,35 @@ class PluginHttpClient:
         """Stream one bounded read request within the declared origins."""
 
         method = str(method or "").upper()
-        if method not in {"GET", "HEAD"}:
+        url_value = str(url or "")
+        evaluation = (
+            self._plugin_key == "typesafe"
+            and method == "POST"
+            and urlsplit(url_value).scheme == "https"
+            and urlsplit(url_value).path == "/v1/systemone"
+            and not urlsplit(url_value).query
+        )
+        if method not in {"GET", "HEAD"} and not evaluation:
             raise PluginHttpClientError("PLUGIN_HTTP_METHOD_REJECTED")
+        if evaluation:
+            try:
+                body = json.dumps(kwargs.get("json"), allow_nan=False)
+            except (TypeError, ValueError, RecursionError) as exc:
+                raise PluginHttpClientError(
+                    "PLUGIN_HTTP_BODY_REJECTED"
+                ) from exc
+            if (
+                not isinstance(kwargs.get("json"), dict)
+                or len(body.encode()) > PLUGIN_HTTP_JSON_MAX_BYTES
+                or "params" in kwargs
+            ):
+                raise PluginHttpClientError("PLUGIN_HTTP_BODY_REJECTED")
         unsupported = set(kwargs) - {
             "params",
             "headers",
             "follow_redirects",
             "timeout",
-        }
+        } - ({"json"} if evaluation else set())
         if unsupported:
             raise PluginHttpClientError("PLUGIN_HTTP_OPTIONS_REJECTED")
         if "timeout" in kwargs and (

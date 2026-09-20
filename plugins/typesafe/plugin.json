@@ -1,0 +1,168 @@
+{
+  "key": "typesafe",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "capability_family": "plugin",
+  "display_name": "TypeSafe AI",
+  "icon": "assets/icon.svg",
+  "description": "Evaluate bounded typed decisions with TypeSafe AI Jev without replacing the primary Agent model.",
+  "assistant_guidance": {
+    "summary": "Use TypeSafe AI for bounded Noul, Choice, or Score decisions when a structured decision is more reliable than free-form model text.",
+    "when_to_use": [
+      "The user asks for a bounded classification, yes/no judgment, ranking, or rubric score.",
+      "A retrieval gate, evidence check, or candidate reranking decision needs a structured result."
+    ],
+    "topics": [
+      {
+        "key": "noul",
+        "summary": "Answer one bounded yes/no question with a probability.",
+        "details": "Use typesafe_noul for a binary decision. Keep state and instructions focused. The result is a number from 0 to 1; it is not a natural-language answer.",
+        "tool_keys": ["typesafe_noul"]
+      },
+      {
+        "key": "choice",
+        "summary": "Select one option from a bounded rubric.",
+        "details": "Use typesafe_choice when the options are known in advance. Pass criteria as a JSON object mapping each option to a short rubric description or null. Do not use it for open-ended generation.",
+        "tool_keys": ["typesafe_choice"]
+      },
+      {
+        "key": "score",
+        "summary": "Score state against an ordered rubric.",
+        "details": "Use typesafe_score when the rubric has two to ten ordered levels. Pass criteria as a JSON array of level descriptions. Preserve the returned confidence and probabilities when reporting the decision.",
+        "tool_keys": ["typesafe_score"]
+      }
+    ]
+  },
+  "handlers": {
+    "control": "python_v1",
+    "runtime": "python_v1"
+  },
+  "connection_schema": {
+    "type": "object",
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "format": "uri",
+        "title": "TypeSafe API endpoint",
+        "description": "HTTPS root endpoint for a TypeSafe-compatible System One API. Preset to the public TypeSafe service.",
+        "default": "https://api.typesafe.ai",
+        "write_to": "endpoint"
+      },
+      "token": {
+        "type": "string",
+        "format": "password",
+        "title": "API token",
+        "description": "A TypeSafe API token. It is encrypted after saving and never included in a Run snapshot.",
+        "write_to": "secret_value"
+      },
+      "model": {
+        "type": "string",
+        "title": "Jev model",
+        "description": "Pinned model version used for reproducible decisions.",
+        "default": "jev-1.13.0",
+        "write_to": "config.model"
+      }
+    },
+    "required": ["endpoint", "token", "model"],
+    "additionalProperties": false
+  },
+  "tools": [
+    {
+      "key": "typesafe_noul",
+      "description": "Evaluate one bounded yes/no question with TypeSafe AI and return its probability.",
+      "capability": "decision.evaluate",
+      "side_effect": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Text or JSON-encoded state to evaluate.",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "instructions": {
+            "type": "string",
+            "description": "The yes/no question.",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "criteria_true": {
+            "type": "string",
+            "description": "Optional description of what yes means.",
+            "maxLength": 2000
+          },
+          "criteria_false": {
+            "type": "string",
+            "description": "Optional description of what no means.",
+            "maxLength": 2000
+          }
+        },
+        "required": ["state", "instructions"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "key": "typesafe_choice",
+      "description": "Choose one option from a bounded JSON rubric with TypeSafe AI.",
+      "capability": "decision.evaluate",
+      "side_effect": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Text or JSON-encoded state to evaluate.",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "instructions": {
+            "type": "string",
+            "description": "The choice question.",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "criteria": {
+            "type": "string",
+            "description": "JSON object mapping each option to a rubric description or null.",
+            "minLength": 2,
+            "maxLength": 32000
+          }
+        },
+        "required": ["state", "instructions", "criteria"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "key": "typesafe_score",
+      "description": "Score state against an ordered JSON rubric with TypeSafe AI.",
+      "capability": "decision.evaluate",
+      "side_effect": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Text or JSON-encoded state to evaluate.",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "instructions": {
+            "type": "string",
+            "description": "The scoring question.",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "criteria": {
+            "type": "string",
+            "description": "JSON array with two to ten ordered level descriptions.",
+            "minLength": 2,
+            "maxLength": 32000
+          }
+        },
+        "required": ["state", "instructions", "criteria"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
