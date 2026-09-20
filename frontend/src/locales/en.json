@@ -369,6 +369,7 @@
       "oversizedTextUnavailable": "This message exceeds {max} characters. Select an assistant that supports document attachments.",
       "emptyAnswerHint": "The reply didn't come through — this is usually a temporary network hiccup. Tap Retry to send it again.",
       "errorModelTimeout": "No answer was returned: the language model is responding too slowly and timed out after several retries. This is usually the model service being busy, not a platform fault. Please tap Retry.",
+      "errorModelUnavailable": "No answer was returned: the model service is temporarily unavailable. The system tried the configured alternatives; please try again later.",
       "errorNodeLost": "The answer was interrupted: the execution node connection dropped. Please tap Retry.",
       "errorSkillRequired": "This assistant has no executable Skill bound for the request. Ask an administrator to bind the required Skill.",
       "errorNodeOffline": "The execution node is offline, so the request cannot run now. Retry later or contact an administrator.",

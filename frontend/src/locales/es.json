@@ -369,6 +369,7 @@
       "oversizedTextUnavailable": "Este mensaje excede {max} caracteres. Seleccione un asistente que admita archivos adjuntos.",
       "emptyAnswerHint": "La respuesta no llegó — esto suele ser un problema temporal de la red. Toque Reintentar para enviarla de nuevo.",
       "errorModelTimeout": "No se devolvió ninguna respuesta: el modelo de lenguaje está respondiendo demasiado lento y se agotó el tiempo después de varios intentos. Esto generalmente se debe a que el servicio del modelo está ocupado, no a un fallo de la plataforma. Por favor, toque Reintentar.",
+      "errorModelUnavailable": "No se devolvió ninguna respuesta: el servicio del modelo no está disponible temporalmente. El sistema probó las alternativas configuradas; inténtelo de nuevo más tarde.",
       "errorNodeLost": "La respuesta fue interrumpida: la conexión del nodo de ejecución se perdió. Por favor, toque Reintentar.",
       "errorSkillRequired": "Este asistente no tiene ninguna Skill ejecutable vinculada para la solicitud. Solicite a un administrador que vincule la Skill requerida.",
       "errorNodeOffline": "El nodo de ejecución está desconectado, por lo que la solicitud no se puede ejecutar ahora. Intente de nuevo más tarde o contacte a un administrador.",

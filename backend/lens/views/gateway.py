@@ -29,6 +29,11 @@ from lens.document_attachments import (
     document_attachment_storage,
     get_document_attachment,
 )
+from lens.llm_resilience import (
+    MODEL_UNAVAILABLE,
+    call_and_track_with_fallback,
+    is_transient_provider_error,
+)
 from lens.models import (
     DataSourceVersion,
     Run,
@@ -161,7 +166,6 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from agentcore_metering.adapters.django import LLMTracker
 
         tracker_state = {
             "source_type": "lensnode_gateway",
@@ -258,7 +262,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             )
 
         try:
-            content, usage = LLMTracker.call_and_track(
+            content, usage = call_and_track_with_fallback(
                 messages=messages,
                 model_uuid=model_ref,
                 node_name=f"lensnode:{lensnode.uuid}",
@@ -270,7 +274,12 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                 reasoning_effort=request.data.get("reasoning_effort"),
                 return_message=bool(request.data.get("return_message")),
             )
-        except ValueError as exc:
+        except Exception as exc:
+            if is_transient_provider_error(exc):
+                return Response(
+                    {"code": self._gateway_stream_error_code(exc)},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             empty_response = self._empty_response_error_payload(exc)
             if empty_response is None:
                 raise
@@ -403,7 +412,6 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         instead of buffering the full response.
         """
 
-        from agentcore_metering.adapters.django import LLMTracker
         import asyncio
         import logging as _logging
 
@@ -416,12 +424,16 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
 
             def run_in_thread():
                 try:
-                    generator = LLMTracker.call_and_track(
+                    generator = call_and_track_with_fallback(
                         messages=messages,
                         model_uuid=model_ref,
                         node_name=f"lensnode:{lensnode_uuid_str}",
                         state=tracker_state,
                         stream=True,
+                        on_retry=lambda event: loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            ("event", {"type": "retry", **event}),
+                        ),
                         tools=payload.get("tools"),
                         tool_choice=payload.get("tool_choice"),
                         temperature=payload.get("temperature"),
@@ -549,6 +561,8 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         message = str(exc).upper()
         if "TIMEOUT" in name or "TIMEOUT" in message or "TIMED OUT" in message:
             return "MODEL_TIMEOUT"
+        if is_transient_provider_error(exc):
+            return MODEL_UNAVAILABLE
         stream_markers = [
             "CHUNKED",
             "INCOMPLETE",

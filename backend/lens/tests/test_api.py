@@ -3268,6 +3268,59 @@ class LensApiTests(TestCase):
             str(self.lensnode.uuid),
         )
 
+    def test_lensnode_ai_gateway_fails_over_after_transient_provider_error(
+        self,
+    ):
+        token = "dev-lensnode-token"
+        self.lensnode.auth_token_hash = hash_lensnode_token(token)
+        self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        primary = LLMConfig.objects.create(
+            scope=LLMConfig.Scope.GLOBAL,
+            model_type=LLMConfig.MODEL_TYPE_LLM,
+            provider="deepseek",
+            config={"model": "deepseek-v4"},
+            is_active=True,
+            is_default=True,
+        )
+        fallback = LLMConfig.objects.create(
+            scope=LLMConfig.Scope.GLOBAL,
+            model_type=LLMConfig.MODEL_TYPE_LLM,
+            provider="qwen",
+            config={"model": "qwen-plus"},
+            is_active=True,
+        )
+        primary.config["fallback_model_uuid"] = str(fallback.uuid)
+        primary.save(update_fields=["config"])
+        client = APIClient()
+        calls = []
+
+        class ProviderBusyError(Exception):
+            status_code = 503
+
+        def call_and_track(**kwargs):
+            calls.append(kwargs["model_uuid"])
+            if len(calls) == 1:
+                raise ProviderBusyError("service is too busy")
+            return "ok", {"total_tokens": 1}
+
+        with patch(
+            "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+            side_effect=call_and_track,
+        ):
+            response = client.post(
+                "/api/lens/lensnode/ai-gateway/",
+                {
+                    "model_ref": str(primary.uuid),
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+                format="json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["content"], "ok")
+        self.assertEqual(calls, [str(primary.uuid), str(fallback.uuid)])
+
     def test_lensnode_ai_gateway_reports_reasoning_length_truncation(self):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)

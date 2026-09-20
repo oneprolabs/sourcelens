@@ -907,6 +907,10 @@ class LensDeepAgentRuntime:
             http_client=self.http_client,
             emit_output=state.emit_output,
             on_activity=state.on_activity,
+            on_model_retry=lambda detail: state.emit_agent_event(
+                "deepagents.model.retry",
+                {"code": detail.get("code") or "MODEL_UNAVAILABLE"},
+            ),
             cancel_event=state.cancel_event,
             run_uuid=state.run_uuid,
             trace_context=state.trace_context,

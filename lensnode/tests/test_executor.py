@@ -17,7 +17,11 @@ from lensnode.agent_runtime.runtime import (
     _vague_code_analysis_question,
 )
 from lensnode.agent_tools import _skill_script_environment, build_agent_tools
-from lensnode.executor import LensNodeExecutor, _remaining_run_timeout_seconds
+from lensnode.executor import (
+    LensNodeExecutor,
+    _failure_error_code,
+    _remaining_run_timeout_seconds,
+)
 from lensnode.gateway_model import RunCancelledError
 from lensnode.main import LensNodeClient
 from lensnode.runtime_resources import (
@@ -25,6 +29,12 @@ from lensnode.runtime_resources import (
     cleanup_runtime_resources,
     prepare_runtime_resources,
 )
+
+
+def test_transient_provider_failure_has_distinct_public_error_code():
+    error = RuntimeError("provider returned HTTP 503: service is too busy")
+
+    assert _failure_error_code(error) == "MODEL_UNAVAILABLE"
 
 
 class FakeAgent:

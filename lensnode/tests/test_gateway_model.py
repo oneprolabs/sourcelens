@@ -97,6 +97,31 @@ def test_streaming_touches_activity_on_every_event(monkeypatch):
     assert client_options["verify"].verify_mode == ssl.CERT_REQUIRED
 
 
+def test_streaming_surfaces_model_retry_progress(monkeypatch):
+    retry_events = []
+    body = (
+        'data: {"type": "retry", "code": "MODEL_UNAVAILABLE"}\n\n'
+        'data: {"type": "token", "kind": "content", "content": "ok"}\n\n'
+        'data: {"type": "done", "usage": {}, "tool_calls": []}\n\n'
+    )
+    _install_transport(
+        monkeypatch,
+        lambda _request: httpx.Response(200, content=body.encode()),
+    )
+
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=lambda _content: None,
+        on_model_retry=retry_events.append,
+    )
+
+    model._generate([HumanMessage(content="hi")])
+
+    assert retry_events == [{"type": "retry", "code": "MODEL_UNAVAILABLE"}]
+
+
 def test_streaming_network_error_is_recoverable(monkeypatch):
     model = LensGatewayChatModel(
         model_ref="model-ref",

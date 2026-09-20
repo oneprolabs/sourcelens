@@ -1,0 +1,7 @@
+type: fix
+audience: user
+en: >-
+  Improved answer reliability by switching to an active fallback model when
+  all retries for a provider temporarily fail.
+zh-CN: >-
+  提升回答可靠性：模型服务临时失败且重试耗尽时，自动切换到可用的备用模型。

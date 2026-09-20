@@ -369,6 +369,7 @@
       "oversizedTextUnavailable": "消息超过 {max} 个字符，请选择支持文档附件的助手。",
       "emptyAnswerHint": "回答没能顺利返回，可能是网络波动等临时原因。点「重试」再发送一次即可。",
       "errorModelTimeout": "回答未能返回：大语言模型当前响应过慢，系统多次重试后仍超时。这通常是模型服务繁忙所致，并非平台故障。请稍后点「重试」。",
+      "errorModelUnavailable": "回答未能返回：模型服务暂时不可用，系统已尝试配置中的备用模型。请稍后重试。",
       "errorNodeLost": "回答中断：执行节点连接异常。请点「重试」。",
       "errorSkillRequired": "当前助手未绑定可执行 Skill，无法处理这个请求。请联系管理员绑定对应 Skill。",
       "errorNodeOffline": "当前执行节点不在线，暂时无法处理请求。请稍后重试或联系管理员。",
