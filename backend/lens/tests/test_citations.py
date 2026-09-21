@@ -70,3 +70,29 @@ class CitationPathTest(SimpleTestCase):
 
         self.assertEqual(output[0]["path"], "docs/guide.md")
         self.assertNotIn("source", output[0])
+
+    def test_collapses_repeated_windows_of_one_path(self):
+        output = sanitize_run_citations([
+            _citation(id="src-1", path="src/app.py"),
+            _citation(
+                id="src-2",
+                path="src/app.py",
+                start_line=10,
+                end_line=11,
+            ),
+        ])
+
+        self.assertEqual(len(output), 1)
+        self.assertEqual(output[0]["id"], "src-1")
+
+    def test_keeps_every_distinct_path_without_a_fixed_cap(self):
+        output = sanitize_run_citations([
+            _citation(id=f"src-{index}", path=f"src/file{index}.py")
+            for index in range(8)
+        ])
+
+        self.assertEqual(len(output), 8)
+        self.assertEqual(
+            len({item["path"] for item in output}),
+            8,
+        )

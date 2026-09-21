@@ -1091,6 +1091,37 @@ class LensApiTests(TestCase):
         self.assertEqual(len(detail_response.data["skill_bindings"]), 1)
         self.assertEqual(len(detail_response.data["mcp_bindings"]), 1)
 
+    def test_assistant_list_exposes_citation_display_preference(self):
+        """Expose the citation switch and persist it through the API."""
+
+        def row_for(assistant_uuid):
+            response = self.client.get("/api/lens/assistants/")
+            return next(
+                item
+                for item in response.data["results"]
+                if item["uuid"] == str(assistant_uuid)
+            )
+
+        self.assertIs(row_for(self.assistant.uuid)["show_citations"], True)
+
+        response = self.client.patch(
+            f"/api/lens/assistants/{self.assistant.uuid}/",
+            {"settings": {"features": {"citations": False}}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(row_for(self.assistant.uuid)["show_citations"], False)
+
+    def test_assistant_settings_reject_non_boolean_citations(self):
+        response = self.client.patch(
+            f"/api/lens/assistants/{self.assistant.uuid}/",
+            {"settings": {"features": {"citations": "yes"}}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_assistant_status_cannot_bypass_lifecycle_actions(self):
         response = self.client.patch(
             f"/api/lens/assistants/{self.assistant.uuid}/",

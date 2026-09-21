@@ -528,6 +528,23 @@
                 }}</span>
               </label>
             </FormRow>
+            <FormRow
+              v-if="requiresWorkspace"
+              :label="t('lensAdmin.fields.enableCitations')"
+            >
+              <label
+                class="flex cursor-pointer items-center gap-3 rounded-md border border-line bg-surface-sunken p-3"
+              >
+                <input
+                  type="checkbox"
+                  v-model="form.enable_citations"
+                  class="h-4 w-4 flex-shrink-0 rounded border-line text-brand-600 focus:ring-brand-500"
+                />
+                <span class="text-sm text-ink-700">{{
+                  t('lensAdmin.fields.enableCitationsHint')
+                }}</span>
+              </label>
+            </FormRow>
           </template>
         </div>
 

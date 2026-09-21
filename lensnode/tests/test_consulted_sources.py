@@ -1,9 +1,6 @@
 """Bounded source citations for tool-loop answers."""
 
-from lensnode.consulted_sources import (
-    MAX_CONSULTED_SOURCES,
-    ConsultedSources,
-)
+from lensnode.consulted_sources import ConsultedSources
 
 
 def _command(tmp_path):
@@ -96,22 +93,38 @@ def test_label_language_accepts_codes_and_names(tmp_path):
         assert sources.citations(language)[0]["supports"] == expected
 
 
-def test_duplicates_collapse_and_the_result_stays_bounded(tmp_path):
+def test_repeated_observations_of_one_file_collapse_to_one_citation(tmp_path):
+    _mount(tmp_path, "notes.md", "one\ntwo\nthree\nfour\n")
     sources = ConsultedSources(_command(tmp_path))
-    for index in range(MAX_CONSULTED_SOURCES + 3):
+    path = tmp_path / "sources" / "hosted_demo" / "notes.md"
+
+    sources.record_read(path, 1, 1, "one")
+    sources.record_read(path, 3, 4, "three\nfour")
+    sources.record_read(path, 1, 2, "one\ntwo")
+
+    citations = sources.citations()
+
+    assert [citation["path"] for citation in citations] == [
+        "hosted_demo/notes.md"
+    ]
+    assert (citations[0]["start_line"], citations[0]["end_line"]) == (1, 1)
+
+
+def test_every_consulted_file_is_reported_without_a_fixed_cap(tmp_path):
+    sources = ConsultedSources(_command(tmp_path))
+    for index in range(9):
+        _mount(tmp_path, f"doc{index}.md", "line\n")
         sources.record_read(
             tmp_path / "sources" / "hosted_demo" / f"doc{index}.md",
             1,
             1,
             "line",
         )
-    sources.record_read(
-        tmp_path / "sources" / "hosted_demo" / "doc0.md", 1, 1, "line"
-    )
 
     citations = sources.citations()
-    assert len(citations) == MAX_CONSULTED_SOURCES
-    assert len({citation["path"] for citation in citations}) == MAX_CONSULTED_SOURCES
+
+    assert len(citations) == 9
+    assert len({citation["path"] for citation in citations}) == 9
 
 
 def test_generated_mount_names_fall_back_to_the_datasource_name(tmp_path):

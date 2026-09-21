@@ -1,0 +1,9 @@
+type: improvement
+audience: user
+en: >-
+  Answers now turn the source files they mention into inline links, so the
+  captured evidence opens in one click. Evidence captured from documents is
+  shown as formatted text instead of raw markup, and the citation list stays at
+  the end of the answer as the complete reference.
+zh-CN: >-
+  回答正文中提到的来源文件现在会变为内联链接，点击即可直接打开对应的证据快照；来自文档的证据以格式化内容展示，不再显示原始标记语法。文末的引用列表仍然保留，作为完整参考。

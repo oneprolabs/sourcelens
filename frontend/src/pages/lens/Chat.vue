@@ -841,7 +841,11 @@
                     v-if="message.role === 'assistant' && message.content"
                     class="message-markdown"
                   >
-                    <MarkdownRenderer :content="message.content" />
+                    <MarkdownRenderer
+                      :content="message.content"
+                      :references="messageReferences(message)"
+                      @reference-click="openInlineCitation(message, $event)"
+                    />
                   </div>
                   <template v-else>
                     <div
@@ -898,6 +902,7 @@
                     v-if="
                       message.role === 'assistant' &&
                       message.citations?.length &&
+                      citationsEnabled &&
                       !isAnonymous
                     "
                     :citations="message.citations"
@@ -2019,6 +2024,8 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
+import { assistantShowsCitations } from '@/pages/lens/codeCitations'
+
 import {
   readRecentChat,
   saveRecentChat,
@@ -2060,6 +2067,8 @@ const citationSource = ref(null)
 const citationSourceLoading = ref(false)
 const citationSourceError = ref('')
 let citationRequestId = 0
+const NO_MESSAGE_REFERENCES = []
+const messageReferenceCache = new WeakMap()
 
 const RUN_POLL_INTERVAL_MS = 3000
 const RUN_POLL_MAX_ATTEMPTS = 160
@@ -2167,6 +2176,10 @@ const selectedAssistant = computed(
 
 const activeAssistant = computed(
   () => selectedAssistant.value || publicAssistant.value
+)
+
+const citationsEnabled = computed(() =>
+  assistantShowsCitations(activeAssistant.value)
 )
 
 const selectedSession = computed(
@@ -4522,6 +4535,35 @@ function openPreview(file) {
 
 function closePreview() {
   previewFile.value = null
+}
+
+function messageReferences(message) {
+  if (
+    isAnonymous.value ||
+    !citationsEnabled.value ||
+    !message?.citations?.length
+  ) {
+    return NO_MESSAGE_REFERENCES
+  }
+  const cached = messageReferenceCache.get(message)
+  if (cached) return cached
+  const references = message.citations
+    .filter((citation) => citation?.id && citation?.path)
+    .map((citation) => ({
+      id: citation.id,
+      path: citation.path,
+      startLine: citation.start_line,
+      endLine: citation.end_line
+    }))
+  messageReferenceCache.set(message, references)
+  return references
+}
+
+function openInlineCitation(message, citationId) {
+  const citation = (message?.citations || []).find(
+    (item) => item.id === citationId
+  )
+  if (citation) openCodeCitation(message, citation)
 }
 
 function openCodeCitation(message, citation) {

@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
+  assistantShowsCitations,
   citationLocation,
-  citationSourceUrl
+  citationSourceUrl,
+  isMarkdownCitationPath
 } from '../src/pages/lens/codeCitations.js'
 
 test('formats workspace-relative citation paths with exact line ranges', () => {
@@ -27,6 +29,14 @@ test('builds citation source URLs from IDs instead of source paths', () => {
 
   assert.equal(url, '/lens/runs/run-123/citations/evidence%3Ahandler.one/')
   assert.doesNotMatch(url, /services\.py/)
+})
+
+test('detects markdown citation paths for the rendered preview', () => {
+  assert.equal(isMarkdownCitationPath('hosted_demo/docs/guide.md'), true)
+  assert.equal(isMarkdownCitationPath('notes.MARKDOWN'), true)
+  assert.equal(isMarkdownCitationPath('src/app.py'), false)
+  assert.equal(isMarkdownCitationPath(''), false)
+  assert.equal(isMarkdownCitationPath(undefined), false)
 })
 
 test('connects message citations to the authenticated code drawer', async () => {
@@ -57,4 +67,8 @@ test('connects message citations to the authenticated code drawer', async () => 
   assert.match(citationDrawer, /<BaseDrawer/)
   assert.match(citationDrawer, /highlight_start_line/)
   assert.match(citationDrawer, /role="alert"/)
+  assert.match(citationDrawer, /isMarkdownCitationPath/)
+  assert.match(citationDrawer, /<MarkdownRenderer/)
+  assert.match(citationDrawer, /lens\.chat\.citations\.preview/)
+  assert.match(citationDrawer, /lens\.chat\.citations\.source/)
 })

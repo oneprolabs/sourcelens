@@ -1768,6 +1768,8 @@
       "excludeDirs": "Exclude directories",
       "enableCodegraph": "Enable code graph",
       "enableCodegraphHint": "Build and search a code graph for analysis",
+      "enableCitations": "Show citations",
+      "enableCitationsHint": "Show the consulted sources in answers, with links to the captured evidence",
       "workspaceGuideEnabled": "Inject this guide for the Assistant",
       "workspaceGuideHelp": "Describe repository layout, search priority, and stopping rules. SourceLens will save it as a bound Skill and inject it into LensNode runs.",
       "agentModel": "Agent Model",

@@ -648,6 +648,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
     supports_document_attachments = serializers.SerializerMethodField()
     vision_model_capability = serializers.SerializerMethodField()
     can_process_images = serializers.SerializerMethodField()
+    show_citations = serializers.SerializerMethodField()
 
     class Meta:
         model = Assistant
@@ -674,12 +675,18 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "supports_document_attachments",
             "vision_model_capability",
             "can_process_images",
+            "show_citations",
         ]
 
     def get_routing_description(self, assistant):
         """Expose the localized routing synopsis used for assistant choice."""
 
         return localized_routing_description(assistant)
+
+    def get_show_citations(self, assistant):
+        """Expose the citation display preference for chat clients."""
+
+        return assistant.show_citations
 
     def get_datasource_routing(self, assistant):
         """Expose the data selection mode without other runtime settings."""
@@ -1143,6 +1150,16 @@ class AssistantSerializer(serializers.ModelSerializer):
             attrs["settings"] = settings
             if "retrieval_policy" in settings:
                 validate_retrieval_policy(settings.get("retrieval_policy"))
+            features = settings.get("features")
+            if isinstance(features, dict) and "citations" in features:
+                if not isinstance(features["citations"], bool):
+                    raise serializers.ValidationError(
+                        {
+                            "settings": (
+                                "features.citations must be a boolean"
+                            )
+                        }
+                    )
         if "multimodal_model_ref" in attrs:
             reason = validate_vision_model_ref(attrs["multimodal_model_ref"])
             if reason:

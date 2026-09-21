@@ -1,10 +1,12 @@
-"""Bounded, non-sensitive source citations for tool-loop answers.
+"""Non-sensitive source citations for tool-loop answers.
 
 The planned-evidence pipeline maps model-selected evidence IDs to citations.
 Tool-loop tasks (knowledge Q&A, general chat) never pick evidence IDs, so they
 report the workspace files the run actually inspected instead. Paths are
 reduced to a public ``<mount name>/<relative path>`` form: internal runtime
-locations and host absolute paths never leave the LensNode.
+locations and host absolute paths never leave the LensNode. Every distinct
+file is reported once; repeated reads or searches of one file collapse to the
+first observation so the citation list reflects the sources actually used.
 
 This module owns the *reader-facing* prefix: a mount name the operator chose is
 kept, while a generated ``ds_*`` mount is replaced by its datasource name so
@@ -16,7 +18,6 @@ for the case where no datasource name is available, not the normal path.
 import re
 from pathlib import Path
 
-MAX_CONSULTED_SOURCES = 5
 MAX_SOURCE_QUERY_CHARS = 500
 MAX_SOURCE_LABEL_CHARS = 80
 REVISION = "working-tree"
@@ -143,7 +144,7 @@ class ConsultedSources:
         self._searches = searches
 
     def citations(self, answer_language=None):
-        """Return at most MAX_CONSULTED_SOURCES public citations.
+        """Return one public citation per consulted file.
 
         A source is reported as consulted, never as supporting the answer:
         the ``supports`` label says so, which keeps an answer that reports the
@@ -183,7 +184,7 @@ class ConsultedSources:
                     source,
                     supports,
                 )
-        return collected[:MAX_CONSULTED_SOURCES]
+        return collected
 
     def _public_path(self, path_text):
         """Return the public path, or empty when it leaves the mounted dirs."""
@@ -270,14 +271,13 @@ def _entry(path, start_line, end_line, source):
 
 
 def _append(collected, seen, path, start, end, source, supports):
-    """Append one deduplicated citation when its path is public."""
+    """Append one citation per path when its path is public."""
 
     if not path:
         return
-    key = (path, start, end)
-    if key in seen:
+    if path in seen:
         return
-    seen.add(key)
+    seen.add(path)
     collected.append(
         {
             "id": f"src-{len(collected) + 1}",

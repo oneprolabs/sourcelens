@@ -10,3 +10,13 @@ export function citationSourceUrl(runUuid, citationId) {
     citationId
   )}/`
 }
+
+export function isMarkdownCitationPath(path) {
+  return /\.(?:md|markdown)$/i.test(String(path || ''))
+}
+
+export function assistantShowsCitations(assistant) {
+  if (!assistant) return true
+  if (assistant.show_citations === false) return false
+  return assistant.settings?.features?.citations !== false
+}
