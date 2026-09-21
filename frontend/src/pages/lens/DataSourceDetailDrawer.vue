@@ -806,6 +806,7 @@ const filesError = ref('')
 const filesCount = ref(0)
 const filePage = ref(1)
 const filesHasMore = ref(false)
+const filesRootDirectory = ref('')
 const fileQuery = ref('')
 const fileSyncStatus = ref('')
 const fileConversionStatus = ref('')
@@ -888,6 +889,7 @@ function resetFileList() {
   filesCount.value = 0
   filePage.value = 1
   filesHasMore.value = false
+  filesRootDirectory.value = ''
   filesError.value = ''
 }
 
@@ -949,25 +951,43 @@ async function loadFiles() {
   filesLoading.value = true
   filesError.value = ''
   try {
-    const { results, count } = await fetchFileEntries({
-      directory: '',
-      page: 1
-    })
+    const rootPage = await fetchFileEntries({ directory: '', page: 1 })
     if (
       requestSeq !== fileRequestSeq.value ||
       uuid !== props.datasource?.uuid
     ) {
       return
     }
+    let directory = ''
+    let results = rootPage.results
+    let count = rootPage.count
+    if (
+      !fileSearchActive.value &&
+      count === 1 &&
+      results.length === 1 &&
+      results[0]?.type === 'directory'
+    ) {
+      const nestedPage = await fetchFileEntries({
+        directory: results[0].path,
+        page: 1
+      })
+      if (
+        requestSeq !== fileRequestSeq.value ||
+        uuid !== props.datasource?.uuid
+      ) {
+        return
+      }
+      directory = results[0].path
+      results = nestedPage.results
+      count = nestedPage.count
+    }
+    filesRootDirectory.value = directory
     if (fileSearchActive.value) {
       searchFileEntries.value = results
       fileNodes.value = buildDataSourceFileTree(results)
-      filesCount.value = count
-      filePage.value = 1
-      filesHasMore.value = count > results.length
-      return
+    } else {
+      fileNodes.value = results.map(mapFileNode)
     }
-    fileNodes.value = results.map(mapFileNode)
     filesCount.value = count
     filePage.value = 1
     filesHasMore.value = count > results.length
@@ -1001,7 +1021,7 @@ async function loadMoreRootFiles() {
   const nextPage = filePage.value + 1
   try {
     const { results, count } = await fetchFileEntries({
-      directory: '',
+      directory: filesRootDirectory.value,
       page: nextPage
     })
     if (requestSeq !== fileRequestSeq.value) return
