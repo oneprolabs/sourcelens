@@ -643,6 +643,7 @@ export async function refreshDataSourceAvailability(uuid) {
 const DATASOURCE_UPLOAD_FALLBACK_CHUNK = 2 * 1024 * 1024
 const DATASOURCE_UPLOAD_REQUEST_TIMEOUT = 120000
 const DATASOURCE_UPLOAD_RETRY_LIMIT = 3
+const DATASOURCE_UPLOAD_CONCURRENCY = 4
 
 function isRetryableUploadError(error) {
   const status = error?.response?.status
@@ -769,12 +770,39 @@ async function uploadDataSourceFileChunked(uuid, file) {
   }
 }
 
+async function uploadDataSourceFilesBounded(uuid, files, limit) {
+  const uploads = new Array(files.length)
+  let next = 0
+  let failure = null
+  const worker = async () => {
+    while (failure === null) {
+      const index = next
+      next += 1
+      if (index >= files.length) return
+      try {
+        uploads[index] = await uploadDataSourceFileChunked(uuid, files[index])
+      } catch (error) {
+        failure = failure || error
+        return
+      }
+    }
+  }
+  const workers = []
+  for (let i = 0; i < Math.min(limit, files.length); i += 1) {
+    workers.push(worker())
+  }
+  await Promise.all(workers)
+  if (failure) throw failure
+  return uploads
+}
+
 export async function uploadDataSourceFile(uuid, file) {
   const files = Array.isArray(file) ? file : [file]
-  const uploads = []
-  for (const item of files) {
-    uploads.push(await uploadDataSourceFileChunked(uuid, item))
-  }
+  const uploads = await uploadDataSourceFilesBounded(
+    uuid,
+    files,
+    DATASOURCE_UPLOAD_CONCURRENCY
+  )
   const first = uploads[0] || {}
   return {
     uuid,
