@@ -2128,7 +2128,12 @@
       "noMatchingDatasources": "未找到匹配的数据源",
       "showFewerDatasources": "收起列表",
       "showAllDatasources": "查看全部（{count}）",
-      "datasourceTypes": {"git": "Git", "feishu": "飞书", "jira": "Jira", "managed_workspace": "托管工作区"},
+      "datasourceTypes": {
+        "git": "Git",
+        "feishu": "飞书",
+        "jira": "Jira",
+        "managed_workspace": "托管工作区"
+      },
       "runtimeStats": "运行环境与统计",
       "rawStorage": "原始",
       "derivedStorage": "处理后",

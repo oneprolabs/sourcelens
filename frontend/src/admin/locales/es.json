@@ -2130,7 +2130,12 @@
       "noMatchingDatasources": "No hay fuentes coincidentes",
       "showFewerDatasources": "Mostrar menos",
       "showAllDatasources": "Ver todas ({count})",
-      "datasourceTypes": {"git": "Git", "feishu": "Feishu", "jira": "Jira", "managed_workspace": "Espacio de trabajo administrado"},
+      "datasourceTypes": {
+        "git": "Git",
+        "feishu": "Feishu",
+        "jira": "Jira",
+        "managed_workspace": "Espacio de trabajo administrado"
+      },
       "runtimeStats": "Entorno y estadísticas",
       "rawStorage": "Original",
       "derivedStorage": "Procesado",

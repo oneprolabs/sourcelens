@@ -2,8 +2,10 @@ type: improvement
 audience: user
 en: >-
   Answers now turn the source files they mention into inline links, so the
-  captured evidence opens in one click. Evidence captured from documents is
-  shown as formatted text instead of raw markup, and the citation list stays at
-  the end of the answer as the complete reference.
+  captured evidence opens in one click. Every consulted source is listed instead
+  of a fixed first five, repeated reads of one file collapse into one entry, and
+  evidence captured from documents is shown as formatted text instead of raw
+  markup. An Assistant can also switch citations off, and the citation list
+  stays at the end of the answer as the complete reference.
 zh-CN: >-
-  回答正文中提到的来源文件现在会变为内联链接，点击即可直接打开对应的证据快照；来自文档的证据以格式化内容展示，不再显示原始标记语法。文末的引用列表仍然保留，作为完整参考。
+  回答正文中提到的来源文件现在会变为内联链接，点击即可直接打开对应的证据快照；引用会列出所有实际查阅过的来源，不再固定只显示前 5 条，同一文件多次阅读只保留一条；来自文档的证据以格式化内容展示，不再显示原始标记语法。助手也可关闭引用展示；文末的引用列表仍然保留，作为完整参考。
