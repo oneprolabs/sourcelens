@@ -226,15 +226,33 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
         },
         scenario={"prompt": "Answer safely."},
     )
+    streamed_answer = (
+        "I used read_file on /subject-documents/"
+        "internal.pdf.sourcelens/content.md."
+    )
+
+    def fake_direct(
+        model,
+        *_args,
+        emit_output=None,
+        stream=False,
+        **_kwargs,
+    ):
+        del model, stream
+        if emit_output is not None:
+            # emulate the streaming model publishing sanitized tokens
+            emit_output(
+                agent_runtime._normalize_code_analysis_paths(
+                    streamed_answer,
+                    {"task": "general_chat"},
+                )
+            )
+        return streamed_answer
+
     monkeypatch.setattr(
         agent_runtime,
         "_answer_general_chat_directly",
-        lambda model, *_args, **_kwargs: (
-            "I used read_file on /subject-documents/"
-            "internal.pdf.sourcelens/content.md."
-            if model.emit_output is None
-            else "unredacted streaming callback"
-        ),
+        fake_direct,
     )
 
     result = runtime._route_runtime(state)
@@ -2285,6 +2303,40 @@ def test_direct_answer_recovers_an_unfulfilled_action_promise():
     assert all(call[1]["runtime_control_call"] for call in model.calls)
     assert events == [("deepagents.answer.promise_recovery", {})]
     assert output == [answer]
+
+
+def test_direct_answer_streams_and_resets_on_promise_recovery():
+    class Model:
+        def __init__(self):
+            self.calls = []
+            self.responses = iter(
+                [
+                    "我先完成身份验证，然后拉取全部记录。",
+                    "修正后的结论。",
+                ]
+            )
+
+        def invoke(self, _messages, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(content=next(self.responses))
+
+    model = Model()
+    output = []
+
+    answer = _answer_general_chat_directly(
+        model,
+        {"question": "精简字段后能否读取全部记录？", "history": []},
+        "system prompt",
+        emit_output=lambda content, **_kwargs: output.append(content),
+        stream=True,
+    )
+
+    # Both the draft and the recovery call opt into streaming, so the model
+    # publishes tokens itself and the helper retracts the rejected draft.
+    assert len(model.calls) == 2
+    assert all(call.get("runtime_stream_control") for call in model.calls)
+    assert output == [""]
+    assert answer.startswith("修正后的结论")
 
 
 def test_direct_answer_does_not_recover_a_completed_explanation():

@@ -549,6 +549,10 @@ class LensGatewayChatModel(BaseChatModel):
         del stop, run_manager
         self._check_cancelled()
         control_call = bool(kwargs.get("runtime_control_call"))
+        # Control calls are normally non-streaming and hidden. A caller that
+        # wants the user to see a control answer (the direct-answer route) can
+        # opt in and have its tokens published like a normal answer turn.
+        stream_control = bool(kwargs.get("runtime_stream_control"))
         gateway_messages = [
             _message_to_gateway(
                 message,
@@ -618,7 +622,9 @@ class LensGatewayChatModel(BaseChatModel):
             payload,
         )
 
-        if self.emit_output is not None and not control_call:
+        if self.emit_output is not None and (
+            not control_call or stream_control
+        ):
             structured_output = bool(
                 kwargs.get("runtime_structured_output")
             )
@@ -630,6 +636,7 @@ class LensGatewayChatModel(BaseChatModel):
                         and (
                             bool(kwargs.get("runtime_final_synthesis"))
                             or completed_plan_followup
+                            or stream_control
                         )
                     ),
                     suppress_output=structured_output,

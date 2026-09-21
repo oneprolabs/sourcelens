@@ -46,8 +46,17 @@ def _answer_general_chat_directly(
     messages=None,
     emit_event=None,
     emit_output=None,
+    stream=False,
 ):
-    """Answer a simple informational request without creating an agent."""
+    """Answer a simple informational request without creating an agent.
+
+    When ``stream`` is set and an ``emit_output`` sink is given, the draft —
+    and any promise-recovery answer — is published token-by-token. The draft
+    is only validated for unfulfilled action promises after it is generated,
+    so a rejected draft is retracted with a reset before the corrected answer
+    streams, letting the user see the fast first draft get replaced instead of
+    waiting for the whole check to finish.
+    """
 
     direct_prompt = (
         f"{system_prompt}\n\nRuntime route: direct_answer. Do not call any "
@@ -68,7 +77,11 @@ def _answer_general_chat_directly(
             )
         ),
     ]
-    response = model.invoke(messages, runtime_control_call=True)
+    streaming = bool(stream and emit_output is not None)
+    invoke_kwargs = {"runtime_control_call": True}
+    if streaming:
+        invoke_kwargs["runtime_stream_control"] = True
+    response = model.invoke(messages, **invoke_kwargs)
     content = getattr(response, "content", None)
     answer = (
         content.strip() if isinstance(content, str) else str(content or "")
@@ -76,6 +89,8 @@ def _answer_general_chat_directly(
     if _contains_unfulfilled_action_promise(answer):
         if emit_event is not None:
             emit_event("deepagents.answer.promise_recovery", {})
+        if streaming:
+            emit_output("", reset=True)
         language = _command_answer_language(command)
         correction = _pick_text(
             "上一版回答以尚未执行的行动承诺收尾。不要调用工具，也不要描述"
@@ -92,10 +107,7 @@ def _answer_general_chat_directly(
             {"role": "assistant", "content": answer},
             {"role": "user", "content": correction},
         ]
-        response = model.invoke(
-            recovery_messages,
-            runtime_control_call=True,
-        )
+        response = model.invoke(recovery_messages, **invoke_kwargs)
         content = getattr(response, "content", None)
         answer = (
             content.strip()
@@ -103,6 +115,8 @@ def _answer_general_chat_directly(
             else str(content or "")
         )
         if _contains_unfulfilled_action_promise(answer):
+            if streaming:
+                emit_output("", reset=True)
             answer = _pick_text(
                 "本轮没有执行任何工具，也无法确认所描述的后续操作已经开始。"
                 "请明确您是只询问可行性，还是希望继续执行该操作。",
@@ -111,6 +125,8 @@ def _answer_general_chat_directly(
                 "a feasibility answer or want the operation to continue.",
                 language,
             )
-    if emit_output is not None and answer:
+            if streaming and answer:
+                emit_output(answer)
+    if emit_output is not None and answer and not streaming:
         emit_output(answer)
     return answer

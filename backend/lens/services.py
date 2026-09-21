@@ -12,6 +12,7 @@ from time import sleep
 from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
@@ -75,8 +76,17 @@ TERMINAL_RUN_STATUSES = {
     Run.Status.FAILED,
     Run.Status.CANCELLED,
 }
+# The async SSE stream mirrors live answer content from a cache key that the
+# control-plane consumer refreshes on every output frame, so tokens reach the
+# client at low latency without polling the database. Status, steps, and
+# terminal state are still reconciled from the database on a slower cadence,
+# which also repairs any mirror update that was missed. The sync fallback
+# below keeps polling the database directly.
 STREAM_POLL_INTERVAL_SECONDS = 0.3
+STREAM_LIVE_POLL_INTERVAL_SECONDS = 0.03
+STREAM_STATE_POLL_INTERVAL_SECONDS = 0.25
 STREAM_PING_INTERVAL_SECONDS = 15
+RUN_LIVE_CACHE_TTL_SECONDS = 300
 
 BUSY_RETRY_INTERVAL_S = 5
 BUSY_RETRY_WINDOW_S = 120
@@ -195,6 +205,12 @@ def lensnode_group_name(lensnode_uuid):
     """Return the Channels group name for a LensNode."""
 
     return f"lens.lensnode.{lensnode_uuid}"
+
+
+def run_live_cache_key(run_uuid):
+    """Return the cache key mirroring a Run's live output content."""
+
+    return f"lens:run-live:{run_uuid}"
 
 
 def invalidate_skill_cache(skill_uuid):
@@ -3980,8 +3996,48 @@ def stream_run_events(run):
         sleep(STREAM_POLL_INTERVAL_SECONDS)
 
 
+def _content_diff_events(content, emitted_content):
+    """Return SSE events and the new cursor for one content change."""
+
+    events = []
+    if not content.startswith(emitted_content):
+        emitted_content = ""
+        events.append(
+            {"type": "token_reset", "ts": timezone.now().isoformat()}
+        )
+    delta = content[len(emitted_content) :]
+    emitted_content = content
+    if delta:
+        events.append(
+            {
+                "type": "token",
+                "content": delta,
+                "ts": timezone.now().isoformat(),
+            }
+        )
+    return events, emitted_content
+
+
+async def _read_live_content(live_key):
+    """Return a Run's mirrored live content, or None when unavailable."""
+
+    try:
+        content = await cache.aget(live_key)
+    except Exception:
+        logger.debug("Live run content mirror read failed.", exc_info=True)
+        return None
+    return content if isinstance(content, str) else None
+
+
 async def stream_run_events_async(run):
-    """Yield SSE event payloads using an async iterator for ASGI streaming."""
+    """Yield SSE event payloads, streaming live output at low latency.
+
+    Answer content is read from a cache mirror that the control-plane
+    consumer refreshes on every output frame, so tokens reach the client
+    immediately instead of waiting on a database poll. Status, steps, and
+    terminal state are reconciled from the database on a slower cadence,
+    which also repairs any mirror update that was missed.
+    """
 
     emitted_steps = set()
     emitted_content = ""
@@ -3990,6 +4046,9 @@ async def stream_run_events_async(run):
     last_queue_position = None
     last_ping_at = timezone.now()
     run_pk = run.pk
+    live_key = run_live_cache_key(str(run.uuid))
+
+    loop = asyncio.get_running_loop()
 
     run = await sync_to_async(_load_run_stream_state)(run_pk)
     yield _build_sync_event(run)
@@ -4003,76 +4062,88 @@ async def stream_run_events_async(run):
         (owner.pk, step.sequence, step.status, step.updated_at)
         for owner, step in _run_stream_steps(run)
     }
+    next_state_poll = loop.time()
 
     while True:
-        content = _run_content(run)
-
-        resume_by = run.resume_by.isoformat() if run.resume_by else None
-        if run.status != last_status or resume_by != last_resume_by:
-            last_status = run.status
-            last_resume_by = resume_by
-            yield {
-                "type": "status",
-                "status": run.status,
-                "resume_by": resume_by,
-                "ts": timezone.now().isoformat(),
-            }
-
-        if run.status == Run.Status.QUEUED:
-            position = await sync_to_async(_queue_position)(run)
-            waiting = await sync_to_async(_datasource_waiting)(run)
-            if (position, waiting) != last_queue_position:
-                last_queue_position = (position, waiting)
-                yield {
-                    "type": "queue_position",
-                    "position": position,
-                    "datasource_waiting": waiting,
-                    "ts": timezone.now().isoformat(),
-                }
-        else:
-            last_queue_position = None
-
-        for owner, step in _run_stream_steps(run):
-            step_key = (
-                owner.pk,
-                step.sequence,
-                step.status,
-                step.updated_at,
+        # Fast path: publish content from the shared mirror as it changes.
+        content = await _read_live_content(live_key)
+        if content is not None and content != emitted_content:
+            events, emitted_content = _content_diff_events(
+                content, emitted_content
             )
-            if step_key not in emitted_steps:
-                emitted_steps.add(step_key)
-                yield _build_stream_step_event(owner, step)
+            for event in events:
+                yield event
 
-        if content != emitted_content:
-            if not content.startswith(emitted_content):
-                emitted_content = ""
+        # Slow path: reconcile status, steps, queue, and terminal state.
+        now = loop.time()
+        if now >= next_state_poll:
+            next_state_poll = now + STREAM_STATE_POLL_INTERVAL_SECONDS
+            run = await sync_to_async(_load_run_stream_state)(run_pk)
+
+            resume_by = run.resume_by.isoformat() if run.resume_by else None
+            if run.status != last_status or resume_by != last_resume_by:
+                last_status = run.status
+                last_resume_by = resume_by
                 yield {
-                    "type": "token_reset",
+                    "type": "status",
+                    "status": run.status,
+                    "resume_by": resume_by,
                     "ts": timezone.now().isoformat(),
                 }
-            delta = content[len(emitted_content) :]
-            emitted_content = content
-            if delta:
+
+            if run.status == Run.Status.QUEUED:
+                position = await sync_to_async(_queue_position)(run)
+                waiting = await sync_to_async(_datasource_waiting)(run)
+                if (position, waiting) != last_queue_position:
+                    last_queue_position = (position, waiting)
+                    yield {
+                        "type": "queue_position",
+                        "position": position,
+                        "datasource_waiting": waiting,
+                        "ts": timezone.now().isoformat(),
+                    }
+            else:
+                last_queue_position = None
+
+            for owner, step in _run_stream_steps(run):
+                step_key = (
+                    owner.pk,
+                    step.sequence,
+                    step.status,
+                    step.updated_at,
+                )
+                if step_key not in emitted_steps:
+                    emitted_steps.add(step_key)
+                    yield _build_stream_step_event(owner, step)
+
+            content = _run_content(run)
+            if content != emitted_content:
+                events, emitted_content = _content_diff_events(
+                    content, emitted_content
+                )
+                for event in events:
+                    yield event
+
+            if run.status in TERMINAL_RUN_STATUSES:
+                yield _terminal_stream_event(run)
+                return
+
+            ping_now = timezone.now()
+            if (
+                ping_now - last_ping_at
+            ).total_seconds() >= STREAM_PING_INTERVAL_SECONDS:
+                last_ping_at = ping_now
                 yield {
-                    "type": "token",
-                    "content": delta,
-                    "ts": timezone.now().isoformat(),
+                    "type": "ping",
+                    "ts": ping_now.isoformat(),
                 }
 
-        if run.status in TERMINAL_RUN_STATUSES:
-            yield _terminal_stream_event(run)
-            return
-
-        now = timezone.now()
-        if (now - last_ping_at).total_seconds() >= STREAM_PING_INTERVAL_SECONDS:
-            last_ping_at = now
-            yield {
-                "type": "ping",
-                "ts": now.isoformat(),
-            }
-
-        await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
-        run = await sync_to_async(_load_run_stream_state)(run_pk)
+        await asyncio.sleep(
+            min(
+                STREAM_LIVE_POLL_INTERVAL_SECONDS,
+                max(0.0, next_state_poll - loop.time()),
+            )
+        )
 
 
 def _load_run_stream_state(run_pk):

@@ -1180,7 +1180,10 @@ class LensDeepAgentRuntime:
                 1,
             )
             original_emit_output = getattr(state.model, "emit_output", None)
-            state.model.emit_output = None
+            # Keep the emitter attached so the direct answer streams
+            # token-by-token (the helper resets the stream if it must retract
+            # a draft that promised unperformed work).
+            state.model.emit_output = state.emit_output
             try:
                 answer = _answer_general_chat_directly(
                     state.model,
@@ -1199,7 +1202,8 @@ class LensDeepAgentRuntime:
                         else None
                     ),
                     emit_event=state.emit_agent_event,
-                    emit_output=None,
+                    emit_output=state.emit_output,
+                    stream=state.emit_output is not None,
                 )
             except Exception:
                 state.runtime_mode.emit_model_round(
@@ -1223,9 +1227,9 @@ class LensDeepAgentRuntime:
                 "phase.changed",
                 {"phase": "completed"},
             )
+            # The helper already published the answer when it streamed; a
+            # run without an emitter has nothing to publish to either way.
             answer = _normalize_code_analysis_paths(answer, state.command)
-            if state.emit_output is not None:
-                state.emit_output(answer)
             return {
                 "answer": answer,
                 "samples": [],
