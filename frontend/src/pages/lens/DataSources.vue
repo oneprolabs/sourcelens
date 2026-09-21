@@ -524,7 +524,7 @@ import { buildPluginGitPathCheckConfig } from './dataSourcePathCheck'
 import { useShortDateTime } from './useShortDateTime'
 
 const { t, te } = useI18n()
-const { showSuccess, showError } = useToast()
+const { showSuccess, showError, showInfo } = useToast()
 const route = useRoute()
 
 const loading = ref(false)
@@ -1690,6 +1690,7 @@ async function save() {
             )
           }
         }
+        showInfo(t('lensAdmin.upload.uploading'))
         await uploadDataSourceFile(created.uuid, filesToUpload)
         pendingUploadFiles.value = []
         showSuccess(t('lensAdmin.messages.uploadStarted'))
@@ -2599,6 +2600,7 @@ async function handleDirectUpload(event) {
         )
       }
     }
+    showInfo(t('lensAdmin.upload.uploading'))
     await uploadDataSourceFile(datasource.uuid, files)
     showSuccess(t('lensAdmin.messages.uploadStarted'))
     await load()
