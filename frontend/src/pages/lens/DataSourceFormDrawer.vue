@@ -1464,6 +1464,18 @@
       </div>
     </template>
   </BaseDrawer>
+
+  <ConfirmDeleteModal
+    :show="credentialConfirmOpen"
+    :title="t('lensAdmin.datasourceWizard.credentialChangeTitle')"
+    :message="t('lensAdmin.datasourceWizard.credentialChangeWarning')"
+    icon-type="warning"
+    variant="primary"
+    :confirm-text="t('lensAdmin.datasourceWizard.credentialChangeConfirm')"
+    :cancel-text="t('common.cancel')"
+    @confirm="confirmCredentialChange"
+    @cancel="cancelCredentialChange"
+  />
 </template>
 
 <script setup>
@@ -1488,6 +1500,7 @@ import { useI18n } from 'vue-i18n'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import PluginIcon from '@/components/ui/PluginIcon.vue'
 import ManifestSchemaForm from '@/components/lens/ManifestSchemaForm.vue'
 import { DATASOURCE_UPLOAD_ACCEPT } from '@/utils/lens'
@@ -1551,6 +1564,9 @@ const pdfAdvancedOpen = ref(false)
 const gitRepositorySearch = ref('')
 const gitBulkBranch = ref('')
 const acceptedCredentialUuid = ref('')
+const credentialConfirmOpen = ref(false)
+const pendingCredentialUuid = ref('')
+const previousCredentialUuid = ref('')
 const conversionOpen = ref(false)
 const fileUploadInput = ref(null)
 const fileUploadDragging = ref(false)
@@ -2463,14 +2479,15 @@ async function handleCredentialChange(nextUuid) {
     return
   }
   if (shouldConfirmCredentialChange(nextUuid, previousUuid)) {
-    const confirmed = window.confirm(
-      t('lensAdmin.datasourceWizard.credentialChangeWarning')
-    )
-    if (!confirmed) {
-      props.form.credential_uuid = previousUuid
-      return
-    }
+    pendingCredentialUuid.value = nextUuid
+    previousCredentialUuid.value = previousUuid
+    credentialConfirmOpen.value = true
+    return
   }
+  await applyCredentialChange(nextUuid, previousUuid)
+}
+
+async function applyCredentialChange(nextUuid, previousUuid) {
   props.form.credential_uuid = nextUuid
   const clearGitSelection = Boolean(
     previousUuid && nextUuid && nextUuid !== previousUuid
@@ -2480,6 +2497,22 @@ async function handleCredentialChange(nextUuid) {
   acceptedCredentialUuid.value = nextUuid || ''
   await nextTick()
   testConnectionIfVisible()
+}
+
+async function confirmCredentialChange() {
+  const nextUuid = pendingCredentialUuid.value
+  const previousUuid = previousCredentialUuid.value
+  credentialConfirmOpen.value = false
+  pendingCredentialUuid.value = ''
+  previousCredentialUuid.value = ''
+  await applyCredentialChange(nextUuid, previousUuid)
+}
+
+function cancelCredentialChange() {
+  credentialConfirmOpen.value = false
+  pendingCredentialUuid.value = ''
+  props.form.credential_uuid = previousCredentialUuid.value
+  previousCredentialUuid.value = ''
 }
 
 watch(

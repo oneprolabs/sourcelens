@@ -1443,19 +1443,19 @@
       },
       "typesafe": {
         "displayName": "TypeSafe AI",
-        "description": "Conecta un endpoint de TypeSafe AI System One para exponer decisiones acotadas Noul (sí/no), Choice y Score como herramientas de solo lectura del asistente. Se admite una ruta base, por ejemplo Vercel AI Gateway.",
+        "description": "Juicios tipados y acotados (Noul, Choice, Score) de TypeSafe AI Jev a través de un endpoint HTTPS de System One. El modelo principal del agente sigue a cargo de la prosa, el razonamiento y el flujo de trabajo.",
         "connectionFields": {
           "endpoint": {
             "title": "Endpoint de TypeSafe API",
-            "description": "Endpoint HTTPS de una API System One compatible con TypeSafe. Se permite una ruta base, por ejemplo https://ai-gateway.vercel.sh/typesafe."
+            "description": "Endpoint HTTPS de una API System One compatible con TypeSafe. Se permite una ruta base."
           },
           "token": {
             "title": "API Token",
-            "description": "API Token de TypeSafe, o una clave de Vercel AI Gateway al usar el gateway."
+            "description": "API Token de TypeSafe."
           },
           "model": {
             "title": "Modelo Jev",
-            "description": "Versión de modelo fija. Use typesafe-ai/jev para Vercel AI Gateway."
+            "description": "Versión de modelo fija."
           }
         },
         "datasourceFields": {}
@@ -1581,8 +1581,10 @@
       "saveSuccess": "Conexión guardada",
       "saveFailed": "No se pudo guardar la conexión",
       "validationSuccess": "Conexión válida; {count} recursos disponibles",
+      "validationSuccessNoResources": "Conexión válida",
       "validationFailed": "Falló la validación de la conexión",
       "deleteConfirm": "¿Eliminar esta conexión?",
+      "deleteConfirmMessage": "Esta conexión se eliminará de forma permanente. Su historial de ejecución se conserva para auditoría.",
       "deleteSuccess": "Conexión eliminada",
       "deleteFailed": "No se pudo eliminar la conexión",
       "pause": "Pausar conexión",
@@ -1986,7 +1988,9 @@
       "branchCount": "{count} sucursales cargadas",
       "loadingGitScope": "Cargando repositorios y ramas...",
       "loadingFeishuScope": "Validando carpeta de Feishu Drive...",
+      "credentialChangeTitle": "¿Cambiar credenciales?",
       "credentialChangeWarning": "Cambiar credenciales borrará los repositorios y ramas seleccionados. Necesitará seleccionarlos de nuevo. ¿Desea continuar?",
+      "credentialChangeConfirm": "Cambiar credenciales",
       "gitOrganizationReposTitle": "Repositorios de espacios de nombres",
       "gitOrganizationReposHint": "{count} repositorios encontrados. Los repositorios seleccionados se sincronizarán como una fuente de datos de un solo espacio de nombres.",
       "gitOrganizationSelectedHint": "{count} repositorios seleccionados.",
@@ -2295,6 +2299,7 @@
     "messages": {
       "loadFailed": "Error al cargar datos de administrador de Lens",
       "unsavedChanges": "Hay cambios sin guardar. ¿Cerrar el panel de todos modos?",
+      "discardChanges": "Descartar cambios",
       "saveSuccess": "Guardado con éxito",
       "saveFailed": "Error al guardar",
       "uploadStarted": "Inicio de subida",

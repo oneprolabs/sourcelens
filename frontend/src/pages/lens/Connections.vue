@@ -194,7 +194,7 @@
                     :disabled="
                       row.datasource_count > 0 || row.assistant_count > 0
                     "
-                    @click.stop="removeRow(row)"
+                    @click.stop="requestRemoveRow(row)"
                   >
                     {{ t('common.delete') }}
                   </BaseButton>
@@ -614,6 +614,16 @@
         </div>
       </template>
     </BaseDrawer>
+
+    <ConfirmDeleteModal
+      :show="Boolean(deleteTarget)"
+      :title="t('lensAdmin.connections.deleteConfirm')"
+      :name="deleteTarget?.name"
+      :message="t('lensAdmin.connections.deleteConfirmMessage')"
+      :loading="deleting"
+      @confirm="confirmRemoveRow"
+      @cancel="deleteTarget = null"
+    />
   </AdminLayout>
 </template>
 
@@ -626,6 +636,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import FeishuConnectionGuide from '@/components/lens/FeishuConnectionGuide.vue'
 import GitHubConnectionGuide from '@/components/lens/GitHubConnectionGuide.vue'
 import GitLabConnectionGuide from '@/components/lens/GitLabConnectionGuide.vue'
@@ -646,6 +657,7 @@ import {
 } from '@/api/lens'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
+import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import {
   localizePluginManifest,
   pluginDisplayName as translatedPluginDisplayName
@@ -676,6 +688,8 @@ const connectionStatusFilter = ref('all')
 const pluginIconUrls = ref({})
 const connectionDetailOpen = ref(false)
 const detailConnection = ref(null)
+const deleteTarget = ref(null)
+const deleting = ref(false)
 const connectionResourceOptions = computed(() => ({
   [connectionResourceField.value?.[1]?.resource || '']: {
     items: connectionResourceCandidates.value
@@ -801,11 +815,17 @@ function pluginDisplayName(pluginKey) {
   )
 }
 
+function connectionHasDatasource(pluginKey) {
+  const manifest = pluginManifests.value[pluginKey] || {}
+  return (
+    Boolean(manifest.datasource) || Boolean(manifest.datasource_source_type)
+  )
+}
+
 function connectionUsageLabels(row) {
   const manifest = pluginManifests.value[row.plugin_key] || {}
   const labels = []
-  const hasDatasource =
-    Boolean(manifest.datasource) || Boolean(manifest.datasource_source_type)
+  const hasDatasource = connectionHasDatasource(row.plugin_key)
   const hasTool = Array.isArray(manifest.tools) && manifest.tools.length > 0
   if (hasDatasource) {
     labels.push({
@@ -886,11 +906,11 @@ function editDetailConnection() {
   if (row) startEdit(row)
 }
 
-async function removeDetailConnection() {
+function removeDetailConnection() {
   const row = detailConnection.value
   if (!row) return
-  await removeRow(row)
   closeConnectionDetail()
+  requestRemoveRow(row)
 }
 
 function startCreate() {
@@ -1020,12 +1040,18 @@ async function validateRow(row) {
   validatingUuid.value = row.uuid
   try {
     await validateConnection(row.uuid)
-    const resources = await getConnectionResources(row.uuid)
+    const hasDatasource = connectionHasDatasource(row.plugin_key)
+    const count = hasDatasource
+      ? resourceItemCount((await getConnectionResources(row.uuid)).resources)
+      : 0
     validationResults.value[row.uuid] = {
       ok: true,
-      message: t('lensAdmin.connections.validationSuccess', {
-        count: resourceItemCount(resources.resources)
-      })
+      message: t(
+        hasDatasource
+          ? 'lensAdmin.connections.validationSuccess'
+          : 'lensAdmin.connections.validationSuccessNoResources',
+        { count }
+      )
     }
   } catch (error) {
     validationResults.value[row.uuid] = {
@@ -1106,16 +1132,26 @@ function resourceItemCount(resources) {
   )
 }
 
-async function removeRow(row) {
-  if (!window.confirm(t('lensAdmin.connections.deleteConfirm'))) return
+function requestRemoveRow(row) {
+  deleteTarget.value = row
+}
+
+async function confirmRemoveRow() {
+  const row = deleteTarget.value
+  if (!row) return
+  deleting.value = true
   try {
     await deleteConnection(row.uuid)
     showSuccess(t('lensAdmin.connections.deleteSuccess'))
+    deleteTarget.value = null
     await load()
   } catch (error) {
     showError(
-      extractErrorMessage(error, t('lensAdmin.connections.deleteFailed'))
+      lensNodeErrorMessage(error.response?.data?.detail, t) ||
+        extractErrorMessage(error, t('lensAdmin.connections.deleteFailed'))
     )
+  } finally {
+    deleting.value = false
   }
 }
 

@@ -198,6 +198,38 @@ def _connection_http_client(provider, connection):
     )
 
 
+CONNECTION_LIVE_RELATIONS = (
+    "datasources",
+    "assistant_bindings",
+    "mcp_adapters",
+)
+
+
+def _connection_is_referenced(connection):
+    """Return whether a live binding still references a Connection.
+
+    Only relations that represent present-tense use are checked. Finished
+    execution history keeps its audit rows through ``SET_NULL``, so it
+    never blocks deletion.
+    """
+
+    if any(
+        getattr(connection, name).exists()
+        for name in CONNECTION_LIVE_RELATIONS
+    ):
+        return True
+    return _connection_has_active_run(connection)
+
+
+def _connection_has_active_run(connection):
+    """Return whether a running Plugin operation still uses a Connection."""
+
+    return ExecutionSnapshot.objects.filter(
+        connection=connection,
+        run__status__in=ACTIVE_RUN_STATUSES,
+    ).exists()
+
+
 class PluginRuntimeNoStoreMixin:
     """Prevent caching of Plugin Runtime responses in every outcome."""
 
@@ -473,11 +505,7 @@ class ConnectionViewSet(BaseAdminViewSet):
         """Reject deletion while a connection is referenced."""
 
         connection = self.get_object()
-        if (
-            connection.datasources.exists()
-            or connection.assistant_bindings.exists()
-            or connection.execution_snapshots.exists()
-        ):
+        if _connection_is_referenced(connection):
             return Response(
                 {"detail": "CONNECTION_IN_USE"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -691,7 +719,10 @@ class PluginCredentialLeaseView(
             return Response({"detail": "SNAPSHOT_NODE_MISMATCH"}, status=403)
         if not _tool_snapshot_run_is_active(snapshot):
             return Response({"detail": "RUN_NOT_ACTIVE"}, status=409)
-        if snapshot.connection.status != snapshot.connection.Status.ACTIVE:
+        if (
+            snapshot.connection is None
+            or snapshot.connection.status != snapshot.connection.Status.ACTIVE
+        ):
             return Response({"detail": "CONNECTION_DISABLED"}, status=409)
         if (
             snapshot.secret_version is not None
@@ -754,7 +785,8 @@ class PluginCredentialMaterialView(
         if not _tool_snapshot_run_is_active(lease.snapshot):
             return Response({"detail": "RUN_NOT_ACTIVE"}, status=409)
         if (
-            lease.snapshot.connection.status
+            lease.snapshot.connection is None
+            or lease.snapshot.connection.status
             != lease.snapshot.connection.Status.ACTIVE
         ):
             return Response({"detail": "CONNECTION_DISABLED"}, status=409)
@@ -815,6 +847,11 @@ class PluginExecutionSnapshotView(
         )
         if snapshot is None or _snapshot_node_id(snapshot) != node.pk:
             return Response({"detail": "SNAPSHOT_NOT_FOUND"}, status=404)
+        if snapshot.connection is None:
+            return Response(
+                {"detail": "SNAPSHOT_CONNECTION_REMOVED"},
+                status=410,
+            )
         payload = {
             "snapshot_uuid": str(snapshot.uuid),
             "connection_uuid": str(snapshot.connection.uuid),

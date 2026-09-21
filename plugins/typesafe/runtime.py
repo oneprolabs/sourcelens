@@ -23,7 +23,7 @@ RESPONSE_MAX_BYTES = 1_000_000
 MAX_STATE_LENGTH = 100_000
 MAX_INSTRUCTIONS_LENGTH = 2_000
 MAX_CRITERIA_LENGTH = 32_000
-MAX_ENDPOINT_LENGTH = 512
+MAX_ENDPOINT_LENGTH = 500
 PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._~-]{1,128}")
 
 
@@ -54,19 +54,41 @@ def build_tool(definition, executor):
 
     if key == "typesafe_noul":
         def invoke(
-            state: Annotated[str, Field(min_length=1, max_length=100000)],
+            state: Annotated[
+                str,
+                Field(
+                    min_length=1,
+                    max_length=100000,
+                    description=(
+                        "Text to evaluate, or a JSON-encoded object or "
+                        "array string. Encode structured state into the "
+                        "string, not a native object or array; prefer "
+                        "named fields for multi-part state."
+                    ),
+                ),
+            ],
             instructions: Annotated[
                 str,
-                Field(min_length=1, max_length=2000),
+                Field(
+                    min_length=1,
+                    max_length=2000,
+                    description="The yes/no question to answer.",
+                ),
             ],
             runtime: ToolRuntime,
             criteria_true: Annotated[
                 str,
-                Field(max_length=2000),
+                Field(
+                    max_length=2000,
+                    description="What a true (yes) answer means.",
+                ),
             ] = "",
             criteria_false: Annotated[
                 str,
-                Field(max_length=2000),
+                Field(
+                    max_length=2000,
+                    description="What a false (no) answer means.",
+                ),
             ] = "",
         ) -> str:
             return executor(
@@ -83,12 +105,41 @@ def build_tool(definition, executor):
         return tool(key, description=description)(invoke)
 
     def invoke(
-        state: Annotated[str, Field(min_length=1, max_length=100000)],
+        state: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=100000,
+                description=(
+                    "Text to evaluate, or a JSON-encoded object or "
+                    "array string. Encode structured state into the "
+                    "string, not a native object or array; prefer "
+                    "named fields for multi-part state."
+                ),
+            ),
+        ],
         instructions: Annotated[
             str,
-            Field(min_length=1, max_length=2000),
+            Field(
+                min_length=1,
+                max_length=2000,
+                description="The bounded question to answer.",
+            ),
         ],
-        criteria: Annotated[str, Field(min_length=2, max_length=32000)],
+        criteria: Annotated[
+            str,
+            Field(
+                min_length=2,
+                max_length=32000,
+                description=(
+                    "A JSON-encoded string rubric, not a native array "
+                    "or object. For choice, a JSON object mapping each "
+                    "option key to a description or null. For score, a "
+                    "JSON array of two to ten concrete, self-standing "
+                    "level descriptions."
+                ),
+            ),
+        ],
         runtime: ToolRuntime,
     ) -> str:
         return executor(

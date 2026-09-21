@@ -1443,11 +1443,11 @@
       },
       "typesafe": {
         "displayName": "TypeSafe AI",
-        "description": "Evaluate bounded typed decisions with TypeSafe AI Jev without replacing the primary Agent model.",
+        "description": "Bounded typed judgments (Noul, Choice, Score) from TypeSafe AI Jev over an HTTPS System One endpoint. The primary Agent model still owns prose, reasoning, and the workflow.",
         "connectionFields": {
           "endpoint": {
             "title": "TypeSafe API endpoint",
-            "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed, for example the Vercel AI Gateway base https://ai-gateway.vercel.sh/typesafe. Preset to the public TypeSafe service."
+            "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed. Preset to the public TypeSafe service."
           },
           "token": {
             "title": "API token",
@@ -1455,7 +1455,7 @@
           },
           "model": {
             "title": "Jev model",
-            "description": "Pinned model version used for reproducible decisions. Use typesafe-ai/jev when connecting through the Vercel AI Gateway."
+            "description": "Pinned System One model version used for reproducible decisions."
           }
         },
         "datasourceFields": {}
@@ -1581,8 +1581,10 @@
       "saveSuccess": "Connection saved",
       "saveFailed": "Failed to save Connection",
       "validationSuccess": "Connection valid; {count} resources available",
+      "validationSuccessNoResources": "Connection valid",
       "validationFailed": "Connection validation failed",
       "deleteConfirm": "Delete this Connection?",
+      "deleteConfirmMessage": "This Connection will be permanently removed. Its run history is kept for auditing.",
       "deleteSuccess": "Connection deleted",
       "deleteFailed": "Failed to delete Connection",
       "pause": "Pause connection",
@@ -1986,7 +1988,9 @@
       "branchCount": "{count} branches loaded",
       "loadingGitScope": "Loading repositories and branches...",
       "loadingFeishuScope": "Validating Feishu Drive folder...",
+      "credentialChangeTitle": "Change credentials?",
       "credentialChangeWarning": "Changing Credentials will clear the selected repositories and branches. You will need to select them again. Continue?",
+      "credentialChangeConfirm": "Change credentials",
       "gitOrganizationReposTitle": "Namespace repositories",
       "gitOrganizationReposHint": "{count} repositories found. Selected repositories will sync as one namespace datasource.",
       "gitOrganizationSelectedHint": "{count} repositories selected.",
@@ -2295,6 +2299,7 @@
     "messages": {
       "loadFailed": "Failed to load Lens admin data",
       "unsavedChanges": "You have unsaved changes. Close this drawer anyway?",
+      "discardChanges": "Discard changes",
       "saveSuccess": "Saved successfully",
       "saveFailed": "Save failed",
       "uploadStarted": "Upload started",

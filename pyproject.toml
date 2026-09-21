@@ -63,6 +63,16 @@ dev = [
     "mypy>=1.0.0",
 ]
 
+[tool.black]
+line-length = 120
+
+[tool.isort]
+line_length = 120
+profile = "black"
+
+[tool.flake8]
+max-line-length = 120
+
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "pytest_*.py"]

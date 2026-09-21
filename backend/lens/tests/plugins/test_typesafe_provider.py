@@ -32,6 +32,20 @@ class TypesafePluginManifestTests(TestCase):
             )
         )
 
+    def test_bundled_plugin_guidance_covers_decision_semantics(self):
+        plugin = installed_plugin("typesafe")
+        guidance = plugin.assistant_guidance
+
+        self.assertTrue(guidance["summary"])
+        self.assertTrue(guidance["when_to_use"])
+        topics = {topic["key"]: topic for topic in guidance["topics"]}
+        self.assertEqual(set(topics), {"noul", "choice", "score"})
+        tool_keys = {tool.key for tool in plugin.tools}
+        for topic in topics.values():
+            self.assertTrue(set(topic["tool_keys"]).issubset(tool_keys))
+        self.assertIn("no confidence", topics["noul"]["details"])
+        self.assertIn("zero-based", topics["score"]["details"])
+
 
 class TypesafeConnectionProviderTests(TestCase):
     """Verify TypeSafe endpoint and Connection scope validation."""
@@ -84,6 +98,22 @@ class TypesafeConnectionProviderTests(TestCase):
                     expected,
                 )
 
+    def test_http_origins_strip_the_gateway_base_path(self):
+        self.assertEqual(
+            self.provider.http_origins(
+                "https://ai-gateway.vercel.sh/typesafe",
+                {"model": "typesafe-ai/jev"},
+            ),
+            ("https://ai-gateway.vercel.sh",),
+        )
+        self.assertEqual(
+            self.provider.http_origins(
+                "https://api.typesafe.ai/v1/systemone",
+                {"model": "jev-1.13.0"},
+            ),
+            ("https://api.typesafe.ai",),
+        )
+
     def test_accepts_manual_model_with_default_preset(self):
         self.assertEqual(
             self.provider.validate_connection_scope({}),
@@ -105,18 +135,101 @@ class TypesafeConnectionProviderTests(TestCase):
         )
 
     def test_live_validation_does_not_send_a_billable_evaluation(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "jev-latest",
+                            "description": "General-purpose model",
+                            "release_date": "2026-09-15",
+                        }
+                    ]
+                },
+                request=request,
+            )
+
         result = self.provider.validate_live_connection(
             "secret-key",
             endpoint="https://api.typesafe.ai",
             connection_config={"model": "jev-1.13.0"},
             client=httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda request: httpx.Response(500, request=request)
+                    handler
                 )
             ),
         )
 
-        self.assertEqual(result, {"status": "configured"})
+        self.assertEqual(
+            result,
+            {
+                "status": "configured",
+                "model": "jev-1.13.0",
+                "available_models": ["jev-latest"],
+            },
+        )
+        self.assertEqual(str(seen[0].url), "https://api.typesafe.ai/v1/models")
+        self.assertEqual(seen[0].headers["Authorization"], "Bearer secret-key")
+
+    def test_live_validation_uses_gateway_base_path(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json={"models": []}, request=request)
+
+        result = self.provider.validate_live_connection(
+            "gateway-key",
+            endpoint="https://ai-gateway.vercel.sh/typesafe",
+            connection_config={"model": "typesafe-ai/jev"},
+            client=httpx.Client(
+                transport=httpx.MockTransport(handler)
+            ),
+        )
+
+        self.assertEqual(result["status"], "configured")
+        self.assertEqual(
+            str(seen[0].url),
+            "https://ai-gateway.vercel.sh/typesafe/v1/models",
+        )
+
+    def test_live_validation_rejects_invalid_models_response(self):
+        with self.assertRaisesRegex(ValueError, "TYPESAFE_RESPONSE_INVALID"):
+            self.provider.validate_live_connection(
+                "secret-key",
+                endpoint="https://api.typesafe.ai",
+                connection_config={"model": "jev-1.13.0"},
+                client=httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            json={"models": [{"name": ""}]},
+                            request=request,
+                        )
+                    )
+                ),
+            )
+
+    def test_live_validation_maps_authentication_failure(self):
+        with self.assertRaisesRegex(ValueError, "TYPESAFE_ACCESS_DENIED"):
+            self.provider.validate_live_connection(
+                "secret-key",
+                endpoint="https://api.typesafe.ai",
+                connection_config={"model": "jev-1.13.0"},
+                client=httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            401,
+                            json={"error_type": "authentication_error"},
+                            request=request,
+                        )
+                    )
+                ),
+            )
 
 
 class TypesafeToolProviderTests(TestCase):

@@ -245,7 +245,7 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
   PR 标题与正文、issue、PR/code review 评论等——**必须使用英文**；与用户的
   对话问答仍用中文。二者边界即"是否进入 GitHub"：进 GitHub 用英文，聊天用中文。
 - **注释规则**：无行内注释，注释写在代码块上方；类和函数使用 docstring（triple quotes）
-- **行宽**：每行最多 79 字符
+- **行宽**：每行最多 120 字符（black / isort / flake8 统一为 120，配置见根 `pyproject.toml` 与 `backend/.flake8`）
 - **Import 结构**：三段式（stdlib → third-party → local app），段内按字母排序，不混用
 - **业务逻辑位置**：放在 models、serializers、services 中，views 只处理请求
 - **Django/DRF**：优先使用 CBV（复杂逻辑）和 DRF 内置功能，不手写原始 SQL

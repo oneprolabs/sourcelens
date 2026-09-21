@@ -4,31 +4,35 @@
   "protocol_version": 1,
   "capability_family": "plugin",
   "display_name": "TypeSafe AI",
-  "icon": "assets/icon.png",
-  "description": "Evaluate bounded typed decisions with TypeSafe AI Jev without replacing the primary Agent model.",
+  "icon": "assets/icon.svg",
+  "description": "Bounded typed judgments (Noul, Choice, Score) from TypeSafe AI Jev. The primary Agent model still owns prose, reasoning, and the workflow.",
   "assistant_guidance": {
-    "summary": "Use TypeSafe AI for bounded Noul, Choice, or Score decisions when a structured decision is more reliable than free-form model text.",
+    "summary": "TypeSafe System One models (Jev) return fast typed judgments and probabilities instead of text. Use them when a bounded decision is more reliable than free-form model output: a yes/no probability, one choice among known options, or a position on an ordered rubric. Keep the workflow, known rules, and lookups in code; call Jev for semantic judgment only. Results are calibrated judgments that the caller thresholds, not ground truth, so validate behavior on your own data. This plugin never replaces the primary Agent model or generates prose.",
     "when_to_use": [
-      "The user asks for a bounded classification, yes/no judgment, ranking, or rubric score.",
-      "A retrieval gate, evidence check, or candidate reranking decision needs a structured result."
+      "A step needs a bounded typed judgment: a yes/no probability, a single choice among known options, or a position on an ordered rubric.",
+      "You would otherwise ask the primary model and then parse free text into a structured decision.",
+      "A retrieval gate, evidence check, candidate reranking, routing decision, extraction verification, or rubric score needs a structured result.",
+      "The options or ordered levels are known in advance and can be passed as criteria.",
+      "Several independent judgments are needed over the same state: issue one tool call per judgment and run the calls in parallel; independent calls cannot see one another.",
+      "Prefer the primary Agent model for open-ended generation, reasoning prose, or anything without a bounded answer."
     ],
     "topics": [
       {
         "key": "noul",
         "summary": "Answer one bounded yes/no question with a probability.",
-        "details": "Use typesafe_noul for a binary decision. Keep state and instructions focused. The result is a number from 0 to 1; it is not a natural-language answer.",
+        "details": "Use typesafe_noul for one binary decision. It returns a single probability from 0 to 1 and has no confidence field. A value near 0.5 means the yes and no probabilities are similar, not medium intensity. One Noul answers one label, so when several labels may each apply, issue one Noul per label instead of a single Choice. Pass state as text or as a JSON-encoded object or array string; encode any structured state into that string rather than passing a native object or array, and prefer named fields for multi-part state. instructions is the yes/no question and must carry the complete meaning; criteria_true and criteria_false are optional and describe what true and false mean. Report the probability as returned and do not restate it as a natural-language answer. Reference: https://docs.typesafe.ai/primitives/noul.md",
         "tool_keys": ["typesafe_noul"]
       },
       {
         "key": "choice",
-        "summary": "Select one option from a bounded rubric.",
-        "details": "Use typesafe_choice when the options are known in advance. Pass criteria as a JSON object mapping each option to a short rubric description or null. Do not use it for open-ended generation.",
+        "summary": "Select one option from a bounded, mutually exclusive rubric.",
+        "details": "Use typesafe_choice when the options are known in advance and exactly one applies. Pass criteria as a JSON-encoded string whose content is a JSON object mapping each option key to a short rubric description or null, for example \"{\\\"bug\\\": \\\"a software defect\\\", \\\"feature\\\": null}\". Do not pass a native object or array. Include a no-match option when nothing may fit. The result choice is one of the criteria keys, and probabilities sum to 1 over the same keys as competing options. confidence summarizes how concentrated that distribution is; it is not overall correctness or permission to act, so ignore uncertainty on unused branches. Use one Noul per label instead when several labels may each apply. Do not use it for open-ended generation. Reference: https://docs.typesafe.ai/primitives/choice.md",
         "tool_keys": ["typesafe_choice"]
       },
       {
         "key": "score",
-        "summary": "Score state against an ordered rubric.",
-        "details": "Use typesafe_score when the rubric has two to ten ordered levels. Pass criteria as a JSON array of level descriptions. Preserve the returned confidence and probabilities when reporting the decision.",
+        "summary": "Score state as a probability-weighted position on an ordered rubric.",
+        "details": "Use typesafe_score when the rubric has two to ten ordered levels. Each level must describe a concrete situation and stand on its own. Pass criteria as a JSON-encoded string whose content is a JSON array of non-empty level descriptions, for example \"[\\\"poor\\\", \\\"acceptable\\\", \\\"excellent\\\"]\". Do not pass a native array, and do not use objects such as {\"level\": 1, \"label\": \"...\"}. The returned score and probability keys are zero-based rubric indexes; map them to labels with legend and do not add 1. probabilities sum to 1 across the levels and confidence summarizes distribution concentration, not correctness. For graded ranking, score every candidate with the same comparable rubric and sort in code rather than expecting a single call to rank. Preserve the returned probabilities when reporting the decision. Reference: https://docs.typesafe.ai/primitives/score.md",
         "tool_keys": ["typesafe_score"]
       }
     ]
@@ -44,7 +48,7 @@
         "type": "string",
         "format": "uri",
         "title": "TypeSafe API endpoint",
-        "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed, for example the Vercel AI Gateway base https://ai-gateway.vercel.sh/typesafe. Preset to the public TypeSafe service.",
+        "description": "HTTPS endpoint for a TypeSafe-compatible System One API. A base path is allowed. Preset to the public TypeSafe service.",
         "default": "https://api.typesafe.ai",
         "write_to": "endpoint"
       },
@@ -58,7 +62,7 @@
       "model": {
         "type": "string",
         "title": "Jev model",
-        "description": "Pinned model version used for reproducible decisions. Use typesafe-ai/jev when connecting through the Vercel AI Gateway.",
+        "description": "Pinned System One model version used for reproducible decisions.",
         "default": "jev-1.13.0",
         "write_to": "config.model"
       }
@@ -69,7 +73,7 @@
   "tools": [
     {
       "key": "typesafe_noul",
-      "description": "Evaluate one bounded yes/no question with TypeSafe AI and return its probability.",
+      "description": "Noul: answer one bounded yes/no question with TypeSafe and return a probability from 0 to 1. Pass state as text or a JSON-encoded object/array string; encode structured state into the string, not a native object, and prefer named fields for multi-part state. instructions is the yes/no question and must carry the complete meaning; criteria_true and criteria_false are optional. Noul returns only the probability and has no confidence field: one Noul answers one label, so issue one Noul per label when several may each apply, and a value near 0.5 means yes and no are similarly likely, not medium intensity. Report the probability as returned. Not for open-ended generation.",
       "capability": "decision.evaluate",
       "side_effect": "none",
       "input_schema": {
@@ -77,24 +81,24 @@
         "properties": {
           "state": {
             "type": "string",
-            "description": "Text or JSON-encoded state to evaluate.",
+            "description": "Text to evaluate, or a JSON-encoded object or array string. Structured state must be encoded into this string, not passed as a native object or array; prefer named fields for multi-part state.",
             "minLength": 1,
             "maxLength": 100000
           },
           "instructions": {
             "type": "string",
-            "description": "The yes/no question.",
+            "description": "The yes/no question the decision must answer, carrying its complete meaning.",
             "minLength": 1,
             "maxLength": 2000
           },
           "criteria_true": {
             "type": "string",
-            "description": "Optional description of what yes means.",
+            "description": "Optional description of what a true (yes) answer means.",
             "maxLength": 2000
           },
           "criteria_false": {
             "type": "string",
-            "description": "Optional description of what no means.",
+            "description": "Optional description of what a false (no) answer means.",
             "maxLength": 2000
           }
         },
@@ -104,7 +108,7 @@
     },
     {
       "key": "typesafe_choice",
-      "description": "Choose one option from a bounded JSON rubric with TypeSafe AI.",
+      "description": "Choice: select one option from a bounded, mutually exclusive rubric with TypeSafe. Pass criteria as a JSON-encoded string (not a native object) whose content is a JSON object mapping each option key to a short description or null, for example \"{\\\"bug\\\": \\\"a defect\\\", \\\"feature\\\": null}\". Include a no-match option when nothing may fit. The result choice is one of the criteria keys and probabilities sum to 1 over the same keys as competing options; confidence is distribution concentration, not correctness. Use one Noul per label instead when several labels may each apply. Do not use for open-ended generation.",
       "capability": "decision.evaluate",
       "side_effect": "none",
       "input_schema": {
@@ -112,19 +116,19 @@
         "properties": {
           "state": {
             "type": "string",
-            "description": "Text or JSON-encoded state to evaluate.",
+            "description": "Text to evaluate, or a JSON-encoded object or array string. Structured state must be encoded into this string, not passed as a native object or array; prefer named fields for multi-part state.",
             "minLength": 1,
             "maxLength": 100000
           },
           "instructions": {
             "type": "string",
-            "description": "The choice question.",
+            "description": "The bounded choice question the decision must answer, carrying its complete meaning.",
             "minLength": 1,
             "maxLength": 2000
           },
           "criteria": {
             "type": "string",
-            "description": "JSON object mapping each option to a rubric description or null.",
+            "description": "A JSON-encoded string, not a native object. Its content is a JSON object mapping each option key to a short rubric description or null. Example: \"{\\\"bug\\\": \\\"a defect\\\", \\\"feature\\\": null}\". Values must be strings or null.",
             "minLength": 2,
             "maxLength": 32000
           }
@@ -135,7 +139,7 @@
     },
     {
       "key": "typesafe_score",
-      "description": "Score state against an ordered JSON rubric with TypeSafe AI.",
+      "description": "Score: place state on an ordered rubric with TypeSafe and return a probability-weighted position. Pass criteria as a JSON-encoded string (not a native array) whose content is a JSON array of 2 to 10 concrete, self-standing level descriptions, for example \"[\\\"poor\\\", \\\"acceptable\\\", \\\"excellent\\\"]\". The returned score and probability keys are zero-based rubric indexes; map them to labels with legend and do not add 1. probabilities sum to 1 across the levels and confidence is distribution concentration, not correctness. For graded ranking, score every candidate with the same comparable rubric and sort in code.",
       "capability": "decision.evaluate",
       "side_effect": "none",
       "input_schema": {
@@ -143,19 +147,19 @@
         "properties": {
           "state": {
             "type": "string",
-            "description": "Text or JSON-encoded state to evaluate.",
+            "description": "Text to evaluate, or a JSON-encoded object or array string. Structured state must be encoded into this string, not passed as a native object or array; prefer named fields for multi-part state.",
             "minLength": 1,
             "maxLength": 100000
           },
           "instructions": {
             "type": "string",
-            "description": "The scoring question.",
+            "description": "The scoring question the decision must answer, carrying its complete meaning.",
             "minLength": 1,
             "maxLength": 2000
           },
           "criteria": {
             "type": "string",
-            "description": "JSON array with two to ten ordered level descriptions.",
+            "description": "A JSON-encoded string, not a native array. Its content is a JSON array of 2 to 10 concrete, self-standing level descriptions. Example: \"[\\\"poor\\\", \\\"acceptable\\\", \\\"excellent\\\"]\". Do not use objects such as {\"level\": 1, \"label\": \"...\"}.",
             "minLength": 2,
             "maxLength": 32000
           }
