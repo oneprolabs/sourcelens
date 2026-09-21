@@ -1720,7 +1720,7 @@
         "taskType": "任务类型",
         "taskTypeSync": "同步",
         "taskTypeUpload": "上传",
-        "taskTypeProcessing": "处理"
+        "taskTypeConversion": "转换"
       }
     },
     "actions": {
