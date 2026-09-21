@@ -40,7 +40,7 @@
         {{ citation.supports }}
       </p>
 
-      <div v-if="isMarkdownSource" class="citation-view-switch" role="tablist">
+      <div v-if="isDocumentSource" class="citation-view-switch" role="tablist">
         <button
           type="button"
           role="tab"
@@ -64,7 +64,7 @@
       </div>
 
       <div
-        v-if="isMarkdownSource && view === 'preview'"
+        v-if="isDocumentSource && view === 'preview'"
         class="citation-preview"
       >
         <MarkdownRenderer :content="previewContent" />
@@ -98,7 +98,8 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
-import { isMarkdownCitationPath } from '@/pages/lens/codeCitations'
+import { isDocumentCitationPath } from '@/pages/lens/codeCitations'
+import { normalizeMarkdownTables } from '@/utils/documentPreview'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -120,12 +121,14 @@ watch(
   }
 )
 
-const isMarkdownSource = computed(() =>
-  isMarkdownCitationPath(props.citation?.path)
+const isDocumentSource = computed(() =>
+  isDocumentCitationPath(props.citation?.path)
 )
 
 const previewContent = computed(() =>
-  (props.citation?.lines || []).map((line) => line.content).join('\n')
+  normalizeMarkdownTables(
+    (props.citation?.lines || []).map((line) => line.content).join('\n')
+  )
 )
 
 function isHighlighted(lineNumber) {
@@ -176,6 +179,16 @@ function isHighlighted(lineNumber) {
 
 .citation-preview {
   @apply max-h-[70vh] overflow-auto rounded-lg border border-line px-4 py-3;
+}
+
+.citation-preview :deep(table) {
+  width: max-content;
+  min-width: 100%;
+}
+
+.citation-preview :deep(th),
+.citation-preview :deep(td) {
+  @apply whitespace-nowrap px-3 py-1.5 align-top;
 }
 
 .citation-code {

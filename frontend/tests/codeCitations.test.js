@@ -6,6 +6,7 @@ import {
   assistantShowsCitations,
   citationLocation,
   citationSourceUrl,
+  isDocumentCitationPath,
   isMarkdownCitationPath
 } from '../src/pages/lens/codeCitations.js'
 
@@ -37,6 +38,17 @@ test('detects markdown citation paths for the rendered preview', () => {
   assert.equal(isMarkdownCitationPath('src/app.py'), false)
   assert.equal(isMarkdownCitationPath(''), false)
   assert.equal(isMarkdownCitationPath(undefined), false)
+})
+
+test('detects converted document paths for the rendered preview', () => {
+  assert.equal(isDocumentCitationPath('hosted_demo/report.pdf'), true)
+  assert.equal(isDocumentCitationPath('hosted_demo/book.XLSX'), true)
+  assert.equal(isDocumentCitationPath('hosted_demo/notes.md'), true)
+  assert.equal(isDocumentCitationPath('hosted_demo/data.csv'), true)
+  assert.equal(isDocumentCitationPath('src/app.py'), false)
+  assert.equal(isDocumentCitationPath('assets/icon.png'), false)
+  assert.equal(isDocumentCitationPath(''), false)
+  assert.equal(isDocumentCitationPath(undefined), false)
 })
 
 test('assistant citation preference defaults on for both payload shapes', () => {
@@ -89,11 +101,8 @@ test('connects message citations to the authenticated code drawer', async () => 
     new URL('../src/pages/lens/Chat.vue', import.meta.url),
     'utf8'
   )
-  const citationList = await readFile(
-    new URL(
-      '../src/pages/lens/components/MessageCitations.vue',
-      import.meta.url
-    ),
+  const renderer = await readFile(
+    new URL('../src/components/ui/MarkdownRenderer.vue', import.meta.url),
     'utf8'
   )
   const citationDrawer = await readFile(
@@ -104,15 +113,15 @@ test('connects message citations to the authenticated code drawer', async () => 
     'utf8'
   )
 
-  assert.match(chat, /<MessageCitations/)
+  assert.doesNotMatch(chat, /MessageCitations/)
+  assert.match(chat, /:references="messageReferences\(message\)"/)
   assert.match(chat, /<CodeCitationDrawer/)
   assert.match(chat, /getRunCitationSource/)
-  assert.match(citationList, /<details/)
-  assert.match(citationList, /type="button"/)
+  assert.match(renderer, /inline-citation-icon/)
   assert.match(citationDrawer, /<BaseDrawer/)
   assert.match(citationDrawer, /highlight_start_line/)
   assert.match(citationDrawer, /role="alert"/)
-  assert.match(citationDrawer, /isMarkdownCitationPath/)
+  assert.match(citationDrawer, /isDocumentCitationPath/)
   assert.match(citationDrawer, /<MarkdownRenderer/)
   assert.match(citationDrawer, /lens\.chat\.citations\.preview/)
   assert.match(citationDrawer, /lens\.chat\.citations\.source/)

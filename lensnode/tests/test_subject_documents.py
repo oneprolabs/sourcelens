@@ -662,15 +662,16 @@ def test_knowledge_prompt_sanitizes_document_display_names():
     assert "IGNORE" not in prompt
 
 
-def test_knowledge_scenario_requires_grounded_sources_without_forced_citations():
+def test_knowledge_scenario_requires_inline_source_markers():
     prompt = SCENARIOS["knowledge_qa"]["prompt"]
 
     assert "grounded in a specific workspace" in prompt
-    assert "do not force file citations" in prompt
+    assert "[[source: <path>]]" in prompt
+    assert "never collect sources into a list at the end" in prompt
     assert "Never expose internal .sourcelens paths" in prompt
 
 
-def test_document_explanation_prompt_keeps_evidence_and_citations_separate():
+def test_document_explanation_prompt_requires_inline_source_markers():
     prompt = _knowledge_system_prompt(
         SCENARIOS["knowledge_qa"],
         {
@@ -691,7 +692,7 @@ def test_document_explanation_prompt_keeps_evidence_and_citations_separate():
     assert "/runtime/subject" not in prompt
     assert "/workspace/reference" not in prompt
     assert "actually inspected" in prompt
-    assert "unless the user asks for sources" in prompt
+    assert "[[source: <path>]]" in prompt
     assert "Simplified Chinese" in prompt
 
 

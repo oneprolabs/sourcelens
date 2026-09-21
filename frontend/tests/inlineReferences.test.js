@@ -4,7 +4,8 @@ import test from 'node:test'
 
 import {
   buildReferenceIndex,
-  linkifyReferences
+  linkifyReferences,
+  stripSourceMarkers
 } from '../src/utils/inlineReferences.js'
 
 const REFERENCES = [
@@ -32,7 +33,7 @@ test('links a dot-slash prefixed path', () => {
   const output = linkifyReferences('<p>./src/app.py</p>', REFERENCES)
 
   assert.match(output, /data-inline-citation-id="evidence-handler"/)
-  assert.match(output, />\.\/src\/app\.py<\/button>/)
+  assert.match(output, />app\.py<\/button>/)
 })
 
 test('drops a basename shared by two citations', () => {
@@ -60,7 +61,8 @@ test('links a path in prose and inside inline code', () => {
 test('keeps a cited line range in the linked label', () => {
   const output = linkifyReferences('<p>src/app.py:15</p>', REFERENCES)
 
-  assert.match(output, />src\/app\.py:15<\/button>/)
+  assert.match(output, />app\.py:15<\/button>/)
+  assert.match(output, /title="src\/app\.py"/)
 })
 
 test('links a unique bare basename but not a longer path suffix', () => {
@@ -107,6 +109,81 @@ test('returns the html unchanged when there are no references', () => {
   const html = '<p>src/app.py</p>'
 
   assert.equal(linkifyReferences(html, []), html)
+})
+
+test('renders a generation-time source marker as a chip in place', () => {
+  const output = linkifyReferences(
+    '<p>The value is 3. [[source: hosted_demo/src/app.py]] Then stop.</p>',
+    REFERENCES
+  )
+
+  assert.match(output, /class="inline-citation-icon"/)
+  assert.match(output, /data-inline-citation-id="evidence-handler"/)
+  assert.match(output, />app\.py:10-20<\/button>/)
+  assert.match(output, /title="hosted_demo\/src\/app\.py"/)
+  assert.doesNotMatch(output, /\[\[source/)
+})
+
+test('resolves a marker by basename and by an explicit line range', () => {
+  const byBasename = linkifyReferences('<p>[source: app.py]</p>', REFERENCES)
+  assert.match(byBasename, /data-inline-citation-id="evidence-handler"/)
+
+  const byRange = linkifyReferences(
+    '<p>[source: src/app.py:15-25]</p>',
+    REFERENCES
+  )
+  assert.match(byRange, /data-inline-citation-id="evidence-handler"/)
+})
+
+test('drops a marker that matches no consulted source', () => {
+  const output = linkifyReferences(
+    '<p>Claim. [[source: secret/other.py]]</p>',
+    REFERENCES
+  )
+
+  assert.doesNotMatch(output, /\[\[source/)
+  assert.doesNotMatch(output, /data-inline-citation-id/)
+})
+
+test('still strips markers when citations are unavailable', () => {
+  const output = linkifyReferences(
+    '<p>Claim. [[source: hosted_demo/src/app.py]]</p>',
+    []
+  )
+
+  assert.equal(output, '<p>Claim. </p>')
+})
+
+test('strips source markers from exported text', () => {
+  assert.equal(
+    stripSourceMarkers('Revenue grew. [[source: report.xlsx]] Then dipped.'),
+    'Revenue grew. Then dipped.'
+  )
+  assert.equal(
+    stripSourceMarkers('Total [[source: a/b.md:1-2]], ok.'),
+    'Total, ok.'
+  )
+  assert.equal(stripSourceMarkers('No markers here.'), 'No markers here.')
+  assert.equal(stripSourceMarkers(''), '')
+})
+
+test('does not relink the path inside a source marker', () => {
+  const output = linkifyReferences(
+    '<p>Claim. [[source: src/app.py]]</p>',
+    REFERENCES
+  )
+
+  assert.equal(countButtons(output), 1)
+})
+
+test('leaves a marker inside code untouched', () => {
+  const output = linkifyReferences(
+    '<pre><code>[[source: src/app.py]]</code></pre>',
+    REFERENCES
+  )
+
+  assert.match(output, /\[\[source: src\/app\.py\]\]/)
+  assert.doesNotMatch(output, /data-inline-citation-id/)
 })
 
 test('chat and the markdown renderer wire inline references together', async () => {

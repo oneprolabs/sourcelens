@@ -1,12 +1,11 @@
 /**
- * Turn source-path mentions in a rendered answer into inline references.
+ * Render consulted sources as inline references within an answer.
  *
- * The backend exposes the files a run consulted as bounded citations. The
- * answer itself repeats those paths as workspace-relative POSIX paths, but
- * without line ranges and usually without the mount prefix. This module links
- * every mention back to its citation so the reader can open the captured
- * source without leaving the answer, while the trailing citation list stays as
- * the complete fallback.
+ * The answer carries a source marker from generation time — ``[[source:
+ * <path>]]`` — placed immediately after the claim it supports. This module
+ * turns each marker into an openable chip, then also links any bare path
+ * mention the answer wrote in prose. A marker that does not match a citation
+ * the run actually produced is removed, so a hallucinated source never shows.
  */
 
 const SKIP_TAGS = new Set([
@@ -19,11 +18,27 @@ const SKIP_TAGS = new Set([
   'button'
 ])
 
+// The answer emits ``[[source: <path>]]`` or ``[[source: <path>:<start>-<end>]]``.
+const MARKER_PATTERN = /\[\[\s*source:\s*([^\]\n]+?)\s*\]\]/gi
+
+// Matches a marker together with the horizontal space before it, so removing
+// it from exported text never leaves a doubled or trailing space.
+const MARKER_STRIP_PATTERN = /[ \t]*\[\[\s*source:[^\]\n]*\]\]/gi
+
 // Path characters are excluded from the boundary so a candidate never matches
 // inside a longer path (for example `guide.md` inside `my-guide.md`).
 const LEADING_BOUNDARY = String.raw`(^|[^A-Za-z0-9_./\\-])`
 const TRAILING_BOUNDARY = String.raw`(?=$|[^A-Za-z0-9_./\\-]|\.(?:$|[^A-Za-z0-9]))`
 const LINE_SUFFIX = String.raw`(?::(\d+)(?:-(\d+))?)?`
+
+// A document glyph drawn with only attributes the sanitizer keeps, so the
+// inline chip survives DOMPurify without widening the allowlist.
+const REFERENCE_ICON =
+  '<svg class="inline-citation-icon" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+  '<path d="M14 2v6h6"/>' +
+  '</svg>'
 
 /**
  * Index citation paths under every form an answer may write them in.
@@ -73,21 +88,20 @@ export function buildReferenceIndex(references) {
 }
 
 /**
- * Link every indexed path mention in rendered HTML.
+ * Turn source markers and bare path mentions into inline reference chips.
  *
- * Existing text and markup is preserved: only matched path tokens are wrapped
- * in a `<button data-inline-citation-id>`. Text inside block code, links, and
- * other non-prose containers is left untouched.
+ * Text inside block code, links, and other non-prose containers is left
+ * untouched, and a marker that resolves to no citation is dropped so the
+ * reader never sees a raw marker or an invented source.
  *
  * @param {string} html - HTML produced by the markdown renderer.
  * @param {Array<object>} references - Citation metadata with `id` and `path`.
- * @returns {string} HTML with inline reference buttons.
+ * @returns {string} HTML with inline reference chips.
  */
 export function linkifyReferences(html, references) {
   if (typeof html !== 'string' || !html) return ''
   const index = buildReferenceIndex(references)
-  if (!index.size) return html
-  const pattern = buildMatcher(index)
+  const pattern = index.size ? buildMatcher(index) : null
 
   let output = ''
   let cursor = 0
@@ -95,7 +109,7 @@ export function linkifyReferences(html, references) {
   const tagPattern = /<[^>]*>/g
   let tagMatch
   while ((tagMatch = tagPattern.exec(html)) !== null) {
-    output += replaceText(
+    output += replaceProse(
       html.slice(cursor, tagMatch.index),
       index,
       pattern,
@@ -105,7 +119,87 @@ export function linkifyReferences(html, references) {
     updateSkipStack(stack, tagMatch[0])
     cursor = tagPattern.lastIndex
   }
-  output += replaceText(html.slice(cursor), index, pattern, stack.length === 0)
+  output += replaceProse(html.slice(cursor), index, pattern, stack.length === 0)
+  return output
+}
+
+/**
+ * Remove every source marker from plain text.
+ *
+ * Copying or exporting an answer must not show the inline source markers, so
+ * the text form drops them entirely while the on-screen answer keeps its chips.
+ *
+ * @param {string} text - Answer text that may contain markers.
+ * @returns {string} Text without markers.
+ */
+export function stripSourceMarkers(text) {
+  if (typeof text !== 'string' || !text) return ''
+  return text.replace(MARKER_STRIP_PATTERN, '')
+}
+
+function replaceProse(text, index, pattern, enabled) {
+  if (!enabled || !text) return text
+  const { text: marked, buttons } = replaceMarkers(text, index)
+  const linked = pattern ? replaceMentions(marked, index, pattern) : marked
+  return restoreButtons(linked, buttons)
+}
+
+function replaceMarkers(text, index) {
+  const buttons = []
+  if (!/\[\[\s*source:/i.test(text)) return { text, buttons }
+  const output = text.replace(MARKER_PATTERN, (match, rawReference) => {
+    const reference = parseMarker(rawReference)
+    const entries = lookupReferenceEntries(index, reference.path)
+    if (!entries) return ''
+    const entry = resolveReferenceEntry(entries, reference.startLine)
+    buttons.push(
+      referenceButton(
+        entry.id,
+        referenceLabel(reference.path, entry.startLine, entry.endLine),
+        referenceTitle(reference.path)
+      )
+    )
+    return buttonPlaceholder(buttons.length - 1)
+  })
+  return { text: output, buttons }
+}
+
+// A marker becomes a sentinel first so the later path-mention pass cannot
+// match the path already wrapped in a chip. The sentinel contains no path
+// character and is swapped back for the chip once the pass is done.
+function buttonPlaceholder(position) {
+  return `\uE000${position}\uE000`
+}
+
+function restoreButtons(text, buttons) {
+  if (!buttons.length) return text
+  return text.replace(/\uE000(\d+)\uE000/g, (match, position) => {
+    const button = buttons[Number(position)]
+    return button === undefined ? '' : button
+  })
+}
+
+function replaceMentions(text, index, pattern) {
+  pattern.lastIndex = 0
+  let output = ''
+  let cursor = 0
+  let match
+  while ((match = pattern.exec(text)) !== null) {
+    const path = match[2]
+    const entries = index.get(path)
+    if (!entries) continue
+    const startLine = match[3]
+    const endLine = match[4]
+    output += text.slice(cursor, match.index)
+    output += match[1]
+    output += referenceButton(
+      resolveReferenceId(entries, startLine),
+      referenceLabel(path, startLine, endLine),
+      referenceTitle(path)
+    )
+    cursor = pattern.lastIndex
+  }
+  output += text.slice(cursor)
   return output
 }
 
@@ -125,36 +219,58 @@ function buildMatcher(index) {
   )
 }
 
-function replaceText(text, index, pattern, enabled) {
-  if (!enabled || !text) return text
-  pattern.lastIndex = 0
-  let output = ''
-  let cursor = 0
-  let match
-  while ((match = pattern.exec(text)) !== null) {
-    const path = match[2]
-    const entries = index.get(path)
-    if (!entries) continue
-    const startLine = match[3]
-    const endLine = match[4]
-    output += text.slice(cursor, match.index)
-    output += match[1]
-    output += inlineButton(path, startLine, endLine, entries)
-    cursor = pattern.lastIndex
+function parseMarker(rawReference) {
+  const text = String(rawReference || '').trim()
+  const lineMatch = /:(\d+)(?:-(\d+))?$/.exec(text)
+  if (lineMatch) {
+    return {
+      path: text.slice(0, lineMatch.index).trim(),
+      startLine: lineMatch[1]
+    }
   }
-  output += text.slice(cursor)
-  return output
+  return { path: text, startLine: '' }
 }
 
-function inlineButton(path, startLine, endLine, entries) {
-  let label = path
+function lookupReferenceEntries(index, path) {
+  const clean = cleanPath(path).replace(/^\.\//, '')
+  if (!clean) return null
+  const parts = clean.split('/').filter(Boolean)
+  const candidates = [clean, `./${clean}`]
+  if (parts.length > 1) candidates.push(parts.slice(1).join('/'))
+  if (parts.length) candidates.push(parts[parts.length - 1])
+  for (const candidate of candidates) {
+    const entries = index.get(candidate)
+    if (entries) return entries
+  }
+  return null
+}
+
+function referenceLabel(path, startLine, endLine) {
+  const parts = cleanPath(path).split('/').filter(Boolean)
+  let label = parts[parts.length - 1] || path
   if (startLine) label += `:${startLine}`
   if (startLine && endLine) label += `-${endLine}`
-  const id = resolveReferenceId(entries, startLine)
+  return label
+}
+
+function referenceTitle(path) {
+  return cleanPath(path)
+}
+
+function referenceButton(id, label, titleText) {
+  const title = titleText ? ` title="${escapeAttribute(titleText)}"` : ''
   return (
     '<button type="button" class="inline-citation" ' +
-    `data-inline-citation-id="${escapeAttribute(id)}">${label}</button>`
+    `data-inline-citation-id="${escapeAttribute(id)}"${title}>` +
+    REFERENCE_ICON +
+    label +
+    '</button>'
   )
+}
+
+function resolveReferenceEntry(entries, startLine) {
+  const id = resolveReferenceId(entries, startLine)
+  return entries.find((entry) => entry.id === id) || entries[0]
 }
 
 function resolveReferenceId(entries, startLine) {

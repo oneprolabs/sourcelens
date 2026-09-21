@@ -1133,16 +1133,22 @@ function setMindmapZoom(mindmap, zoom, focusX, focusY) {
 }
 
 .markdown-content :deep(.inline-citation) {
-  @apply cursor-pointer rounded-sm border-0 bg-transparent p-0 text-left text-primary-600 underline decoration-dotted underline-offset-2;
-  font: inherit;
+  @apply inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-line bg-surface-sunken px-1.5 py-0.5 align-middle text-xs font-medium text-theme-secondary transition-colors;
+  font-family: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .markdown-content :deep(.inline-citation:hover) {
-  @apply text-primary-700 decoration-solid;
+  @apply border-line-strong bg-surface-hover text-theme;
 }
 
 .markdown-content :deep(.inline-citation:focus-visible) {
   @apply outline-none ring-2 ring-primary-500;
+}
+
+.markdown-content :deep(.inline-citation-icon) {
+  @apply h-3.5 w-3.5 flex-shrink-0 text-success;
 }
 
 .markdown-content :deep(img) {

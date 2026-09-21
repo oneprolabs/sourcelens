@@ -898,16 +898,6 @@
                       </template>
                     </div>
                   </template>
-                  <MessageCitations
-                    v-if="
-                      message.role === 'assistant' &&
-                      message.citations?.length &&
-                      citationsEnabled &&
-                      !isAnonymous
-                    "
-                    :citations="message.citations"
-                    @open="openCodeCitation(message, $event)"
-                  />
                   <div
                     v-if="message.output_files && message.output_files.length"
                     class="message-deliverables"
@@ -1906,7 +1896,6 @@ import LoginModal from '@/components/auth/LoginModal.vue'
 import QaShareModal from '@/components/lens/QaShareModal.vue'
 import FilePreviewModal from '@/components/lens/FilePreviewModal.vue'
 import CodeCitationDrawer from '@/pages/lens/components/CodeCitationDrawer.vue'
-import MessageCitations from '@/pages/lens/components/MessageCitations.vue'
 import AssistantActivityGroups from '@/pages/lens/components/AssistantActivityGroups.vue'
 import ParticipatingAssistantsPicker from '@/pages/lens/components/ParticipatingAssistantsPicker.vue'
 import {
@@ -1916,6 +1905,8 @@ import {
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
 import { extractErrorMessage } from '@/utils/api'
+import { copyToClipboard } from '@/utils/clipboard'
+import { stripSourceMarkers } from '@/utils/inlineReferences'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
@@ -4490,10 +4481,12 @@ async function cancel() {
 }
 
 async function copyMessage(message) {
-  try {
-    await navigator.clipboard.writeText(message.content || '')
+  const copied = await copyToClipboard(
+    stripSourceMarkers(message.content || '')
+  )
+  if (copied) {
     showSuccess(t('lens.chat.messageCopied'))
-  } catch {
+  } else {
     showWarning(t('lens.chat.copyFailed'))
   }
 }
