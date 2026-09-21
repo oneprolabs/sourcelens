@@ -262,7 +262,12 @@ def _model(config):
 
     if config in ({}, None):
         return TYPESAFE_MODEL
-    model = config.get("model") if isinstance(config, dict) else None
+    if (
+        not isinstance(config, dict)
+        or set(config) - {"__allowed_scope"} != {"model"}
+    ):
+        raise PluginRuntimeError("TYPESAFE_MODEL_INVALID")
+    model = config.get("model")
     if (
         not isinstance(model, str)
         or not model.strip()

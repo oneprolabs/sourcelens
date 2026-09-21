@@ -255,3 +255,30 @@ def test_invalid_rubrics_never_reach_http(key, criteria):
             key, None, {**ARGUMENTS, "criteria": criteria},
             "test-token", ENDPOINT, CONFIG,
         )
+
+
+def test_default_model_matches_the_manifest():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json=payload())
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        RUNTIME.execute_tool(
+            "typesafe_noul", client, ARGUMENTS, "test-token", ENDPOINT, {},
+        )
+    default = MANIFEST["connection_schema"]["properties"]["model"]["default"]
+    assert json.loads(seen[0].content)["model"] == default
+
+
+def test_rejects_unknown_connection_config_keys():
+    with pytest.raises(PluginRuntimeError, match="MODEL_INVALID"):
+        RUNTIME.execute_tool(
+            "typesafe_noul",
+            None,
+            ARGUMENTS,
+            "test-token",
+            ENDPOINT,
+            {"model": "custom-model", "unexpected": True},
+        )
