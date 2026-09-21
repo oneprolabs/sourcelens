@@ -8,10 +8,10 @@ const page = await readFile(
   'utf8'
 )
 const labelFunction = page.slice(
-  page.indexOf('function connectionUsageLabels('),
+  page.indexOf('function connectionHasDatasource('),
   page.indexOf(
     'async function load()',
-    page.indexOf('function connectionUsageLabels(')
+    page.indexOf('function connectionHasDatasource(')
   )
 )
 

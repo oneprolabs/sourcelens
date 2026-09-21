@@ -26,40 +26,42 @@ def run_installer_function(body, *args):
 
 
 class InstallerPlatformTests(unittest.TestCase):
-    def test_readmes_use_single_line_platform_install_commands(self):
+    def test_readmes_document_platform_install_commands(self):
         readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
-        commands = [
-            "curl -fsSL https://raw.githubusercontent.com/oneprolabs/"
-            "sourcelens/main/install.sh | sudo bash",
-            "curl -fsSL https://gitee.com/oneprolabs/sourcelens/raw/"
-            "main/install.sh | sudo bash -s -- --channel cn "
-            "--download-source gitee",
-            "curl -fsSL https://raw.githubusercontent.com/oneprolabs/"
-            "sourcelens/main/install.sh | bash",
+        fragments = [
+            "https://raw.githubusercontent.com/oneprolabs/"
+            "sourcelens/main/install.sh",
+            "| sudo bash",
+            "| bash",
+            "https://gitee.com/oneprolabs/sourcelens/raw/main/install.sh",
+            "--channel cn --download-source gitee --yes",
         ]
         for readme in readmes:
             content = readme.read_text()
-            for command in commands:
-                with self.subTest(readme=readme.name, command=command):
-                    self.assertIn(command, content)
+            for fragment in fragments:
+                with self.subTest(readme=readme.name, fragment=fragment):
+                    self.assertIn(fragment, content)
 
     def test_readmes_explain_windows_china_channel_without_sudo(self):
         readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
         for readme in readmes:
             content = readme.read_text()
             with self.subTest(readme=readme.name):
-                self.assertIn("`sudo bash`", content)
-                self.assertIn("`bash`", content)
+                self.assertIn("Git Bash", content)
+                self.assertIn("PowerShell", content)
+                self.assertIn("| sudo bash", content)
+                self.assertIn("| bash", content)
 
     def test_readmes_document_noninteractive_install_and_options(self):
         readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
         expected = [
             "oneprolabs/sourcelens",
-            "--download-source gitee --yes",
-            "--dir /srv/sourcelens",
-            "--port 10083",
-            "--https-port 10443",
-            "--domain lens.example.com",
+            "--channel cn --download-source gitee --yes",
+            "--dir",
+            "--port",
+            "--https-port",
+            "--domain",
+            "--yes",
             "install.sh --help",
         ]
         for readme in readmes:
@@ -70,16 +72,14 @@ class InstallerPlatformTests(unittest.TestCase):
 
     def test_readmes_document_recommended_resources_as_requirements(self):
         requirements = {
-            ROOT / "README.md": (
-                "At least 4 GB available memory and 20 GB free disk space"
-            ),
-            ROOT / "README.zh-CN.md": (
-                "至少 4 GB 可用内存和 20 GB 可用磁盘空间"
-            ),
+            ROOT / "README.md": ("4 cores", "8 GB", "100 GB recommended"),
+            ROOT / "README.zh-CN.md": ("4 核", "8 GB", "推荐 100 GB"),
         }
-        for readme, requirement in requirements.items():
-            with self.subTest(readme=readme.name):
-                self.assertIn(requirement, readme.read_text())
+        for readme, expected in requirements.items():
+            content = readme.read_text()
+            for text in expected:
+                with self.subTest(readme=readme.name, text=text):
+                    self.assertIn(text, content)
 
     def test_default_install_dir_is_platform_appropriate(self):
         cases = [

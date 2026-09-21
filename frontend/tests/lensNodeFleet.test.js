@@ -22,13 +22,19 @@ test('LensNode workload links to filtered run operations', async () => {
   assert.match(contents, /lensnode: row\.uuid/)
 })
 
-test('LensNode list exposes readable directory and task capabilities', async () => {
-  const contents = await source()
+test('LensNode list exposes readable versions and drawer capabilities', async () => {
+  const [contents, drawer] = await Promise.all([
+    source(),
+    readFile(
+      new URL('../src/pages/lens/LensNodeDetailDrawer.vue', import.meta.url),
+      'utf8'
+    )
+  ])
 
-  assert.match(contents, /data-testid="lensnode-capabilities"/)
-  assert.match(contents, /directoryCapabilityLabels/)
-  assert.match(contents, /taskCapabilityLabels/)
   assert.match(contents, /whitespace-nowrap.*text-ink-600/)
   assert.match(contents, /runtimeVersion/)
   assert.match(contents, /protocolVersion/)
+  assert.match(drawer, /data-testid="lensnode-capabilities"/)
+  assert.match(drawer, /supportedTasks/)
+  assert.match(drawer, /taskLabel\(/)
 })

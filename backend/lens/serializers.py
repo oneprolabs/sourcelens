@@ -1059,7 +1059,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                     {"routing_mode": "System Assistants cannot be Smart teams."}
                 )
             if member_uuids is None and (
-                self.instance is None
+                getattr(self.instance, "pk", None) is None
                 or not self.instance.collaboration_members.exists()
             ):
                 raise serializers.ValidationError(
@@ -1103,7 +1103,10 @@ class AssistantSerializer(serializers.ModelSerializer):
         if not requires_workspace:
             if mode_behavior.requires_skill:
                 skill_bindings = attrs.get("skill_bindings")
-                if skill_bindings is None and self.instance is not None:
+                if (
+                    skill_bindings is None
+                    and getattr(self.instance, "pk", None) is not None
+                ):
                     has_enabled_skill = self.instance.skill_bindings.filter(
                         enabled=True,
                         skill__enabled=True,
@@ -1119,7 +1122,10 @@ class AssistantSerializer(serializers.ModelSerializer):
                         enabled=True,
                     ).exists()
                 plugin_bindings = attrs.get("plugin_bindings")
-                if plugin_bindings is None and self.instance is not None:
+                if (
+                    plugin_bindings is None
+                    and getattr(self.instance, "pk", None) is not None
+                ):
                     has_enabled_plugin = (
                         self.instance.plugin_bindings.filter(
                             enabled=True,
@@ -1187,7 +1193,10 @@ class AssistantSerializer(serializers.ModelSerializer):
         """Require selected Plugin tools for enabled Skill dependencies."""
 
         skill_bindings = attrs.get("skill_bindings")
-        if skill_bindings is None and self.instance is not None:
+        if (
+            skill_bindings is None
+            and getattr(self.instance, "pk", None) is not None
+        ):
             skills = [
                 binding.skill
                 for binding in self.instance.skill_bindings.select_related(
@@ -1205,7 +1214,10 @@ class AssistantSerializer(serializers.ModelSerializer):
             )
 
         plugin_bindings = attrs.get("plugin_bindings")
-        if plugin_bindings is None and self.instance is not None:
+        if (
+            plugin_bindings is None
+            and getattr(self.instance, "pk", None) is not None
+        ):
             plugin_bindings = [
                 {
                     "connection": binding.connection,
@@ -1275,7 +1287,10 @@ class AssistantSerializer(serializers.ModelSerializer):
         """Reject Tool name collisions across native and MCP bindings."""
 
         plugin_bindings = attrs.get("plugin_bindings")
-        if plugin_bindings is None and self.instance is not None:
+        if (
+            plugin_bindings is None
+            and getattr(self.instance, "pk", None) is not None
+        ):
             plugin_bindings = [
                 {
                     "connection": binding.connection,
@@ -1311,7 +1326,10 @@ class AssistantSerializer(serializers.ModelSerializer):
         """Return valid Plugin adapters from effective Assistant MCP bindings."""
 
         mcp_bindings = attrs.get("mcp_bindings")
-        if mcp_bindings is None and self.instance is not None:
+        if (
+            mcp_bindings is None
+            and getattr(self.instance, "pk", None) is not None
+        ):
             adapter_ids = self.instance.mcp_bindings.filter(
                 enabled=True,
                 mcp__enabled=True,
@@ -4296,6 +4314,17 @@ class SessionSerializer(serializers.ModelSerializer):
             "routing_assistants",
             "user",
             "title",
+            "title_manually_edited",
+            "title_generation_status",
+            "pinned_at",
+            "has_shareable_answer",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "uuid",
+            "user",
             "title_manually_edited",
             "title_generation_status",
             "pinned_at",

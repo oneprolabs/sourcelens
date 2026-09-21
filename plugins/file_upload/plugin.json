@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "protocol_version": 1,
   "capability_family": "plugin",
-  "display_name": "File upload",
+  "display_name": "Manual upload",
   "icon": "assets/icon.svg",
   "description": "Upload files or archives to a LensNode workspace and process them through the standard datasource pipeline.",
   "datasource_source_type": "upload",

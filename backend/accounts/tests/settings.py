@@ -59,6 +59,9 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "accounts.authentication.AgentRestrictedJWTAuthentication",
     ),
+    "DEFAULT_RENDERER_CLASSES": (
+        "core.settings.renders.CustomJSONRenderer",
+    ),
     "DEFAULT_PARSER_CLASSES": (
         "djangorestframework_camel_case.parser.CamelCaseJSONParser",
     ),
@@ -99,3 +102,9 @@ ACCOUNT_SIGNUP_FIELDS = [
 ]
 
 PASSWORD_RESET_TIMEOUT = 86400
+
+OTP_CODE_TTL_SECONDS = 300
+OTP_MAX_ATTEMPTS = 5
+OTP_SEND_COOLDOWN_SECONDS = 60
+OTP_SEND_MAX_PER_DAY = 10
+OTP_SEND_MAX_PER_IP_HOUR = 20

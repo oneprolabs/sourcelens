@@ -820,10 +820,13 @@ def _enable_skill_scripts(skill_root):
 
     if skill_root.is_symlink():
         return
+    resolved_root = skill_root.resolve()
     for path in skill_root.rglob("*"):
         if not path.is_file() or path.is_symlink():
             continue
-        under_scripts = path.resolve().relative_to(skill_root).parts[0] == "scripts"
+        under_scripts = (
+            path.resolve().relative_to(resolved_root).parts[0] == "scripts"
+        )
         if under_scripts or os.access(path, os.X_OK):
             path.chmod(0o755)
 

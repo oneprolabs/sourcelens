@@ -174,7 +174,7 @@ test('ignores a stale session list after switching to archived sessions', async 
   const source = await chatSource()
 
   assert.match(source, /const loadGeneration = \+\+sessionLoadGeneration/)
-  assert.match(source, /const loadedSessions = await listSessions\(/)
+  assert.match(source, /loadedSessions = await listSessions\(/)
   assert.match(source, /if \(loadGeneration !== sessionLoadGeneration\) return/)
   assert.match(
     source,
@@ -196,7 +196,7 @@ test('shows an assistant welcome state on mobile before the first message', asyn
 
   assert.match(
     source,
-    /v-if="\s*isMobile && !decoratedMessages\.length && !showLiveAnswer\s*"\s+class="chat-welcome"/
+    /v-else-if="\s*isMobile && !decoratedMessages\.length && !showLiveAnswer\s*"\s+class="chat-welcome"/
   )
   assert.match(source, /<h1 class="chat-welcome-title">/)
   assert.match(source, /\{\{ assistantName \}\}/)

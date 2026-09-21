@@ -35,10 +35,6 @@ test('assistant detail preserves directories, bindings, and grants', () => {
     ]
   })
 
-  assert.deepEqual(detail.workspaceDirectories, [
-    '/workspace/api',
-    '/workspace/frontend'
-  ])
   assert.deepEqual(detail.skills, [
     { name: 'Repository search', enabled: true },
     { name: 'Release notes', enabled: false }
@@ -65,7 +61,7 @@ test('assistant detail safely normalizes incomplete list data', () => {
     access_grants: [{ type: 'user', id: 9, name: 'grace' }]
   })
 
-  assert.deepEqual(detail.workspaceDirectories, ['/workspace/docs'])
+  assert.deepEqual(detail.plugins, [])
   assert.deepEqual(detail.skills, [{ name: '', enabled: true }])
   assert.deepEqual(detail.mcps, [{ name: '', enabled: true }])
   assert.deepEqual(detail.authorizedUsers, [
@@ -120,7 +116,7 @@ test('assistant management loads form resources only when editing', async () => 
   const page = await source('pages/lens/Assistants.vue')
 
   assert.match(page, /async function loadFormResources\(\)/)
-  assert.match(page, /await loadFormResources\(\)/)
+  assert.match(page, /loadFormResources\(\)\.catch\(/)
   assert.doesNotMatch(
     page,
     /async function load\(\)[\s\S]*?Promise\.all\(\[\s*listAssistants[\s\S]*?listSkills/

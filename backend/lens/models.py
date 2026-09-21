@@ -1259,8 +1259,13 @@ class Session(TimestampedUUIDModel):
         max_length=16,
         choices=RoutingMode.choices,
         default=RoutingMode.DIRECT,
+        db_default=RoutingMode.DIRECT,
     )
-    allowed_assistant_uuids = models.JSONField(default=list, blank=True)
+    allowed_assistant_uuids = models.JSONField(
+        default=list,
+        blank=True,
+        db_default=[],
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE
     )
