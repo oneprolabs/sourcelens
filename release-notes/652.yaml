@@ -1,0 +1,13 @@
+type: improvement
+audience: admin
+en: >-
+  Plugin Connections can now be deleted once nothing live references them:
+  finished run and invocation history is retained for auditing instead of
+  blocking deletion, while datasources, assistant bindings, MCP adapters, and
+  active runs still prevent removal with a clear CONNECTION_IN_USE message.
+  TypeSafe AI Connections are now validated against the non-billable models
+  endpoint, and destructive admin actions use consistent in-app confirmation
+  dialogs instead of browser prompts.
+zh-CN: >-
+  插件连接在无任何实时引用后可被删除：已完成的运行与调用历史会保留用于审计，不再阻止删除；数据源、助手绑定、MCP 适配器与运行中的任务仍会阻止删除，并给出明确的 CONNECTION_IN_USE 提示。
+  TypeSafe AI 连接改为通过非计费的模型端点验证，管理端的危险操作确认统一改为应用内对话框。
