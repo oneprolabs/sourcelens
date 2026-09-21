@@ -138,7 +138,7 @@
     "datasourceUploadArchiveInvalid": "The archive is invalid or unsupported.",
     "datasourceUploadArchivePathInvalid": "The archive contains an unsafe path.",
     "datasourceUploadNotSupported": "This datasource does not support file upload.",
-    "datasourceConversionOrphaned": "Processing was interrupted before the node reported a result. Retry processing.",
+    "datasourceConversionOrphaned": "Processing was interrupted before the node reported a result. Retrying continues from completed work instead of starting over.",
     "datasourceConversionFailed": "Processing failed. Check the datasource and try again.",
     "datasourceConversionTimeout": "Processing timed out. Retry later.",
     "connectionInUse": "This Connection is still referenced by a datasource, assistant, or run. Remove those references and try again."

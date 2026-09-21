@@ -1,0 +1,13 @@
+type: feature
+audience: admin
+en: >-
+  Managed Datasource Conversions now persist safe checkpoints and expose
+  recovery by task ID. After a LensNode control-connection interruption, an
+  administrator can query whether a conversion is resumable and request an
+  idempotent resume: the original executor is rebound when it is still running,
+  or a new conversion continues from the latest checkpoint so already converted
+  files and model calls are not repeated. When neither is available the API
+  returns an explicit restart-required result instead of implying all progress
+  was lost.
+zh-CN: >-
+  托管数据源处理现在会持久化安全检查点，并按任务 ID 暴露恢复能力。LensNode 控制连接中断后，管理员可以查询处理是否可恢复并发起幂等的续跑请求：原执行器仍在运行时直接重新绑定，否则从最新检查点继续，已处理的文件和模型调用不会重复执行。当两者都不可用时，接口会显式返回需要重新处理，而不再表示所有进度都已丢失。

@@ -60,10 +60,12 @@ from lens.tasks import (
     DATASOURCE_CANCELLING_STATUS,
     datasource_conversion_task,
     datasource_upload_task,
+    describe_datasource_conversion_recovery,
     register_datasource_conversion_task,
     register_datasource_sync_task,
     register_datasource_upload_task,
     release_datasource_lock,
+    resume_datasource_conversion,
     source_sync_task,
 )
 from rest_framework import status
@@ -1466,6 +1468,72 @@ class DataSourceViewSet(BaseAdminViewSet):
             return self.get_paginated_response(serializer.data)
         serializer = TaskExecutionListSerializer(queryset, many=True)
         return Response(serializer.data)
+
+    def _conversion_recovery_task(self, datasource, task_id):
+        """Return one conversion task owned by this datasource."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        return (
+            TaskExecution.objects.filter(
+                task_id=task_id,
+                module="lens_datasource_conversion",
+                metadata__datasource_uuid=str(datasource.uuid),
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"conversion-tasks/(?P<task_id>[^/.]+)/recovery",
+    )
+    def conversion_recovery(self, request, uuid=None, task_id=None):
+        """Describe whether an orphaned conversion can be resumed."""
+
+        datasource = self.get_object()
+        task = self._conversion_recovery_task(datasource, task_id)
+        if task is None:
+            return Response(
+                {"detail": "DATASOURCE_CONVERSION_TASK_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(describe_datasource_conversion_recovery(task))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"conversion-tasks/(?P<task_id>[^/.]+)/resume",
+    )
+    def resume_conversion(self, request, uuid=None, task_id=None):
+        """Idempotently resume an orphaned managed workspace conversion."""
+
+        datasource = self.get_object()
+        if datasource.status == DataSource.Status.DISABLED:
+            return Response(
+                {"detail": "DATASOURCE_DISABLED"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        task = self._conversion_recovery_task(datasource, task_id)
+        if task is None:
+            return Response(
+                {"detail": "DATASOURCE_CONVERSION_TASK_NOT_FOUND"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        result = resume_datasource_conversion(
+            datasource,
+            task,
+            created_by=request.user,
+        )
+        response_status = (
+            status.HTTP_202_ACCEPTED
+            if result.get("resumed")
+            else status.HTTP_200_OK
+        )
+        if result.get("restart_required"):
+            response_status = status.HTTP_409_CONFLICT
+        return Response(result, status=response_status)
 
     @action(detail=True, methods=["post"], url_path="cancel-sync")
     def cancel_sync(self, request, uuid=None):
