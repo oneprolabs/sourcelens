@@ -1,0 +1,9 @@
+type: fix
+audience: user
+en: >-
+  The datasource sync history no longer labels document-conversion tasks as
+  "Processing" next to a separate success or failure status. The Type column now
+  reads "Conversion", matching the operation name used elsewhere.
+zh-CN: >-
+  数据源同步历史不再将文档转换任务标记为「处理」，避免与独立的状态列出现
+  语义冲突；类型列现在显示「转换」，与其他位置的命名保持一致。

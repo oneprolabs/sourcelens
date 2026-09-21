@@ -1248,7 +1248,7 @@ async function loadExpandedTask(id) {
 
 function taskTypeLabel(task) {
   if (task?.module === 'lens_datasource_conversion') {
-    return t('lensAdmin.datasourceDetail.details.taskTypeProcessing')
+    return t('lensAdmin.datasourceDetail.details.taskTypeConversion')
   }
   if (task?.module === 'lens_datasource_upload') {
     return t('lensAdmin.datasourceDetail.details.taskTypeUpload')

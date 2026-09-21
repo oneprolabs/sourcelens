@@ -51,7 +51,7 @@ test('sync records list sync, upload, and processing tasks in one table', async 
   assert.match(drawer, /lens_datasource_conversion/)
   assert.match(
     drawer,
-    /lensAdmin\.datasourceDetail\.details\.taskTypeProcessing/
+    /lensAdmin\.datasourceDetail\.details\.taskTypeConversion/
   )
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colTaskType/)
   assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colFileName/)

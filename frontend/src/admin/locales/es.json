@@ -1722,7 +1722,7 @@
         "taskType": "Tipo de tarea",
         "taskTypeSync": "Sincronización",
         "taskTypeUpload": "Subida",
-        "taskTypeProcessing": "Procesamiento"
+        "taskTypeConversion": "Conversión"
       }
     },
     "actions": {
