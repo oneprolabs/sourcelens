@@ -40,7 +40,37 @@
         {{ citation.supports }}
       </p>
 
-      <div class="citation-code" tabindex="0">
+      <div v-if="isDocumentSource" class="citation-view-switch" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="citation-view-tab"
+          :class="{ 'citation-view-tab-active': view === 'preview' }"
+          :aria-selected="view === 'preview'"
+          @click="view = 'preview'"
+        >
+          {{ t('lens.chat.citations.preview') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="citation-view-tab"
+          :class="{ 'citation-view-tab-active': view === 'source' }"
+          :aria-selected="view === 'source'"
+          @click="view = 'source'"
+        >
+          {{ t('lens.chat.citations.source') }}
+        </button>
+      </div>
+
+      <div
+        v-if="isDocumentSource && view === 'preview'"
+        class="citation-preview"
+      >
+        <MarkdownRenderer :content="previewContent" />
+      </div>
+
+      <div v-else class="citation-code" tabindex="0">
         <div
           v-for="line in citation.lines"
           :key="line.number"
@@ -60,12 +90,16 @@
 </template>
 
 <script setup>
+import { computed, ref, watch } from 'vue'
 import { AlertCircle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
+import { isDocumentCitationPath } from '@/pages/lens/codeCitations'
+import { normalizeMarkdownTables } from '@/utils/documentPreview'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -77,6 +111,25 @@ const props = defineProps({
 defineEmits(['close', 'retry'])
 
 const { t } = useI18n()
+
+const view = ref('preview')
+
+watch(
+  () => props.citation,
+  () => {
+    view.value = 'preview'
+  }
+)
+
+const isDocumentSource = computed(() =>
+  isDocumentCitationPath(props.citation?.path)
+)
+
+const previewContent = computed(() =>
+  normalizeMarkdownTables(
+    (props.citation?.lines || []).map((line) => line.content).join('\n')
+  )
+)
 
 function isHighlighted(lineNumber) {
   if (!props.citation) return false
@@ -110,6 +163,32 @@ function isHighlighted(lineNumber) {
 
 .citation-supports {
   @apply text-sm leading-6 text-theme-secondary;
+}
+
+.citation-view-switch {
+  @apply inline-flex rounded-lg border border-line bg-surface-sunken p-0.5;
+}
+
+.citation-view-tab {
+  @apply rounded-md px-3 py-1 text-sm font-medium text-theme-muted transition-colors;
+}
+
+.citation-view-tab-active {
+  @apply bg-surface text-theme shadow-sm;
+}
+
+.citation-preview {
+  @apply max-h-[70vh] overflow-auto rounded-lg border border-line px-4 py-3;
+}
+
+.citation-preview :deep(table) {
+  width: max-content;
+  min-width: 100%;
+}
+
+.citation-preview :deep(th),
+.citation-preview :deep(td) {
+  @apply whitespace-nowrap px-3 py-1.5 align-top;
 }
 
 .citation-code {

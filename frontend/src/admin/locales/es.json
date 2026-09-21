@@ -1768,6 +1768,8 @@
       "excludeDirs": "Excluir directorios",
       "enableCodegraph": "Habilitar gráfico de código",
       "enableCodegraphHint": "Construir y buscar un gráfico de código para análisis",
+      "enableCitations": "Mostrar citas",
+      "enableCitationsHint": "Mostrar las fuentes consultadas en las respuestas, con enlaces a la evidencia capturada",
       "workspaceGuideEnabled": "Inyectar esta guía para el Asistente",
       "workspaceGuideHelp": "Describe la disposición del repositorio, la prioridad de búsqueda y las reglas de detención. SourceLens lo guardará como una Skill vinculada e inyectará en las ejecuciones de LensNode.",
       "agentModel": "Modelo de agente",
@@ -2128,7 +2130,12 @@
       "noMatchingDatasources": "No hay fuentes coincidentes",
       "showFewerDatasources": "Mostrar menos",
       "showAllDatasources": "Ver todas ({count})",
-      "datasourceTypes": {"git": "Git", "feishu": "Feishu", "jira": "Jira", "managed_workspace": "Espacio de trabajo administrado"},
+      "datasourceTypes": {
+        "git": "Git",
+        "feishu": "Feishu",
+        "jira": "Jira",
+        "managed_workspace": "Espacio de trabajo administrado"
+      },
       "runtimeStats": "Entorno y estadísticas",
       "rawStorage": "Original",
       "derivedStorage": "Procesado",

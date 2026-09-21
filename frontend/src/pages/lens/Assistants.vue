@@ -924,6 +924,7 @@ function defaultForm() {
     access_grant_options: [],
     settings: { datasource_routing: 'selected' },
     enable_codegraph: true,
+    enable_citations: true,
     status: 'active',
     mode: 'direct',
     collaboration_member_uuids: []
@@ -1014,6 +1015,7 @@ function formFromRow(row) {
     access_grant_options: row.access_grants || [],
     settings: { ...(row.settings || {}), datasource_routing: 'selected' },
     enable_codegraph: row.settings?.features?.codegraph !== false,
+    enable_citations: row.settings?.features?.citations !== false,
     status: row.status || 'active'
   }
 }
@@ -1158,6 +1160,7 @@ function buildAssistantSettings() {
   }
   const features = { ...(settings.features || {}) }
   features.codegraph = !!form.value.enable_codegraph
+  features.citations = !!form.value.enable_citations
   settings.features = features
   return settings
 }

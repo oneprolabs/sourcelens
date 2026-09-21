@@ -339,7 +339,9 @@
         "lines": "Lines",
         "loading": "Loading code citation…",
         "retry": "Retry",
-        "unavailable": "This code citation is unavailable. Its run snapshot may be missing, or you may not have access."
+        "unavailable": "This code citation is unavailable. Its run snapshot may be missing, or you may not have access.",
+        "preview": "Preview",
+        "source": "Source"
       },
       "questionPlaceholder": "Ask anything",
       "startTitle": "What would you like to work on?",

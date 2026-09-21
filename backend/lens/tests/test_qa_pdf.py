@@ -62,6 +62,22 @@ class QAPdfRenderingTests(TestCase):
         self.assertNotIn("<img", html)
         self.assertNotIn("javascript:", html)
 
+    def test_html_drops_inline_source_markers(self):
+        html = build_qa_pdf_html(
+            title="Report",
+            question="How did revenue move?",
+            answer=(
+                "Revenue grew. [[source: hosted_demo/report.xlsx]] "
+                "Then it dipped."
+            ),
+            language_code="en",
+        )
+
+        self.assertIn("Revenue grew.", html)
+        self.assertIn("Then it dipped.", html)
+        self.assertNotIn("[[source", html)
+        self.assertNotIn("hosted_demo/report.xlsx", html)
+
     def test_pdf_contains_selectable_text_instead_of_page_image(self):
         pdf = render_qa_pdf(
             title="订单汇总",

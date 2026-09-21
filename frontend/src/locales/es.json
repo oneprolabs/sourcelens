@@ -339,7 +339,9 @@
         "lines": "Líneas",
         "loading": "Cargando cita de código…",
         "retry": "Reintentar",
-        "unavailable": "Esta cita de código no está disponible. Su instantánea de ejecución puede faltar, o es posible que no tenga acceso."
+        "unavailable": "Esta cita de código no está disponible. Su instantánea de ejecución puede faltar, o es posible que no tenga acceso.",
+        "preview": "Vista previa",
+        "source": "Texto original"
       },
       "questionPlaceholder": "Preguntar cualquier cosa",
       "startTitle": "¿En qué te gustaría trabajar?",

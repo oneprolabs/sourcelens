@@ -4,7 +4,6 @@ import re
 from pathlib import PurePosixPath
 
 
-MAX_CITATIONS = 5
 MAX_CITATION_SOURCE_CHARS = 100_000
 MAX_LINE_NUMBER = 10_000_000
 CITATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -35,17 +34,17 @@ PUBLIC_CITATION_FIELDS = (
 
 
 def sanitize_run_citations(value):
-    """Return bounded workspace-relative citation snapshots."""
+    """Return workspace-relative citation snapshots, one per path."""
 
     if not isinstance(value, list):
         return []
     citations = []
     seen = set()
-    for item in value[:MAX_CITATIONS]:
+    for item in value:
         citation = _sanitize_citation(item)
-        if citation is None or citation["id"] in seen:
+        if citation is None or citation["path"] in seen:
             continue
-        seen.add(citation["id"])
+        seen.add(citation["path"])
         citations.append(citation)
     return citations
 

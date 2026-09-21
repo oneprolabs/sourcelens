@@ -841,7 +841,11 @@
                     v-if="message.role === 'assistant' && message.content"
                     class="message-markdown"
                   >
-                    <MarkdownRenderer :content="message.content" />
+                    <MarkdownRenderer
+                      :content="message.content"
+                      :references="messageReferences(message)"
+                      @reference-click="openInlineCitation(message, $event)"
+                    />
                   </div>
                   <template v-else>
                     <div
@@ -894,15 +898,6 @@
                       </template>
                     </div>
                   </template>
-                  <MessageCitations
-                    v-if="
-                      message.role === 'assistant' &&
-                      message.citations?.length &&
-                      !isAnonymous
-                    "
-                    :citations="message.citations"
-                    @open="openCodeCitation(message, $event)"
-                  />
                   <div
                     v-if="message.output_files && message.output_files.length"
                     class="message-deliverables"
@@ -1901,7 +1896,6 @@ import LoginModal from '@/components/auth/LoginModal.vue'
 import QaShareModal from '@/components/lens/QaShareModal.vue'
 import FilePreviewModal from '@/components/lens/FilePreviewModal.vue'
 import CodeCitationDrawer from '@/pages/lens/components/CodeCitationDrawer.vue'
-import MessageCitations from '@/pages/lens/components/MessageCitations.vue'
 import AssistantActivityGroups from '@/pages/lens/components/AssistantActivityGroups.vue'
 import ParticipatingAssistantsPicker from '@/pages/lens/components/ParticipatingAssistantsPicker.vue'
 import {
@@ -1911,6 +1905,8 @@ import {
 } from '@/utils/filePreview'
 import { downloadQaPdf } from '@/utils/qaPdf'
 import { extractErrorMessage } from '@/utils/api'
+import { copyToClipboard } from '@/utils/clipboard'
+import { stripSourceMarkers } from '@/utils/inlineReferences'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
@@ -2019,6 +2015,8 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
+import { assistantShowsCitations } from '@/pages/lens/codeCitations'
+
 import {
   readRecentChat,
   saveRecentChat,
@@ -2060,6 +2058,8 @@ const citationSource = ref(null)
 const citationSourceLoading = ref(false)
 const citationSourceError = ref('')
 let citationRequestId = 0
+const NO_MESSAGE_REFERENCES = []
+const messageReferenceCache = new WeakMap()
 
 const RUN_POLL_INTERVAL_MS = 3000
 const RUN_POLL_MAX_ATTEMPTS = 160
@@ -2167,6 +2167,10 @@ const selectedAssistant = computed(
 
 const activeAssistant = computed(
   () => selectedAssistant.value || publicAssistant.value
+)
+
+const citationsEnabled = computed(() =>
+  assistantShowsCitations(activeAssistant.value)
 )
 
 const selectedSession = computed(
@@ -4477,10 +4481,12 @@ async function cancel() {
 }
 
 async function copyMessage(message) {
-  try {
-    await navigator.clipboard.writeText(message.content || '')
+  const copied = await copyToClipboard(
+    stripSourceMarkers(message.content || '')
+  )
+  if (copied) {
     showSuccess(t('lens.chat.messageCopied'))
-  } catch {
+  } else {
     showWarning(t('lens.chat.copyFailed'))
   }
 }
@@ -4522,6 +4528,35 @@ function openPreview(file) {
 
 function closePreview() {
   previewFile.value = null
+}
+
+function messageReferences(message) {
+  if (
+    isAnonymous.value ||
+    !citationsEnabled.value ||
+    !message?.citations?.length
+  ) {
+    return NO_MESSAGE_REFERENCES
+  }
+  const cached = messageReferenceCache.get(message)
+  if (cached) return cached
+  const references = message.citations
+    .filter((citation) => citation?.id && citation?.path)
+    .map((citation) => ({
+      id: citation.id,
+      path: citation.path,
+      startLine: citation.start_line,
+      endLine: citation.end_line
+    }))
+  messageReferenceCache.set(message, references)
+  return references
+}
+
+function openInlineCitation(message, citationId) {
+  const citation = (message?.citations || []).find(
+    (item) => item.id === citationId
+  )
+  if (citation) openCodeCitation(message, citation)
 }
 
 function openCodeCitation(message, citation) {

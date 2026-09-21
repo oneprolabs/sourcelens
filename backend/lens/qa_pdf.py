@@ -14,6 +14,14 @@ DEFAULT_FILENAME = "SourceLens-conversation"
 MAX_FILENAME_LENGTH = 80
 UNSAFE_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*%]+')
 
+# Inline evidence markers are an on-screen affordance; an exported document
+# drops them, including the horizontal space before each marker, so the text
+# reads cleanly.
+SOURCE_MARKER_PATTERN = re.compile(
+    r"[ \t]*\[\[\s*source:[^\]\n]*\]\]",
+    re.IGNORECASE,
+)
+
 MARKDOWN_TAGS = {
     "a",
     "b",
@@ -215,7 +223,7 @@ def _markdown_html(content):
     """Convert untrusted Markdown to a safe, resource-free HTML subset."""
 
     rendered = markdown.markdown(
-        content or "",
+        SOURCE_MARKER_PATTERN.sub("", content or ""),
         extensions=["fenced_code", "tables", "sane_lists"],
     )
     return bleach.clean(

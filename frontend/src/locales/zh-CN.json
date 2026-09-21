@@ -339,7 +339,9 @@
         "lines": "行号",
         "loading": "正在加载代码引用…",
         "retry": "重试",
-        "unavailable": "该代码引用当前不可用，可能是运行快照已缺失或你没有访问权限。"
+        "unavailable": "该代码引用当前不可用，可能是运行快照已缺失或你没有访问权限。",
+        "preview": "预览",
+        "source": "源码"
       },
       "questionPlaceholder": "有什么问题，尽管问",
       "startTitle": "今天想处理什么？",

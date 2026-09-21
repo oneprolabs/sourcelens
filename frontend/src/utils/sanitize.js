@@ -62,6 +62,7 @@ export function sanitizeHtml(dirty) {
       'type',
       'aria-label',
       'data-markdown-code-copy',
+      'data-inline-citation-id',
       'data-mindmap-root',
       'data-mindmap-action',
       'data-mindmap-toggle',

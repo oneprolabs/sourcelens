@@ -1766,6 +1766,8 @@
       "excludeDirs": "排除目录",
       "enableCodegraph": "启用代码图",
       "enableCodegraphHint": "构建并检索代码图，辅助代码分析",
+      "enableCitations": "显示引用内容",
+      "enableCitationsHint": "在回答中展示所查阅的来源文件，并提供可点击打开证据快照的链接",
       "workspaceGuideEnabled": "为该 Assistant 注入此指引",
       "workspaceGuideHelp": "描述仓库结构、检索优先级和停止规则。SourceLens 会将其保存为绑定 Skill，并在节点执行时注入。",
       "agentModel": "Agent 模型",
@@ -2126,7 +2128,12 @@
       "noMatchingDatasources": "未找到匹配的数据源",
       "showFewerDatasources": "收起列表",
       "showAllDatasources": "查看全部（{count}）",
-      "datasourceTypes": {"git": "Git", "feishu": "飞书", "jira": "Jira", "managed_workspace": "托管工作区"},
+      "datasourceTypes": {
+        "git": "Git",
+        "feishu": "飞书",
+        "jira": "Jira",
+        "managed_workspace": "托管工作区"
+      },
       "runtimeStats": "运行环境与统计",
       "rawStorage": "原始",
       "derivedStorage": "处理后",

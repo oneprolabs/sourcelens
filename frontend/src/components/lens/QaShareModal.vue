@@ -42,11 +42,12 @@
         <div class="mb-1 text-xs font-medium text-ink-500">
           {{ t('lens.qa.previewLabel') }}
         </div>
-        <p
-          class="line-clamp-3 rounded-md border border-line bg-surface-sunken px-3 py-2 text-xs text-ink-500"
-        >
-          {{ answerPreview }}
-        </p>
+        <div class="qa-share-preview">
+          <MarkdownRenderer
+            :content="answerPreview"
+            :enable-highlight="false"
+          />
+        </div>
       </div>
 
       <div v-if="share">
@@ -133,6 +134,7 @@ import { Bot, Copy, Share2 } from '@lucide/vue'
 
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
 import { shareRun, updateMyShare, deleteShare } from '@/api/lens'
 import { copyToClipboard } from '@/utils/clipboard'
 import { qaShareUrl } from '@/utils/lens'
@@ -312,6 +314,22 @@ async function unshare() {
 </script>
 
 <style scoped>
+.qa-share-preview {
+  @apply max-h-40 overflow-hidden rounded-md border border-line bg-surface-sunken px-3 py-2;
+}
+
+.qa-share-preview :deep(.markdown-content) {
+  @apply text-xs;
+}
+
+.qa-share-preview :deep(.markdown-content > :first-child) {
+  margin-top: 0;
+}
+
+.qa-share-preview :deep(.markdown-content > :last-child) {
+  margin-bottom: 0;
+}
+
 @media (max-width: 767px), (hover: none), (pointer: coarse) {
   .qa-share-copy,
   :deep(.qa-share-action) {

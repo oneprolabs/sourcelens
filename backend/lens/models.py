@@ -310,6 +310,16 @@ class Assistant(TimestampedUUIDModel):
             and self.is_accessible_by(user)
         )
 
+    @property
+    def show_citations(self):
+        """Return whether answers display the consulted evidence citations."""
+
+        settings = self.settings if isinstance(self.settings, dict) else {}
+        features = settings.get("features")
+        if isinstance(features, dict) and "citations" in features:
+            return bool(features.get("citations"))
+        return True
+
 
 class AssistantMode:
     """Polymorphic product behavior shared by Assistant modes."""

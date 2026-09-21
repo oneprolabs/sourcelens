@@ -20,6 +20,7 @@ import hljs from 'highlight.js/lib/common'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '@/utils/clipboard'
 import { sanitizeHtml, escapeHtml } from '@/utils/sanitize'
+import { linkifyReferences } from '@/utils/inlineReferences'
 import { renderMindmap } from '@/utils/mindmap'
 
 const props = defineProps({
@@ -30,8 +31,14 @@ const props = defineProps({
   enableHighlight: {
     type: Boolean,
     default: true
+  },
+  references: {
+    type: Array,
+    default: () => []
   }
 })
+
+const emit = defineEmits(['reference-click'])
 
 const { t } = useI18n()
 const copyResetTimers = new WeakMap()
@@ -281,7 +288,7 @@ const renderedContent = computed(() => {
       }
     )
 
-    return sanitizeHtml(processedHtml)
+    return sanitizeHtml(linkifyReferences(processedHtml, props.references))
   } catch (error) {
     // Surface the real failure instead of silently degrading to plain text;
     // a throw here means the answer renders unformatted, so it must be
@@ -292,6 +299,12 @@ const renderedContent = computed(() => {
 })
 
 async function handleMarkdownClick(event) {
+  const reference = event.target.closest('[data-inline-citation-id]')
+  if (reference) {
+    emit('reference-click', reference.dataset.inlineCitationId)
+    return
+  }
+
   const action = event.target.closest('[data-mindmap-action]')
   if (action) {
     const mindmap = action.closest('[data-mindmap-root]')
@@ -1117,6 +1130,25 @@ function setMindmapZoom(mindmap, zoom, focusX, focusY) {
 
 .markdown-content :deep(a) {
   @apply text-primary-600 hover:text-primary-700 underline;
+}
+
+.markdown-content :deep(.inline-citation) {
+  @apply inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-line bg-surface-sunken px-1.5 py-0.5 align-middle text-xs font-medium text-theme-secondary transition-colors;
+  font-family: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content :deep(.inline-citation:hover) {
+  @apply border-line-strong bg-surface-hover text-theme;
+}
+
+.markdown-content :deep(.inline-citation:focus-visible) {
+  @apply outline-none ring-2 ring-primary-500;
+}
+
+.markdown-content :deep(.inline-citation-icon) {
+  @apply h-3.5 w-3.5 flex-shrink-0 text-success;
 }
 
 .markdown-content :deep(img) {
