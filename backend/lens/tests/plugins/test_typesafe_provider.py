@@ -134,6 +134,30 @@ class TypesafeConnectionProviderTests(TestCase):
             "https://api.typesafe.ai",
         )
 
+    def test_default_model_matches_the_manifest(self):
+        plugin = installed_plugin("typesafe")
+        manifest = json.loads(
+            (plugin.path / "plugin.json").read_text(encoding="utf-8")
+        )
+        default = manifest["connection_schema"]["properties"]["model"]["default"]
+
+        result = self.provider.validate_live_connection(
+            "secret-key",
+            endpoint="https://api.typesafe.ai",
+            connection_config={},
+            client=httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        json={"models": []},
+                        request=request,
+                    )
+                )
+            ),
+        )
+
+        self.assertEqual(result["model"], default)
+
     def test_live_validation_does_not_send_a_billable_evaluation(self):
         seen = []
 
