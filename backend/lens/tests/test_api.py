@@ -5806,6 +5806,74 @@ class LensApiTests(TestCase):
             )
         )
 
+    def test_datasource_serializer_exposes_measured_storage_usage(self):
+        ScheduledTask.objects.create(
+            name="Datasource sync",
+            task_type=ScheduledTask.TaskType.SOURCE_SYNC,
+            target_type="datasource",
+            target_id=self.datasource.uuid,
+            last_status=ScheduledTask.Status.SUCCESS,
+            last_metrics={
+                "storage_usage": {
+                    "raw_bytes": 1024,
+                    "derived_bytes": 512,
+                    "total_bytes": 1536,
+                    "status": "complete",
+                    "measured_at": "2026-01-01T00:00:00+00:00",
+                }
+            },
+        )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["storage_usage"],
+            {
+                "raw_bytes": 1024,
+                "derived_bytes": 512,
+                "total_bytes": 1536,
+                "status": "complete",
+                "measured_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+
+    def test_datasource_serializer_reports_unmeasured_storage(self):
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["storage_usage"], {})
+
+    def test_datasource_serializer_prefers_measured_field(self):
+        self.datasource.storage_usage = {
+            "raw_bytes": 10,
+            "derived_bytes": 5,
+            "total_bytes": 15,
+            "status": "complete",
+            "measured_at": "2026-02-02T00:00:00+00:00",
+        }
+        self.datasource.save(update_fields=["storage_usage"])
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{self.datasource.uuid}/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["storage_usage"],
+            {
+                "raw_bytes": 10,
+                "derived_bytes": 5,
+                "total_bytes": 15,
+                "status": "complete",
+                "measured_at": "2026-02-02T00:00:00+00:00",
+            },
+        )
+
     def test_datasource_serializer_exposes_processing_task_kind(self):
         datasource = DataSource.objects.create(
             name="Manual Upload",

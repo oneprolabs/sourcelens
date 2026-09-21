@@ -5252,6 +5252,49 @@ class LensServiceTests(TransactionTestCase):
             cache.get(_datasource_capacity_slot_key(self.lensnode.uuid, 0))
         )
 
+    def test_complete_upload_persists_measured_storage_usage(self):
+        """A finished upload records the measured storage usage."""
+
+        datasource = DataSource.objects.create(
+            name="Manual Upload",
+            plugin_key="file_upload",
+            source_type=DataSource.SourceType.UPLOAD,
+            lensnode=self.lensnode,
+        )
+        item = datasource.items.create(
+            name=datasource.name,
+            source_type=datasource.source_type,
+            storage_key=f"datasources/{datasource.uuid}/items/{uuid4()}",
+        )
+        task = register_datasource_upload_task(
+            datasource,
+            "upload-storage-usage",
+            "report.pdf",
+        )
+        task.status = "STARTED"
+        task.save(update_fields=["status"])
+
+        complete_datasource_upload_task(
+            task.task_id,
+            {
+                "status": "success",
+                "uploaded": 1,
+                "storage_usage": {
+                    "raw_bytes": 2048,
+                    "derived_bytes": 1024,
+                    "total_bytes": 3072,
+                    "status": "complete",
+                    "measured_at": "2026-01-01T00:00:00+00:00",
+                },
+            },
+            connection_id=self.lensnode.connection_id,
+        )
+
+        datasource.refresh_from_db()
+        item.refresh_from_db()
+        self.assertEqual(datasource.storage_usage["total_bytes"], 3072)
+        self.assertEqual(item.storage_usage["derived_bytes"], 1024)
+
     def test_upload_task_streams_chunks_and_acks(self):
         from django.core.files.base import ContentFile
         from django.core.files.storage import default_storage

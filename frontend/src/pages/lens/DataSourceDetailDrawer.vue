@@ -102,6 +102,29 @@
           </div>
         </DrawerSection>
 
+        <DrawerSection
+          :title="t('lensAdmin.datasourceDetail.storage.title')"
+          class="datasource-storage-block rounded-xl border border-line bg-surface p-4"
+        >
+          <dl v-if="datasourceStorageUsage" class="mt-3 grid grid-cols-3 gap-2">
+            <div
+              v-for="item in datasourceStorageUsage"
+              :key="item.label"
+              class="min-w-0 rounded-lg bg-surface-sunken px-3 py-2.5"
+            >
+              <dt class="text-[11px] font-medium text-ink-500">
+                {{ item.label }}
+              </dt>
+              <dd class="mt-1 truncate text-sm font-medium text-ink-900">
+                {{ item.value }}
+              </dd>
+            </div>
+          </dl>
+          <p v-else class="mt-3 text-sm text-ink-500">
+            {{ t('lensAdmin.datasourceDetail.storage.notMeasured') }}
+          </p>
+        </DrawerSection>
+
         <section
           v-if="isUploadDatasource && originalUploadFiles.length"
           class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
@@ -782,6 +805,21 @@ const originalUploadFiles = computed(() =>
 function formatFileSize(bytes) {
   if (!bytes) return '-'
   return `${new Intl.NumberFormat().format(Math.ceil(bytes / 1024))} KB`
+}
+
+function formatBytes(value) {
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes < 0) return emptyValue
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let size = bytes
+  let unit = 'B'
+  for (const candidate of units) {
+    size /= 1024
+    unit = candidate
+    if (size < 1024 || candidate === 'TB') break
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${unit}`
 }
 
 const tasks = ref([])
@@ -1486,6 +1524,25 @@ const datasourceOverviewDetails = computed(() => {
   }
   items.push(detailItem('UUID', row.uuid, true))
   return items
+})
+
+const datasourceStorageUsage = computed(() => {
+  const usage = props.datasource?.storage_usage
+  if (!usage || usage.status !== 'complete') return null
+  return [
+    {
+      label: t('lensAdmin.datasourceDetail.storage.raw'),
+      value: formatBytes(usage.raw_bytes)
+    },
+    {
+      label: t('lensAdmin.datasourceDetail.storage.derived'),
+      value: formatBytes(usage.derived_bytes)
+    },
+    {
+      label: t('lensAdmin.datasourceDetail.storage.total'),
+      value: formatBytes(usage.total_bytes)
+    }
+  ]
 })
 
 function datasourceLensNodeName(row) {

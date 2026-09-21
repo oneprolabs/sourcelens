@@ -209,6 +209,16 @@ class LensNodeSerializer(serializers.ModelSerializer):
                     item_usage.get("derived_bytes") or 0
                 )
                 usage["total_bytes"] += int(item_usage.get("total_bytes") or 0)
+            if not measured:
+                stored = datasource.storage_usage or {}
+                if stored:
+                    measured = True
+                    usage["raw_bytes"] = int(stored.get("raw_bytes") or 0)
+                    usage["derived_bytes"] = int(
+                        stored.get("derived_bytes") or 0
+                    )
+                    usage["total_bytes"] = int(stored.get("total_bytes") or 0)
+                    usage["status"] = stored.get("status") or "complete"
             result.append({
                 "uuid": str(datasource.uuid),
                 "name": datasource.name,
@@ -1991,6 +2001,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
     credential_configured = serializers.SerializerMethodField()
     current_sync = serializers.SerializerMethodField()
     sync_state = serializers.SerializerMethodField()
+    storage_usage = serializers.SerializerMethodField()
     deployments = serializers.SerializerMethodField()
 
     def get_deployments(self, obj):
@@ -2426,6 +2437,25 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "next_run_at": estimate_datasource_next_run(datasource, record),
         }
 
+    def get_storage_usage(self, datasource):
+        """Return the most recent measured local storage usage."""
+
+        usage = datasource.storage_usage or {}
+        if not usage:
+            sync_state = self.get_sync_state(datasource)
+            usage = (sync_state.get("last_metrics") or {}).get(
+                "storage_usage"
+            ) or {}
+        if not usage:
+            return {}
+        return {
+            "raw_bytes": int(usage.get("raw_bytes") or 0),
+            "derived_bytes": int(usage.get("derived_bytes") or 0),
+            "total_bytes": int(usage.get("total_bytes") or 0),
+            "status": usage.get("status") or "complete",
+            "measured_at": usage.get("measured_at") or None,
+        }
+
     def to_representation(self, instance):
         """Return datasource data without plaintext credential values."""
 
@@ -2492,6 +2522,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "credential_configured",
             "current_sync",
             "sync_state",
+            "storage_usage",
             "sync_policy",
             "target_path",
             "last_synced_at",
@@ -2514,6 +2545,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "credential_configured",
             "current_sync",
             "sync_state",
+            "storage_usage",
             "last_error",
             "availability_status",
             "availability_checked_at",
