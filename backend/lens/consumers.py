@@ -20,7 +20,9 @@ from .services import (
     reconcile_lensnode_active_runs,
     record_lensnode_run_event,
     resume_awaiting_runs_for_lensnode,
+    run_live_cache_key,
     schedule_lensnode_disconnect_grace_check,
+    RUN_LIVE_CACHE_TTL_SECONDS,
 )
 from .tasks import reconcile_orphaned_datasource_conversions
 from .tasks import session_workspace_cleanup_task
@@ -484,6 +486,14 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             citations=content.get("citations"),
             planned_evidence=content.get("planned_evidence"),
         )
+        if run.output_message is not None:
+            # Mirror the live answer so the user-facing SSE stream can read it
+            # without polling the database on every token.
+            await cache.aset(
+                run_live_cache_key(run_uuid),
+                run.output_message.content or "",
+                RUN_LIVE_CACHE_TTL_SECONDS,
+            )
         delta_chars = len(content.get("content_delta") or "")
         final_chars = len(content.get("final_content") or "")
         content_length = 0

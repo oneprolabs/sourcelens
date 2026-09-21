@@ -606,6 +606,41 @@ def test_runtime_control_call_is_non_streaming_and_hidden(monkeypatch):
     ]
 
 
+def test_runtime_stream_control_publishes_tokens(monkeypatch):
+    captured = {}
+    outputs = []
+    stop_body = (
+        'data: {"type": "token", "kind": "content", "content": "Hello"}\n\n'
+        'data: {"type": "done", "usage": {"total_tokens": 5}, '
+        '"tool_calls": [], "finish_reason": "stop"}\n\n'
+    )
+
+    def handler(request):
+        captured["payload"] = json.loads(request.read())
+        return httpx.Response(200, content=stop_body.encode("utf-8"))
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=outputs.append,
+    )
+
+    result = model._generate(
+        [HumanMessage(content="hi")],
+        runtime_control_call=True,
+        runtime_stream_control=True,
+        tools=[{"type": "function"}],
+    )
+
+    # The opt-in control call streams its answer and strips tools.
+    assert outputs == ["Hello"]
+    assert captured["payload"]["stream"] is True
+    assert "tools" not in captured["payload"]
+    assert result.generations[0].message.content.startswith("Hello")
+
+
 def test_streaming_structured_output_surfaces_reasoning_delta(monkeypatch):
     captured = {}
     outputs = []

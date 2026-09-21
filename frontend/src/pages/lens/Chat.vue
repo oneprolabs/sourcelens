@@ -1534,7 +1534,10 @@
                     class="message-markdown live-markdown"
                     :class="{ 'is-streaming': showCursor }"
                   >
-                    <MarkdownRenderer :content="partialAnswer" />
+                    <MarkdownRenderer
+                      :content="partialAnswer"
+                      :streaming="showCursor"
+                    />
                   </div>
                 </div>
               </div>
@@ -2121,11 +2124,22 @@ const answerAutoScroller = createConversationAutoScroller({
   schedule: (callback) => window.setTimeout(callback, 100),
   cancel: (timerId) => window.clearTimeout(timerId)
 })
+// Live-answer rendering is decoupled from token arrival: deltas are buffered
+// and revealed at a steady cadence, so backend batches look like continuous
+// typing and the full markdown render is not re-run on every animation frame.
+// Highlighting is skipped while streaming (see MarkdownRenderer), which keeps
+// each reveal cheap even on long answers.
+const STREAM_RENDER_INTERVAL_MS = 33
+const STREAM_REVEAL_CHARS_PER_TICK = 8
 const streamTextBuffer = createStreamTextBuffer({
   onFlush: (chunk) => {
     partialAnswer.value += chunk
     answerAutoScroller.request()
-  }
+  },
+  schedule: (callback) =>
+    window.setTimeout(callback, STREAM_RENDER_INTERVAL_MS),
+  cancel: (timerId) => window.clearTimeout(timerId),
+  revealPerTick: STREAM_REVEAL_CHARS_PER_TICK
 })
 
 const publicAssistant = ref(null)

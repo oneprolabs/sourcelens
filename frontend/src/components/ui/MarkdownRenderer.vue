@@ -35,6 +35,10 @@ const props = defineProps({
   references: {
     type: Array,
     default: () => []
+  },
+  streaming: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -79,8 +83,10 @@ renderer.code = ({ text, lang }) => {
 // `language-*` class. A declared, registered language is highlighted;
 // everything else stays escaped plain text so no wrong grammar is applied
 // (auto-detection mislabels short snippets often enough to avoid it).
+// While streaming, skip highlighting entirely: it re-runs on every flush
+// over the growing answer and is the most expensive part of the render.
 function highlightCode(text, declaredLanguage) {
-  if (!props.enableHighlight) {
+  if (!props.enableHighlight || props.streaming) {
     return {
       body: escapeHtml(text),
       label: declaredLanguage,
