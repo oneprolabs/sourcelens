@@ -613,6 +613,7 @@ class DataSource(TimestampedUUIDModel):
     datasource_config = models.JSONField(default=dict, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    storage_usage = models.JSONField(default=dict, blank=True)
     availability_status = models.CharField(
         max_length=16,
         choices=AvailabilityStatus.choices,

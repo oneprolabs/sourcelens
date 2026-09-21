@@ -1653,6 +1653,13 @@
       "empty": "Select a data source",
       "selectHint": "Click a data source on the left to view details.",
       "basicInfo": "Basic Information",
+      "storage": {
+        "title": "Storage Usage",
+        "raw": "Raw",
+        "derived": "Processed",
+        "total": "Total",
+        "notMeasured": "Not yet measured"
+      },
       "originalFiles": "Uploaded Files",
       "fileName": "File name",
       "uploadedAt": "Uploaded at",

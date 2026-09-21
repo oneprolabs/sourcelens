@@ -1653,6 +1653,13 @@
       "empty": "Seleccionar una fuente de datos",
       "selectHint": "Haz clic en una fuente de datos a la izquierda para ver detalles.",
       "basicInfo": "Información básica",
+      "storage": {
+        "title": "Espacio ocupado",
+        "raw": "Original",
+        "derived": "Procesado",
+        "total": "Total",
+        "notMeasured": "Aún sin medir"
+      },
       "originalFiles": "Archivos subidos",
       "fileName": "Nombre del archivo",
       "uploadedAt": "Subido el",

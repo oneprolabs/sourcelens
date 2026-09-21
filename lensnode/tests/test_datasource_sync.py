@@ -745,6 +745,30 @@ def test_managed_workspace_upload_stores_single_document(tmp_path, monkeypatch):
     assert (root / "report.pdf").read_bytes() == b"%PDF-1.4"
 
 
+def test_managed_workspace_upload_reports_storage_usage(tmp_path, monkeypatch):
+    """A finished upload reports the measured datasource storage usage."""
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync.convert_managed_workspace",
+        lambda command, workspace_path: {"status": "success"},
+    )
+    content = b"%PDF-1.4 storage"
+
+    result = upload_managed_workspace(
+        {
+            "datasource_uuid": "uuid-1",
+            "filename": "report.pdf",
+            "content_base64": base64.b64encode(content).decode(),
+        },
+        workspace_path=tmp_path,
+    )
+
+    usage = result["storage_usage"]
+    assert usage["status"] == "complete"
+    assert usage["raw_bytes"] >= len(content)
+    assert usage["total_bytes"] >= len(content)
+
+
 def test_managed_workspace_upload_records_source_metadata(tmp_path):
     """Every uploaded file gets a sidecar even without a converter."""
 

@@ -1249,6 +1249,7 @@ def upload_managed_workspace(
         upload_version,
         index_target,
     )
+    result["storage_usage"] = _storage_usage(datasource_root)
     return result
 
 

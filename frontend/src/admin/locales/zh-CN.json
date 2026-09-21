@@ -1651,6 +1651,13 @@
       "empty": "请选择数据源",
       "selectHint": "点击左侧数据源查看详情。",
       "basicInfo": "基本信息",
+      "storage": {
+        "title": "空间占用",
+        "raw": "原始数据",
+        "derived": "处理后数据",
+        "total": "总计",
+        "notMeasured": "暂未统计"
+      },
       "originalFiles": "原始上传文件",
       "fileName": "文件名称",
       "uploadedAt": "上传时间",

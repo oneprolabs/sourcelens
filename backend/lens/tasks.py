@@ -1937,6 +1937,9 @@ def complete_datasource_upload_task(
     if task is None:
         return None
     metadata = task.metadata or {}
+    datasource = DataSource.objects.filter(
+        uuid=metadata.get("datasource_uuid")
+    ).first()
     owner_connection_id = metadata.get("lensnode_connection_id") or ""
     if (
         connection_id
@@ -1998,6 +2001,18 @@ def complete_datasource_upload_task(
             if result.get("duplicate")
             else "datasource_upload_completed"
         )
+        usage = result.get("storage_usage") or {}
+        if usage and datasource is not None:
+            datasource.storage_usage = usage
+            datasource.save(update_fields=["storage_usage", "updated_at"])
+            item = (
+                datasource.items.filter(status="active")
+                .order_by("uuid")
+                .first()
+            )
+            if item is not None:
+                item.storage_usage = usage
+                item.save(update_fields=["storage_usage", "updated_at"])
     return TaskTracker.update_task_status(
         task_id,
         task_status,
@@ -2265,20 +2280,21 @@ def complete_datasource_sync_task(task_id, result):
     if datasource is not None:
         if success:
             usage = metrics.get("storage_usage") or {}
+            update_fields = ["last_error", "last_synced_at", "updated_at"]
             if usage:
-                item = datasource.items.filter(status="active").order_by("uuid").first()
+                item = (
+                    datasource.items.filter(status="active")
+                    .order_by("uuid")
+                    .first()
+                )
                 if item is not None:
                     item.storage_usage = usage
                     item.save(update_fields=["storage_usage", "updated_at"])
+                datasource.storage_usage = usage
+                update_fields.append("storage_usage")
             datasource.last_error = ""
             datasource.last_synced_at = timezone.now()
-            datasource.save(
-                update_fields=[
-                    "last_error",
-                    "last_synced_at",
-                    "updated_at",
-                ]
-            )
+            datasource.save(update_fields=update_fields)
         elif not cancelled:
             datasource.last_error = error
             datasource.save(update_fields=["last_error", "updated_at"])
