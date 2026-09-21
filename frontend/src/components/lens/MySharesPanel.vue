@@ -149,7 +149,11 @@
 
       <template #footer>
         <div class="flex items-center justify-between gap-2">
-          <BaseButton variant="danger" size="sm" @click="remove(current)">
+          <BaseButton
+            variant="danger"
+            size="sm"
+            @click="requestRemove(current)"
+          >
             {{ t('lens.qa.unshare') }}
           </BaseButton>
           <BaseButton variant="secondary" size="sm" @click="closeDrawer">
@@ -158,6 +162,17 @@
         </div>
       </template>
     </BaseDrawer>
+
+    <ConfirmDeleteModal
+      :show="Boolean(deleteTarget)"
+      :title="t('lens.qa.unshare')"
+      :name="deleteTarget?.title"
+      :message="t('lens.qa.unshareConfirm')"
+      :confirm-text="t('lens.qa.unshare')"
+      :loading="deleting"
+      @confirm="confirmRemove"
+      @cancel="deleteTarget = null"
+    />
   </div>
 </template>
 
@@ -169,6 +184,7 @@ import { ChevronRight, Copy } from '@lucide/vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
+import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
 import { listMyShares, updateMyShare, deleteShare } from '@/api/lens'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -184,6 +200,8 @@ const loading = ref(true)
 const drawerOpen = ref(false)
 const current = ref(null)
 const editTitle = ref('')
+const deleteTarget = ref(null)
+const deleting = ref(false)
 const savingTitle = ref(false)
 
 const titleDirty = computed(
@@ -271,17 +289,25 @@ async function copyLink() {
   }
 }
 
-async function remove(row) {
-  if (!row || !window.confirm(t('lens.qa.unshareConfirm'))) {
-    return
-  }
+function requestRemove(row) {
+  if (!row) return
+  deleteTarget.value = row
+}
+
+async function confirmRemove() {
+  const row = deleteTarget.value
+  if (!row) return
+  deleting.value = true
   try {
     await deleteShare(row.uuid)
     shares.value = shares.value.filter((item) => item.uuid !== row.uuid)
     showSuccess(t('lens.qa.unshared'))
+    deleteTarget.value = null
     closeDrawer()
   } catch {
     showError(t('lens.qa.shareFailed'))
+  } finally {
+    deleting.value = false
   }
 }
 

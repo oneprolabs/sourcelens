@@ -926,7 +926,9 @@ class ExecutionSnapshot(TimestampedUUIDModel):
     kind = models.CharField(max_length=32, choices=Kind.choices)
     connection = models.ForeignKey(
         Connection,
-        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="execution_snapshots",
     )
     datasource = models.ForeignKey(
@@ -1023,7 +1025,9 @@ class PluginInvocation(TimestampedUUIDModel):
     )
     connection = models.ForeignKey(
         Connection,
-        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="plugin_invocations",
     )
     datasource = models.ForeignKey(

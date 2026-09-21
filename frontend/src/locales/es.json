@@ -140,7 +140,8 @@
     "datasourceUploadNotSupported": "Esta fuente de datos no admite la carga de archivos.",
     "datasourceConversionOrphaned": "El procesamiento se interrumpió antes de que el nodo informara un resultado. Vuelva a procesar.",
     "datasourceConversionFailed": "El procesamiento falló. Revise la fuente e inténtelo de nuevo.",
-    "datasourceConversionTimeout": "El procesamiento agotó el tiempo de espera. Inténtelo más tarde."
+    "datasourceConversionTimeout": "El procesamiento agotó el tiempo de espera. Inténtelo más tarde.",
+    "connectionInUse": "Esta conexión aún está referenciada por un origen de datos, un asistente o una ejecución. Elimine esas referencias e inténtelo de nuevo."
   },
   "lens": {
     "share": {

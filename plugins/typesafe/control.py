@@ -2,12 +2,17 @@
 
 import json
 import re
+from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
+
+import httpx
 
 from lens.plugins.contracts import ToolProviderError
 from lens.plugins.providers.base import (
     DatasourceProvider,
     DatasourceProviderError,
+    PluginRequestContext,
+    retry_after_seconds,
 )
 
 
@@ -19,8 +24,75 @@ TYPESAFE_API_SUFFIX = "/v1/systemone"
 MAX_STATE_LENGTH = 100_000
 MAX_INSTRUCTIONS_LENGTH = 2_000
 MAX_CRITERIA_LENGTH = 32_000
-MAX_ENDPOINT_LENGTH = 512
+MAX_ENDPOINT_LENGTH = 500
+MAX_MODELS_RESPONSE_BYTES = 256_000
 PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._~-]{1,128}")
+
+
+class TypeSafeApi(Protocol):
+    """Minimal TypeSafe API used by connection validation."""
+
+    def list_models(self):
+        """Return model names available to the authenticated account."""
+
+
+class TypeSafeApiClient:
+    """HTTP implementation of the documented TypeSafe API interface."""
+
+    def __init__(self, client, endpoint, secret):
+        self._client = client
+        self._endpoint = endpoint
+        self._secret = secret
+
+    def list_models(self):
+        """List models through the non-billable TypeSafe models endpoint."""
+
+        if self._client is None:
+            raise DatasourceProviderError("PLUGIN_HTTP_CLIENT_REQUIRED")
+        try:
+            with self._client.stream(
+                "GET",
+                _api_url(self._endpoint, "/v1/models"),
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self._secret}",
+                    "User-Agent": "SourceLens-LensNode",
+                },
+                follow_redirects=False,
+            ) as response:
+                if response.is_redirect:
+                    raise DatasourceProviderError(
+                        "TYPESAFE_REDIRECT_REJECTED"
+                    )
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_MODELS_RESPONSE_BYTES:
+                        raise DatasourceProviderError(
+                            "TYPESAFE_RESPONSE_TOO_LARGE"
+                        )
+                retry_after = response.headers.get("Retry-After")
+                status_code = response.status_code
+        except DatasourceProviderError:
+            raise
+        except httpx.HTTPError as exc:
+            raise DatasourceProviderError(
+                "TYPESAFE_REQUEST_FAILED"
+            ) from exc
+
+        if status_code != 200:
+            raise DatasourceProviderError(
+                _error_code(status_code),
+                retry_after=retry_after_seconds(retry_after),
+            )
+        try:
+            payload = json.loads(
+                body,
+                parse_constant=_reject_non_finite,
+            )
+        except (TypeError, UnicodeDecodeError, ValueError, RecursionError):
+            raise DatasourceProviderError("TYPESAFE_RESPONSE_INVALID")
+        return _model_names(payload)
 
 
 class TypeSafeConnectionProvider(DatasourceProvider):
@@ -34,6 +106,12 @@ class TypeSafeConnectionProvider(DatasourceProvider):
         parsed = _parse_endpoint(endpoint, DatasourceProviderError)
         _model(connection_config)
         return parsed
+
+    def http_origins(self, endpoint, connection_config=None):
+        """Return the bare origin allowed for host-managed HTTP clients."""
+
+        endpoint = self.validate_connection(endpoint, connection_config)
+        return (_origin(endpoint),)
 
     def validate_connection_scope(self, connection_scope):
         """Return an empty scope because TypeSafe has no resource allowlist."""
@@ -50,13 +128,22 @@ class TypeSafeConnectionProvider(DatasourceProvider):
         client=None,
         request_context=None,
     ):
-        """Validate stored fields without sending a billable evaluation."""
+        """Validate credentials through the non-billable models endpoint."""
 
-        del client, request_context
         if not isinstance(secret, str) or not secret.strip():
             raise DatasourceProviderError("TYPESAFE_API_KEY_REQUIRED")
-        self.validate_connection(endpoint, connection_config)
-        return {"status": "configured"}
+        endpoint = self.validate_connection(endpoint, connection_config)
+        context = request_context or PluginRequestContext(
+            timeout_seconds=15,
+        )
+        models = context.run(
+            TypeSafeApiClient(client, endpoint, secret.strip()).list_models
+        )
+        return {
+            "status": "configured",
+            "model": _model(connection_config),
+            "available_models": models,
+        }
 
     def validate_datasource_source_type(self, source_type):
         """Reject datasource use because this plugin exposes tools only."""
@@ -115,6 +202,19 @@ def _parse_endpoint(value, error_type):
     return urlunsplit(
         (parsed.scheme.lower(), parsed.netloc, path, "", "")
     )
+
+
+def _origin(endpoint):
+    """Return the bare scheme and authority of one canonical endpoint."""
+
+    parsed = urlsplit(endpoint)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _api_url(endpoint, suffix):
+    """Append one documented API path to a normalized base endpoint."""
+
+    return endpoint.rstrip("/") + suffix
 
 
 def _base_path(path):
@@ -267,6 +367,37 @@ def _reject_non_finite(value):
     """Reject non-standard JSON numeric constants."""
 
     raise ValueError(value)
+
+
+def _model_names(payload):
+    """Validate and project the documented GET /v1/models response."""
+
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list) or len(models) > 1000:
+        raise DatasourceProviderError("TYPESAFE_RESPONSE_INVALID")
+    names = []
+    for item in models:
+        name = item.get("name") if isinstance(item, dict) else None
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 128
+            or any(ord(char) < 32 for char in name)
+        ):
+            raise DatasourceProviderError("TYPESAFE_RESPONSE_INVALID")
+        names.append(name.strip())
+    return names
+
+
+def _error_code(status_code):
+    """Map TypeSafe model endpoint errors to stable provider codes."""
+
+    return {
+        401: "TYPESAFE_ACCESS_DENIED",
+        403: "TYPESAFE_ACCESS_DENIED",
+        404: "TYPESAFE_ENDPOINT_NOT_FOUND",
+        429: "TYPESAFE_RATE_LIMITED",
+    }.get(status_code, "TYPESAFE_REQUEST_FAILED")
 
 
 DATASOURCE_PROVIDER = TypeSafeConnectionProvider()

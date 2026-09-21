@@ -390,6 +390,17 @@
       @save="save"
     />
 
+    <ConfirmDeleteModal
+      :show="discardConfirmOpen"
+      :title="t('lensAdmin.messages.unsavedChanges')"
+      icon-type="warning"
+      variant="primary"
+      :confirm-text="t('lensAdmin.messages.discardChanges')"
+      :cancel-text="t('common.cancel')"
+      @confirm="discardDrawer"
+      @cancel="discardConfirmOpen = false"
+    />
+
     <BaseModal
       :show="Boolean(archiveConfirmRow)"
       :title="t('lensAdmin.assistantDetail.archiveTitle')"
@@ -472,6 +483,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
@@ -499,6 +511,7 @@ const mode = ref('create')
 const form = ref({})
 const formError = ref('')
 const formBaseline = ref('')
+const discardConfirmOpen = ref(false)
 const showArchived = ref(false)
 const archiveConfirmRow = ref(null)
 const actionUuid = ref('')
@@ -851,11 +864,16 @@ function closeDrawer() {
   if (
     !saving.value &&
     showDrawer.value &&
-    serializeForm(form.value) !== formBaseline.value &&
-    !window.confirm(t('lensAdmin.messages.unsavedChanges'))
+    serializeForm(form.value) !== formBaseline.value
   ) {
+    discardConfirmOpen.value = true
     return
   }
+  discardDrawer()
+}
+
+function discardDrawer() {
+  discardConfirmOpen.value = false
   showDrawer.value = false
   form.value = {}
   formError.value = ''

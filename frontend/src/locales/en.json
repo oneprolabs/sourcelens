@@ -140,7 +140,8 @@
     "datasourceUploadNotSupported": "This datasource does not support file upload.",
     "datasourceConversionOrphaned": "Processing was interrupted before the node reported a result. Retry processing.",
     "datasourceConversionFailed": "Processing failed. Check the datasource and try again.",
-    "datasourceConversionTimeout": "Processing timed out. Retry later."
+    "datasourceConversionTimeout": "Processing timed out. Retry later.",
+    "connectionInUse": "This Connection is still referenced by a datasource, assistant, or run. Remove those references and try again."
   },
   "lens": {
     "share": {

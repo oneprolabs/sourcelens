@@ -43,7 +43,8 @@ const LENSNODE_ERROR_KEYS = {
   DATASOURCE_UPLOAD_NOT_SUPPORTED: 'datasourceUploadNotSupported',
   DATASOURCE_CONVERSION_ORPHANED: 'datasourceConversionOrphaned',
   DATASOURCE_CONVERSION_FAILED: 'datasourceConversionFailed',
-  DATASOURCE_CONVERSION_TIMEOUT: 'datasourceConversionTimeout'
+  DATASOURCE_CONVERSION_TIMEOUT: 'datasourceConversionTimeout',
+  CONNECTION_IN_USE: 'connectionInUse'
 }
 
 const DATASOURCE_UNAVAILABLE_PREFIX = 'DATASOURCE_UNAVAILABLE'

@@ -1591,8 +1591,8 @@ class PluginInvocationSerializer(serializers.ModelSerializer):
     """Read-only, secret-free audit representation for Plugin executions."""
 
     snapshot_uuid = serializers.UUIDField(source="snapshot.uuid")
-    connection_uuid = serializers.UUIDField(source="connection.uuid")
-    connection_name = serializers.CharField(source="connection.name")
+    connection_uuid = serializers.SerializerMethodField()
+    connection_name = serializers.SerializerMethodField()
     datasource_uuid = serializers.SerializerMethodField()
     run_uuid = serializers.SerializerMethodField()
     actor_username = serializers.CharField(
@@ -1630,6 +1630,20 @@ class PluginInvocationSerializer(serializers.ModelSerializer):
         """Return the optional datasource identity."""
 
         return str(invocation.datasource.uuid) if invocation.datasource else None
+
+    def get_connection_uuid(self, invocation):
+        """Return the optional Connection identity.
+
+        The reference is cleared once the Connection is deleted, so the
+        audit record survives without its originating Connection.
+        """
+
+        return str(invocation.connection.uuid) if invocation.connection else None
+
+    def get_connection_name(self, invocation):
+        """Return the optional Connection display name."""
+
+        return invocation.connection.name if invocation.connection else None
 
     def get_run_uuid(self, invocation):
         """Return the optional Run identity."""
