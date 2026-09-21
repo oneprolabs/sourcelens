@@ -138,7 +138,7 @@
     "datasourceUploadArchiveInvalid": "压缩包无效或不受支持。",
     "datasourceUploadArchivePathInvalid": "压缩包包含不安全的路径。",
     "datasourceUploadNotSupported": "该数据源不支持文件上传。",
-    "datasourceConversionOrphaned": "处理在节点返回结果前中断，请重试处理。",
+    "datasourceConversionOrphaned": "处理在节点返回结果前中断，重试会从已完成的工作继续，而不是从头开始。",
     "datasourceConversionFailed": "处理失败，请检查数据源后重试。",
     "datasourceConversionTimeout": "处理超时，请稍后重试。",
     "connectionInUse": "该连接仍被数据源、助手或运行记录引用，请先移除这些引用后重试。"

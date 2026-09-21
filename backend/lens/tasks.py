@@ -154,6 +154,9 @@ LENSNODE_HEALTH_PROBE_TIMEOUT_S_DEFAULT = 5
 LENSNODE_HEALTH_PROBE_WORKERS = 16
 LEGACY_DATASOURCE_ACTIVE_STATUSES = ("pending", "running", "started", "retry")
 LEGACY_DATASOURCE_COMPLETED_STATUSES = ("success", "failed", "failure", "revoked")
+CONVERSION_CHECKPOINT_KEY = "conversion_checkpoint"
+CONVERSION_RESUME_OF_KEY = "resume_of"
+CONVERSION_RECOVERY_ORPHAN_ERROR = "DATASOURCE_CONVERSION_ORPHANED"
 
 
 @shared_task(name="lens.execute_run_diagnostic", queue="lens")
@@ -2591,6 +2594,7 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
             else "DATASOURCE_CONVERSION_ORPHANED"
         )
     )
+    checkpoint = conversion_checkpoint_from_metadata(metadata)
     metadata.update(
         {
             "recovery_reason": "LENSNODE_ACTIVE_OPERATION_UNREPORTED",
@@ -2600,6 +2604,8 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
             "stop_confirmation_source": "lensnode_active_operations_absent",
         }
     )
+    if checkpoint:
+        metadata[CONVERSION_CHECKPOINT_KEY] = checkpoint
     updated = TaskExecution.objects.filter(
         pk=task.pk,
         status__in=_datasource_active_statuses(TaskStatus),
@@ -2645,6 +2651,409 @@ def confirm_orphaned_datasource_conversion(task_id, connection_id):
     if is_upload:
         _delete_upload_storage(metadata)
     return True
+
+
+def conversion_checkpoint_from_metadata(metadata):
+    """Return the latest safe conversion checkpoint recorded for a task.
+
+    Newer tasks persist an explicit ``conversion_checkpoint`` as progress
+    arrives. Tasks written by an older application version are still
+    recoverable: their progress lives in ``progress_counts`` /
+    ``conversion_summary`` / ``last_substantive_progress_at``, so derive a
+    checkpoint from those keys instead of treating them as unrecoverable.
+    """
+
+    metadata = metadata or {}
+    checkpoint = metadata.get(CONVERSION_CHECKPOINT_KEY)
+    if isinstance(checkpoint, dict) and checkpoint:
+        return dict(checkpoint)
+    counts = metadata.get("progress_counts") or {}
+    summary = metadata.get("conversion_summary") or {}
+    last_substantive_at = metadata.get("last_substantive_progress_at")
+    if not (counts or summary or last_substantive_at):
+        return None
+    processed = counts.get("processed")
+    if processed is None and summary:
+        processed = sum(
+            int(summary.get(key) or 0)
+            for key in ("converted", "skipped", "failed")
+        )
+    return {
+        "phase": metadata.get("phase") or "",
+        "overall_progress_percent": metadata.get("overall_progress_percent"),
+        "processed": processed,
+        "total": counts.get("total") or summary.get("total"),
+        "converted": counts.get("converted") or summary.get("converted"),
+        "skipped": counts.get("skipped") or summary.get("skipped"),
+        "failed": counts.get("failed") or summary.get("failed"),
+        "at": last_substantive_at or metadata.get("last_progress_at") or "",
+    }
+
+
+def _lensnode_reports_conversion_operation(lensnode, task_id):
+    """Return whether a LensNode still reports an active conversion task."""
+
+    if lensnode is None:
+        return False
+    for operation in lensnode.active_datasource_operations or []:
+        if not isinstance(operation, dict):
+            continue
+        if str(operation.get("task_id") or "") != str(task_id):
+            continue
+        if operation.get("operation") in (None, "", "conversion"):
+            return True
+    return False
+
+
+def describe_datasource_conversion_recovery(task, lensnode=None):
+    """Describe whether a managed conversion task can still be recovered.
+
+    The caller needs to distinguish the original executor still owning the
+    work (``lensnode_executor``), a safe checkpoint being available after the
+    executor is gone (``checkpoint``), and neither being recoverable
+    (``restart_required``).
+    """
+
+    from agentcore_task.constants import TaskStatus
+
+    metadata = dict(task.metadata or {})
+    if lensnode is None:
+        lensnode = LensNode.objects.filter(
+            uuid=metadata.get("lensnode_uuid")
+        ).first()
+    node_online = bool(lensnode and lensnode.status == LensNode.Status.ONLINE)
+    completed = task.status in TaskStatus.get_completed_statuses()
+    operation_active = node_online and _lensnode_reports_conversion_operation(
+        lensnode,
+        task.task_id,
+    )
+    checkpoint = conversion_checkpoint_from_metadata(metadata)
+    completion_reason = str(metadata.get("completion_reason") or task.error or "")
+    orphaned = (
+        completion_reason == CONVERSION_RECOVERY_ORPHAN_ERROR
+        or str(task.error or "") == CONVERSION_RECOVERY_ORPHAN_ERROR
+        or bool(metadata.get("recovery_reason"))
+    )
+    recovery = {
+        "task_id": task.task_id,
+        "datasource_uuid": str(metadata.get("datasource_uuid") or ""),
+        "status": task.status,
+        "error": str(task.error or ""),
+        "orphaned": orphaned,
+        "lensnode_uuid": str(metadata.get("lensnode_uuid") or ""),
+        "lensnode_online": node_online,
+        "checkpoint": checkpoint,
+        "resumable": False,
+        "resumed": False,
+        "resume_source": None,
+        "restart_required": False,
+        "reason": "",
+    }
+    if task.status == TaskStatus.SUCCESS:
+        recovery["reason"] = "CONVERSION_ALREADY_COMPLETED"
+        return recovery
+    if task.status == TaskStatus.REVOKED:
+        recovery["reason"] = "CONVERSION_CANCELLED"
+        return recovery
+    if operation_active or (not completed and node_online):
+        recovery.update(
+            resumable=True,
+            resume_source="lensnode_executor",
+            reason="EXECUTOR_ACTIVE",
+        )
+        return recovery
+    if checkpoint and node_online:
+        recovery.update(
+            resumable=True,
+            resume_source="checkpoint",
+            reason="CHECKPOINT_AVAILABLE",
+        )
+        return recovery
+    if checkpoint or not completed:
+        recovery["reason"] = "LENSNODE_UNAVAILABLE"
+        return recovery
+    recovery.update(
+        restart_required=True,
+        reason="EXECUTOR_AND_CHECKPOINT_UNAVAILABLE",
+    )
+    return recovery
+
+
+def _conversion_resume_response(
+    task,
+    resumable,
+    resumed,
+    resume_source=None,
+    reason="",
+    restart_required=False,
+    original_task_id=None,
+):
+    """Build the stable recovery contract payload for one resume request."""
+
+    return {
+        "task_id": task.task_id,
+        "original_task_id": original_task_id or task.task_id,
+        "resumable": bool(resumable),
+        "resumed": bool(resumed),
+        "resume_source": resume_source,
+        "restart_required": bool(restart_required),
+        "reason": reason,
+        "status": task.status,
+    }
+
+
+def _rebind_orphaned_conversion(task, lensnode, metadata):
+    """Restore an orphaned conversion that its executor still owns."""
+
+    from agentcore_task.constants import TaskStatus
+
+    now = timezone.now()
+    metadata = dict(metadata or {})
+    lock_token = metadata.get("lock_token") or task.task_id
+    datasource_uuid = str(metadata.get("datasource_uuid") or "")
+    if task.error:
+        metadata["resumed_from_error"] = str(task.error)
+    metadata["lensnode_connection_id"] = str(lensnode.connection_id or "")
+    metadata["resumed_at"] = now.isoformat()
+    metadata["resume_source"] = "lensnode_executor"
+    metadata.pop("datasource_orphan_confirmation_connection_id", None)
+    metadata.pop("recovery_reason", None)
+    metadata.pop("recovery_retryable", None)
+    task.status = TaskStatus.STARTED
+    task.error = ""
+    task.finished_at = None
+    task.metadata = metadata
+    task.save(update_fields=["status", "error", "finished_at", "metadata"])
+    if datasource_uuid:
+        DataSource.objects.filter(uuid=datasource_uuid).update(
+            last_conversion_status=TaskStatus.STARTED,
+            updated_at=now,
+        )
+    acquire_datasource_lock(
+        datasource_uuid,
+        token=lock_token,
+        ttl_s=get_datasource_sync_timeout_s(),
+    )
+    return task
+
+
+def _dispatch_conversion_resume(
+    datasource,
+    task,
+    lensnode,
+    metadata,
+    checkpoint,
+    created_by=None,
+):
+    """Start a new conversion that continues from the latest safe checkpoint."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.constants import TaskStatus
+
+    resume_task_id = uuid.uuid4().hex
+    celery_task_id = uuid.uuid4().hex
+    acquire_datasource_lock(
+        datasource.uuid,
+        token=resume_task_id,
+        ttl_s=get_datasource_sync_timeout_s(),
+    )
+    conversion = dict(metadata.get("conversion") or {})
+    resume_task = register_datasource_conversion_task(
+        datasource,
+        resume_task_id,
+        conversion,
+        force=False,
+        created_by=created_by,
+        metadata={
+            "celery_task_id": celery_task_id,
+            CONVERSION_RESUME_OF_KEY: str(task.task_id),
+            "resumed_from_checkpoint": True,
+            "resume_source": "checkpoint",
+            "resume_requested_at": timezone.now().isoformat(),
+            CONVERSION_CHECKPOINT_KEY: dict(checkpoint or {}),
+            "original_force": bool(metadata.get("force")),
+            "lock_token": resume_task_id,
+            "lensnode_connection_id": str(lensnode.connection_id or ""),
+        },
+    )
+    datasource.last_conversion_status = TaskStatus.PENDING
+    datasource.save(update_fields=["last_conversion_status", "updated_at"])
+    TaskTracker.update_task_status(
+        task.task_id,
+        task.status,
+        metadata={
+            "resumed_by": resume_task_id,
+            "resumed_at": timezone.now().isoformat(),
+        },
+    )
+    _append_datasource_task_step(
+        resume_task_id,
+        "resume",
+        "queued",
+        "Resuming managed workspace conversion from the latest safe checkpoint.",
+        task_status=TaskStatus.PENDING,
+    )
+    transaction.on_commit(
+        lambda: datasource_conversion_task.apply_async(
+            args=[str(datasource.uuid), conversion, False, resume_task_id],
+            task_id=celery_task_id,
+        )
+    )
+    return _conversion_resume_response(
+        resume_task,
+        resumable=True,
+        resumed=True,
+        resume_source="checkpoint",
+        reason="CHECKPOINT_AVAILABLE",
+        original_task_id=task.task_id,
+    )
+
+
+def resume_datasource_conversion(datasource, task, created_by=None):
+    """Idempotently resume an orphaned managed workspace conversion.
+
+    The request is serialized on the datasource row so repeated calls never
+    create duplicate conversions. When the original executor still owns the
+    work it is rebound to the node's current connection; otherwise a new task
+    continues from the latest safe checkpoint. Dispatch is refused with an
+    explicit ``restart_required`` result when neither is recoverable.
+    """
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    active_statuses = _datasource_active_statuses(TaskStatus)
+    try:
+        with transaction.atomic():
+            datasource = DataSource.objects.select_for_update().get(
+                pk=datasource.pk
+            )
+            task = TaskExecution.objects.select_for_update().get(pk=task.pk)
+            metadata = dict(task.metadata or {})
+            if task.status == TaskStatus.SUCCESS:
+                return _conversion_resume_response(
+                    task,
+                    resumable=False,
+                    resumed=False,
+                    reason="CONVERSION_ALREADY_COMPLETED",
+                )
+            if task.status == TaskStatus.REVOKED:
+                return _conversion_resume_response(
+                    task,
+                    resumable=False,
+                    resumed=False,
+                    reason="CONVERSION_CANCELLED",
+                )
+            existing = (
+                TaskExecution.objects.filter(
+                    module="lens_datasource_conversion",
+                    metadata__datasource_uuid=str(datasource.uuid),
+                    metadata__resume_of=str(task.task_id),
+                    status__in=active_statuses,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if existing is not None:
+                return _conversion_resume_response(
+                    existing,
+                    resumable=True,
+                    resumed=True,
+                    resume_source="checkpoint",
+                    reason="ALREADY_RESUMED",
+                    original_task_id=task.task_id,
+                )
+            active_task = (
+                TaskExecution.objects.filter(
+                    module="lens_datasource_conversion",
+                    metadata__datasource_uuid=str(datasource.uuid),
+                    status__in=active_statuses,
+                )
+                .exclude(task_id=task.task_id)
+                .order_by("-created_at")
+                .first()
+            )
+            if active_task is not None:
+                return _conversion_resume_response(
+                    active_task,
+                    resumable=True,
+                    resumed=False,
+                    reason="CONVERSION_ALREADY_RUNNING",
+                    original_task_id=task.task_id,
+                )
+            lensnode = datasource.lensnode
+            if lensnode is None and metadata.get("lensnode_uuid"):
+                lensnode = LensNode.objects.filter(
+                    uuid=metadata.get("lensnode_uuid")
+                ).first()
+            node_online = bool(
+                lensnode and lensnode.status == LensNode.Status.ONLINE
+            )
+            operation_active = node_online and (
+                _lensnode_reports_conversion_operation(lensnode, task.task_id)
+            )
+            checkpoint = conversion_checkpoint_from_metadata(metadata)
+            if task.status not in TaskStatus.get_completed_statuses():
+                if not node_online:
+                    return _conversion_resume_response(
+                        task,
+                        resumable=False,
+                        resumed=False,
+                        reason="LENSNODE_UNAVAILABLE",
+                        original_task_id=task.task_id,
+                    )
+                _rebind_orphaned_conversion(task, lensnode, metadata)
+                return _conversion_resume_response(
+                    task,
+                    resumable=True,
+                    resumed=True,
+                    resume_source="lensnode_executor",
+                    reason="EXECUTOR_ACTIVE",
+                    original_task_id=task.task_id,
+                )
+            if operation_active:
+                _rebind_orphaned_conversion(task, lensnode, metadata)
+                return _conversion_resume_response(
+                    task,
+                    resumable=True,
+                    resumed=True,
+                    resume_source="lensnode_executor",
+                    reason="EXECUTOR_ACTIVE",
+                    original_task_id=task.task_id,
+                )
+            if not node_online:
+                return _conversion_resume_response(
+                    task,
+                    resumable=bool(checkpoint),
+                    resumed=False,
+                    reason="LENSNODE_UNAVAILABLE",
+                    original_task_id=task.task_id,
+                )
+            if not checkpoint:
+                return _conversion_resume_response(
+                    task,
+                    resumable=False,
+                    resumed=False,
+                    restart_required=True,
+                    reason="EXECUTOR_AND_CHECKPOINT_UNAVAILABLE",
+                    original_task_id=task.task_id,
+                )
+            return _dispatch_conversion_resume(
+                datasource,
+                task,
+                lensnode,
+                metadata,
+                checkpoint,
+                created_by=created_by,
+            )
+    except SourceSyncBusy:
+        return _conversion_resume_response(
+            task,
+            resumable=True,
+            resumed=False,
+            reason="CONVERSION_ALREADY_RUNNING",
+            original_task_id=task.task_id,
+        )
 
 
 def cleanup_stale_datasource_sync_tasks(startup=False):

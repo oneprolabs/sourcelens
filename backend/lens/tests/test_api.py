@@ -6921,6 +6921,142 @@ class LensApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def _orphaned_conversion_execution(self, datasource, task_id):
+        task = TaskExecution.objects.create(
+            task_id=task_id,
+            task_name="datasource_convert:Managed Snapshot",
+            module="lens_datasource_conversion",
+            status="FAILURE",
+            error="DATASOURCE_CONVERSION_ORPHANED",
+            finished_at=timezone.now(),
+            metadata={
+                "type": "datasource_conversion",
+                "datasource_uuid": str(datasource.uuid),
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "lensnode_connection_id": "old-connection",
+                "conversion": {"document": True},
+                "force": False,
+                "last_substantive_progress_at": timezone.now().isoformat(),
+                "phase": "PARSING_DOCUMENTS",
+                "progress_counts": {
+                    "total": 10,
+                    "processed": 6,
+                    "converted": 5,
+                    "skipped": 1,
+                    "failed": 0,
+                },
+            },
+        )
+        return task
+
+    def test_conversion_recovery_endpoint_reports_checkpoint(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = self._orphaned_conversion_execution(datasource, "orphan-recovery")
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/"
+            f"conversion-tasks/{task.task_id}/recovery/"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["resumable"])
+        self.assertEqual(response.data["resume_source"], "checkpoint")
+        self.assertFalse(response.data["restart_required"])
+        self.assertEqual(response.data["checkpoint"]["processed"], 6)
+
+    def test_conversion_recovery_endpoint_unknown_task(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+
+        response = self.client.get(
+            f"/api/lens/admin/datasources/{datasource.uuid}/"
+            "conversion-tasks/missing-task/recovery/"
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_resume_conversion_endpoint_dispatches_from_checkpoint(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = self._orphaned_conversion_execution(datasource, "orphan-resume")
+
+        with patch(
+            "lens.tasks.datasource_conversion_task.apply_async"
+        ) as apply_async:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.post(
+                    f"/api/lens/admin/datasources/{datasource.uuid}/"
+                    f"conversion-tasks/{task.task_id}/resume/",
+                    {},
+                    format="json",
+                )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertTrue(response.data["resumed"])
+        self.assertEqual(response.data["resume_source"], "checkpoint")
+        self.assertNotEqual(response.data["task_id"], task.task_id)
+        resume_task = TaskExecution.objects.get(
+            task_id=response.data["task_id"]
+        )
+        self.assertEqual(resume_task.metadata["resume_of"], task.task_id)
+        self.assertFalse(resume_task.metadata["force"])
+        apply_async.assert_called_once()
+
+    def test_resume_conversion_endpoint_returns_restart_required(self):
+        datasource = DataSource.objects.create(
+            name="Managed Snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=self.lensnode,
+            target_path="/workspace/restores/finance",
+        )
+        task = TaskExecution.objects.create(
+            task_id="orphan-no-progress",
+            task_name="datasource_convert:Managed Snapshot",
+            module="lens_datasource_conversion",
+            status="FAILURE",
+            error="DATASOURCE_CONVERSION_ORPHANED",
+            finished_at=timezone.now(),
+            metadata={
+                "type": "datasource_conversion",
+                "datasource_uuid": str(datasource.uuid),
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "conversion": {"document": True},
+                "force": False,
+            },
+        )
+
+        with patch(
+            "lens.tasks.datasource_conversion_task.apply_async"
+        ) as apply_async:
+            response = self.client.post(
+                f"/api/lens/admin/datasources/{datasource.uuid}/"
+                f"conversion-tasks/{task.task_id}/resume/",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertFalse(response.data["resumable"])
+        self.assertTrue(response.data["restart_required"])
+        self.assertEqual(
+            response.data["reason"],
+            "EXECUTOR_AND_CHECKPOINT_UNAVAILABLE",
+        )
+        apply_async.assert_not_called()
+
     def test_cancel_managed_workspace_conversion_finishes_immediately(self):
         datasource = DataSource.objects.create(
             name="Managed Snapshot",

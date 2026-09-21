@@ -24,6 +24,8 @@ from .services import (
     schedule_lensnode_disconnect_grace_check,
     RUN_LIVE_CACHE_TTL_SECONDS,
 )
+from .tasks import CONVERSION_CHECKPOINT_KEY
+from .tasks import conversion_checkpoint_from_metadata
 from .tasks import reconcile_orphaned_datasource_conversions
 from .tasks import session_workspace_cleanup_task
 
@@ -814,6 +816,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 metadata_update["sync_summary"] = summary
         if "conversion_summary" in content:
             metadata_update["conversion_summary"] = content.get("conversion_summary")
+        if is_conversion:
+            checkpoint = conversion_checkpoint_from_metadata(
+                {**metadata, **metadata_update}
+            )
+            if checkpoint:
+                metadata_update[CONVERSION_CHECKPOINT_KEY] = checkpoint
         for key in ["progress_total", "progress_current", "progress_percent"]:
             if key in content:
                 metadata_update[key] = content.get(key)
