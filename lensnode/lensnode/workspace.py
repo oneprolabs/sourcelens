@@ -92,6 +92,7 @@ def search_workspace(
     output_mode="content",
     context_lines=None,
     case_sensitive=False,
+    rerank=None,
 ):
     """Search selected directories, ripgrep-style.
 
@@ -171,6 +172,7 @@ def search_workspace(
         for match in matches:
             match["path"] = str(citation_path(match["path"]))
         matches = _rank_matches(matches, terms)
+        matches = _apply_rerank(matches, rerank)
         if matches:
             return {
                 "mode": "content",
@@ -679,6 +681,43 @@ def _safe_mtime(path):
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _apply_rerank(matches, rerank):
+    """Reorder matches through the optional evidence-rerank seam.
+
+    ``rerank`` receives the ordered candidate matches and returns the indices
+    to bring forward, most relevant first.  Only a prefix is expected to be
+    returned; every match the seam does not name keeps its deterministic
+    position after the reordered prefix.  Any missing seam, empty result, or
+    error keeps the original order unchanged.
+    """
+
+    if rerank is None or len(matches) < 2:
+        return matches
+    try:
+        order = rerank(matches)
+    except Exception:
+        LOGGER.exception("Evidence rerank failed; keeping deterministic order")
+        return matches
+    if not isinstance(order, (list, tuple)) or not order:
+        return matches
+    seen = set()
+    reordered = []
+    for index in order:
+        if (
+            isinstance(index, int)
+            and 0 <= index < len(matches)
+            and index not in seen
+        ):
+            seen.add(index)
+            reordered.append(matches[index])
+    if not reordered:
+        return matches
+    reordered.extend(
+        match for index, match in enumerate(matches) if index not in seen
+    )
+    return reordered
 
 
 def _rank_matches(matches, terms):

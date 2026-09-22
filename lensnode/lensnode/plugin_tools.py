@@ -72,7 +72,7 @@ def build_plugin_tools(
             capability_family = str(
                 definition.get("capability_family") or "plugin"
             )
-            if capability_family != "plugin":
+            if capability_family not in {"plugin", "decision"}:
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
             if tool_key in seen_keys:
                 raise PluginToolError("PLUGIN_TOOL_NAME_CONFLICT")

@@ -31,7 +31,7 @@ def _command(gate="search_needed", **config):
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     gate: {
@@ -119,7 +119,7 @@ def test_rejects_invalid_neutral_results(payload, kind):
 
 
 def test_typesafe_runtime_projects_its_vendor_response():
-    runtime = load_runtime_contract("typesafe", "1.3.0")
+    runtime = load_runtime_contract("typesafe", "1.4.0")
 
     neutral = runtime.project_decision(
         "typesafe_noul",
@@ -133,7 +133,7 @@ def test_typesafe_runtime_projects_its_vendor_response():
 
 
 def test_typesafe_runtime_declares_its_post_path():
-    runtime = load_runtime_contract("typesafe", "1.3.0")
+    runtime = load_runtime_contract("typesafe", "1.4.0")
 
     assert runtime.http_post_paths("https://api.typesafe.ai") == (
         "/v1/systemone",
@@ -476,7 +476,7 @@ def _post_run_command():
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     "evidence_sufficient": {
@@ -584,3 +584,38 @@ def test_post_run_state_includes_the_answer_and_evidence():
     assert "Why did it fail?" in state
     assert "Because of the deploy." in state
     assert "Runtime evidence:" in state
+
+
+def test_gate_not_declared_by_the_manifest_falls_back():
+    events = []
+    command = _command()
+    command["decision_gates"][0]["gates"]["search_needed"] = {
+        "declared": False,
+        "tool_key": "",
+        "kind": "",
+        "threshold": 0.5,
+        "margin": 0.1,
+        "max_state_chars": 4000,
+    }
+    runner = _runner(command, events)
+
+    assert runner.evaluate("search_needed", question="Why?") is None
+    assert events[1][1]["fallback_reason"] == "not_declared"
+
+
+def test_evidence_requirement_state_stays_within_the_limit():
+    limit = 200
+    tools = [
+        SimpleNamespace(name=f"tool_{index}") for index in range(200)
+    ]
+
+    arguments = decision_gates._gate_arguments(
+        "evidence_requirement",
+        "x" * 5000,
+        None,
+        tools,
+        limit,
+    )
+
+    assert len(arguments["state"]) <= limit
+    assert "Available tools:" in arguments["state"]

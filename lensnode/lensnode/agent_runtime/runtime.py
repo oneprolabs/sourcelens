@@ -154,6 +154,15 @@ def _model_decision_policy():
     )
 
 
+def _decision_attempt(state):
+    """Return the attempt number used to scope Decision call ids."""
+
+    resume_state = getattr(state, "resume_state", None)
+    if resume_state is None:
+        return 1
+    return max(int(getattr(resume_state, "current_attempt", 1) or 1), 1)
+
+
 def _post_run_decision_gates(state, answer):
     """Return advisory post-run gate verdicts, replaying resume metadata.
 
@@ -1001,6 +1010,14 @@ class LensDeepAgentRuntime:
             state.shared_token_budget.restore(
                 state.model.token_usage
             )
+        state.decision_ranker = build_decision_ranker(
+            state.command,
+            self.config,
+            self.http_client,
+            plugin_http_pool=self.plugin_http_pool,
+            emit_event=state.emit_agent_event,
+            run_uuid=state.run_uuid,
+        )
         if state.runtime_mode.general_chat:
             state.tools = build_general_chat_tools(
                 state.command,
@@ -1020,6 +1037,7 @@ class LensDeepAgentRuntime:
                 self.config,
                 emit_event=state.emit_agent_event,
                 source_recorder=state.consulted_sources,
+                evidence_reranker=state.decision_ranker,
             )
         state.plugin_tools = build_plugin_tools(
             state.command,
@@ -1037,14 +1055,6 @@ class LensDeepAgentRuntime:
             emit_event=state.emit_agent_event,
             run_uuid=state.run_uuid,
             inner=_model_decision_policy(),
-        )
-        state.decision_ranker = build_decision_ranker(
-            state.command,
-            self.config,
-            self.http_client,
-            plugin_http_pool=self.plugin_http_pool,
-            emit_event=state.emit_agent_event,
-            run_uuid=state.run_uuid,
         )
         state.tools.extend(state.decision_ranker.as_tools())
         state.mcp_tools = load_mcp_tools(

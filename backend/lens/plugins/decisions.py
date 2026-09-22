@@ -79,13 +79,21 @@ def analysis_decision(plugin, key):
 def rank_eligible(decision):
     """Return whether one analysis Decision can drive deterministic ranking.
 
-    Ranking needs a comparable scalar.  Only ``score`` qualifies today: its
-    rubric is an ordered scale, so ``sum(index * probability)`` is comparable
-    across candidates.  ``choice`` is rejected because a manifest has no
-    option list to build the criteria from (see design §7.2).
+    Ranking needs a comparable scalar.  ``score`` qualifies because its rubric
+    is an ordered scale; ``choice`` qualifies when it names a ``target_option``
+    that the rubric (the option list) contains, so the probability of that
+    option is comparable across candidates.
     """
 
-    return decision.get("kind") == "score"
+    kind = decision.get("kind")
+    if kind == "score":
+        return True
+    if kind != "choice":
+        return False
+    target_option = decision.get("target_option")
+    return bool(target_option) and target_option in (
+        decision.get("rubric") or []
+    )
 
 
 def validate_decision_analyses(plugin, analyses):
@@ -148,10 +156,19 @@ def resolve_decision_gates(plugin, gates):
     for key, config in (gates or {}).items():
         decision = control_decision(plugin, key)
         if decision is None:
-            resolved[key] = {"tool_key": "", "kind": "", **config}
+            # A Plugin upgrade removed a gate the binding still names.  The key
+            # stays so the host can report `not_declared` (distinct from an
+            # unknown key) and fall back to the inner policy.
+            resolved[key] = {
+                "declared": False,
+                "tool_key": "",
+                "kind": "",
+                **config,
+            }
             continue
         resolved[key] = {
             **config,
+            "declared": True,
             "kind": decision["kind"],
             "tool_key": decision["tool_keys"][0],
         }

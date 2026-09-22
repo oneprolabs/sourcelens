@@ -666,3 +666,24 @@ def test_build_plugin_tools_keeps_model_tools_alongside_internal_ones():
     tools = build_plugin_tools(command, _config(), GitHubRuntimeClient())
 
     assert [item.name for item in tools] == ["github_search_code"]
+
+
+def test_build_plugin_tools_accepts_a_decision_family_tool():
+    command = _command("github_read_file")
+    command["loaded_plugins"][0]["tools"][0]["capability_family"] = "decision"
+
+    tools = build_plugin_tools(command, _config(), GitHubRuntimeClient())
+
+    assert [item.name for item in tools] == ["github_read_file"]
+    assert tools[0].metadata["capability_family"] == "decision"
+
+
+def test_decision_capability_is_never_an_evidence_family():
+    from lensnode.agent_runtime import capability_protocol
+
+    assert capability_protocol.is_capability_family("decision")
+    assert "decision" not in capability_protocol.CAPABILITY_FAMILY_ORDER
+    assert (
+        "decision"
+        not in capability_protocol.EVIDENCE_CAPABILITY_FAMILIES
+    )

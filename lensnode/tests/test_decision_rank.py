@@ -1,6 +1,7 @@
 """Decision ranking seam: aggregation, bounds, and the decision_rank tool."""
 
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -26,7 +27,7 @@ def _command(analysis="plan_quality", **config):
         "decision_analyses": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "analyses": {
                     analysis: {
@@ -247,7 +248,14 @@ def test_rank_is_bounded_per_run(monkeypatch):
     assert ranker.rank("plan_quality", candidates) is None
 
 
-def test_rank_caches_identical_candidates(monkeypatch):
+def test_rank_caches_identical_candidates_across_batches(monkeypatch):
+    """The per-Run cache dedupes repeat content across rank calls.
+
+    Within one batch candidates are scored concurrently, so duplicates in the
+    same batch may each be scored once; the cache still prevents paying again
+    on a later call.
+    """
+
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -261,13 +269,8 @@ def test_rank_caches_identical_candidates(monkeypatch):
         SimpleNamespace(),
     )
 
-    ranker.rank(
-        "plan_quality",
-        [
-            {"label": "a", "content": "same"},
-            {"label": "b", "content": "same"},
-        ],
-    )
+    ranker.rank("plan_quality", [{"label": "a", "content": "same"}])
+    ranker.rank("plan_quality", [{"label": "b", "content": "same"}])
 
     assert calls == ["same"]
 
@@ -323,3 +326,184 @@ def test_rank_tool_returns_a_structured_error_when_unavailable(monkeypatch):
     )
 
     assert payload == {"ok": False, "error": "DECISION_RANK_UNAVAILABLE"}
+
+
+def _choice_payload(probabilities):
+    return json.dumps(
+        {
+            "ok": True,
+            "answers": {
+                "decision": {
+                    "type": "choice",
+                    "choice": max(probabilities, key=probabilities.get),
+                    "probabilities": probabilities,
+                    "confidence": 0.9,
+                }
+            },
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
+
+
+def _choice_command(**config):
+    return {
+        "run_uuid": "run-1",
+        "decision_analyses": [
+            {
+                "plugin_key": "typesafe",
+                "plugin_version": "1.4.0",
+                "connection_uuid": "connection-1",
+                "analyses": {
+                    "pick_best": {
+                        "tool_key": "typesafe_choice",
+                        "kind": "choice",
+                        "rubric": ["weak", "strong"],
+                        "target_option": "strong",
+                        "summary": "Prefer the stronger option.",
+                        **config,
+                    }
+                },
+            }
+        ],
+    }
+
+
+def test_rank_score_uses_the_target_option_for_choice():
+    result = DecisionResult(
+        kind="choice",
+        value={"weak": 0.2, "strong": 0.8},
+        confidence=0.8,
+        legend=None,
+        usage={},
+    )
+
+    assert decision_contract.rank_score(result, "strong") == pytest.approx(0.8)
+    assert decision_contract.rank_score(result) is None
+    assert decision_contract.rank_score(result, "missing") is None
+
+
+def test_rank_orders_choice_candidates_by_target_probability(monkeypatch):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        state = args[9]["state"]
+        calls.append(args[9])
+        if "strong" in state:
+            return _choice_payload({"weak": 0.1, "strong": 0.9}), ""
+        return _choice_payload({"weak": 0.7, "strong": 0.3}), ""
+
+    monkeypatch.setattr(decision_policy, "run_decision_tool", fake_run)
+    ranker = decision_policy.DecisionRanker(
+        _choice_command(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    result = ranker.rank(
+        "pick_best",
+        [
+            {"label": "weak-plan", "content": "a weak plan"},
+            {"label": "strong-plan", "content": "a strong plan"},
+        ],
+    )
+
+    assert [item["label"] for item in result["ranked"]] == [
+        "strong-plan",
+        "weak-plan",
+    ]
+    assert result["ranked"][0]["score"] == pytest.approx(0.9)
+    assert calls[0]["criteria"] == json.dumps(
+        {"weak": None, "strong": None},
+        ensure_ascii=False,
+    )
+
+
+def test_rank_refuses_a_choice_analysis_without_a_target(monkeypatch):
+    monkeypatch.setattr(
+        decision_policy,
+        "run_decision_tool",
+        lambda *args, **kwargs: (_choice_payload({"weak": 0.9}), ""),
+    )
+    command = _choice_command()
+    command["decision_analyses"][0]["analyses"]["pick_best"].pop(
+        "target_option"
+    )
+    ranker = decision_policy.DecisionRanker(
+        command,
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    assert ranker.rank("pick_best", [{"label": "a", "content": "x"}]) is None
+
+
+def test_rank_scores_candidates_concurrently(monkeypatch):
+    barrier = threading.Barrier(2, timeout=5)
+
+    def fake_run(*args, **kwargs):
+        barrier.wait()
+        return _score_payload({"0": 0.2, "1": 0.8}), ""
+
+    monkeypatch.setattr(decision_policy, "run_decision_tool", fake_run)
+    ranker = decision_policy.DecisionRanker(
+        _command(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    result = ranker.rank(
+        "plan_quality",
+        [
+            {"label": "a", "content": "a"},
+            {"label": "b", "content": "b"},
+        ],
+    )
+
+    assert result is not None
+    assert len(result["ranked"]) == 2
+
+
+def test_rank_evidence_uses_the_reserved_key(monkeypatch):
+    def fake_run(*args, **kwargs):
+        state = args[9]["state"]
+        if "strong" in state:
+            return _score_payload({"0": 0.05, "1": 0.15, "2": 0.8}), ""
+        return _score_payload({"0": 0.6, "1": 0.3, "2": 0.1}), ""
+
+    monkeypatch.setattr(decision_policy, "run_decision_tool", fake_run)
+    ranker = decision_policy.DecisionRanker(
+        _command(analysis="evidence_relevance"),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    order = ranker.rank_evidence(
+        [
+            {"label": "0", "content": "a weak chunk"},
+            {"label": "1", "content": "a strong chunk"},
+        ],
+        "answer the question",
+    )
+
+    assert order == ["1", "0"]
+
+
+def test_rank_evidence_returns_none_without_the_reserved_binding(monkeypatch):
+    monkeypatch.setattr(
+        decision_policy,
+        "run_decision_tool",
+        lambda *args, **kwargs: (_score_payload({"0": 0.2, "1": 0.8}), ""),
+    )
+    ranker = decision_policy.DecisionRanker(
+        _command(analysis="plan_quality"),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    assert ranker.rank_evidence([{"label": "0", "content": "chunk"}]) is None
+
+
+def test_null_ranker_has_no_evidence_order():
+    ranker = decision_policy.NullDecisionRanker()
+
+    assert ranker.rank_evidence([{"label": "0", "content": "chunk"}]) is None

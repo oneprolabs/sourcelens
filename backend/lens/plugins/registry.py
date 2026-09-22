@@ -16,7 +16,7 @@ CONNECTION_WRITE_TARGET_PATTERN = re.compile(
     r"allowed_scope\.[a-z][a-z0-9_-]{0,63})$"
 )
 SUPPORTED_PROTOCOL_VERSION = 1
-SUPPORTED_CAPABILITY_FAMILIES = frozenset({"plugin"})
+SUPPORTED_CAPABILITY_FAMILIES = frozenset({"plugin", "decision"})
 PLUGIN_TYPES = frozenset({"integration", "decision"})
 DECISION_MODES = frozenset({"control", "analysis"})
 DECISION_KINDS = frozenset({"noul", "choice", "score"})
@@ -392,7 +392,7 @@ def _validate_decisions(value, tools):
             decision["applies_to"] = list(applies_to)
         else:
             rubric = item.get("rubric")
-            if kind == "score":
+            if kind in {"score", "choice"}:
                 if (
                     not isinstance(rubric, list)
                     or not DECISION_RUBRIC_MIN
@@ -408,14 +408,20 @@ def _validate_decisions(value, tools):
                     )
                 decision["rubric"] = list(rubric)
             target_option = item.get("target_option")
-            if target_option is not None:
-                if kind != "choice" or not isinstance(
-                    target_option, str
-                ) or not target_option:
+            if kind == "choice":
+                if (
+                    not isinstance(target_option, str)
+                    or not target_option
+                    or target_option not in decision.get("rubric", [])
+                ):
                     raise PluginRegistryError(
                         "plugin analysis target is invalid"
                     )
                 decision["target_option"] = target_option
+            elif target_option is not None:
+                raise PluginRegistryError(
+                    "plugin analysis target is invalid"
+                )
             summary = item.get("summary")
             if summary is not None:
                 decision["summary"] = _bounded_manifest_text(

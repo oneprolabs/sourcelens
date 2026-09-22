@@ -691,6 +691,7 @@ test('Decision bindings carry gates and analyses through the form', async () => 
     drawer,
     /function toggleDecisionAnalysis\(connection, analysisKey, checked\)/
   )
-  assert.match(drawer, /decision\.mode === 'analysis' && decision\.kind === 'score'/)
+  assert.match(drawer, /decision\.mode === 'analysis'/)
+  assert.match(drawer, /decision\.kind === 'choice' && decision\.target_option/)
   assert.match(drawer, /function gateIsActive\(connection, gateKey\)/)
 })

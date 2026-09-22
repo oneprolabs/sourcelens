@@ -174,6 +174,7 @@ class DecisionRunner:
         plugin_http_pool=None,
         emit_event=None,
         run_uuid="",
+        attempt=1,
     ):
         self._command = command or {}
         self._config = config
@@ -181,6 +182,7 @@ class DecisionRunner:
         self._plugin_http_pool = plugin_http_pool
         self._emit = emit_event
         self._run_uuid = str(run_uuid or "")
+        self._attempt = max(int(attempt or 1), 1)
         self._bindings = gate_bindings(self._command)
         self._used = 0
         self._sequence = {}
@@ -302,6 +304,8 @@ class DecisionRunner:
         ):
             return None, "not_bound"
         binding = self._bindings.get(gate) or {}
+        if binding.get("declared") is False:
+            return None, "not_declared"
         if not binding or not binding.get("tool_key"):
             return None, "unknown_gate"
         if self._used >= GATE_RUN_BUDGET:
@@ -381,6 +385,11 @@ class DecisionRunner:
     def _next_call_id(self, gate):
         sequence = self._sequence.get(gate, 0) + 1
         self._sequence[gate] = sequence
+        if self._attempt > 1:
+            # Scope ids per attempt: a resume that re-evaluates a gate the
+            # previous attempt already recorded must not reuse its call id
+            # (same id + different arguments is a TOOL_CALL_CONFLICT).
+            return f"gate:{gate}:{self._attempt}:{sequence}"
         return f"gate:{gate}:{sequence}"
 
 
@@ -391,13 +400,20 @@ def _gate_arguments(gate, question, history, tools, max_state_chars):
     instructions = spec.get("instructions")
     if not instructions:
         return None
+    limit = (
+        max_state_chars
+        if type(max_state_chars) is int and max_state_chars > 0
+        else DEFAULT_MAX_STATE_CHARS
+    )
     state = _state_text(question, history, max_state_chars)
     if not state:
         return None
     if gate == "evidence_requirement":
         names = _tool_names(tools)
         if names:
-            state = f"{state}\n\nAvailable tools: {names}"
+            suffix = f"\n\nAvailable tools: {names}"
+            state = state[: max(limit - len(suffix), 0)] + suffix
+    state = state[:limit]
     if spec.get("kind") == "choice":
         criteria = spec.get("criteria")
         if not isinstance(criteria, dict) or not criteria:

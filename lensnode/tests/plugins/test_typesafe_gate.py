@@ -28,7 +28,7 @@ def _command(**config):
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     "search_needed": {
@@ -69,7 +69,7 @@ def test_gate_executes_through_the_real_plugin_pipeline():
                 json={
                     "run_uuid": RUN_UUID,
                     "plugin_key": "typesafe",
-                    "plugin_version": "1.3.0",
+                    "plugin_version": "1.4.0",
                     "tool_key": "typesafe_noul",
                     "invocation_id": CALL_ID,
                     "resolved_config": {
@@ -179,7 +179,7 @@ def test_gate_without_a_declared_post_path_falls_back():
                 json={
                     "run_uuid": RUN_UUID,
                     "plugin_key": "typesafe",
-                    "plugin_version": "1.3.0",
+                    "plugin_version": "1.4.0",
                     "tool_key": "typesafe_noul",
                     "invocation_id": CALL_ID,
                     "resolved_config": {
@@ -259,7 +259,7 @@ def _rank_command():
         "decision_analyses": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "analyses": {
                     "plan_quality": {
@@ -306,7 +306,7 @@ def test_rank_executes_through_the_real_plugin_pipeline():
                 json={
                     "run_uuid": RUN_UUID,
                     "plugin_key": "typesafe",
-                    "plugin_version": "1.3.0",
+                    "plugin_version": "1.4.0",
                     "tool_key": "typesafe_score",
                     "invocation_id": call_id,
                     "resolved_config": {
@@ -399,20 +399,21 @@ def test_rank_executes_through_the_real_plugin_pipeline():
     assert result["ranked"][0]["score"] == 1.75
     assert result["failed"] == []
     assert sorted(provider_states) == ["a strong plan", "a weak plan"]
-    assert [body["call_id"] for body in snapshot_bodies] == [
+    assert sorted(body["call_id"] for body in snapshot_bodies) == [
         "rank:plan_quality:0",
         "rank:plan_quality:1",
     ]
     assert {body["source"] for body in snapshot_bodies} == {"decision_rank"}
-    assert [name for name, _ in events] == [
-        "tool.plugin.start",
+    # Candidates are scored concurrently, so the event pairs may interleave.
+    assert sorted(name for name, _ in events) == [
+        "tool.plugin.done",
         "tool.plugin.done",
         "tool.plugin.start",
-        "tool.plugin.done",
+        "tool.plugin.start",
     ]
     assert {payload["source"] for _, payload in events} == {"decision_rank"}
-    assert [
+    assert sorted(
         payload["invocation_id"]
         for name, payload in events
         if name == "tool.plugin.start"
-    ] == ["rank:plan_quality:0", "rank:plan_quality:1"]
+    ) == ["rank:plan_quality:0", "rank:plan_quality:1"]

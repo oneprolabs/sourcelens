@@ -1,6 +1,8 @@
 """Uniform decision seams for one Run: control flow and ranking."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from langchain.tools import tool
 from pydantic import BaseModel, Field
@@ -23,6 +25,12 @@ RANK_SOURCE = "decision_rank"
 RANK_MAX_CANDIDATES = 8
 RANK_TIMEOUT_S = 3.0
 RANK_RUN_BUDGET = 2
+
+# Host-reserved analysis key used for the retrieval evidence rerank seam.
+# It shares the ranker's candidate cap and per-Run budget with the model
+# facing ``decision_rank`` tool, so a Run can rerank at most ``RANK_RUN_BUDGET``
+# search windows.
+EVIDENCE_RERANK_KEY = "evidence_relevance"
 
 
 class ControlDecisionPolicy:
@@ -164,6 +172,7 @@ def build_decision_policy(
     emit_event=None,
     run_uuid="",
     inner=None,
+    attempt=1,
 ):
     """Assemble the control-decision seam for one Run.
 
@@ -182,6 +191,7 @@ def build_decision_policy(
         plugin_http_pool=plugin_http_pool,
         emit_event=emit_event,
         run_uuid=run_uuid,
+        attempt=attempt,
     )
     return GateDecisionPolicy(policy, runner, gates)
 
@@ -267,6 +277,11 @@ class NullDecisionRanker:
 
         return None
 
+    def rank_evidence(self, candidates, instructions=""):
+        """Return None so the retrieval seam keeps its own ordering."""
+
+        return None
+
     def as_tools(self):
         """Expose no model tool."""
 
@@ -284,6 +299,7 @@ class DecisionRanker:
         plugin_http_pool=None,
         emit_event=None,
         run_uuid="",
+        attempt=1,
     ):
         self._command = command or {}
         self._config = config
@@ -291,9 +307,11 @@ class DecisionRanker:
         self._plugin_http_pool = plugin_http_pool
         self._emit = emit_event
         self._run_uuid = str(run_uuid or "")
+        self._attempt = max(int(attempt or 1), 1)
         self._bindings = analysis_bindings(self._command)
         self._used = 0
         self._cache = {}
+        self._cache_lock = threading.Lock()
 
     def rank(self, decision, candidates, instructions=""):
         """Return one deterministic ranking, or None when unavailable."""
@@ -301,7 +319,11 @@ class DecisionRanker:
         binding = self._bindings.get(decision)
         if not binding or not binding.get("tool_key"):
             return None
-        if binding.get("kind") != "score":
+        kind = binding.get("kind")
+        if kind == "choice":
+            if not binding.get("target_option"):
+                return None
+        elif kind != "score":
             return None
         if self._used >= RANK_RUN_BUDGET:
             return None
@@ -309,23 +331,23 @@ class DecisionRanker:
         if not bounded:
             return None
         self._used += 1
+        scored = self._score_candidates(
+            decision,
+            binding,
+            bounded,
+            instructions,
+        )
         entries = []
         failed = []
         for index, candidate in enumerate(bounded):
-            result, reason = self._score(
-                decision,
-                binding,
-                candidate,
-                instructions,
-                index,
-            )
+            result, reason = scored[index]
             if result is None:
                 failed.append({"label": candidate["label"], "reason": reason})
                 continue
             entries.append((index, candidate["label"], result))
         if not entries:
             return None
-        ranked = aggregate_ranked(entries)
+        ranked = aggregate_ranked(entries, binding.get("target_option"))
         return {
             "ok": True,
             "decision": decision,
@@ -342,12 +364,56 @@ class DecisionRanker:
             "usage": _merged_usage(ranked),
         }
 
+    def rank_evidence(self, candidates, instructions=""):
+        """Return the evidence-rerank order for one retrieval window.
+
+        Uses the host-reserved ``evidence_relevance`` analysis and returns the
+        ordered candidate labels, or None so the caller keeps its own order.
+        Shares the candidate cap and per-Run budget with ``rank``.
+        """
+
+        result = self.rank(EVIDENCE_RERANK_KEY, candidates, instructions)
+        if result is None:
+            return None
+        return [item["label"] for item in result.get("ranked") or []]
+
     def as_tools(self):
         """Return the model-facing decision_rank Tool when configured."""
 
         if not self._bindings:
             return []
         return [build_decision_rank_tool(self)]
+
+    def _score_candidates(self, decision, binding, bounded, instructions):
+        """Score every candidate in parallel, preserving input order.
+
+        One candidate is one bounded external call, so scoring a full window
+        concurrently keeps the rerank within a single timeout budget instead
+        of paying the per-candidate timeout sequentially.  The returned list
+        is aligned with ``bounded`` by index, so aggregation stays
+        deterministic.
+        """
+
+        scored = [(None, "error")] * len(bounded)
+        workers = min(len(bounded), RANK_MAX_CANDIDATES)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    self._score,
+                    decision,
+                    binding,
+                    candidate,
+                    instructions,
+                    index,
+                ): index
+                for index, candidate in enumerate(bounded)
+            }
+            for future, index in futures.items():
+                try:
+                    scored[index] = future.result()
+                except Exception:
+                    scored[index] = (None, "error")
+        return scored
 
     def _score(self, decision, binding, candidate, instructions, index):
         tool_key = str(binding.get("tool_key") or "")
@@ -357,7 +423,8 @@ class DecisionRanker:
         if not plugin_key or not plugin_version or not connection_uuid:
             return None, "unavailable"
         cache_key = (plugin_key, tool_key, candidate["content"], instructions)
-        cached = self._cache.get(cache_key)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
         if cached is not None:
             return cached, ""
         try:
@@ -381,7 +448,9 @@ class DecisionRanker:
             plugin_version,
             tool_key,
             arguments,
-            f"rank:{decision}:{index}",
+            f"rank:{decision}:{index}"
+            if self._attempt <= 1
+            else f"rank:{decision}:{self._attempt}:{index}",
             RANK_SOURCE,
             self._tagged_emit,
             RANK_TIMEOUT_S,
@@ -400,7 +469,8 @@ class DecisionRanker:
         )
         if result is None:
             return None, "invalid_response"
-        self._cache[cache_key] = result
+        with self._cache_lock:
+            self._cache[cache_key] = result
         return result, ""
 
     def _tagged_emit(self, event, payload):
@@ -417,6 +487,7 @@ def build_decision_ranker(
     plugin_http_pool=None,
     emit_event=None,
     run_uuid="",
+    attempt=1,
 ):
     """Assemble the ranking seam, or a Null ranker when unconfigured."""
 
@@ -429,6 +500,7 @@ def build_decision_ranker(
         plugin_http_pool=plugin_http_pool,
         emit_event=emit_event,
         run_uuid=run_uuid,
+        attempt=attempt,
     )
 
 
@@ -463,10 +535,15 @@ def _score_arguments(binding, content, instructions):
             "Score the candidate against this ordered rubric: "
             + ", ".join(rubric)
         )
+    criteria = (
+        json.dumps({option: None for option in rubric}, ensure_ascii=False)
+        if binding.get("kind") == "choice"
+        else json.dumps(rubric, ensure_ascii=False)
+    )
     return {
         "state": content[:100000],
         "instructions": question[:2000],
-        "criteria": json.dumps(rubric, ensure_ascii=False),
+        "criteria": criteria,
     }
 
 

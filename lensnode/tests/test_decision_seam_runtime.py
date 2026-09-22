@@ -30,7 +30,7 @@ def _gates(tool_key="typesafe_noul", **config):
     return [
         {
             "plugin_key": "typesafe",
-            "plugin_version": "1.3.0",
+            "plugin_version": "1.4.0",
             "connection_uuid": "connection-1",
             "gates": {
                 "search_needed": {
@@ -50,7 +50,7 @@ def _analyses(analysis="plan_quality", **config):
     return [
         {
             "plugin_key": "typesafe",
-            "plugin_version": "1.3.0",
+            "plugin_version": "1.4.0",
             "connection_uuid": "connection-1",
             "analyses": {
                 analysis: {
@@ -64,7 +64,14 @@ def _analyses(analysis="plan_quality", **config):
     ]
 
 
-def _run_answer(monkeypatch, tmp_path, *, gates=None, analyses=None):
+def _run_answer(
+    monkeypatch,
+    tmp_path,
+    *,
+    gates=None,
+    analyses=None,
+    routing_mode=None,
+):
     """Run one knowledge_qa answer through the real prepare and seam."""
 
     invocations = []
@@ -163,6 +170,8 @@ def _run_answer(monkeypatch, tmp_path, *, gates=None, analyses=None):
         command["decision_gates"] = gates
     if analyses is not None:
         command["decision_analyses"] = analyses
+    if routing_mode is not None:
+        command["routing_mode"] = routing_mode
 
     def collect(_message, detail):
         events.append((detail.get("agent_event"), detail))
@@ -305,7 +314,7 @@ def _post_run_command():
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.3.0",
+                "plugin_version": "1.4.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     "evidence_sufficient": {
@@ -378,3 +387,47 @@ def test_post_run_decision_gates_are_empty_without_a_policy():
     state = _post_run_state(None)
 
     assert agent_runtime._post_run_decision_gates(state, "answer") == {}
+
+
+def test_smart_collaboration_still_exposes_the_decision_rank_tool(
+    monkeypatch,
+    tmp_path,
+):
+    """The coordinator is model-driven, so rank must reach it as a tool."""
+
+    run = _run_answer(
+        monkeypatch,
+        tmp_path,
+        analyses=_analyses(),
+        routing_mode="smart",
+    )
+
+    assert run.state.command["routing_mode"] == "smart"
+    assert agent_runtime.LensDeepAgentRuntime._is_smart_collaboration(
+        run.state.command
+    )
+    assert "decision_rank" in run.tool_names
+
+
+def test_decision_call_ids_are_scoped_per_attempt():
+    """A resumed attempt must not reuse the previous attempt's call id."""
+
+    command = {"run_uuid": RUN_UUID, "decision_gates": _gates()}
+    first = decision_gates.DecisionRunner(
+        command,
+        SimpleNamespace(),
+        SimpleNamespace(),
+        attempt=1,
+    )
+    resumed = decision_gates.DecisionRunner(
+        command,
+        SimpleNamespace(),
+        SimpleNamespace(),
+        attempt=2,
+    )
+
+    assert first._next_call_id("search_needed") == "gate:search_needed:1"
+    assert (
+        resumed._next_call_id("search_needed")
+        == "gate:search_needed:2:1"
+    )

@@ -753,7 +753,7 @@ class DecisionGateBindingTests(TestCase):
             tool["exposure"] = tool_exposure
         manifest = {
             "key": "typesafe",
-            "version": "1.3.0",
+            "version": "1.4.0",
             "protocol_version": 1,
             "plugin_type": "decision",
             "handlers": {
@@ -858,7 +858,7 @@ class DecisionGateBindingTests(TestCase):
 
         self.assertEqual(len(gates), 1)
         self.assertEqual(gates[0]["plugin_key"], "typesafe")
-        self.assertEqual(gates[0]["plugin_version"], "1.3.0")
+        self.assertEqual(gates[0]["plugin_version"], "1.4.0")
         self.assertEqual(
             gates[0]["connection_uuid"],
             str(self.connection.uuid),
@@ -1019,7 +1019,7 @@ class DecisionGateBindingTests(TestCase):
     def test_rejects_gates_for_an_integration_plugin(self):
         manifest = {
             "key": "typesafe",
-            "version": "1.3.0",
+            "version": "1.4.0",
             "protocol_version": 1,
             "handlers": {
                 "runtime": "python_v1",
@@ -1075,7 +1075,7 @@ class DecisionGateBindingTests(TestCase):
             ["weak", "acceptable", "strong"],
         )
         self.assertEqual(len(analyses), 1)
-        self.assertEqual(analyses[0]["plugin_version"], "1.3.0")
+        self.assertEqual(analyses[0]["plugin_version"], "1.4.0")
         self.assertEqual(
             analyses[0]["analyses"]["plan_quality"]["kind"],
             "score",
@@ -1162,3 +1162,37 @@ class DecisionGateBindingTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 400, response.data)
+
+    def test_choice_analysis_binding_is_frozen_with_its_target(self):
+        decisions = [
+            {
+                "key": "plan_quality",
+                "mode": "analysis",
+                "kind": "choice",
+                "rubric": ["weak", "strong"],
+                "target_option": "strong",
+                "tool_keys": ["typesafe_noul"],
+            }
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            response = self._create(
+                "decision-choice-analysis",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_analyses": {"plan_quality": {}},
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(
+                slug="decision-choice-analysis"
+            )
+            loaded = build_loaded_plugins(assistant)
+
+        frozen = loaded[0]["decision_analyses"]["plan_quality"]
+        self.assertEqual(frozen["tool_key"], "typesafe_noul")
+        self.assertEqual(frozen["kind"], "choice")
+        self.assertEqual(frozen["target_option"], "strong")
+        self.assertEqual(frozen["rubric"], ["weak", "strong"])

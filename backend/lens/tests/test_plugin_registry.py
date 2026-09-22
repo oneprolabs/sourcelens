@@ -780,3 +780,78 @@ class PluginRegistryTests(TestCase):
                     "topic tools",
                 ):
                     discover_plugins()
+
+    def test_accepts_a_choice_analysis_with_a_target_option(self):
+        manifest = self._decision_manifest(
+            tools=[
+                {
+                    "key": "github_decide",
+                    "description": "Return one bounded choice.",
+                    "capability": "decision.evaluate",
+                    "capability_family": "decision",
+                    "side_effect": "none",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"state": {"type": "string"}},
+                        "required": ["state"],
+                    },
+                }
+            ],
+            decisions=[
+                {
+                    "key": "plan_quality",
+                    "mode": "analysis",
+                    "kind": "choice",
+                    "rubric": ["weak", "acceptable", "strong"],
+                    "target_option": "strong",
+                    "tool_keys": ["github_decide"],
+                }
+            ],
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.tools[0].capability_family, "decision")
+        decision = plugin.decisions[0]
+        self.assertEqual(decision["kind"], "choice")
+        self.assertEqual(decision["target_option"], "strong")
+        self.assertEqual(
+            decision["rubric"],
+            ["weak", "acceptable", "strong"],
+        )
+
+    def test_rejects_a_choice_analysis_target_outside_the_rubric(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "plan_quality",
+                    "mode": "analysis",
+                    "kind": "choice",
+                    "rubric": ["weak", "strong"],
+                    "target_option": "excellent",
+                    "tool_keys": ["github_decide"],
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "analysis target",
+                ):
+                    discover_plugins()
+
+    def test_rejects_an_unknown_tool_capability_family(self):
+        manifest = self._decision_manifest()
+        manifest["tools"][0]["capability_family"] = "orchestrator"
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "capability family",
+                ):
+                    discover_plugins()

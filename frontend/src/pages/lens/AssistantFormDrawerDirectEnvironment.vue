@@ -2113,7 +2113,10 @@ function analysisDecisionsFor(connection) {
   const decisions = props.pluginManifests?.[connection.plugin_key]?.decisions
   if (!Array.isArray(decisions)) return []
   return decisions.filter(
-    (decision) => decision.mode === 'analysis' && decision.kind === 'score'
+    (decision) =>
+      decision.mode === 'analysis' &&
+      (decision.kind === 'score' ||
+        (decision.kind === 'choice' && decision.target_option))
   )
 }
 

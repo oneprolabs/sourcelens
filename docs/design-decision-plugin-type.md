@@ -1,7 +1,7 @@
 # 设计稿：Decision Plugin（TypeSafe AI / Jev）——统一决策 seam
 
-- 状态：**P1 已实施**（2026-09-22；lensnode 993 测试全绿，backend 新增
-  校验/绑定测试全绿；见文末「P1 实施记录」）
+- 状态：**P1 → P3 已实施**（2026-09-22；lensnode 1040 测试全绿；backend/前端
+  对应测试全绿；见文末「实施记录（P1 → P3）」）
 - 日期：2026-09-22
 - 评审记录（第 1 轮自查）：见 §12 风险与 §14 待确认补充项；曾误判装配时序
   需提前，经核实 `_prepare_model_and_tools` 早于 gate 调用点，结论为**无需
@@ -97,10 +97,12 @@ judgment only"）。运行时真正由辅助模型做的判定只有 **2 处**
 
 | 决策点 | 位置 | 当前实现 | 归属 |
 |---|---|---|---|
-| 检索门 `needs_retrieval` | `routing.py:139` | 辅助模型 | **P1** `search_needed` |
-| 路由 / 证据需求分类 | `routing.py:442` | 辅助模型 | **P3** 校正 `evidence_requirement`（evidence correction policy） |
-| 证据充分性 | 主循环后置（新增点） | 主模型 ReAct 自行决定 | **P3** `evidence_sufficient`（软 gate） |
-| 方案比较 / 择优 | 新增 | 无 | **P2** `rank` / `decision_rank` |
+| 检索门 `needs_retrieval` | `routing.py:139` | 辅助模型 | **P1 已实施** `search_needed` |
+| 路由 / 证据需求分类 | `routing.py:442` | 辅助模型 | **P3 已实施** 校正 `evidence_requirement`（校正式） |
+| 证据充分性 | 主循环后置（`_execute_agent` 收尾） | 主模型 ReAct 自行决定 | **P3 已实施** `evidence_sufficient`（**观测-only**） |
+| 答案是否有据 | 主循环后置（同上） | 主模型 ReAct 自行决定 | **P3 已实施** `answer_supported`（**观测-only**） |
+| 检索证据重排 | `workspace.py search_workspace`（`_apply_rerank`） | 确定性 `_rank_matches` | **P4 已实施** `evidence_relevance`（host 编排，order-only） |
+| 方案比较 / 择优 | 新增 | 无 | **P2 已实施** `rank` / `decision_rank` |
 
 **B. 不接入（确定性，概率化即回归）**
 
@@ -111,7 +113,7 @@ judgment only"）。运行时真正由辅助模型做的判定只有 **2 处**
 | `routing.py:615 _normalize_route_evidence_capabilities` | 规则修复 | 结构修复，非语义判断 |
 | `outcomes.py _evidence_termination_detail` / `_unverified_execution_answer` | 统计判定 | 需可审计、可复现 |
 | `planned_evidence.py:731 build_evidence_bundle` | 去重/排序/截断 | 确定性排序；P2 仅可选增强且失败回退 |
-| `workspace.py:684 _rank_matches` | 检索排序 | 确定性、延迟敏感 |
+| `workspace.py:684 _rank_matches` | 检索排序 | 本身仍确定性；其上叠加 **P4** evidence rerank seam（见 §A），失败回退原序 |
 | `capabilities.py` 恢复/预算 | 授权与安全 | 安全边界，不能概率化 |
 | `runtime.py:157 _report_scoped_tools` | 工具裁剪 | 授权边界 |
 
@@ -403,7 +405,7 @@ bound connection** 的 manifest `decisions[].tool_keys`，只能是该绑定插�
 的 `TOOL_CALL_CONFLICT`（`tool_snapshots.py:214`）。同 `seq` 重试仍幂等
 （返回原 snapshot），新 `seq` 才是新评估。
 
-#### 6.2.1 `evidence_requirement` 校正语义（evidence correction policy，P3 生效）
+#### 6.2.1 `evidence_requirement` 校正语义（evidence correction policy，P3 已生效）
 
 > **命名与边界（第 3 轮评审纠正）**：本 gate 是 **evidence correction
 > policy**——它修正的是 route 决策里的 **`evidence_requirement` 字段**，
@@ -499,11 +501,26 @@ inner（§12 风险）。各 gate 输入显式定义：
 | `search_needed` | noul | `model` | 回退内层 `_message_needs_retrieval`（`:123-152` 保守语义） |
 | `evidence_requirement` | noul | `model` | 保留 inner route 原值，不校正 |
 | `evidence_sufficient` | noul | `fixed` | 取 `True`（不阻塞主循环） |
-| `answer_supported` | choice | `fixed` | 取 pass（不阻断） |
+| `answer_supported` | choice | `fixed` | 取 `pass_option`（`"supported"`，不阻断） |
 
 > `evidence_sufficient` / `answer_supported` 没有对应的现有 LLM 判定，
 > 不存在可回退的 inner 方法，故只能用固定默认值——装饰器必须支持
 > `fallback="model"` 与 `fallback="fixed"` 两种形态，不能一律假设 inner 存在。
+> 固定默认值由宿主 registry 声明（`DecisionRunner.default_verdict`），
+> 不在绑定配置里（管理员无从决定 fail-safe 方向）。
+
+**P3 已实施：两个后置 gate 是"观测-only"（§14-1 旁的决定）**。它们在
+`_execute_agent` 收尾处评估一次（`ControlDecisionPolicy.post_run_checks`），
+verdict 写入 `termination_detail["decision_gates"]` 并 emit `gate.start/done`，
+**不改变任何控制流**（不做额外检索轮、不阻断作答）——即"不硬控"的字面实现。
+先积累"本该拦住多少次"的数据，再决定是否升级为硬控。要点：
+
+- 只评估**该绑定已声明**的 gate；未绑定的 gate 不调用、不发事件、零流量
+  （避免每个 Run 都产生 `not_bound` 噪音）。
+- `evidence_sufficient`（noul）取 `value >= threshold`；`answer_supported`
+  （choice）取概率 argmax 选项。低置信/超时/错误 → 上表固定默认值。
+- 未配置任何 gate 时 `ModelDecisionPolicy.post_run_checks` 返回 `{}` →
+  `termination_detail` 不变、零事件（零配置零影响）。
 
 ### 6.4 resume 一致性
 
@@ -512,10 +529,21 @@ inner（§12 风险）。各 gate 输入显式定义：
 `route_decision` 随 `save_resume_metadata`（`checkpoint.py:202`）持久化**，
 恢复时一致。检索门受 `resume_state` 守卫跳过（`runtime.py:449`），与现状一致。
 
-**缺口在 P3 新增 gate**：`evidence_sufficient` / `answer_supported` 的结论
-不属 `route_decision`，不持久化就会在恢复时重跑（重复外部调用、结果可能不同）。
-→ 这两个 gate 的结果必须显式并入 `save_resume_metadata`（新增
-`decision_gates` JSON 列或并入现有 metadata 结构），恢复时回放不重跑。
+**P3 已实施（`decision_gates` 列）**：`evidence_sufficient` /
+`answer_supported` 的结论不属 `route_decision`，故 `lensnode_run_metadata`
+新增 `decision_gates TEXT NOT NULL DEFAULT '{}'` 列（CREATE TABLE +
+ALTER-if-missing），由独立的 `save_decision_gates(run_uuid, workspace_path,
+verdicts)` 写入（单独 UPDATE 单列，**不覆盖** `route_decision`），
+`load_resume_state` 读入 `ResumeState.decision_gates`。
+`runtime._post_run_decision_gates`：存量 verdicts 存在则**回放**（不重跑、
+不发事件），否则评估一次并持久化。
+
+**由此，预算与 `call_id` 序号的"每作答 vs 每 Run"问题消解**：pre-loop 两个
+gate 受 `resume_state` 守卫跳过，post-run 两个 gate 在恢复时回放 →
+同一 Run 内 gate 评估至多一次，seq 必为 `1`。唯一残留窗口：上一轮已完成
+post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以同 seq
+不同 args 重试 → `TOOL_CALL_CONFLICT`（409）→ fail-safe 固定默认值
+（不崩、不阻断）。已记入 §15「已知遗留」。
 
 ### 6.5 事件与可观测
 
@@ -532,6 +560,9 @@ inner（§12 风险）。各 gate 输入显式定义：
   两者的分界是"gates 是否非空"，不是"该 key 是否命中"。
 - 聚合面：按 `fallback_reason` 分维度出 fallback 率指标（§12「静默回退」
   风险的缓解）；`PluginInvocation` 审计带 `source`，可与模型工具调用区分。
+- **后置 gate（P3）**：同样发一对事件；其**消费面**是
+  `termination_detail["decision_gates"]`（观测-only，不参与控制流）。
+  `source` 一律 `decision_gate`；rank 侧为 `decision_rank`。
 
 ---
 
@@ -584,7 +615,11 @@ inner（§12 风险）。各 gate 输入显式定义：
 - Smart Collaboration（`runtime.py:1048`）：`state.decision_ranker.rank(...)`，
   返回 `None` 时保持协调器原选择（与模型工具 `decision_rank` 共用同一
   ranker 实例）。
-- 证据重排：增强 `planned_evidence.py`，失败回退原排序。
+- 证据重排（**P4 已实施**）：`search_workspace` 在 `_rank_matches` 之后、
+  `matches[:max_results]` 截断之前，经 `_apply_rerank` 调用
+  `state.decision_ranker.rank_evidence(...)`（host 预留 key
+  `evidence_relevance`）。order-only、重排窗口 = top-8、与模型工具
+  `decision_rank` 共用每 Run 2 次预算，失败/未绑定回退确定性原序。
 
 ---
 
@@ -592,7 +627,7 @@ inner（§12 风险）。各 gate 输入显式定义：
 
 ```json
 {
-  "key": "typesafe", "version": "1.1.0", "protocol_version": 1,
+  "key": "typesafe", "version": "1.4.0", "protocol_version": 1,
   "capability_family": "plugin", "plugin_type": "decision",
   "decisions": [
     {"key": "search_needed", "mode": "control", "kind": "noul",
@@ -601,12 +636,24 @@ inner（§12 风险）。各 gate 输入显式定义：
     {"key": "evidence_requirement", "mode": "control", "kind": "noul",
      "applies_to": ["general_chat"],
      "tool_keys": ["typesafe_noul"]},
+    {"key": "evidence_sufficient", "mode": "control", "kind": "noul",
+     "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
+     "tool_keys": ["typesafe_noul"]},
+    {"key": "answer_supported", "mode": "control", "kind": "choice",
+     "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
+     "tool_keys": ["typesafe_choice"]},
     {"key": "plan_quality", "mode": "analysis", "kind": "score",
      "rubric": ["weak", "acceptable", "strong"],
+     "tool_keys": ["typesafe_score"]},
+    {"key": "evidence_relevance", "mode": "analysis", "kind": "score",
+     "rubric": ["irrelevant", "related", "helpful", "direct_answer"],
      "tool_keys": ["typesafe_score"]}
   ]
 }
 ```
+
+> 上例即当前 `plugins/typesafe/plugin.json`（1.4.0；三个原语均为
+> `exposure: "internal"`，无 `assistant_guidance`）。
 
 - `plugin_type` 可选、缺省 `integration`；`decision` 时才允许 `decisions`。
 - 校验：key 唯一、`mode ∈ {control, analysis}`、`kind` 合法、analysis 必须有
@@ -666,7 +713,8 @@ inner（§12 风险）。各 gate 输入显式定义：
 | Runtime 契约 | `lensnode/lensnode/plugin_package_loader.py` | `execute_tool` 必需；`build_tool` / `http_origins` / `http_post_paths` / `project_decision` 可选 |
 | 装配 | `runtime.py`（`_prepare_model_and_tools`，早于 `_maybe_answer_without_retrieval` / `_route_runtime`） | `build_decision_policy`（**唯一分支点**）；`:1048` 的 ranker 归 P2 |
 | 调用点 | `runtime.py` `_maybe_answer_without_retrieval` / `_route_runtime`（`:1048` P2 ranker） | 无条件 `policy.xxx(...)` / `ranker.rank(...)`，无 if |
-| Resume | `lensnode/lensnode/checkpoint.py:202` | P3 gate 结果并入 `save_resume_metadata` |
+| Resume | `lensnode/lensnode/checkpoint.py` | `decision_gates` 列 + `save_decision_gates` + `ResumeState.decision_gates`（P3 已实施，见 §6.4） |
+| 后置 gate | `decision_policy.post_run_checks` + `runtime._post_run_decision_gates`（`_execute_agent` 收尾） | `evidence_sufficient` / `answer_supported` 观测-only，verdict 入 `termination_detail["decision_gates"]` |
 | 指标 | `backend/lens/plugins/tool_snapshots.py` `resolved_config.source` | gate/rank 快照与模型工具调用按 `source` 区分；凡按 snapshot 计数的展示/诊断不得混计（`PluginInvocation.source` 列 P2 再加） |
 | 工具元数据 | `lensnode/lensnode/plugin_tools.py` | metadata 加 `plugin_type`；跳过 `exposure=internal`；`build_tool` 缺失时按需报错 |
 | 前端 | Assistant 绑定页 + 连接管理 + `admin/locales/*` | P1.5：连接管理按**类别**显示 Decision（不再派生 Tool）；绑定页按 manifest `decisions` 渲染 gate 启用/阈值/容差，写入 `plugin_bindings[].decision_gates`；`internal` 工具不进任何 UI 列表。analysis(rank) 配置 UI 仍后置 |
@@ -696,10 +744,19 @@ inner（§12 风险）。各 gate 输入显式定义：
    绑定字段 + 迁移 `0064`；绑定 UI 同批（analysis 勾选 + rubric 只读展示）。
    Smart Collaboration 编排点**未接**（§14-3 已定：留作独立后续）。
    详见 §15 P2 记录。
-4. **P3（Control 扩展）**：`evidence_requirement`（evidence correction，
-   §6.2.1 四条契约）、`evidence_sufficient`、`answer_supported`（是否提前
-   见 §14-1）。
-5. **后续（需协议升级）**：decision 端点进协议、正式
+4. **P3（Control 扩展）— 已实施**：`evidence_requirement` 激活（校正契约，
+   §6.2.1；phase 改为**排序**判定：`PHASE_ORDER[phase] > PHASE_ORDER[active]`
+   → `not_bound`，`GATE_ACTIVE_PHASE = "P3"`，四个 gate 全部生效）；
+   `evidence_sufficient` / `answer_supported` 以**观测-only**落地（§6.3）；
+   resume 回放（§6.4）；manifest 升 `1.3.0`（新增两条 control 决策）。
+   详见 §15 P3 记录。
+5. **P4（证据重排）— 已实施**：`DecisionRanker` 增并发打分（≤8 候选并行、
+   保持确定性聚合）与 `rank_evidence`；`search_workspace` 增 `_apply_rerank`
+   缝（`_rank_matches` 之后、截断之前）；`build_agent_tools` 透传
+   `state.decision_ranker`（装配前移到工具构造之前）；manifest 升 `1.4.0`
+   （新增 analysis `evidence_relevance`）。order-only、top-8、与模型工具
+   `decision_rank` 共用每 Run 2 次预算、失败/未绑定回退原序。
+6. **后续（需协议升级）**：decision 端点进协议、正式
    `capability_family: "decision"`。
 
 ---
@@ -738,8 +795,10 @@ inner（§12 风险）。各 gate 输入显式定义：
 | 决策插件读取敏感上下文 | 高 | §6.2.3：只传 `question` + 截断 history（+模式/工具名），不传文档正文与 skills 内容；绑定时向管理员明示外发范围；沿用插件 secret 边界 |
 | `plugin_type` 与 `capability_family` 混淆 | 中 | 文档固定：前者业务分类，后者执行族，互不授权 |
 | gate 长期失败**静默回退**，管理员无感 | 中 | 聚合 fallback 率指标 + 告警；trace 记 `fallback_reason` |
-| gate 与路由分类**并存** → +1 次外部调用/延迟 | 中 | 有界超时；是否改替代式见 §14 |
-| P3 gate 结果未持久化 → resume 重跑/不一致 | 中 | §6.4：并入 `save_resume_metadata` |
+| gate 与路由分类**并存** → +1 次外部调用/延迟 | 中 | 有界超时；§14-2 已定保持校正式 |
+| P3 gate 结果未持久化 → resume 重跑/不一致 | 中 | **已修**：`decision_gates` 列 + 回放（§6.4） |
+| 后置 gate（观测-only）**每个 Run 多两次外部调用** | 中 | 只在**已绑定**该 gate 时才评估（未绑定零流量）；与其它 gate 共用每 Run 预算；verdict 不改控制流，失败即固定默认值 |
+| 观测-only 的 verdict **无人消费** → 纯开销 | 低 | 有意为之：先积累"本该拦住多少次"的数据再决定是否上硬控（§6.3） |
 | `decision_rank` 与 provider 自带单次工具并存混淆模型 | 低 | **已消解**：provider 的 `typesafe_score` 为 `internal`，不进模型工具集 |
 | 与 `_high_confidence_report_route` 短路交互（`:1071 or`） | 低 | 启发式优先、gate 不生效为既定语义；测试锁定顺序 |
 | gate 绕过 `CapabilityBoundaryMiddleware` 预算 | 中 | 每 Run 独立 gate 预算，超预算固定回退不报错 |
@@ -757,6 +816,13 @@ inner（§12 风险）。各 gate 输入显式定义：
 - **Control（P1）**：绑定 `search_needed` 后命中走决策、否则回退，trace 记录
   `fallback_reason`；每次评估产生 `deepagents.decision.gate.*` 事件对，
   未配置时零事件；绑了未激活 key → `not_bound` 回退（零外部调用）且事件可见。
+- **后置 gate（P3，已落地）**：`evidence_sufficient` / `answer_supported`
+  verdict 写入 `termination_detail["decision_gates"]`，未绑定时零事件、不改
+  `termination_detail`；resume 有存量 verdicts 时回放、不重跑。
+  测试：`lensnode/tests/test_decision_gates.py`（`evaluate_choice` /
+  `default_verdict` / `post_run_checks` 观测-only 与固定默认值）、
+  `lensnode/tests/test_decision_seam_runtime.py`（record + replay）、
+  `lensnode/tests/test_checkpoint.py`（`decision_gates` 往返）。
 - **校正契约（P3）**：`evidence_requirement` 提案经
   `_normalize_route_evidence_capabilities` 裁决后，不产生 route/evidence
   非法组合；提案 `none` 而 route 不允许时等效无操作（不变式测试锁定）。
@@ -797,11 +863,12 @@ inner（§12 风险）。各 gate 输入显式定义：
 
 **范围与形态**
 
-1. `evidence_requirement` 按既定节奏放 **P3**，还是因 general_chat 主路径
-   价值提前到 P1/P2？默认已定：**P1 只上 `search_needed`**（风险最低的
-   vertical slice），`evidence_requirement` 含 §6.2.1 不变式交互、风险最高，
-   后置；提前 = 换取主路径收益、承担 B1 级风险。
-2. gate 与路由分类**并存**（+1 次外部调用/延迟）还是**替代**其中的证据判定？
+1. ~~`evidence_requirement` 按既定节奏放 **P3**，还是因 general_chat 主路径
+   价值提前到 P1/P2？~~ **已实施（P3）**：按既定节奏在 P3 激活（`GATE_ACTIVE_PHASE
+   = "P3"`），未提前。两个后置 gate 的动作语义另按 §6.3 定为**观测-only**。
+2. ~~gate 与路由分类**并存**（+1 次外部调用/延迟）还是**替代**其中的证据判定？~~
+   **已定（P3）**：保持**并存/校正式**（inner 先分类，gate 只在高/低置信区间
+   改 `evidence_requirement`）；替代式会改 inner 签名、风险更高。
 3. ~~`decision_rank` 是否同时作为宿主编排点（Smart Collaboration / plan 择优）？~~
    **已定（P2）**：`rank()` 宿主编排 API 已交付并测试，但**不接** Smart
    Collaboration 协调器（改既有协作行为、风险面不同，留作独立后续）。
@@ -856,7 +923,7 @@ inner（§12 风险）。各 gate 输入显式定义：
 
 ---
 
-## 15. P1 实施记录（2026-09-22）
+## 15. 实施记录（P1 → P3，2026-09-22）
 
 ### 已落地
 
@@ -937,15 +1004,16 @@ inner（§12 风险）。各 gate 输入显式定义：
 
 ### 验证状态
 
-- lensnode：`1027 passed` —— 另含 P2 的
-  `tests/test_decision_rank.py`（聚合/边界/缓存/工具/Null）与
-  `tests/plugins/test_typesafe_gate.py::test_rank_executes_through_the_real_plugin_pipeline`；
-  以及 含 `tests/test_decision_gates.py`（seam/runner/
-  契约）、`tests/test_decision_seam_runtime.py`（**装配时序 + 双模式等价 +
-  gate 接受跳过 inner**，真实 `_prepare_runtime`）、
-  `tests/plugins/test_typesafe_gate.py`（**gate 真实 HTTP 链路**：snapshot→
-  lease→material→provider POST→投影；以及未声明 POST path 必回退）、
-  `tests/test_decision_gate_phases.py`（跨包 phase 镜像守护）。
+- lensnode：`1040 passed` ——
+  `tests/test_decision_gates.py`（seam/runner/契约；P3 增 `evaluate_choice` /
+  `default_verdict` / `post_run_checks` 观测-only 与固定默认值）、
+  `tests/test_decision_seam_runtime.py`（**装配时序 + 双模式等价 + gate 接受
+  跳过 inner + post-run record/replay**，真实 `_prepare_runtime`）、
+  `tests/test_decision_rank.py`（聚合/边界/缓存/工具/Null）、
+  `tests/plugins/test_typesafe_gate.py`（**gate 与 rank 的真实 HTTP 链路**：
+  snapshot→lease→material→provider POST→投影；未声明 POST path 必回退）、
+  `tests/test_decision_gate_phases.py`（跨包 phase 镜像守护）、
+  `tests/test_checkpoint.py`（`decision_gates` 往返）。
 - backend：`test_plugin_registry.py`（decision manifest + `exposure`/guidance +
   manifest API 的 `gate_phases`）、
   `test_plugin_bindings.py::DecisionGateBindingTests`（含命令下发、纯 decision
@@ -982,11 +1050,43 @@ inner（§12 风险）。各 gate 输入显式定义：
   无 choice 选项列表字段），P2 收紧为 score-only；已改稿并说明放开条件。
 - **未接**：Smart Collaboration 协调器（§14-3 已定，留作独立后续）。
 
+### P3 实施记录（Control 扩展 / resume）
+
+- **Manifest**：`plugins/typesafe/plugin.json` 升 `1.3.0`，新增两条 control 决策
+  `evidence_sufficient`（noul，`applies_to: [knowledge_qa, code_analysis,
+  general_chat]`，`tool_keys: [typesafe_noul]`）与 `answer_supported`（choice，
+  同 applies_to，`tool_keys: [typesafe_choice]`）；`runtime.py`/`control.py`
+  同步升版。
+- **激活机制**：phase 由"相等判定"改为**排序判定**
+  （`PHASE_ORDER = {"P1": 1, "P3": 3}`，`GATE_PHASE = "P3"`），
+  `search_needed`(P1) 与三个 P3 gate 全部生效；backend 只读镜像
+  `GATE_ACTIVE_PHASE = "P3"`（跨包守护测试覆盖）。
+- **`evidence_requirement` 激活**：契约已就位（§6.2.1 四条 +
+  `_enforce_route_evidence_invariants`），本轮仅放开 phase；保持**校正式**。
+- **后置 gate（观测-only）**：`GATE_REGISTRY` 补 instructions/criteria/
+  `pass_option`；`_gate_arguments` 加 choice 分支（`criteria` JSON）；
+  `DecisionRunner` 重构出 `evaluate_choice` / `default_verdict` /
+  `_gate_result`（`evaluate` 行为不变）；`ControlDecisionPolicy.post_run_checks`
+  默认 `{}`、`GateDecisionPolicy.post_run_checks` 只评估已绑定 gate；
+  `runtime._post_run_decision_gates` 回放/评估 + 持久化，verdict 入
+  `termination_detail["decision_gates"]`。**不改控制流**。
+- **Resume**：`lensnode_run_metadata.decision_gates` 列（DDL + ALTER-if-missing）、
+  `save_decision_gates`（单列 UPDATE，不覆盖 `route_decision`）、
+  `ResumeState.decision_gates`、`load_resume_state` 读取并校验。
+- **UI**：choice gate 不再带 `threshold`/`margin`（`gateDefaults(gate)` 按 kind
+  分派；模板对 choice 隐藏阈值/容差输入）——否则后端
+  `_normalize_gate_config` 会以 "does not accept a threshold" 拒绝绑定。
+- **未接**：Smart Collaboration 协调器（§14-3 已定）。
+
 ### 已知遗留（review 记录，未修）
 
-- 预算/`call_id` 序号是**每次作答**而非每 Run（§10 写"每 Run 8 次"）；当前安全
-  仅因 resume 跳过 gate 评估。建议随 P3（resume 持久化）一起改成 Run 级计数。
+- ~~预算/`call_id` 序号是**每次作答**而非每 Run~~ **P3 后已等价**：pre-loop
+  两个 gate 受 `resume_state` 守卫跳过、post-run 两个 gate 恢复时回放 ⇒
+  每 Run 至多一次评估（seq 恒为 1）。仅剩"post-run 调用完成、但写
+  `decision_gates` 前崩溃"这一窄窗口会以同 seq 不同 args 重试 → 409 →
+  fail-safe 固定默认值（不崩、不阻断）。
 - 插件升级移除 gate key 时 `fallback_reason=unknown_gate`（宿主其实认识该 key），
   语义上更接近 `not_bound`。
 - `evidence_requirement` 的 state 在截断后追加工具名，可超 `max_state_chars`
-  （受插件 schema 100000 兜底）；P3 生效前无影响。
+  （受插件 schema 100000 兜底）；现 gate 已生效，属**低危**（仅插件侧多收几个
+  字符的工具名列表），待顺手修。

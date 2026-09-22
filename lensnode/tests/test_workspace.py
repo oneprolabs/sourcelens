@@ -790,3 +790,126 @@ def test_tool_lists_nested_files_when_path_is_directory(tmp_path):
 
     assert out["error"] == "PATH_IS_DIRECTORY"
     assert any(path.endswith("book01.txt") for path in out["candidate_files"])
+
+
+def test_search_rerank_reorders_the_prefix_before_truncation(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+    (root / "b.txt").write_text("alpha two\n", encoding="utf-8")
+    (root / "c.txt").write_text("alpha three\n", encoding="utf-8")
+
+    seen = {}
+
+    def rerank(matches):
+        seen["paths"] = [item["path"] for item in matches]
+        return [2, 0]
+
+    result = search_workspace(
+        [{"path": str(root)}], "alpha", rerank=rerank
+    )
+
+    paths = [item["path"] for item in result["matches"]]
+    assert paths == [
+        seen["paths"][2],
+        seen["paths"][0],
+        seen["paths"][1],
+    ]
+
+
+def test_search_rerank_none_keeps_deterministic_order(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+    (root / "b.txt").write_text("alpha two\n", encoding="utf-8")
+
+    baseline = search_workspace([{"path": str(root)}], "alpha")
+    same = search_workspace(
+        [{"path": str(root)}], "alpha", rerank=lambda _matches: None
+    )
+
+    assert [item["path"] for item in same["matches"]] == [
+        item["path"] for item in baseline["matches"]
+    ]
+
+
+def test_search_rerank_failure_keeps_deterministic_order(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+    (root / "b.txt").write_text("alpha two\n", encoding="utf-8")
+
+    def boom(_matches):
+        raise RuntimeError("rerank failed")
+
+    baseline = search_workspace([{"path": str(root)}], "alpha")
+    result = search_workspace([{"path": str(root)}], "alpha", rerank=boom)
+
+    assert [item["path"] for item in result["matches"]] == [
+        item["path"] for item in baseline["matches"]
+    ]
+
+
+class _FakeEvidenceRanker:
+    """Ranker stub returning a fixed evidence order and recording calls."""
+
+    def __init__(self, order):
+        self.order = order
+        self.calls = []
+
+    def rank_evidence(self, candidates, instructions=""):
+        self.calls.append((candidates, instructions))
+        return self.order
+
+
+def test_agent_search_tool_reranks_with_the_bound_ranker(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+    (root / "b.txt").write_text("alpha two\n", encoding="utf-8")
+
+    ranker = _FakeEvidenceRanker(["1", "0"])
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {
+                "question": "where is alpha?",
+                "target_dirs": [{"path": str(root)}],
+                "settings": {},
+            },
+            evidence_reranker=ranker,
+        )
+    }
+
+    payload = json.loads(
+        tools["search_workspace"].invoke({"query": "alpha"})
+    )
+
+    assert [item["path"] for item in payload["matches"]] == [
+        str(root / "b.txt"),
+        str(root / "a.txt"),
+    ]
+    assert ranker.calls
+    assert ranker.calls[0][1] == "where is alpha?"
+
+
+def test_agent_search_tool_without_ranker_keeps_order(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+    (root / "b.txt").write_text("alpha two\n", encoding="utf-8")
+
+    baseline = search_workspace([{"path": str(root)}], "alpha")
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {"target_dirs": [{"path": str(root)}], "settings": {}}
+        )
+    }
+    payload = json.loads(
+        tools["search_workspace"].invoke({"query": "alpha"})
+    )
+
+    assert [item["path"] for item in payload["matches"]] == [
+        item["path"] for item in baseline["matches"]
+    ]

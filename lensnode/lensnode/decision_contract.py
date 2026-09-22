@@ -25,13 +25,22 @@ class RankedCandidate:
     result: DecisionResult
 
 
-def rank_score(result):
+def rank_score(result, target_option=None):
     """Return the comparable scalar of one DecisionResult, or None.
 
-    Only ``score`` results are rankable: the rubric is ordered, so the
-    probability-weighted position is comparable across candidates.
+    ``score`` results are ordered by their rubric, so the probability-weighted
+    position is comparable.  ``choice`` results are comparable only when the
+    analysis names a ``target_option``: the probability of that option is the
+    "how good" scalar.
     """
 
+    if result.kind == "choice":
+        if not target_option or not isinstance(result.value, dict):
+            return None
+        probability = result.value.get(target_option)
+        if type(probability) not in (int, float):
+            return None
+        return float(probability)
     if result.kind != "score" or not isinstance(result.value, dict):
         return None
     total = 0.0
@@ -46,15 +55,17 @@ def rank_score(result):
     return total
 
 
-def rank_tiebreak(result):
+def rank_tiebreak(result, target_option=None):
     """Return the tie-break probability of one DecisionResult."""
 
+    if result.kind == "choice":
+        return rank_score(result, target_option) or 0.0
     if not isinstance(result.value, dict) or not result.value:
         return 0.0
     return max(result.value.values())
 
 
-def aggregate_ranked(entries):
+def aggregate_ranked(entries, target_option=None):
     """Return candidates sorted by score, then probability, then input order.
 
     ``entries`` is a sequence of ``(index, label, DecisionResult)``.  Ordering
@@ -64,13 +75,13 @@ def aggregate_ranked(entries):
 
     ranked = []
     for index, label, result in entries:
-        score = rank_score(result)
+        score = rank_score(result, target_option)
         if score is None:
             continue
         ranked.append(
             (
                 -score,
-                -rank_tiebreak(result),
+                -rank_tiebreak(result, target_option),
                 index,
                 RankedCandidate(label, score, result.confidence, result),
             )
