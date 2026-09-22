@@ -20,4 +20,9 @@ class Migration(migrations.Migration):
             name='decision_analyses',
             field=models.JSONField(blank=True, default=dict),
         ),
+        migrations.AddField(
+            model_name='assistantpluginbinding',
+            name='decision_auto',
+            field=models.BooleanField(default=True),
+        ),
     ]
