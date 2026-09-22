@@ -1379,7 +1379,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                 if decision is None:
                     if not from_client:
                         # A Plugin upgrade removed the gate. Stored bindings
-                        # stay inert at assembly time (unknown_gate) rather
+                        # stay inert at assembly time (not_declared) rather
                         # than blocking unrelated Assistant edits.
                         continue
                     raise serializers.ValidationError(

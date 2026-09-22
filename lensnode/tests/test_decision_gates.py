@@ -158,6 +158,20 @@ def test_unknown_gate_falls_back_and_emits_a_pair(monkeypatch):
     assert events[1][1]["source"] == "decision_gate"
 
 
+def test_undeclared_gate_falls_back_as_not_declared():
+    events = []
+    runner = _runner(_command(declared=False), events)
+
+    assert runner.evaluate("search_needed") is None
+
+    kinds = [event for event, _ in events]
+    assert kinds == [
+        "deepagents.decision.gate.start",
+        "deepagents.decision.gate.done",
+    ]
+    assert events[1][1]["fallback_reason"] == "not_declared"
+
+
 def test_gate_above_the_active_phase_is_unbound(monkeypatch):
     events = []
     monkeypatch.setattr(decision_gates, "GATE_PHASE", "P1")

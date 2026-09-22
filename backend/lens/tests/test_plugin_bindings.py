@@ -21,7 +21,10 @@ from lens.models import (
     Session,
     Skill,
 )
-from lens.plugins.decisions import validate_decision_gates
+from lens.plugins.decisions import (
+    resolve_decision_gates,
+    validate_decision_gates,
+)
 from lens.plugins.registry import PluginRegistryError, installed_plugin
 from lens.services import (
     build_decision_analyses,
@@ -1080,6 +1083,30 @@ class DecisionGateBindingTests(TestCase):
             analyses[0]["analyses"]["plan_quality"]["kind"],
             "score",
         )
+
+    def test_removed_gate_is_frozen_as_not_declared(self):
+        decisions = [
+            {
+                "key": "search_needed",
+                "mode": "control",
+                "kind": "noul",
+                "applies_to": ["knowledge_qa"],
+                "tool_keys": ["typesafe_noul"],
+            }
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            plugin = installed_plugin("typesafe")
+            resolved = resolve_decision_gates(
+                plugin,
+                {
+                    "search_needed": {"threshold": 0.5},
+                    "evidence_requirement": {"threshold": 0.5},
+                },
+            )
+
+        self.assertTrue(resolved["search_needed"]["declared"])
+        self.assertFalse(resolved["evidence_requirement"]["declared"])
+        self.assertEqual(resolved["evidence_requirement"]["tool_key"], "")
 
     def test_rejects_an_unrankable_analysis(self):
         decisions = [

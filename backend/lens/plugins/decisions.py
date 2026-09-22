@@ -147,9 +147,10 @@ def resolve_decision_analyses(plugin, analyses):
 def resolve_decision_gates(plugin, gates):
     """Return frozen gate config including its declared Tool identity.
 
-    A Plugin upgrade may remove a gate the binding still names.  The host
-    treats such a gate as unbound at assembly time (``unknown_gate``) instead
-    of failing the Run, so the frozen entry keeps the key without a Tool.
+    A Plugin upgrade may remove a gate the binding still names.  The frozen
+    entry keeps the key with ``declared: False`` and no Tool, so LensNode
+    reports ``not_declared`` and falls back to the inner policy instead of
+    failing the Run.
     """
 
     resolved = {}

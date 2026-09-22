@@ -431,3 +431,39 @@ def test_decision_call_ids_are_scoped_per_attempt():
         resumed._next_call_id("search_needed")
         == "gate:search_needed:2:1"
     )
+
+
+def test_decision_attempt_reads_the_resume_state():
+    assert (
+        agent_runtime._decision_attempt(
+            SimpleNamespace(
+                resume_state=SimpleNamespace(current_attempt=3)
+            )
+        )
+        == 3
+    )
+    assert (
+        agent_runtime._decision_attempt(
+            SimpleNamespace(resume_state=None)
+        )
+        == 1
+    )
+
+
+def test_decision_seams_capture_the_resume_attempt(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_runtime, "_decision_attempt", lambda _state: 2)
+    monkeypatch.setattr(
+        decision_gates,
+        "_execute_plugin_tool",
+        lambda *_args, **_kwargs: _noul_payload(0.52),
+    )
+
+    run = _run_answer(
+        monkeypatch,
+        tmp_path,
+        gates=_gates(),
+        analyses=_analyses(),
+    )
+
+    assert run.state.decision_policy.runner._attempt == 2
+    assert run.state.decision_ranker._attempt == 2

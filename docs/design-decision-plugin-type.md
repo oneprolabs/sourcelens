@@ -454,7 +454,7 @@ backend 与 lensnode 是两个进程/两个包，**无法共享 Python 模块**�
 |---|---|---|
 | 绑定时 | backend（`serializers` / `assistant_lifecycle`） | **结构**：key 存在于该 manifest `decisions`、字段类型合法、`threshold`/`margin` 仅 `kind ∈ {noul, score}`（`choice` 须 `target_option` 不得配 `threshold`）、`applies_to` 与 Assistant 模式匹配（`search_needed` 仅 `knowledge_qa`/`code_analysis`，`evidence_requirement` 仅 `general_chat`） |
 | 冻结时 | backend（`services.py`） | **唯一性**：同 `plugin_key` 至多一条非空绑定 |
-| 装配时 | lensnode（`decision_gates.py` registry） | **语义 allowlist**：登记 4 个已知 key 的 `fallback`/阈值适用性与 `enabled_phase`；**配置了但不在已知表**的 key → `fallback_reason=unknown_gate`；**已知但本阶段未激活**（如 P1 绑 `evidence_requirement`）→ `fallback_reason=not_bound`。两者均回退 inner、零外部调用，区分只在事件可见性 |
+| 装配时 | lensnode（`decision_gates.py` registry） | **语义 allowlist**：登记 4 个已知 key 的 `fallback`/阈值适用性与 `enabled_phase`；**配置了但不在已知表**的 key → `fallback_reason=unknown_gate`；**已知但本阶段未激活**（如 P1 绑 `evidence_requirement`）→ `fallback_reason=not_bound`；**插件升级后不再声明该 key**（绑定仍带着、宿主也认识）→ 冻结时写入 `declared: false`，装配期 `fallback_reason=not_declared`。以上均回退 inner、零外部调用，区分只在事件可见性 |
 
 backend **不依赖** lensnode 的 registry；§8 的「落在宿主已知 gate 注册表」
 即指 lensnode 装配期这一层。
@@ -552,11 +552,11 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 - `deepagents.decision.gate.start` / `deepagents.decision.gate.done`
 - payload：`{gate, source: "decision_gate", verdict: "accept|fallback",
   value, threshold, margin, fallback_reason, duration_ms, call_id}`
-- `fallback_reason ∈ {not_bound, unknown_gate, timeout, error,
+- `fallback_reason ∈ {not_bound, not_declared, unknown_gate, timeout, error,
   invalid_response, low_confidence, budget_exceeded}`
 - **未配置（`decision_gates` 整体为空 → 装配 `ModelDecisionPolicy`）时不发
   任何事件**（零配置零影响，§3.1）；已配置但某 key 回退/未激活则照发
-  `verdict=fallback`（含 `not_bound`/`unknown_gate`，§6.1/§6.2.2）——
+  `verdict=fallback`（含 `not_bound`/`not_declared`/`unknown_gate`，§6.1/§6.2.2）——
   两者的分界是"gates 是否非空"，不是"该 key 是否命中"。
 - 聚合面：按 `fallback_reason` 分维度出 fallback 率指标（§12「静默回退」
   风险的缓解）；`PluginInvocation` 审计带 `source`，可与模型工具调用区分。
@@ -581,14 +581,16 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
  "tool_keys": ["typesafe_score"]}
 ```
 
-**`rank` 的 kind 限制**：排序要求一个可比较的标量。`kind: "score"` 天然有序
-（rubric 即刻度，聚合为 `sum(index * probability)`）。
-`kind: "choice"` 的概率是向量，"哪个选项更好"没有定义——原稿设想用
-`target_option`（该选项概率 = 好的程度），**但 manifest 没有承载 choice 选项
-列表的字段**（`rubric` 目前只在 `score` 上被校验），无法构造 criteria。
-故 **P2 只接受 `kind == "score"`**；`choice` 分析在绑定时被拒
-（`rank_eligible`）。若日后需要 choice 排序，应先在 manifest 增加选项列表字段
-再放开。
+**`rank` 的 kind 限制**：排序要求一个可比较的标量。
+
+- `kind: "score"`：rubric 即有序刻度，聚合为 `sum(index * probability)`。
+- `kind: "choice"`：manifest 的 `rubric` 承载 choice 选项列表，`target_option`
+  必须取自该列表；该选项的概率即"好的程度"，排序直接取 `target_option`
+  的概率。
+
+故 `rank_eligible` 接受 `kind == "score"`，或 `kind == "choice"` 且
+`target_option ∈ rubric`；不满足者在绑定时被拒
+（`backend/lens/plugins/decisions.py::rank_eligible`）。
 
 ### 7.3 模型工具 `decision_rank`
 
@@ -1085,8 +1087,9 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
   每 Run 至多一次评估（seq 恒为 1）。仅剩"post-run 调用完成、但写
   `decision_gates` 前崩溃"这一窄窗口会以同 seq 不同 args 重试 → 409 →
   fail-safe 固定默认值（不崩、不阻断）。
-- 插件升级移除 gate key 时 `fallback_reason=unknown_gate`（宿主其实认识该 key），
-  语义上更接近 `not_bound`。
+- 插件升级移除 gate key 时按 `not_declared` 回退：绑定仍带着该 key、宿主也认识
+  它，但当前插件版本已不再声明，故与 `not_bound`（阶段未激活）、`unknown_gate`
+  （宿主不认识该 key）三者区分。
 - `evidence_requirement` 的 state 在截断后追加工具名，可超 `max_state_chars`
   （受插件 schema 100000 兜底）；现 gate 已生效，属**低危**（仅插件侧多收几个
   字符的工具名列表），待顺手修。

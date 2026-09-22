@@ -1017,6 +1017,7 @@ class LensDeepAgentRuntime:
             plugin_http_pool=self.plugin_http_pool,
             emit_event=state.emit_agent_event,
             run_uuid=state.run_uuid,
+            attempt=_decision_attempt(state),
         )
         if state.runtime_mode.general_chat:
             state.tools = build_general_chat_tools(
@@ -1055,6 +1056,7 @@ class LensDeepAgentRuntime:
             emit_event=state.emit_agent_event,
             run_uuid=state.run_uuid,
             inner=_model_decision_policy(),
+            attempt=_decision_attempt(state),
         )
         state.tools.extend(state.decision_ranker.as_tools())
         state.mcp_tools = load_mcp_tools(
