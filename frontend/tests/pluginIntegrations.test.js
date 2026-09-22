@@ -694,4 +694,18 @@ test('Decision bindings carry gates and analyses through the form', async () => 
   assert.match(drawer, /decision\.mode === 'analysis'/)
   assert.match(drawer, /decision\.kind === 'choice' && decision\.target_option/)
   assert.match(drawer, /function gateIsActive\(connection, gateKey\)/)
+  // Gate activity comes precomputed from the API (phase ordering lives in the
+  // backend mirror), so the drawer must read `gate_active` rather than
+  // re-derive it from `gate_active_phase`.
+  assert.match(drawer, /gate_active/)
+  // Gate values prefill from the Plugin manifest defaults (versioned with the
+  // Plugin), falling back to the built-in constants only when absent.
+  assert.match(drawer, /defaults\.threshold \?\? DEFAULT_GATE_THRESHOLD/)
+  // Automatic mode (Plugin defaults) vs advanced manual configuration.
+  assert.match(drawer, /function decisionAuto\(connection\)/)
+  assert.match(drawer, /function setDecisionAuto\(connection, value\)/)
+  assert.match(drawer, /function decisionSelectionLocked\(connection\)/)
+  // Switching to advanced seeds the manual config from the effective auto set.
+  assert.match(drawer, /decisionGatesFor\(connection\)\.map\(\(gate\) => \[/)
+  assert.match(page, /decision_auto: binding\.decision_auto !== false/)
 })

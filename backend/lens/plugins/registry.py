@@ -24,6 +24,12 @@ DECISION_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 DECISION_MAX_ENTRIES = 32
 DECISION_RUBRIC_MIN = 2
 DECISION_RUBRIC_MAX = 10
+DECISION_GATE_DEFAULT_KEYS = frozenset(
+    {"threshold", "margin", "max_state_chars"}
+)
+DECISION_THRESHOLD_KINDS = frozenset({"noul", "score"})
+DECISION_STATE_CHARS_MIN = 100
+DECISION_STATE_CHARS_MAX = 100000
 TOOL_EXPOSURES = frozenset({"model", "internal"})
 ALLOWED_HANDLERS = frozenset(
     {
@@ -334,6 +340,49 @@ def _load_plugin(root, plugin_dir, expected_key=None):
     )
 
 
+def _validate_gate_defaults(value, kind):
+    """Return validated default gate config for one control Decision.
+
+    Defaults live in the manifest so one Plugin release carries the values an
+    admin gets when a binding omits them; changing a default means a new
+    Plugin release.  ``threshold``/``margin`` only apply to scalar kinds
+    (``noul``/``score``), matching the binding-time rules.
+    """
+
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value).difference(
+        DECISION_GATE_DEFAULT_KEYS
+    ):
+        raise PluginRegistryError("plugin decision defaults are invalid")
+    normalized = {}
+    for field in ("threshold", "margin"):
+        if field not in value:
+            continue
+        if kind not in DECISION_THRESHOLD_KINDS:
+            raise PluginRegistryError("plugin decision defaults are invalid")
+        normalized[field] = _unit_default(value[field])
+    if "max_state_chars" in value:
+        limit = value["max_state_chars"]
+        if (
+            type(limit) is not int
+            or not DECISION_STATE_CHARS_MIN
+            <= limit
+            <= DECISION_STATE_CHARS_MAX
+        ):
+            raise PluginRegistryError("plugin decision defaults are invalid")
+        normalized["max_state_chars"] = limit
+    return normalized
+
+
+def _unit_default(value):
+    """Return one probability in [0, 1], or raise."""
+
+    if type(value) not in (int, float) or not 0 <= value <= 1:
+        raise PluginRegistryError("plugin decision defaults are invalid")
+    return value
+
+
 def _validate_decisions(value, tools):
     """Return validated Decision declarations from one manifest."""
 
@@ -390,7 +439,14 @@ def _validate_decisions(value, tools):
                     "plugin control decision needs applies_to"
                 )
             decision["applies_to"] = list(applies_to)
+            defaults = _validate_gate_defaults(item.get("defaults"), kind)
+            if defaults:
+                decision["defaults"] = defaults
         else:
+            if item.get("defaults") is not None:
+                raise PluginRegistryError(
+                    "plugin analysis defaults are invalid"
+                )
             rubric = item.get("rubric")
             if kind in {"score", "choice"}:
                 if (

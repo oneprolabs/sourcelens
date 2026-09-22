@@ -1232,6 +1232,7 @@ class AssistantPluginBinding(models.Model):
     tools = models.JSONField(default=list, blank=True)
     decision_gates = models.JSONField(default=dict, blank=True)
     decision_analyses = models.JSONField(default=dict, blank=True)
+    decision_auto = models.BooleanField(default=True)
     enabled = models.BooleanField(default=True)
 
     class Meta:

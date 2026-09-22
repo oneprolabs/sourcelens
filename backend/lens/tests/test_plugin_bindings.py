@@ -949,7 +949,7 @@ class DecisionGateBindingTests(TestCase):
         self.assertEqual(set(gates), {"search_needed"})
         self.assertEqual(gates["search_needed"]["threshold"], 0.5)
 
-    def test_binding_without_gates_keeps_the_legacy_snapshot_shape(self):
+    def test_binding_without_gates_auto_derives_the_manifest_defaults(self):
         with self.decision_plugin_root():
             response = self._create(
                 "decision-plain",
@@ -960,7 +960,51 @@ class DecisionGateBindingTests(TestCase):
             assistant = Assistant.objects.get(slug="decision-plain")
             loaded = build_loaded_plugins(assistant)
 
+        # Auto mode enables only the gates whose applies_to matches the
+        # Assistant capability, filled from the manifest defaults.
+        gates = loaded[0]["decision_gates"]
+        self.assertEqual(set(gates), {"search_needed"})
+        self.assertEqual(gates["search_needed"]["threshold"], 0.5)
+        self.assertEqual(gates["search_needed"]["margin"], 0.1)
+
+    def test_manual_mode_can_disable_every_decision(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-manual-empty",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_auto": False,
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-manual-empty")
+            loaded = build_loaded_plugins(assistant)
+
         self.assertNotIn("decision_gates", loaded[0])
+
+    def test_rejects_a_second_decision_plugin_binding(self):
+        second = Connection.objects.create(
+            name="TypeSafe 2",
+            plugin_key="typesafe",
+            endpoint="https://api.typesafe.ai",
+            allowed_scope={},
+            secret_version=self.connection.secret_version,
+        )
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-two",
+                "knowledge_qa",
+                [
+                    {"connection_uuid": str(self.connection.uuid)},
+                    {"connection_uuid": str(second.uuid)},
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("plugin_bindings", response.data)
 
     def test_general_chat_rejects_the_search_needed_gate(self):
         with self.decision_plugin_root():
@@ -1107,6 +1151,37 @@ class DecisionGateBindingTests(TestCase):
         self.assertTrue(resolved["search_needed"]["declared"])
         self.assertFalse(resolved["evidence_requirement"]["declared"])
         self.assertEqual(resolved["evidence_requirement"]["tool_key"], "")
+
+    def test_binding_inherits_control_gate_defaults(self):
+        decisions = [
+            {
+                "key": "search_needed",
+                "mode": "control",
+                "kind": "noul",
+                "applies_to": ["knowledge_qa"],
+                "tool_keys": ["typesafe_noul"],
+                "defaults": {
+                    "threshold": 0.7,
+                    "margin": 0.2,
+                    "max_state_chars": 2000,
+                },
+            }
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            plugin = installed_plugin("typesafe")
+            inherited = validate_decision_gates(
+                plugin, {"search_needed": {}}
+            )
+            overridden = validate_decision_gates(
+                plugin,
+                {"search_needed": {"threshold": 0.9}},
+            )
+
+        self.assertEqual(inherited["search_needed"]["threshold"], 0.7)
+        self.assertEqual(inherited["search_needed"]["margin"], 0.2)
+        self.assertEqual(inherited["search_needed"]["max_state_chars"], 2000)
+        self.assertEqual(overridden["search_needed"]["threshold"], 0.9)
+        self.assertEqual(overridden["search_needed"]["margin"], 0.2)
 
     def test_rejects_an_unrankable_analysis(self):
         decisions = [

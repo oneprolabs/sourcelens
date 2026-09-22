@@ -30,7 +30,7 @@ def _gates(tool_key="typesafe_noul", **config):
     return [
         {
             "plugin_key": "typesafe",
-            "plugin_version": "1.4.0",
+            "plugin_version": "1.0.0",
             "connection_uuid": "connection-1",
             "gates": {
                 "search_needed": {
@@ -50,7 +50,7 @@ def _analyses(analysis="plan_quality", **config):
     return [
         {
             "plugin_key": "typesafe",
-            "plugin_version": "1.4.0",
+            "plugin_version": "1.0.0",
             "connection_uuid": "connection-1",
             "analyses": {
                 analysis: {
@@ -314,7 +314,7 @@ def _post_run_command():
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.4.0",
+                "plugin_version": "1.0.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     "evidence_sufficient": {

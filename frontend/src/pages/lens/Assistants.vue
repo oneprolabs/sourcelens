@@ -1005,7 +1005,8 @@ function formFromRow(row) {
       connection_uuid: binding.connection_uuid,
       enabled: binding.enabled !== false,
       decision_gates: { ...(binding.decision_gates || {}) },
-      decision_analyses: { ...(binding.decision_analyses || {}) }
+      decision_analyses: { ...(binding.decision_analyses || {}) },
+      decision_auto: binding.decision_auto !== false
     })),
     visibility: row.visibility || 'public',
     access_group_ids: (row.access_grants || [])
@@ -1114,7 +1115,8 @@ function buildPayload() {
             connection_uuid: binding.connection_uuid,
             enabled: binding.enabled !== false,
             decision_gates: { ...(binding.decision_gates || {}) },
-            decision_analyses: { ...(binding.decision_analyses || {}) }
+            decision_analyses: { ...(binding.decision_analyses || {}) },
+            decision_auto: binding.decision_auto !== false
           }))
         : [],
     visibility: form.value.visibility || 'public',

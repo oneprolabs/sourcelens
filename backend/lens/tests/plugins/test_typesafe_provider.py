@@ -14,7 +14,7 @@ class TypesafePluginManifestTests(TestCase):
     def test_bundled_plugin_exposes_decision_tools(self):
         plugin = installed_plugin("typesafe")
 
-        self.assertEqual(plugin.version, "1.4.0")
+        self.assertEqual(plugin.version, "1.0.0")
         self.assertEqual(plugin.display_name, "TypeSafe AI")
         self.assertIsNone(plugin.datasource_source_type)
         self.assertEqual(
@@ -111,7 +111,7 @@ class TypesafeConnectionProviderTests(TestCase):
     """Verify TypeSafe endpoint and Connection scope validation."""
 
     def setUp(self):
-        self.provider = get_datasource_provider("typesafe", "1.4.0")
+        self.provider = get_datasource_provider("typesafe", "1.0.0")
 
     def test_accepts_a_manual_https_endpoint(self):
         self.assertEqual(
@@ -320,7 +320,7 @@ class TypesafeToolProviderTests(TestCase):
     """Verify typed question validation before LensNode execution."""
 
     def setUp(self):
-        self.provider = get_tool_provider("typesafe", "1.4.0")
+        self.provider = get_tool_provider("typesafe", "1.0.0")
 
     def test_normalizes_noul_request(self):
         endpoint, arguments = self.provider.validate_request(

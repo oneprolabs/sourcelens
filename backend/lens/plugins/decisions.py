@@ -32,6 +32,23 @@ GATE_PHASES = {
     "evidence_sufficient": "P3",
     "answer_supported": "P3",
 }
+# Mirrors LensNode's ``PHASE_ORDER`` (``decision_gates.py``); guarded by
+# ``lensnode/tests/test_decision_gate_phases.py``.  A gate is active once the
+# release reaches its phase, so earlier phases stay active (P1 under P3).
+GATE_PHASE_ORDER = {"P1": 1, "P3": 3}
+
+
+def gate_is_active(phase):
+    """Return whether one gate phase is active for the current release.
+
+    Mirrors the LensNode ordering rule
+    (``PHASE_ORDER[phase] > PHASE_ORDER[GATE_PHASE]`` -> inactive): a gate
+    stays active once its phase is reached.
+    """
+
+    return GATE_PHASE_ORDER.get(phase, 99) <= GATE_PHASE_ORDER.get(
+        GATE_ACTIVE_PHASE, 0
+    )
 
 
 def control_decision(plugin, key):
@@ -65,6 +82,28 @@ def validate_decision_gates(plugin, gates, capability=None):
             capability,
         )
     return normalized
+
+
+def default_control_gates(plugin, capability):
+    """Return the manifest-default control gates for one Assistant mode.
+
+    Auto mode enables every control Decision whose ``applies_to`` matches the
+    Assistant capability, each filled from the manifest ``defaults`` (or the
+    built-in fallbacks).  Manual bindings skip this and use their stored
+    config instead.
+    """
+
+    gates = {}
+    for decision in getattr(plugin, "decisions", ()) or ():
+        if decision.get("mode") != "control":
+            continue
+        applies_to = decision.get("applies_to") or []
+        if capability is not None and capability not in applies_to:
+            continue
+        gates[decision["key"]] = {}
+    if not gates:
+        return {}
+    return validate_decision_gates(plugin, gates, capability)
 
 
 def analysis_decision(plugin, key):
@@ -187,20 +226,27 @@ def _normalize_gate_config(decision, config, capability):
             "decision gate does not apply to this Assistant"
         )
     kind = decision["kind"]
+    defaults = decision.get("defaults") or {}
     normalized = {}
     if kind in THRESHOLD_KINDS:
         normalized["threshold"] = _unit_number(
-            config.get("threshold", DEFAULT_THRESHOLD)
+            config.get(
+                "threshold",
+                defaults.get("threshold", DEFAULT_THRESHOLD),
+            )
         )
         normalized["margin"] = _unit_number(
-            config.get("margin", DEFAULT_MARGIN)
+            config.get("margin", defaults.get("margin", DEFAULT_MARGIN))
         )
     elif "threshold" in config or "margin" in config:
         raise PluginRegistryError(
             "decision gate does not accept a threshold"
         )
     normalized["max_state_chars"] = _state_limit(
-        config.get("max_state_chars", DEFAULT_MAX_STATE_CHARS)
+        config.get(
+            "max_state_chars",
+            defaults.get("max_state_chars", DEFAULT_MAX_STATE_CHARS),
+        )
     )
     return normalized
 

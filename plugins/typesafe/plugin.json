@@ -1,6 +1,6 @@
 {
   "key": "typesafe",
-  "version": "1.4.0",
+  "version": "1.0.0",
   "protocol_version": 1,
   "capability_family": "plugin",
   "plugin_type": "decision",
@@ -10,28 +10,32 @@
       "mode": "control",
       "kind": "noul",
       "applies_to": ["knowledge_qa", "code_analysis"],
-      "tool_keys": ["typesafe_noul"]
+      "tool_keys": ["typesafe_noul"],
+      "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}
     },
     {
       "key": "evidence_requirement",
       "mode": "control",
       "kind": "noul",
       "applies_to": ["general_chat"],
-      "tool_keys": ["typesafe_noul"]
+      "tool_keys": ["typesafe_noul"],
+      "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}
     },
     {
       "key": "evidence_sufficient",
       "mode": "control",
       "kind": "noul",
       "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
-      "tool_keys": ["typesafe_noul"]
+      "tool_keys": ["typesafe_noul"],
+      "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}
     },
     {
       "key": "answer_supported",
       "mode": "control",
       "kind": "choice",
       "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
-      "tool_keys": ["typesafe_choice"]
+      "tool_keys": ["typesafe_choice"],
+      "defaults": {"max_state_chars": 4000}
     },
     {
       "key": "plan_quality",

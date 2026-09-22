@@ -27,7 +27,11 @@ from lens.plugins.providers import (
     DatasourceProviderError,
     get_datasource_provider,
 )
-from lens.plugins.decisions import GATE_ACTIVE_PHASE, GATE_PHASES
+from lens.plugins.decisions import (
+    GATE_ACTIVE_PHASE,
+    GATE_PHASES,
+    gate_is_active,
+)
 from lens.plugins.registry import (
     PluginNotFoundError,
     discover_plugins,
@@ -336,6 +340,10 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                 "decisions": list(plugin.decisions),
                 "gate_active_phase": GATE_ACTIVE_PHASE,
                 "gate_phases": dict(GATE_PHASES),
+                "gate_active": {
+                    key: gate_is_active(phase)
+                    for key, phase in GATE_PHASES.items()
+                },
                 "display_name": plugin.display_name,
                 "description": plugin.description,
                 "assistant_guidance": plugin.assistant_guidance,

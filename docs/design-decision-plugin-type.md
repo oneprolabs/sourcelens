@@ -386,6 +386,29 @@ seam 在 `build_plugin_tools` 旁装配即满足所有调用点，无需额外�
 {"search_needed": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}}
 ```
 
+**自动 / 高级模式（`decision_auto`）**：管理员不该被要求填阈值/容差——这些是
+与后端校准绑定的经验值（§12），普通界面只该决定"要不要用"。因此绑定新增
+`decision_auto`（bool）：
+
+- `decision_auto=true`（**默认**）：**冻结时**由宿主按插件 manifest 计算
+  `default_control_gates(plugin, assistant.capability)`——即该助手模式
+  `applies_to` 命中的全部 control gate，各取 manifest `defaults`（缺省回退内置
+  常量）。**不落库**，故插件升级换默认值后已有助手自动跟随。analysis 不在自动
+  范围内（默认不启用重排/排序，避免默认多出外部调用）。
+- `decision_auto=false`（**高级**）：使用绑定的 `decision_gates` /
+  `decision_analyses`（校验同前：key 已声明、`applies_to` 匹配、`rank_eligible`）。
+
+落点：`PluginBindingsField`（读写 `decision_auto`）、`_validate_decision_bindings`
+（自动绑定跳过存储校验）、`services.build_loaded_plugins`（自动时改算默认值）、
+`decisions.default_control_gates`、绑定页"自动 / 高级"单选。兼容：旧请求带
+非空 `decision_gates`/`decision_analyses` 视为高级（`decision_auto=false`）；
+不带则视为自动。
+
+**每个助手至多一个 Decision 插件**：`PluginBindingsField` 在同一助手的绑定里
+出现第二个 `plugin_type == "decision"` 时直接拒绝（400）；绑定页选中一个
+decision 连接会自动取消其它，并置灰其余 decision 复选框。UI 上决策配置
+只在自动 / 高级两个模式间切换，自动模式不展示任何 gate/参数明细。
+
 执行复用现有 tool snapshot 链路（`tool_snapshots.py:15,66` 只要求 run 活跃 +
 connection 在 `loaded_plugins` + `call_id` 合法；`decision.evaluate` 已在
 `READ_ONLY_TOOL_CAPABILITIES`）。`resolved_config.source = "decision_gate"`。
@@ -629,21 +652,25 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 
 ```json
 {
-  "key": "typesafe", "version": "1.4.0", "protocol_version": 1,
+  "key": "typesafe", "version": "1.0.0", "protocol_version": 1,
   "capability_family": "plugin", "plugin_type": "decision",
   "decisions": [
     {"key": "search_needed", "mode": "control", "kind": "noul",
      "applies_to": ["knowledge_qa", "code_analysis"],
-     "tool_keys": ["typesafe_noul"]},
+     "tool_keys": ["typesafe_noul"],
+     "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}},
     {"key": "evidence_requirement", "mode": "control", "kind": "noul",
      "applies_to": ["general_chat"],
-     "tool_keys": ["typesafe_noul"]},
+     "tool_keys": ["typesafe_noul"],
+     "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}},
     {"key": "evidence_sufficient", "mode": "control", "kind": "noul",
      "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
-     "tool_keys": ["typesafe_noul"]},
+     "tool_keys": ["typesafe_noul"],
+     "defaults": {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}},
     {"key": "answer_supported", "mode": "control", "kind": "choice",
      "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
-     "tool_keys": ["typesafe_choice"]},
+     "tool_keys": ["typesafe_choice"],
+     "defaults": {"max_state_chars": 4000}},
     {"key": "plan_quality", "mode": "analysis", "kind": "score",
      "rubric": ["weak", "acceptable", "strong"],
      "tool_keys": ["typesafe_score"]},
@@ -654,8 +681,16 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 }
 ```
 
-> 上例即当前 `plugins/typesafe/plugin.json`（1.4.0；三个原语均为
-> `exposure: "internal"`，无 `assistant_guidance`）。
+> 上例即当前 `plugins/typesafe/plugin.json`（`1.0.0`；三个原语均为
+> `exposure: "internal"`，无 `assistant_guidance`）。TypeSafe 尚未正式发布，
+> 故其 manifest 版本保持 `1.0.0`，改动不再逐个 SemVer 升版；首发时再定版本。
+>
+> **`defaults`（control 决策专属，A 方案）**：manifest 每个 control 决策可带
+> `defaults`（`threshold`/`margin`/`max_state_chars`），绑定未显式指定时由
+> `_normalize_gate_config` 套用（`threshold`/`margin` 仅 `noul`/`score`，
+> `choice` 只能给 `max_state_chars`）。即"一套插件级默认值"随插件版本走；
+> 管理员仍可在绑定里覆盖单项；要换默认值 = 换插件版本（未发布期直接改
+> `1.0.0`）。registry 在安装时校验 `defaults` 结构。
 
 - `plugin_type` 可选、缺省 `integration`；`decision` 时才允许 `decisions`。
 - 校验：key 唯一、`mode ∈ {control, analysis}`、`kind` 合法、analysis 必须有
@@ -670,12 +705,14 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
   `evidence_sufficient` / `answer_supported`，但上例只声明了 2 个 control
   条目——P3 上线这两个 gate 时必须**同步在 `decisions` 增加对应条目**
   （含 `tool_keys`，并定义其 `applies_to` 模式集，backend 结构校验要求
-  非空），**再次 SemVer 升版**；否则绑定校验（key 须在 manifest）直接拒绝。
+  非空）；否则绑定校验（key 须在 manifest）直接拒绝。**TypeSafe 未发布，故
+  manifest 版本保持 `1.0.0`**，不再逐个 SemVer 升版。
 - **`fallback` 与固定默认值由宿主 registry 拥有**（fail-safe 方向是宿主语义，
   插件无从知晓该往哪边退）；manifest 只声明 `applies_to` 与 `kind`。
 - `rank` 可用性：`kind == "score"`，或 `kind == "choice"` 且有 `target_option`
   （见 §7.2）。
-- 版本冻结：改 `plugin.json` 必须升 SemVer（`1.0.0 → 1.1.0`）。
+- 版本冻结：**已发布**的 `plugin.json` 改动必须升 SemVer；**未发布的 TypeSafe
+  保持 `1.0.0`**，首发时再定版本。
 - **展示语义（P1.5 UI 修正）**：`plugin_type` 是**类别**（`integration` /
   `decision`），`capability_family` 是**执行族**，两者都**不是"消费方式"**。
   连接管理页按**类别**展示（decision → "Decision"，不再从 `tools.length`
@@ -702,7 +739,7 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 | Manifest | `plugins/typesafe/plugin.json` | `plugin_type` + `decisions` |
 | Registry | `backend/lens/plugins/registry.py` | `PLUGIN_TYPES`、`plugin_type`、校验 `decisions`；工具级 `TOOL_EXPOSURES`/`exposure`、guidance 仅可引用 `model` 工具 |
 | Gate registry | `lensnode/lensnode/agent_runtime/decision_gates.py` | 宿主侧 key→`fallback`/阈值适用性语义表（**仅 lensnode**，backend 不依赖，§6.2.2；单一来源，非散落 if） |
-| 绑定模型 | `backend/lens/models.py:1215` | `decision_gates` / `decision_analyses` JSON（迁移 `0063` / `0064`） |
+| 绑定模型 | `backend/lens/models.py:1215` | `decision_gates` / `decision_analyses` JSON + `decision_auto` bool（迁移 `0063` / `0064`） |
 | 绑定校验 | `backend/lens/plugins/decisions.py`（新）+ `serializers.py` | gate **结构**校验（`plugin_type`、key∈manifest、threshold 适用性、`applies_to`、同 plugin 唯一）；语义 allowlist 不在此（§6.2.2） |
 | 冻结 | `backend/lens/services.py` `build_loaded_plugins` + 命令下发 | 解析 `tool_key`/`kind`/`exposure` 进 loaded 条目；命令顶层 `decision_gates`；条目条件 `tools or gate_config`（P1.5：允许纯 decision 插件） |
 | 快照 | `backend/lens/plugins/tool_snapshots.py` | `resolved_config.source ∈ {model_tool, decision_gate, decision_rank}`（P1：JSON 字段，**未加 `PluginInvocation.source` 列**） |
@@ -738,8 +775,8 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
    结果包络改为 runtime 导出的 **`project_decision`**（host 不再解析厂商字段）；
    并解掉"decision 插件必须同时是模型工具插件"的隐含要求——
    `build_tool` 改按需、manifest 工具加 `exposure: model|internal`、
-   `build_loaded_plugins` 不再要求 `tools` 非空。**SemVer 升版即可，不升
-   `protocol_version`**。详见 §15 P1.5 记录。
+    `build_loaded_plugins` 不再要求 `tools` 非空。**不升 `protocol_version`**
+   （TypeSafe 未发布，版本保持 `1.0.0`）。详见 §15 P1.5 记录。
 3. **P2（Analysis）— 已实施**：`DecisionRanker` + `NullDecisionRanker` +
    `decision_rank` 模型工具 + 确定性聚合（`aggregate_ranked`）+ 边界
    （8 候选 / 3s / 每 Run 2 次 / 缓存 / 部分失败）；`decision_analyses`
@@ -750,13 +787,13 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
    §6.2.1；phase 改为**排序**判定：`PHASE_ORDER[phase] > PHASE_ORDER[active]`
    → `not_bound`，`GATE_ACTIVE_PHASE = "P3"`，四个 gate 全部生效）；
    `evidence_sufficient` / `answer_supported` 以**观测-only**落地（§6.3）；
-   resume 回放（§6.4）；manifest 升 `1.3.0`（新增两条 control 决策）。
+   resume 回放（§6.4）；manifest 新增两条 control 决策（版本保持 `1.0.0`）。
    详见 §15 P3 记录。
 5. **P4（证据重排）— 已实施**：`DecisionRanker` 增并发打分（≤8 候选并行、
    保持确定性聚合）与 `rank_evidence`；`search_workspace` 增 `_apply_rerank`
    缝（`_rank_matches` 之后、截断之前）；`build_agent_tools` 透传
-   `state.decision_ranker`（装配前移到工具构造之前）；manifest 升 `1.4.0`
-   （新增 analysis `evidence_relevance`）。order-only、top-8、与模型工具
+   `state.decision_ranker`（装配前移到工具构造之前）；manifest 新增 analysis
+   `evidence_relevance`（版本保持 `1.0.0`）。order-only、top-8、与模型工具
    `decision_rank` 共用每 Run 2 次预算、失败/未绑定回退原序。
 6. **后续（需协议升级）**：decision 端点进协议、正式
    `capability_family: "decision"`。
@@ -774,7 +811,7 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
   **已落地（P1.5 review 补测）**：
   `lensnode/tests/test_decision_seam_runtime.py`（真实 `_prepare_runtime` 走一遍，
   对比两种模式的事件序列/模型调用数/工具集；另有 gate 接受时不调 inner 分类器）。
-- 发布：TypeSafe 升 `1.1.0` → 发布并设 active → 回归
+- 发布：TypeSafe 首发 → 发布并设 active → 回归
   `lensnode/tests/plugins/test_typesafe_tools.py`、
   `lensnode/tests/test_plugin_http.py`、
   `backend/lens/tests/test_plugin_registry.py`、
@@ -929,11 +966,11 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 
 ### 已落地
 
-- **Manifest**：`plugins/typesafe/plugin.json` 升 `1.1.0`，加 `plugin_type:
-  "decision"` + 两个 control decision（`search_needed` →
+- **Manifest**：`plugins/typesafe/plugin.json`（未发布，版本保持 `1.0.0`）加
+  `plugin_type: "decision"` + 两个 control decision（`search_needed` →
   `["knowledge_qa","code_analysis"]`、`evidence_requirement` →
   `["general_chat"]`，均 `tool_keys: ["typesafe_noul"]`）；
-  `runtime.py` / `control.py` 的 `PLUGIN_VERSION` 同步升版。
+  `runtime.py` / `control.py` 的 `PLUGIN_VERSION` 同为 `1.0.0`。
 - **Backend registry**：`PLUGIN_TYPES` / `DECISION_MODES` / `DECISION_KINDS`、
   `InstalledPlugin.plugin_type` / `.decisions`、`_validate_decisions`
   （key 唯一、mode/kind、`tool_keys` 必须引用本 manifest 工具、control 必须有
@@ -1031,9 +1068,9 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
 
 ### P2 实施记录（Analysis / rank）
 
-- **Manifest**：`plugins/typesafe/plugin.json` 升 `1.2.0`，加 analysis 决策
-  `plan_quality`（`kind: "score"`、`rubric: ["weak","acceptable","strong"]`、
-  `tool_keys: ["typesafe_score"]`）；`runtime.py` / `control.py` 同步升版。
+- **Manifest**：`plugins/typesafe/plugin.json`（版本保持 `1.0.0`）加 analysis
+  决策 `plan_quality`（`kind: "score"`、`rubric: ["weak","acceptable","strong"]`、
+  `tool_keys: ["typesafe_score"]`）；`runtime.py` / `control.py` 同步。
 - **Backend**：绑定模型加 `decision_analyses`（迁移 `0064`）；
   `decisions.py` 加 `analysis_decision` / `rank_eligible` /
   `validate_decision_analyses` / `resolve_decision_analyses`；
@@ -1048,17 +1085,19 @@ post-run gate 调用、但在 `save_decision_gates` 之前崩溃 → 本轮以�
   `state.tools`；快照 `source=decision_rank`。
 - **UI**：绑定页为 decision 插件渲染 analysis 勾选（只列 `kind == "score"`，
   展示 rubric 只读）；`Assistants.vue` 载入/提交透传 `decision_analyses`。
-- **设计修正**：§7.2 的 `choice` + `target_option` 路径**不可实现**（manifest
-  无 choice 选项列表字段），P2 收紧为 score-only；已改稿并说明放开条件。
+- **设计修正**：§7.2 的 `choice` + `target_option` 路径在 P2 判定为**不可实现**
+  （当时 manifest 未承载 choice 选项列表），P2 收紧为 score-only。
+  **后续已放开**：`rubric` 承载 choice 选项、`target_option` 须取自其中，
+  `rank_eligible` / registry / 前端同步支持（见 §7.2）。
 - **未接**：Smart Collaboration 协调器（§14-3 已定，留作独立后续）。
 
 ### P3 实施记录（Control 扩展 / resume）
 
-- **Manifest**：`plugins/typesafe/plugin.json` 升 `1.3.0`，新增两条 control 决策
-  `evidence_sufficient`（noul，`applies_to: [knowledge_qa, code_analysis,
-  general_chat]`，`tool_keys: [typesafe_noul]`）与 `answer_supported`（choice，
-  同 applies_to，`tool_keys: [typesafe_choice]`）；`runtime.py`/`control.py`
-  同步升版。
+- **Manifest**：`plugins/typesafe/plugin.json`（版本保持 `1.0.0`）新增两条
+  control 决策 `evidence_sufficient`（noul，`applies_to: [knowledge_qa,
+  code_analysis, general_chat]`，`tool_keys: [typesafe_noul]`）与
+  `answer_supported`（choice，同 applies_to，`tool_keys: [typesafe_choice]`）；
+  `runtime.py`/`control.py` 同步。
 - **激活机制**：phase 由"相等判定"改为**排序判定**
   （`PHASE_ORDER = {"P1": 1, "P3": 3}`，`GATE_PHASE = "P3"`），
   `search_needed`(P1) 与三个 P3 gate 全部生效；backend 只读镜像

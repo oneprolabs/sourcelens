@@ -13,7 +13,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 from lensnode.plugin_tools import build_plugin_tools
 
 
-RUNTIME = load_runtime_contract("typesafe", "1.4.0")
+RUNTIME = load_runtime_contract("typesafe", "1.0.0")
 ENDPOINT = "https://decision.example:8443"
 CONFIG = {"model": "custom-model", "__allowed_scope": {}}
 ARGUMENTS = {
@@ -73,7 +73,7 @@ def test_tools_use_real_pool_and_authorized_snapshot(kind, criteria, answer):
         if request.url.path.endswith("/snapshots/snapshot-1/"):
             return httpx.Response(200, json={
                 "run_uuid": "run-1", "plugin_key": "typesafe",
-                "plugin_version": "1.4.0", "tool_key": key,
+                "plugin_version": "1.0.0", "tool_key": key,
                 "invocation_id": "call-1",
                 "resolved_config": {
                     "arguments": arguments, "endpoint": ENDPOINT,
@@ -111,7 +111,7 @@ def test_tools_use_real_pool_and_authorized_snapshot(kind, criteria, answer):
             tool = build_plugin_tools(
                 {"run_uuid": "run-1", "loaded_plugins": [{
                     "plugin_key": "typesafe",
-                    "plugin_version": "1.4.0",
+                    "plugin_version": "1.0.0",
                     "connection_uuid": "connection-1",
                     "protocol_version": 1,
                     "tools": [

@@ -2300,6 +2300,8 @@
       "decisionGateInactive": "未生效（{phase}）",
       "decisionAnalyses": "决策排序",
       "decisionAnalysesHint": "绑定后模型可用 decision_rank 按同一 rubric 对候选排序。",
+      "decisionModeAuto": "自动（使用插件默认）",
+      "decisionModeAdvanced": "高级（手动配置）",
       "mcpEnvironmentSectionHint": "这些配置仅对当前 MCP Server 生效；继续前需配置全部必填变量。",
       "mcpEnvironmentConfigurationHint": "该 MCP Server 声明了 {count} 个环境变量。请选择已有配置集，或在这里新建。",
       "noSkills": "暂无可用 Skill，请先在 Skill 资源库中创建",

@@ -9,7 +9,11 @@ fails when the mirror drifts.
 import ast
 from pathlib import Path
 
-from lensnode.agent_runtime.decision_gates import GATE_PHASE, GATE_REGISTRY
+from lensnode.agent_runtime.decision_gates import (
+    GATE_PHASE,
+    GATE_REGISTRY,
+    PHASE_ORDER,
+)
 
 
 def _backend_constant(name):
@@ -33,3 +37,4 @@ def test_backend_gate_phase_mirror_matches_the_host_registry():
     assert _backend_constant("GATE_PHASES") == {
         key: spec["phase"] for key, spec in GATE_REGISTRY.items()
     }
+    assert _backend_constant("GATE_PHASE_ORDER") == PHASE_ORDER

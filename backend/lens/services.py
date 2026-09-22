@@ -62,6 +62,7 @@ from .models import (
     Session,
 )
 from .plugins.decisions import (
+    default_control_gates,
     resolve_decision_analyses,
     resolve_decision_gates,
 )
@@ -1852,11 +1853,12 @@ def build_loaded_plugins(assistant):
             True,
             binding.decision_gates or {},
             binding.decision_analyses or {},
+            binding.decision_auto,
         )
         for binding in direct_bindings
     ]
     bindings.extend(
-        (binding.mcp.connection, binding.mcp.tools, False, {}, {})
+        (binding.mcp.connection, binding.mcp.tools, False, {}, {}, False)
         for binding in adapter_bindings
     )
     for (
@@ -1865,6 +1867,7 @@ def build_loaded_plugins(assistant):
         use_all_tools,
         gate_config,
         analysis_config,
+        decision_auto,
     ) in bindings:
         secret_version = connection.secret_version
         if secret_version is None or secret_version.status != "active":
@@ -1875,6 +1878,11 @@ def build_loaded_plugins(assistant):
         if plugin is None:
             plugin = installed_plugin(connection.plugin_key)
             plugins[connection.plugin_key] = plugin
+        if decision_auto:
+            gate_config = default_control_gates(
+                plugin, assistant.capability
+            )
+            analysis_config = {}
         definitions = {
             tool.key: tool
             for tool in plugin.tools

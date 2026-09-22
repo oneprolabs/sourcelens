@@ -27,7 +27,7 @@ def _command(analysis="plan_quality", **config):
         "decision_analyses": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.4.0",
+                "plugin_version": "1.0.0",
                 "connection_uuid": "connection-1",
                 "analyses": {
                     analysis: {
@@ -351,7 +351,7 @@ def _choice_command(**config):
         "decision_analyses": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.4.0",
+                "plugin_version": "1.0.0",
                 "connection_uuid": "connection-1",
                 "analyses": {
                     "pick_best": {

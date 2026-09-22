@@ -1015,6 +1015,7 @@
                       type="checkbox"
                       class="h-4 w-4 flex-shrink-0 rounded border-line text-brand-600 focus:ring-brand-500"
                       :checked="Boolean(pluginBinding(connection.uuid))"
+                      :disabled="decisionSelectionLocked(connection)"
                       @change="
                         togglePluginConnection(
                           connection,
@@ -1060,8 +1061,31 @@
                     <p class="text-xs leading-5 text-ink-500">
                       {{ t('lensAdmin.wizard.decisionGatesHint') }}
                     </p>
+                    <div class="flex items-center gap-4">
+                      <label class="flex items-center gap-1 text-xs text-ink-700">
+                        <input
+                          type="radio"
+                          name="decision-mode"
+                          class="h-3.5 w-3.5 border-line text-brand-600 focus:ring-brand-500"
+                          :checked="decisionAuto(connection)"
+                          @change="setDecisionAuto(connection, true)"
+                        />
+                        {{ t('lensAdmin.wizard.decisionModeAuto') }}
+                      </label>
+                      <label class="flex items-center gap-1 text-xs text-ink-700">
+                        <input
+                          type="radio"
+                          name="decision-mode"
+                          class="h-3.5 w-3.5 border-line text-brand-600 focus:ring-brand-500"
+                          :checked="!decisionAuto(connection)"
+                          @change="setDecisionAuto(connection, false)"
+                        />
+                        {{ t('lensAdmin.wizard.decisionModeAdvanced') }}
+                      </label>
+                    </div>
                     <div
                       v-for="gate in decisionGatesFor(connection)"
+                      v-show="!decisionAuto(connection)"
                       :key="gate.key"
                       class="space-y-2 rounded-md bg-surface-sunken p-2"
                     >
@@ -1162,6 +1186,7 @@
                     v-if="
                       pluginBinding(connection.uuid) &&
                       isDecisionConnection(connection) &&
+                      !decisionAuto(connection) &&
                       analysisDecisionsFor(connection).length
                     "
                     class="mt-3 space-y-2 border-t border-line pt-3"
@@ -2058,11 +2083,10 @@ function gatePhase(connection, gateKey) {
 }
 
 function gateIsActive(connection, gateKey) {
-  const manifest = props.pluginManifests?.[connection.plugin_key]
-  const activePhase = manifest?.gate_active_phase
-  if (!activePhase) return true
-  const phase = manifest?.gate_phases?.[gateKey]
-  return !phase || phase === activePhase
+  const active = props.pluginManifests?.[connection.plugin_key]?.gate_active
+  if (!active || typeof active !== 'object') return true
+  const value = active[gateKey]
+  return value === undefined ? true : Boolean(value)
 }
 
 function updateBindingGates(connectionUuid, mutate) {
@@ -2075,9 +2099,64 @@ function updateBindingGates(connectionUuid, mutate) {
   })
 }
 
+function decisionAuto(connection) {
+  const binding = pluginBinding(connection.uuid)
+  if (!binding) return true
+  return binding.decision_auto !== false
+}
+
+function setDecisionAuto(connection, value) {
+  props.form.plugin_bindings = selectedPluginBindings.value.map((binding) => {
+    if (binding.connection_uuid !== connection.uuid) return binding
+    if (value) {
+      return {
+        ...binding,
+        decision_auto: true,
+        decision_gates: {},
+        decision_analyses: {}
+      }
+    }
+    // Seed the manual config from the effective auto set so the advanced view
+    // starts from the Plugin defaults, not stale stored values.
+    return {
+      ...binding,
+      decision_auto: false,
+      decision_gates: Object.fromEntries(
+        decisionGatesFor(connection).map((gate) => [
+          gate.key,
+          gateDefaults(gate)
+        ])
+      ),
+      decision_analyses: {}
+    }
+  })
+}
+
+function selectedDecisionConnectionUuid() {
+  const boundUuids = selectedPluginBindings.value.map(
+    (binding) => binding.connection_uuid
+  )
+  const selected = activePluginConnections.value.find(
+    (conn) =>
+      isDecisionConnection(conn) && boundUuids.includes(conn.uuid)
+  )
+  return selected?.uuid || ''
+}
+
+function decisionSelectionLocked(connection) {
+  if (!isDecisionConnection(connection)) return false
+  if (pluginBinding(connection.uuid)) return false
+  return Boolean(selectedDecisionConnectionUuid())
+}
+
 function gateDefaults(gate) {
-  if (gate.kind === 'choice') return {}
-  return { threshold: DEFAULT_GATE_THRESHOLD, margin: DEFAULT_GATE_MARGIN }
+  const defaults =
+    gate && typeof gate.defaults === 'object' ? gate.defaults : {}
+  if (gate?.kind === 'choice') return { ...defaults }
+  return {
+    threshold: defaults.threshold ?? DEFAULT_GATE_THRESHOLD,
+    margin: defaults.margin ?? DEFAULT_GATE_MARGIN
+  }
 }
 
 function toggleDecisionGate(connection, gateKey, checked) {
@@ -2167,7 +2246,7 @@ function selectedPluginCapabilities(pluginKey) {
 }
 
 function togglePluginConnection(connection, checked) {
-  const bindings = [...selectedPluginBindings.value]
+  let bindings = [...selectedPluginBindings.value]
   if (!checked) {
     props.form.plugin_bindings = bindings.filter(
       (binding) => binding.connection_uuid !== connection.uuid
@@ -2176,13 +2255,15 @@ function togglePluginConnection(connection, checked) {
   }
   if (pluginBinding(connection.uuid)) return
   const binding = { connection_uuid: connection.uuid, enabled: true }
-  const gates = decisionGatesFor(connection).filter((gate) =>
-    gateIsActive(connection, gate.key)
-  )
-  if (gates.length) {
-    binding.decision_gates = Object.fromEntries(
-      gates.map((gate) => [gate.key, gateDefaults(gate)])
-    )
+  if (isDecisionConnection(connection)) {
+    // One Decision Plugin per Assistant: drop any previously selected one.
+    bindings = bindings.filter((existing) => {
+      const conn = activePluginConnections.value.find(
+        (item) => item.uuid === existing.connection_uuid
+      )
+      return !conn || !isDecisionConnection(conn)
+    })
+    binding.decision_auto = true
   }
   props.form.plugin_bindings = [...bindings, binding]
 }

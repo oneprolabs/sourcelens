@@ -31,7 +31,7 @@ def _command(gate="search_needed", **config):
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.4.0",
+                "plugin_version": "1.0.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     gate: {
@@ -119,7 +119,7 @@ def test_rejects_invalid_neutral_results(payload, kind):
 
 
 def test_typesafe_runtime_projects_its_vendor_response():
-    runtime = load_runtime_contract("typesafe", "1.4.0")
+    runtime = load_runtime_contract("typesafe", "1.0.0")
 
     neutral = runtime.project_decision(
         "typesafe_noul",
@@ -133,7 +133,7 @@ def test_typesafe_runtime_projects_its_vendor_response():
 
 
 def test_typesafe_runtime_declares_its_post_path():
-    runtime = load_runtime_contract("typesafe", "1.4.0")
+    runtime = load_runtime_contract("typesafe", "1.0.0")
 
     assert runtime.http_post_paths("https://api.typesafe.ai") == (
         "/v1/systemone",
@@ -490,7 +490,7 @@ def _post_run_command():
         "decision_gates": [
             {
                 "plugin_key": "typesafe",
-                "plugin_version": "1.4.0",
+                "plugin_version": "1.0.0",
                 "connection_uuid": "connection-1",
                 "gates": {
                     "evidence_sufficient": {

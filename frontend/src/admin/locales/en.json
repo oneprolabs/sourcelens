@@ -2300,6 +2300,8 @@
       "decisionGateInactive": "Not active yet ({phase})",
       "decisionAnalyses": "Decision ranking",
       "decisionAnalysesHint": "Bound analyses let the model rank candidates with decision_rank against one rubric.",
+      "decisionModeAuto": "Automatic (Plugin defaults)",
+      "decisionModeAdvanced": "Advanced (manual)",
       "mcpEnvironmentSectionHint": "These values apply only to this MCP Server. Configure every required variable before continuing.",
       "mcpEnvironmentConfigurationHint": "This MCP Server needs {count} environment variables. Choose an existing variable set or create a new one.",
       "noSkills": "No Skills available — create one in the Skill Library first",

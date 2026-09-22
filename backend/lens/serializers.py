@@ -514,6 +514,7 @@ class PluginBindingsField(serializers.Field):
                 "enabled": binding.enabled,
                 "decision_gates": dict(binding.decision_gates or {}),
                 "decision_analyses": dict(binding.decision_analyses or {}),
+                "decision_auto": binding.decision_auto,
             }
             for binding in bindings.select_related("connection").all()
         ]
@@ -531,6 +532,7 @@ class PluginBindingsField(serializers.Field):
             raise serializers.ValidationError("Expected a list of bindings.")
         validated = []
         seen = set()
+        decision_seen = None
         for item in data:
             if not isinstance(item, dict):
                 raise serializers.ValidationError(
@@ -570,6 +572,12 @@ class PluginBindingsField(serializers.Field):
                 plugin = installed_plugin(connection.plugin_key)
             except PluginRegistryError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
+            if plugin.plugin_type == "decision":
+                if decision_seen is not None:
+                    raise serializers.ValidationError(
+                        "Only one Decision Plugin can be bound per Assistant."
+                    )
+                decision_seen = connection.pk
             available = {tool.key for tool in plugin.tools}
             requested = item.get("tools")
             if requested is None or requested == []:
@@ -587,6 +595,15 @@ class PluginBindingsField(serializers.Field):
             seen.add(connection.pk)
             decision_gates = item.get("decision_gates") or {}
             decision_analyses = item.get("decision_analyses") or {}
+            decision_auto = item.get("decision_auto")
+            if decision_auto is None:
+                # Legacy callers that send explicit decision config are manual;
+                # an untouched binding defaults to the Plugin's auto values.
+                decision_auto = not (decision_gates or decision_analyses)
+            if not isinstance(decision_auto, bool):
+                raise serializers.ValidationError(
+                    "Plugin decision mode must be a boolean."
+                )
             try:
                 decision_gates = validate_decision_gates(
                     plugin,
@@ -605,6 +622,7 @@ class PluginBindingsField(serializers.Field):
                     "enabled": enabled,
                     "decision_gates": decision_gates,
                     "decision_analyses": decision_analyses,
+                    "decision_auto": decision_auto,
                 }
             )
         return validated
@@ -1361,11 +1379,16 @@ class AssistantSerializer(serializers.ModelSerializer):
                     "connection": binding.connection,
                     "decision_gates": binding.decision_gates or {},
                     "decision_analyses": binding.decision_analyses or {},
+                    "decision_auto": binding.decision_auto,
                 }
                 for binding in self.instance.plugin_bindings.all()
             ]
         providers = []
         for binding in plugin_bindings or []:
+            if binding.get("decision_auto", False):
+                # Auto bindings derive their gates from the Plugin manifest at
+                # freeze time, so there is nothing stored to validate here.
+                continue
             gates = binding.get("decision_gates") or {}
             analyses = binding.get("decision_analyses") or {}
             connection = binding.get("connection")
@@ -1587,6 +1610,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                     decision_analyses=(
                         binding.get("decision_analyses") or {}
                     ),
+                    decision_auto=binding.get("decision_auto", True),
                     enabled=binding.get("enabled", True),
                 )
 

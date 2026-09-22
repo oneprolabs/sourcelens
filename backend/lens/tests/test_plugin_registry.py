@@ -533,6 +533,9 @@ class PluginRegistryTests(TestCase):
             response.data["gate_phases"]["evidence_requirement"],
             "P3",
         )
+        # A gate stays active once its phase is reached: P1 is active under P3.
+        self.assertTrue(response.data["gate_active"]["search_needed"])
+        self.assertTrue(response.data["gate_active"]["evidence_requirement"])
 
     def test_admin_can_read_the_bundled_plugin_icon(self):
         admin = User.objects.create_user("icon-admin", is_staff=True)
@@ -635,6 +638,71 @@ class PluginRegistryTests(TestCase):
             plugin.decisions[0]["applies_to"],
             ["knowledge_qa"],
         )
+
+    def test_accepts_and_exposes_control_gate_defaults(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {
+                        "threshold": 0.7,
+                        "margin": 0.2,
+                        "max_state_chars": 2000,
+                    },
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(
+            plugin.decisions[0]["defaults"],
+            {"threshold": 0.7, "margin": 0.2, "max_state_chars": 2000},
+        )
+
+    def test_rejects_a_threshold_default_on_a_choice_gate(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "answer_supported",
+                    "mode": "control",
+                    "kind": "choice",
+                    "applies_to": ["general_chat"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {"threshold": 0.5},
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaises(PluginRegistryError):
+                    installed_plugin("github")
+
+    def test_rejects_an_unknown_control_gate_default(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {"thresholds": 0.5},
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaises(PluginRegistryError):
+                    installed_plugin("github")
 
     def test_defaults_to_an_integration_plugin_type(self):
         manifest = {
