@@ -1,0 +1,16 @@
+type: feature
+audience: admin
+en: >-
+  Added Decision Plugins: administrators can bind a TypeSafe AI (Jev) Decision
+  Plugin to an Assistant so bounded typed judgments steer control flow
+  (retrieval and evidence gates) and rank candidates. Each Assistant uses at
+  most one Decision Plugin, and configuration defaults to automatic (the
+  Plugin's own values) with an advanced manual option. Decision endpoints may
+  be self-hosted over plain HTTP and may omit a secret; gates fall back to the
+  primary model on low confidence or error.
+zh-CN: >-
+  新增 Decision Plugin：管理员可把 TypeSafe AI（Jev）决策插件绑定到助手，
+  用有界的类型化判定参与控制流（检索/证据 gate）与候选排序。每个助手最多
+  绑定一个决策插件；配置默认为自动（使用插件自带默认值），并提供高级手动
+  配置。决策端点支持内网 plain HTTP 自托管、可无 secret；gate 在低置信或
+  出错时回退主模型。
