@@ -11,6 +11,7 @@ from lens.plugins.registry import (
     discover_plugins,
     installed_plugin,
     latest_plugin,
+    plugin_requires_secret,
 )
 from rest_framework.test import APIClient
 
@@ -703,6 +704,37 @@ class PluginRegistryTests(TestCase):
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
                 with self.assertRaises(PluginRegistryError):
                     installed_plugin("github")
+
+    def test_plugin_requires_secret_follows_the_connection_schema(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(
+                root,
+                self._decision_manifest(
+                    connection_schema={
+                        "type": "object",
+                        "properties": {
+                            "token": {
+                                "type": "string",
+                                "write_to": "secret_value",
+                            }
+                        },
+                        "required": ["token"],
+                    }
+                ),
+            )
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                required = plugin_requires_secret(
+                    installed_plugin("github")
+                )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, self._decision_manifest())
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                optional = plugin_requires_secret(
+                    installed_plugin("github")
+                )
+
+        self.assertTrue(required)
+        self.assertFalse(optional)
 
     def test_defaults_to_an_integration_plugin_type(self):
         manifest = {

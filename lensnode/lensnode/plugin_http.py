@@ -118,9 +118,12 @@ class PluginHttpClient:
         method = str(method or "").upper()
         url_value = str(url or "")
         parsed = urlsplit(url_value)
+        # Plain HTTP is allowed for self-hosted Plugins on a private network
+        # (e.g. docker-compose service names); the origin and POST path are
+        # still restricted to what the Plugin runtime declares.
         evaluation = (
             method == "POST"
-            and parsed.scheme == "https"
+            and parsed.scheme in {"http", "https"}
             and not parsed.query
             and parsed.path in self._post_paths
         )

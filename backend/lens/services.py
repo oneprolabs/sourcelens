@@ -1870,9 +1870,10 @@ def build_loaded_plugins(assistant):
         decision_auto,
     ) in bindings:
         secret_version = connection.secret_version
-        if secret_version is None or secret_version.status != "active":
-            continue
-        if secret_version.material.status != "active":
+        if secret_version is not None and (
+            secret_version.status != "active"
+            or secret_version.material.status != "active"
+        ):
             continue
         plugin = plugins.get(connection.plugin_key)
         if plugin is None:

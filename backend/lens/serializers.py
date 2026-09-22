@@ -82,7 +82,11 @@ from .plugins.decisions import (
     validate_decision_analyses,
     validate_decision_gates,
 )
-from .plugins.registry import PluginRegistryError, installed_plugin
+from .plugins.registry import (
+    PluginRegistryError,
+    installed_plugin,
+    plugin_requires_secret,
+)
 from .plugins.skill_requirements import (
     SkillPluginRequirementError,
     validate_required_plugins,
@@ -560,9 +564,8 @@ class PluginBindingsField(serializers.Field):
                     "Plugin binding enabled must be a boolean."
                 )
             secret_version = connection.secret_version
-            if enabled and (
-                secret_version is None
-                or secret_version.status != "active"
+            if secret_version is not None and (
+                secret_version.status != "active"
                 or secret_version.material.status != "active"
             ):
                 raise serializers.ValidationError(
@@ -572,6 +575,14 @@ class PluginBindingsField(serializers.Field):
                 plugin = installed_plugin(connection.plugin_key)
             except PluginRegistryError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
+            if (
+                enabled
+                and secret_version is None
+                and plugin_requires_secret(plugin)
+            ):
+                raise serializers.ValidationError(
+                    "Plugin Connection secret is unavailable."
+                )
             if plugin.plugin_type == "decision":
                 if decision_seen is not None:
                     raise serializers.ValidationError(
@@ -1938,7 +1949,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
         _validate_plugin_json(config, "config")
         _validate_plugin_json(allowed_scope, "allowed_scope")
         try:
-            installed_plugin(plugin_key)
+            plugin = installed_plugin(plugin_key)
             provider = get_datasource_provider(plugin_key)
         except PluginRegistryError as exc:
             raise serializers.ValidationError({"plugin_key": str(exc)})
@@ -1966,6 +1977,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
         if (
             status_value == Connection.Status.ACTIVE
             and not secret_value
+            and plugin_requires_secret(plugin)
             and (
                 current_version is None
                 or current_version.status != "active"

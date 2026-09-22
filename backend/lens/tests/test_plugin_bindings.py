@@ -1006,6 +1006,26 @@ class DecisionGateBindingTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("plugin_bindings", response.data)
 
+    def test_decision_plugin_binds_without_a_secret(self):
+        secretless = Connection.objects.create(
+            name="Laya",
+            plugin_key="typesafe",
+            endpoint="http://laya:8000",
+            allowed_scope={},
+        )
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-secretless",
+                "knowledge_qa",
+                [{"connection_uuid": str(secretless.uuid)}],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-secretless")
+            loaded = build_loaded_plugins(assistant)
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["connection_uuid"], str(secretless.uuid))
+
     def test_general_chat_rejects_the_search_needed_gate(self):
         with self.decision_plugin_root():
             response = self._create(

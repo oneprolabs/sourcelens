@@ -288,3 +288,50 @@ def test_decision_post_allows_a_gateway_base_path():
     assert [request.url.path for request in seen] == [
         "/typesafe/v1/systemone"
     ]
+
+
+def test_decision_post_allows_a_plain_http_origin():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={}, request=request)
+
+    pool = PluginHttpClientPool(
+        timeout=15,
+        verify=True,
+        client_factory=lambda **options: httpx.Client(
+            transport=httpx.MockTransport(handler), **options
+        ),
+    )
+    try:
+        client = pool.bind(
+            "laya",
+            "connection-1",
+            ["http://laya:8000"],
+            ["/v1/decide"],
+        )
+        with client.stream(
+            "POST",
+            "http://laya:8000/v1/decide",
+            json={"state": "x"},
+        ) as response:
+            assert response.status_code == 200
+    finally:
+        pool.close()
+    assert [str(request.url) for request in seen] == [
+        "http://laya:8000/v1/decide"
+    ]
+
+
+def test_plain_http_post_is_still_path_bounded():
+    pool = PluginHttpClientPool(timeout=15, verify=True)
+    client = pool.bind(
+        "laya",
+        "connection-1",
+        ["http://laya:8000"],
+        ["/v1/decide"],
+    )
+    with pytest.raises(PluginHttpClientError):
+        with client.stream("POST", "http://laya:8000/admin", json={}):
+            pass

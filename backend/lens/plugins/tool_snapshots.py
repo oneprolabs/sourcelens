@@ -96,9 +96,12 @@ def create_tool_execution_snapshot(
     if connection.status != Connection.Status.ACTIVE:
         raise ToolSnapshotError("CONNECTION_DISABLED", 409)
     secret_version = connection.secret_version
-    if secret_version is None or secret_version.status != "active":
+    if secret_version is not None and secret_version.status != "active":
         raise ToolSnapshotError("SECRET_VERSION_DISABLED", 409)
-    if secret_version.material.status != "active":
+    if (
+        secret_version is not None
+        and secret_version.material.status != "active"
+    ):
         raise ToolSnapshotError("SECRET_MATERIAL_DISABLED", 409)
 
     _validate_frozen_tool(frozen_tool, arguments)

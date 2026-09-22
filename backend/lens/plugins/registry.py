@@ -112,6 +112,22 @@ class InstalledPluginTool:
     exposure: str = "model"
 
 
+def plugin_requires_secret(plugin):
+    """Return whether one Plugin's connection schema mandates a secret.
+
+    A Plugin that lists a ``write_to: secret_value`` field as required needs
+    an active Connection secret; Plugins without one (e.g. an unauthenticated
+    self-hosted decision service) may bind with no secret.
+    """
+
+    schema = getattr(plugin, "connection_schema", None) or {}
+    properties = schema.get("properties") or {}
+    return any(
+        (properties.get(key) or {}).get("write_to") == "secret_value"
+        for key in schema.get("required") or []
+    )
+
+
 def discover_plugins():
     """Return validated Plugin packages from controlled roots."""
 
