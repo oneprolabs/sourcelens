@@ -15,4 +15,9 @@ class Migration(migrations.Migration):
             name='decision_gates',
             field=models.JSONField(blank=True, default=dict),
         ),
+        migrations.AddField(
+            model_name='assistantpluginbinding',
+            name='decision_analyses',
+            field=models.JSONField(blank=True, default=dict),
+        ),
     ]
