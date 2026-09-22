@@ -2,7 +2,7 @@
 
 from django.test import TestCase
 
-from lens.datasource_services import get_datasource_upload_limits
+from lens.datasource.services import get_datasource_upload_limits
 from lens.models import GlobalSetting
 from lens.serializers import GlobalSettingSerializer
 

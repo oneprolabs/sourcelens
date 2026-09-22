@@ -230,17 +230,20 @@ test('assistant exposes one execution strategy without a token budget picker', a
   assert.doesNotMatch(drawer, /token_budget_profile:/)
 })
 
-test('assistant node selection is available for every capability', async () => {
+test('assistant node selection defers to datasource bindings', async () => {
   const drawer = await source(
     'pages/lens/AssistantFormDrawerDirectEnvironment.vue'
   )
 
-  assert.match(drawer, /const requiresNodeSelection = computed\(/)
-  assert.match(drawer, /!!props\.form\.capability/)
+  assert.match(
+    drawer,
+    /const requiresNodeSelection = computed\(\(\) => false\)/
+  )
+  assert.match(drawer, /const requiresWorkspace = computed\(/)
   assert.doesNotMatch(drawer, /isOrchestratorTask/)
   assert.match(drawer, /v-if="requiresNodeSelection"/)
   assert.match(drawer, /v-if="form\.mode === 'direct'"/)
-  assert.match(drawer, /v-else-if="isGeneralChatTask"/)
+  assert.match(drawer, /v-if="isGeneralChatTask"/)
   assert.doesNotMatch(drawer, /isDirectGeneralChat/)
   const retrievalStart = drawer.indexOf("t('lensAdmin.fields.retrievalPolicy')")
   assert.notEqual(retrievalStart, -1)
@@ -272,7 +275,7 @@ test('assistant selects its type before conditional execution settings', async (
     secondStep.indexOf("t('lensAdmin.fields.type')") <
       secondStep.indexOf('v-if="requiresNodeSelection"')
   )
-  assert.match(secondStep, /lensAdmin\.placeholders\.selectType/)
+  assert.match(secondStep, /v-for="type in assistantTypeOptions"/)
   assert.match(drawer, /if \(!props\.form\.capability\) return false/)
   assert.match(assistants, /capability: '',/)
   assert.match(chinese.lensAdmin.wizard.step2Desc, /先选择类型/)
@@ -338,7 +341,7 @@ test('assistant Skill picker supports search and environment configuration', asy
   assert.match(drawer, /data-testid="assistant-skill-option"/)
   assert.match(
     drawer,
-    /isSkillSelected\(skill\.uuid\)\s*&& skillEnvironment\(skill\)\.length/
+    /isSkillSelected\(skill\.uuid\)\s*&&\s*skillEnvironment\(skill\)\.length/
   )
   assert.match(drawer, /data-testid="assistant-skill-environments"/)
   assert.match(drawer, /class="ml-8 border-l border-primary-200 pl-3"/)

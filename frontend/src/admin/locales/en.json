@@ -1443,7 +1443,7 @@
       },
       "typesafe": {
         "displayName": "TypeSafe AI",
-        "description": "Bounded typed judgments (Noul, Choice, Score) from TypeSafe AI Jev over an HTTPS System One endpoint. The primary Agent model still owns prose, reasoning, and the workflow.",
+        "description": "Bounded typed judgments (Noul, Choice, Score) from TypeSafe AI Jev. The primary Agent model still owns prose, reasoning, and the workflow.",
         "connectionFields": {
           "endpoint": {
             "title": "TypeSafe API endpoint",

@@ -19,3 +19,9 @@ DATABASES = {
 
 ROOT_URLCONF = "tests.admin_bulk_urls"
 USE_TZ = True
+
+REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": (
+        "core.settings.renders.CustomJSONRenderer",
+    ),
+}

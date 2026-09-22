@@ -17,7 +17,11 @@ class TaskExecutionDatasourceIndexMigrationTests(SimpleTestCase):
 
     def test_postgresql_index_matches_the_jsonb_history_query(self):
         schema_editor = SimpleNamespace(
-            connection=SimpleNamespace(vendor="postgresql"),
+            connection=SimpleNamespace(
+                vendor="postgresql",
+                settings_dict={"TEST": {"NAME": ""}},
+                in_atomic_block=False,
+            ),
             execute=Mock(),
         )
 
@@ -32,7 +36,11 @@ class TaskExecutionDatasourceIndexMigrationTests(SimpleTestCase):
 
     def test_non_postgresql_database_skips_the_expression_index(self):
         schema_editor = SimpleNamespace(
-            connection=SimpleNamespace(vendor="sqlite"),
+            connection=SimpleNamespace(
+                vendor="sqlite",
+                settings_dict={"TEST": {"NAME": ""}},
+                in_atomic_block=False,
+            ),
             execute=Mock(),
         )
 

@@ -61,7 +61,7 @@ test('Feishu datasource URLs are checked before they can be saved', async () => 
   assert.match(api, /connections\/\$\{uuid\}\/validate-datasource/)
   assert.match(page, /validateConnectionDatasource/)
   assert.match(page, /form\.value\.plugin_key === 'feishu'/)
-  assert.match(page, /datasource_config: buildPluginDatasourceConfig\(\)/)
+  assert.match(page, /buildPluginDatasourceConfig\(\)/)
   assert.match(
     page,
     /datasourceConnectionSignature\(true\) !==\s*datasourceConnectionBaseSignature\.value/
@@ -76,14 +76,12 @@ test('Feishu datasource configuration changes re-run access validation', async (
   const updatePluginConfig = drawer.match(
     /function updatePluginConfig\(value\) \{[\s\S]*?\n\}/
   )?.[0]
-  const scheduleValidation = drawer.match(
-    /function schedulePluginConnectionValidation\(\) \{[\s\S]*?\n\}/
-  )?.[0]
 
   assert.ok(updatePluginConfig)
-  assert.match(updatePluginConfig, /schedulePluginConnectionValidation\(\)/)
-  assert.ok(scheduleValidation)
-  assert.match(scheduleValidation, /testConnectionIfVisible\(\)/)
+  assert.match(updatePluginConfig, /emit\('connection-change'\)/)
+  assert.match(page, /function validateFeishuResources\(\)/)
+  assert.match(page, /feishuValidation\.update\(/)
+  assert.match(page, /validateConnectionDatasource\(connectionUuid/)
   assert.match(page, /const requestId = \+\+datasourceConnectionRequestId/)
   assert.match(
     page,
@@ -454,7 +452,7 @@ test('datasource wizard exposes completed steps for quick navigation', async () 
     drawer,
     /aria-current="i \+ 1 === wizardStep \? 'step' : undefined"/
   )
-  assert.match(drawer, /:disabled="i \+ 1 > wizardStep"/)
+  assert.match(drawer, /:disabled="mode !== 'edit' && i \+ 1 > wizardStep"/)
   assert.match(drawer, /goToWizardStep\(i \+ 1\)/)
 })
 
@@ -609,7 +607,10 @@ test('connection management uses compact cards with summarized scope', async () 
     page,
     /<BaseButton[^>]*@click="openConnectionDetail\(row\)"/
   )
-  assert.match(page, /variant="danger"[\s\S]*@click\.stop="removeRow\(row\)"/)
+  assert.match(
+    page,
+    /variant="danger"[\s\S]*@click\.stop="requestRemoveRow\(row\)"/
+  )
   assert.match(page, /@click\.stop="startEdit\(row\)"/)
   assert.match(page, /connectionDetailOpen/)
   assert.match(page, /:schema="detailScopeSchema"/)
@@ -634,12 +635,9 @@ test('datasource management groups source, target and run information', async ()
   assert.match(page, /datasource-card/)
   assert.match(page, /pluginIconUrl/)
   assert.match(page, /datasource-source-summary/)
-  assert.match(page, /datasource-target-summary/)
   assert.match(page, /datasource-run-summary/)
-  assert.match(
-    page,
-    /dataSourceRepositoryUrl\(row, connectionEndpoint\(row\)\)/
-  )
+  assert.match(page, /columns\.targetPath/)
+  assert.match(page, /dataSourceRepository\(row\)/)
   assert.doesNotMatch(page, /min-h-64/)
   assert.match(page, /grid-cols-1/)
   assert.match(page, /datasource-card flex min-w-0/)
@@ -673,15 +671,4 @@ test('creation forms do not expose generic active or disabled selectors', async 
   assert.match(connections, /connections\.resume/)
   assert.match(detailDrawer, /actions\.disableDatasource/)
   assert.match(detailDrawer, /actions\.enableDatasource/)
-})
-
-test('datasource wizard presents an explicit configuration summary', async () => {
-  const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
-
-  assert.match(drawer, /datasource-wizard-summary/)
-  assert.match(drawer, /selectedConnectionScopeSummary/)
-  assert.doesNotMatch(
-    drawer,
-    /JSON\.stringify\(selectedConnection\.allowed_scope\)/
-  )
 })

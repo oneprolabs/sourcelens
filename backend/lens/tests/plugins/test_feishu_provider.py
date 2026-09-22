@@ -33,7 +33,7 @@ class FeishuPluginManifestTests(TestCase):
         self.assertEqual(plugin.datasource_source_type, "feishu")
         self.assertEqual(
             [tool.key for tool in plugin.tools],
-            ["feishu_get_document"],
+            [],
         )
         self.assertEqual(
             plugin.connection_schema["required"],

@@ -32,7 +32,7 @@ test('History filters use BaseDateInput', () => {
   )
   assert.match(source, /<BaseDateInput/)
   assert.match(source, /compact/)
-  assert.match(source, /md:flex-nowrap/)
+  assert.match(source, /md:grid-cols-/)
   assert.doesNotMatch(
     source,
     /type="date"[\s\S]{0,80}:lang="toDocumentLang\(locale\)"/

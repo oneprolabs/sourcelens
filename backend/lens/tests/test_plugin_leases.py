@@ -58,6 +58,7 @@ class PluginLeaseTests(TestCase):
             resolved_config={
                 "repository": "owner/repository",
                 "access_token": "must-not-leave-control-plane",
+                "lensnode_uuid": str(self.node.uuid),
             },
         )
         self.token = issue_lensnode_token(self.node)
@@ -85,6 +86,11 @@ class PluginLeaseTests(TestCase):
         )
         self.datasource.lensnode = other
         self.datasource.save(update_fields=["lensnode"])
+        self.snapshot.resolved_config = {
+            **self.snapshot.resolved_config,
+            "lensnode_uuid": str(other.uuid),
+        }
+        self.snapshot.save(update_fields=["resolved_config"])
 
         response = self.client.post(
             "/api/lens/plugin-runtime/leases/",
@@ -134,6 +140,7 @@ class PluginLeaseTests(TestCase):
         self.snapshot.plugin_key = "feishu"
         self.snapshot.resolved_config = {
             "token": "must-not-leave-control-plane",
+            "lensnode_uuid": str(self.node.uuid),
             "connection_config": {
                 "kind": "credential",
                 "token": "nested-secret",

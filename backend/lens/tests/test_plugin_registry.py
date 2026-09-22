@@ -447,6 +447,7 @@ class PluginRegistryTests(TestCase):
                             "additionalProperties": False,
                         },
                         "resources": [],
+                        "supports_item_selection": True,
                         "runtime": {
                             "supports_incremental": False,
                             "supports_cancel": True,

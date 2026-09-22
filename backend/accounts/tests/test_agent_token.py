@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
@@ -13,8 +14,18 @@ from accounts.authentication import agent_token_route_allowed
 
 TOKEN_URL = "/api/v1/auth/agent/token"
 
+# Exercise the active allowlist plus one route that exists in the accounts
+# test URL conf, so the confinement is testable regardless of the settings
+# module the suite is running under.
+AGENT_TOKEN_ALLOWED_ROUTES = tuple(
+    settings.AGENT_TOKEN_ALLOWED_ROUTES
+) + (("GET", r"/api/v1/auth/probe"),)
 
-@override_settings(ROOT_URLCONF="accounts.tests.urls")
+
+@override_settings(
+    ROOT_URLCONF="accounts.tests.urls",
+    AGENT_TOKEN_ALLOWED_ROUTES=AGENT_TOKEN_ALLOWED_ROUTES,
+)
 class AgentTokenTests(TestCase):
     """Mint a long-lived, agent-scoped access token for authenticated users."""
 

@@ -74,6 +74,11 @@ def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
     monkeypatch.setattr(Command, "_has_tty", lambda self: True)
     monkeypatch.setattr(
         Command,
+        "_confirm",
+        lambda self, prompt, default=True: True,
+    )
+    monkeypatch.setattr(
+        Command,
         "_input",
         lambda self, prompt: next(answers),
     )
@@ -186,6 +191,11 @@ def test_model_setup_can_be_aborted_midway(monkeypatch):
     """Aborting the provider menu skips setup and saves no model."""
 
     monkeypatch.setattr(Command, "_has_tty", lambda self: True)
+    monkeypatch.setattr(
+        Command,
+        "_confirm",
+        lambda self, prompt, default=True: True,
+    )
     monkeypatch.setattr(Command, "_read_key", lambda self: "escape")
     output = StringIO()
 

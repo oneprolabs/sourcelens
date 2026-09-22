@@ -2,6 +2,7 @@
   "lensRuns": {
     "menu": "Run 运维",
     "title": "Run 运维中心",
+    "subtitle": "跨用户与 LensNode 监控、检查并安全操作 Agent 运行。",
     "filterKeyword": "搜索问题…",
     "filterUsername": "用户名",
     "filterLensNode": "LensNode 名称或 ID",
@@ -1020,6 +1021,7 @@
       "settings": {
         "title": "Lens 全局配置",
         "description": "配置节点默认超时、Run 保留天数、健康检查阈值，以及默认定时任务启用状态。",
+        "label": "配置项",
         "action": "新建配置"
       }
     },

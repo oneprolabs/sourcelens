@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Polished admin console consistency: datasource file status filters now use
+  the shared select control, the File upload plugin is renamed to "Manual
+  upload", and the Run operations and global-settings screens show their
+  previously missing subtitle and labels.
+zh-CN: >-
+  优化管理端一致性：数据源文件状态筛选改用统一的选项控件，文件上传插件更名为“手动上传”，Run 运维与全局配置页面补齐了此前缺失的副标题与标签。

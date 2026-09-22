@@ -574,9 +574,9 @@
             type="search"
             @keyup.enter="searchFiles"
           />
-          <select
+          <BaseSelect
             v-model="fileSyncStatus"
-            class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
+            class="text-ink-700"
             @change="searchFiles"
           >
             <option value="">
@@ -591,10 +591,10 @@
             <option value="failed">
               {{ t('lensAdmin.datasourceDetail.files.syncFailed') }}
             </option>
-          </select>
-          <select
+          </BaseSelect>
+          <BaseSelect
             v-model="fileConversionStatus"
-            class="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-700"
+            class="text-ink-700"
             @change="searchFiles"
           >
             <option value="">
@@ -612,7 +612,7 @@
             <option value="not_converted">
               {{ t('lensAdmin.datasourceDetail.files.notConverted') }}
             </option>
-          </select>
+          </BaseSelect>
         </div>
         <div class="overflow-hidden rounded-lg border border-line bg-surface">
           <div
@@ -727,6 +727,7 @@ import { extractErrorMessage, extractResponseData } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PluginIcon from '@/components/ui/PluginIcon.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import DrawerSection from '@/components/ui/DrawerSection.vue'
