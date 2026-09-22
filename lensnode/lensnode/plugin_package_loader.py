@@ -29,6 +29,8 @@ class PluginRuntimeContract:
     execute_tool: object
     build_datasource_command: object
     sync_datasource: object
+    http_post_paths: object = None
+    project_decision: object = None
 
 
 def load_runtime_contract(plugin_key, plugin_version, roots=None):
@@ -115,7 +117,9 @@ def _runtime_contract(path, plugin_key, plugin_version):
         None,
     )
     sync_datasource = getattr(module, "sync_datasource", None)
-    if not callable(build_tool) or not callable(execute_tool):
+    if not callable(execute_tool):
+        raise PluginPackageLoadError("plugin runtime contract is invalid")
+    if build_tool is not None and not callable(build_tool):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
     if build_datasource_command is not None and not callable(
         build_datasource_command
@@ -128,6 +132,12 @@ def _runtime_contract(path, plugin_key, plugin_version):
     http_origins = getattr(module, "http_origins", None)
     if http_origins is not None and not callable(http_origins):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
+    http_post_paths = getattr(module, "http_post_paths", None)
+    if http_post_paths is not None and not callable(http_post_paths):
+        raise PluginPackageLoadError("plugin runtime contract is invalid")
+    project_decision = getattr(module, "project_decision", None)
+    if project_decision is not None and not callable(project_decision):
+        raise PluginPackageLoadError("plugin runtime contract is invalid")
     return PluginRuntimeContract(
         plugin_key=plugin_key,
         plugin_version=plugin_version,
@@ -136,6 +146,8 @@ def _runtime_contract(path, plugin_key, plugin_version):
         execute_tool=execute_tool,
         build_datasource_command=build_datasource_command,
         sync_datasource=sync_datasource,
+        http_post_paths=http_post_paths,
+        project_decision=project_decision,
     )
 
 

@@ -1047,6 +1047,160 @@
                       </span>
                     </span>
                   </label>
+                  <div
+                    v-if="
+                      pluginBinding(connection.uuid) &&
+                      isDecisionConnection(connection)
+                    "
+                    class="mt-3 space-y-3 border-t border-line pt-3"
+                  >
+                    <p class="text-xs font-medium text-ink-700">
+                      {{ t('lensAdmin.wizard.decisionGates') }}
+                    </p>
+                    <p class="text-xs leading-5 text-ink-500">
+                      {{ t('lensAdmin.wizard.decisionGatesHint') }}
+                    </p>
+                    <div
+                      v-for="gate in decisionGatesFor(connection)"
+                      :key="gate.key"
+                      class="space-y-2 rounded-md bg-surface-sunken p-2"
+                    >
+                      <label
+                        class="flex items-center gap-2"
+                        :class="
+                          gateToggleDisabled(connection, gate.key)
+                            ? 'cursor-not-allowed opacity-60'
+                            : 'cursor-pointer'
+                        "
+                      >
+                        <input
+                          type="checkbox"
+                          class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                          :disabled="gateToggleDisabled(connection, gate.key)"
+                          :checked="
+                            Boolean(gateConfig(connection.uuid, gate.key))
+                          "
+                          @change="
+                            toggleDecisionGate(
+                              connection,
+                              gate.key,
+                              $event.target.checked
+                            )
+                          "
+                        />
+                        <span class="text-xs font-medium text-ink-800">
+                          {{ gate.key }}
+                        </span>
+                        <span
+                          v-if="!gateIsActive(connection, gate.key)"
+                          class="rounded bg-surface px-1.5 py-0.5 text-[10px] text-ink-500"
+                        >
+                          {{
+                            t('lensAdmin.wizard.decisionGateInactive', {
+                              phase: gatePhase(connection, gate.key)
+                            })
+                          }}
+                        </span>
+                      </label>
+                      <div
+                        v-if="
+                          gateConfig(connection.uuid, gate.key) &&
+                          gate.kind !== 'choice'
+                        "
+                        class="flex flex-wrap items-center gap-3 pl-6"
+                      >
+                        <label
+                          class="flex items-center gap-1 text-xs text-ink-600"
+                        >
+                          {{ t('lensAdmin.wizard.decisionGateThreshold') }}
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            class="w-20 rounded border border-line bg-surface px-2 py-1 text-xs text-ink-900"
+                            :value="
+                              gateConfig(connection.uuid, gate.key).threshold
+                            "
+                            @input="
+                              updateDecisionGate(
+                                connection,
+                                gate.key,
+                                'threshold',
+                                $event.target.value
+                              )
+                            "
+                          />
+                        </label>
+                        <label
+                          class="flex items-center gap-1 text-xs text-ink-600"
+                        >
+                          {{ t('lensAdmin.wizard.decisionGateMargin') }}
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            class="w-20 rounded border border-line bg-surface px-2 py-1 text-xs text-ink-900"
+                            :value="
+                              gateConfig(connection.uuid, gate.key).margin
+                            "
+                            @input="
+                              updateDecisionGate(
+                                connection,
+                                gate.key,
+                                'margin',
+                                $event.target.value
+                              )
+                            "
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    v-if="
+                      pluginBinding(connection.uuid) &&
+                      isDecisionConnection(connection) &&
+                      analysisDecisionsFor(connection).length
+                    "
+                    class="mt-3 space-y-2 border-t border-line pt-3"
+                  >
+                    <p class="text-xs font-medium text-ink-700">
+                      {{ t('lensAdmin.wizard.decisionAnalyses') }}
+                    </p>
+                    <p class="text-xs leading-5 text-ink-500">
+                      {{ t('lensAdmin.wizard.decisionAnalysesHint') }}
+                    </p>
+                    <label
+                      v-for="analysis in analysisDecisionsFor(connection)"
+                      :key="analysis.key"
+                      class="flex cursor-pointer items-start gap-2 rounded-md bg-surface-sunken p-2"
+                    >
+                      <input
+                        type="checkbox"
+                        class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                        :checked="
+                          Boolean(analysisConfig(connection.uuid, analysis.key))
+                        "
+                        @change="
+                          toggleDecisionAnalysis(
+                            connection,
+                            analysis.key,
+                            $event.target.checked
+                          )
+                        "
+                      />
+                      <span class="min-w-0 flex-1">
+                        <span class="block text-xs font-medium text-ink-800">
+                          {{ analysis.key }}
+                        </span>
+                        <span class="mt-0.5 block text-xs text-ink-500">
+                          {{ (analysis.rubric || []).join(' · ') }}
+                        </span>
+                      </span>
+                    </label>
+                  </div>
                 </div>
                 <p
                   v-if="!activePluginConnections.length"
@@ -1445,7 +1599,9 @@ const activePluginConnections = computed(() =>
   props.pluginConnections.filter((connection) => {
     if (connection.status !== 'active') return false
     const manifest = props.pluginManifests?.[connection.plugin_key]
-    return Array.isArray(manifest?.tools) && manifest.tools.length > 0
+    if (manifest?.plugin_type === 'decision') return true
+    const tools = Array.isArray(manifest?.tools) ? manifest.tools : []
+    return tools.some((tool) => tool.exposure !== 'internal')
   })
 )
 
@@ -1864,10 +2020,120 @@ const compatibleLensnodes = computed(() =>
   )
 )
 
+const DEFAULT_GATE_THRESHOLD = 0.5
+const DEFAULT_GATE_MARGIN = 0.1
+
 function pluginBinding(connectionUuid) {
   return selectedPluginBindings.value.find(
     (binding) => binding.connection_uuid === connectionUuid
   )
+}
+
+function isDecisionConnection(connection) {
+  return (
+    props.pluginManifests?.[connection.plugin_key]?.plugin_type === 'decision'
+  )
+}
+
+function decisionGatesFor(connection) {
+  const decisions = props.pluginManifests?.[connection.plugin_key]?.decisions
+  if (!Array.isArray(decisions)) return []
+  return decisions.filter(
+    (decision) =>
+      decision.mode === 'control' &&
+      (decision.applies_to || []).includes(props.form.capability)
+  )
+}
+
+function gateConfig(connectionUuid, gateKey) {
+  const gates = pluginBinding(connectionUuid)?.decision_gates
+  if (!gates || typeof gates !== 'object') return null
+  return gates[gateKey] || null
+}
+
+function gatePhase(connection, gateKey) {
+  return (
+    props.pluginManifests?.[connection.plugin_key]?.gate_phases?.[gateKey] || ''
+  )
+}
+
+function gateIsActive(connection, gateKey) {
+  const manifest = props.pluginManifests?.[connection.plugin_key]
+  const activePhase = manifest?.gate_active_phase
+  if (!activePhase) return true
+  const phase = manifest?.gate_phases?.[gateKey]
+  return !phase || phase === activePhase
+}
+
+function updateBindingGates(connectionUuid, mutate) {
+  props.form.plugin_bindings = selectedPluginBindings.value.map((binding) => {
+    if (binding.connection_uuid !== connectionUuid) return binding
+    return {
+      ...binding,
+      decision_gates: mutate({ ...(binding.decision_gates || {}) })
+    }
+  })
+}
+
+function gateDefaults(gate) {
+  if (gate.kind === 'choice') return {}
+  return { threshold: DEFAULT_GATE_THRESHOLD, margin: DEFAULT_GATE_MARGIN }
+}
+
+function toggleDecisionGate(connection, gateKey, checked) {
+  const gate = decisionGatesFor(connection).find((item) => item.key === gateKey)
+  updateBindingGates(connection.uuid, (gates) => {
+    if (checked) {
+      gates[gateKey] = gateDefaults(gate || {})
+    } else {
+      delete gates[gateKey]
+    }
+    return gates
+  })
+}
+
+function updateDecisionGate(connection, gateKey, field, value) {
+  if (value === '' || value === null) return
+  const number = Number(value)
+  if (!Number.isFinite(number)) return
+  updateBindingGates(connection.uuid, (gates) => {
+    if (!gates[gateKey]) return gates
+    gates[gateKey] = { ...gates[gateKey], [field]: number }
+    return gates
+  })
+}
+
+function gateToggleDisabled(connection, gateKey) {
+  return (
+    !gateIsActive(connection, gateKey) && !gateConfig(connection.uuid, gateKey)
+  )
+}
+
+function analysisDecisionsFor(connection) {
+  const decisions = props.pluginManifests?.[connection.plugin_key]?.decisions
+  if (!Array.isArray(decisions)) return []
+  return decisions.filter(
+    (decision) => decision.mode === 'analysis' && decision.kind === 'score'
+  )
+}
+
+function analysisConfig(connectionUuid, analysisKey) {
+  const analyses = pluginBinding(connectionUuid)?.decision_analyses
+  if (!analyses || typeof analyses !== 'object') return null
+  return analyses[analysisKey] || null
+}
+
+function toggleDecisionAnalysis(connection, analysisKey, checked) {
+  props.form.plugin_bindings = selectedPluginBindings.value.map((binding) => {
+    if (binding.connection_uuid !== connection.uuid) return binding
+    const analyses = { ...(binding.decision_analyses || {}) }
+    if (checked) {
+      analyses[analysisKey] = {}
+    } else {
+      delete analyses[analysisKey]
+    }
+    return { ...binding, decision_analyses: analyses }
+  })
 }
 
 function pluginDisplayName(pluginKey) {
@@ -1890,7 +2156,9 @@ function selectedPluginCapabilities(pluginKey) {
     )
     if (connection?.plugin_key !== pluginKey) return
     const tools = props.pluginManifests?.[pluginKey]?.tools || []
-    tools.forEach((tool) => capabilities.add(tool.capability))
+    tools
+      .filter((tool) => tool.exposure !== 'internal')
+      .forEach((tool) => capabilities.add(tool.capability))
   })
   return capabilities
 }
@@ -1904,11 +2172,41 @@ function togglePluginConnection(connection, checked) {
     return
   }
   if (pluginBinding(connection.uuid)) return
-  props.form.plugin_bindings = [
-    ...bindings,
-    { connection_uuid: connection.uuid, enabled: true }
-  ]
+  const binding = { connection_uuid: connection.uuid, enabled: true }
+  const gates = decisionGatesFor(connection).filter((gate) =>
+    gateIsActive(connection, gate.key)
+  )
+  if (gates.length) {
+    binding.decision_gates = Object.fromEntries(
+      gates.map((gate) => [gate.key, gateDefaults(gate)])
+    )
+  }
+  props.form.plugin_bindings = [...bindings, binding]
 }
+
+watch(
+  () => props.form.capability,
+  () => {
+    props.form.plugin_bindings = selectedPluginBindings.value.map((binding) => {
+      if (!binding.decision_gates) return binding
+      const connection = props.pluginConnections.find(
+        (item) => item.uuid === binding.connection_uuid
+      )
+      if (!connection) return binding
+      const allowed = new Set(
+        decisionGatesFor(connection).map((gate) => gate.key)
+      )
+      return {
+        ...binding,
+        decision_gates: Object.fromEntries(
+          Object.entries(binding.decision_gates).filter(([key]) =>
+            allowed.has(key)
+          )
+        )
+      }
+    })
+  }
+)
 
 function nextWizardStep() {
   if (wizardStep.value < WIZARD_STEP_COUNT) wizardStep.value++

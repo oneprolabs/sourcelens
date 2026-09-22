@@ -47,6 +47,7 @@ class ResumeState:
     messages: tuple
     route_decision: dict
     history_assistant_turns: int
+    decision_gates: dict = field(default_factory=dict)
     checkpoint_step: int = -1
     checkpoint_id: str = ""
     capability_state: dict = field(default_factory=dict)
@@ -123,6 +124,7 @@ def get_checkpoint_saver(workspace_path) -> SqliteSaver:
                         route_decision TEXT NOT NULL,
                         history_assistant_turns INTEGER NOT NULL,
                         runtime_state TEXT NOT NULL DEFAULT '{}',
+                        decision_gates TEXT NOT NULL DEFAULT '{}',
                         checkpoint_id TEXT,
                         schema_version INTEGER NOT NULL DEFAULT 1,
                         updated_at REAL NOT NULL,
@@ -150,6 +152,11 @@ def get_checkpoint_saver(workspace_path) -> SqliteSaver:
                     connection.execute(
                         "ALTER TABLE lensnode_run_metadata "
                         "ADD COLUMN checkpoint_id TEXT"
+                    )
+                if "decision_gates" not in columns:
+                    connection.execute(
+                        "ALTER TABLE lensnode_run_metadata "
+                        "ADD COLUMN decision_gates TEXT NOT NULL DEFAULT '{}'"
                     )
                 if "schema_version" not in columns:
                     connection.execute(
@@ -235,6 +242,27 @@ def save_resume_metadata(
             ),
         )
         saver.conn.commit()
+
+
+def save_decision_gates(run_uuid, workspace_path, decision_gates):
+    """Persist advisory Decision gate verdicts for replay on resume."""
+
+    saver = get_checkpoint_saver(workspace_path)
+    with _database_lock:
+        cursor = saver.conn.execute(
+            """
+            UPDATE lensnode_run_metadata
+            SET decision_gates = ?, updated_at = ?
+            WHERE run_uuid = ?
+            """,
+            (
+                json.dumps(decision_gates or {}, sort_keys=True),
+                time.time(),
+                str(run_uuid),
+            ),
+        )
+        saver.conn.commit()
+    return cursor.rowcount == 1
 
 
 def save_initial_checkpoint(run_uuid, workspace_path, messages):
@@ -351,7 +379,7 @@ def load_resume_state(run_uuid, workspace_path) -> ResumeState:
             row = saver.conn.execute(
                 """
                 SELECT route_decision, history_assistant_turns, runtime_state,
-                       checkpoint_id, schema_version
+                       checkpoint_id, schema_version, decision_gates
                 FROM lensnode_run_metadata
                 WHERE run_uuid = ?
                 """,
@@ -393,6 +421,7 @@ def load_resume_state(run_uuid, workspace_path) -> ResumeState:
     try:
         route_decision = json.loads(row[0])
         runtime_state = json.loads(row[2])
+        decision_gates = json.loads(row[5] or "{}")
     except (TypeError, ValueError) as exc:
         raise CheckpointResumeError(
             "Cannot resume run because its checkpoint metadata is invalid."
@@ -411,10 +440,15 @@ def load_resume_state(run_uuid, workspace_path) -> ResumeState:
         raise CheckpointResumeError(
             "Cannot resume run because its checkpoint step is invalid."
         )
+    if not isinstance(decision_gates, dict):
+        raise CheckpointResumeError(
+            "Cannot resume run because its decision gates are invalid."
+        )
     return ResumeState(
         messages=tuple(channel_values.get("messages") or ()),
         route_decision=route_decision,
         history_assistant_turns=max(int(row[1] or 0), 0),
+        decision_gates=decision_gates,
         checkpoint_step=checkpoint_step,
         checkpoint_id=str(row[3]),
         capability_state=runtime_state.get("capability_state") or {},

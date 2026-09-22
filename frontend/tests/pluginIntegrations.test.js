@@ -48,8 +48,8 @@ test('Datasource-only Plugins stay out of Assistant configuration', async () => 
 
   assert.match(drawer, /const activePluginConnections = computed/)
   assert.match(drawer, /props\.pluginManifests\?\.\[connection\.plugin_key\]/)
-  assert.match(drawer, /Array\.isArray\(manifest\?\.tools\)/)
-  assert.match(drawer, /manifest\.tools\.length > 0/)
+  assert.match(drawer, /manifest\?\.plugin_type === 'decision'/)
+  assert.match(drawer, /tool\.exposure !== 'internal'/)
 })
 
 test('Feishu datasource URLs are checked before they can be saved', async () => {
@@ -671,4 +671,26 @@ test('creation forms do not expose generic active or disabled selectors', async 
   assert.match(connections, /connections\.resume/)
   assert.match(detailDrawer, /actions\.disableDatasource/)
   assert.match(detailDrawer, /actions\.enableDatasource/)
+})
+
+test('Decision bindings carry gates and analyses through the form', async () => {
+  const [page, drawer] = await Promise.all([
+    source('pages/lens/Assistants.vue'),
+    source('pages/lens/AssistantFormDrawerDirectEnvironment.vue')
+  ])
+
+  assert.match(page, /decision_gates: \{ \.\.\.\(binding\.decision_gates \|\| \{\}\) \}/)
+  assert.match(
+    page,
+    /decision_analyses: \{ \.\.\.\(binding\.decision_analyses \|\| \{\}\) \}/
+  )
+  assert.match(drawer, /function decisionGatesFor\(connection\)/)
+  assert.match(drawer, /function toggleDecisionGate\(connection, gateKey, checked\)/)
+  assert.match(drawer, /function analysisDecisionsFor\(connection\)/)
+  assert.match(
+    drawer,
+    /function toggleDecisionAnalysis\(connection, analysisKey, checked\)/
+  )
+  assert.match(drawer, /decision\.mode === 'analysis' && decision\.kind === 'score'/)
+  assert.match(drawer, /function gateIsActive\(connection, gateKey\)/)
 })

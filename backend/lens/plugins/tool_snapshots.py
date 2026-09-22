@@ -29,6 +29,11 @@ ACTIVE_RUN_STATUSES = frozenset({
     Run.Status.RUNNING,
     Run.Status.STREAMING,
 })
+TOOL_SOURCES = frozenset({
+    "model_tool",
+    "decision_gate",
+    "decision_rank",
+})
 
 
 class ToolSnapshotError(ValueError):
@@ -48,6 +53,7 @@ def create_tool_execution_snapshot(
     tool_key,
     call_id,
     arguments,
+    source="model_tool",
 ):
     """Authorize one frozen Tool binding and persist its execution snapshot."""
 
@@ -67,6 +73,9 @@ def create_tool_execution_snapshot(
         raise ToolSnapshotError("TOOL_CALL_ID_INVALID", 400)
     if not isinstance(tool_key, str) or not tool_key:
         raise ToolSnapshotError("TOOL_NOT_AUTHORIZED", 403)
+    source = str(source or "model_tool")
+    if source not in TOOL_SOURCES:
+        raise ToolSnapshotError("TOOL_REQUEST_INVALID", 400)
 
     frozen_plugin, frozen_tool = _frozen_tool(
         run.execution.loaded_plugins,
@@ -119,6 +128,8 @@ def create_tool_execution_snapshot(
         },
         "arguments": normalized_arguments,
     }
+    if source != "model_tool":
+        resolved_config["source"] = source
     existing = ExecutionSnapshot.objects.filter(
         run=run,
         invocation_id=call_id,

@@ -40,18 +40,22 @@ def create_plugin_tool_snapshot(
     tool_key,
     call_id,
     arguments,
+    source="model_tool",
 ):
     """Authorize one model Tool call and return its opaque snapshot."""
 
+    body = {
+        "run_uuid": str(run_uuid),
+        "connection_uuid": str(connection_uuid),
+        "tool_key": str(tool_key),
+        "call_id": str(call_id),
+        "arguments": arguments,
+    }
+    if source and source != "model_tool":
+        body["source"] = str(source)
     response = client.post(
         tool_snapshot_url(ai_gateway_url),
-        json={
-            "run_uuid": str(run_uuid),
-            "connection_uuid": str(connection_uuid),
-            "tool_key": str(tool_key),
-            "call_id": str(call_id),
-            "arguments": arguments,
-        },
+        json=body,
         headers={"Authorization": f"Bearer {token}"},
     )
     if response.is_error:

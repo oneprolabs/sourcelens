@@ -213,7 +213,12 @@ def test_pool_closes_every_origin_client_and_rejects_new_bindings():
 ])
 def test_decision_post_permission_is_bounded(plugin, url, kwargs):
     pool = PluginHttpClientPool(timeout=15, verify=True)
-    client = pool.bind(plugin, "connection-1", ["https://decision.example"])
+    client = pool.bind(
+        plugin,
+        "connection-1",
+        ["https://decision.example"],
+        ("/v1/systemone",) if plugin == "typesafe" else (),
+    )
     with pytest.raises(PluginHttpClientError):
         with client.stream("POST", url, **kwargs):
             pass
@@ -235,7 +240,10 @@ def test_decision_post_allows_body_within_the_bounded_size():
     )
     try:
         client = pool.bind(
-            "typesafe", "connection-1", ["https://decision.example"]
+            "typesafe",
+            "connection-1",
+            ["https://decision.example"],
+            ["/v1/systemone"],
         )
         with client.stream(
             "POST",
@@ -264,7 +272,10 @@ def test_decision_post_allows_a_gateway_base_path():
     )
     try:
         client = pool.bind(
-            "typesafe", "connection-1", ["https://ai-gateway.vercel.sh"]
+            "typesafe",
+            "connection-1",
+            ["https://ai-gateway.vercel.sh"],
+            ["/typesafe/v1/systemone"],
         )
         with client.stream(
             "POST",

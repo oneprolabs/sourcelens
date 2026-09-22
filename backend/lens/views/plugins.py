@@ -27,6 +27,7 @@ from lens.plugins.providers import (
     DatasourceProviderError,
     get_datasource_provider,
 )
+from lens.plugins.decisions import GATE_ACTIVE_PHASE, GATE_PHASES
 from lens.plugins.registry import (
     PluginNotFoundError,
     discover_plugins,
@@ -277,6 +278,8 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                     "version": plugin.version,
                     "protocol_version": plugin.protocol_version,
                     "capability_family": plugin.capability_family,
+                    "plugin_type": plugin.plugin_type,
+                    "decisions": list(plugin.decisions),
                     "display_name": plugin.display_name,
                     "description": plugin.description,
                     "assistant_guidance": plugin.assistant_guidance,
@@ -307,6 +310,7 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                     "capability": tool.capability,
                     "capability_family": tool.capability_family,
                     "side_effect": tool.side_effect,
+                    "exposure": tool.exposure,
                     "input_schema": tool.input_schema,
                 }
                 for tool in plugin.tools
@@ -328,6 +332,10 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                 "version": plugin.version,
                 "protocol_version": plugin.protocol_version,
                 "capability_family": plugin.capability_family,
+                "plugin_type": plugin.plugin_type,
+                "decisions": list(plugin.decisions),
+                "gate_active_phase": GATE_ACTIVE_PHASE,
+                "gate_phases": dict(GATE_PHASES),
                 "display_name": plugin.display_name,
                 "description": plugin.description,
                 "assistant_guidance": plugin.assistant_guidance,
@@ -343,6 +351,7 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                         "capability": tool.capability,
                         "capability_family": tool.capability_family,
                         "side_effect": tool.side_effect,
+                        "exposure": tool.exposure,
                         "input_schema": tool.input_schema,
                     }
                     for tool in plugin.tools
@@ -662,6 +671,7 @@ class PluginToolExecutionSnapshotView(
                 tool_key=request.data.get("tool_key"),
                 call_id=request.data.get("call_id"),
                 arguments=request.data.get("arguments"),
+                source=request.data.get("source"),
             )
         except ToolSnapshotError as exc:
             return Response(

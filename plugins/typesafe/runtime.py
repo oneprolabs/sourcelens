@@ -15,7 +15,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "typesafe"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.3.0"
 TYPESAFE_MODEL = "jev-1.13.0"
 TYPESAFE_API_SUFFIX = "/v1/systemone"
 REQUEST_MAX_BYTES = 1_000_000
@@ -31,6 +31,46 @@ def http_origins(endpoint):
     """Return the configured origin approved for pooled HTTP."""
 
     return (_origin(_endpoint(endpoint)),)
+
+
+def http_post_paths(endpoint):
+    """Return the fixed request paths this runtime may POST to."""
+
+    return (urlsplit(f"{_endpoint(endpoint)}{TYPESAFE_API_SUFFIX}").path,)
+
+
+def project_decision(tool_key, result):
+    """Return the neutral Decision view of one execute_tool result."""
+
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return None
+    answers = result.get("answers")
+    answer = answers.get("decision") if isinstance(answers, dict) else None
+    if not isinstance(answer, dict):
+        return None
+    kind = answer.get("type")
+    usage = result.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    if kind == "noul":
+        return {
+            "kind": "noul",
+            "value": answer.get("noul"),
+            "confidence": answer.get("confidence"),
+            "legend": None,
+            "usage": usage,
+        }
+    if kind not in {"choice", "score"}:
+        return None
+    probabilities = answer.get("probabilities")
+    if not isinstance(probabilities, dict):
+        return None
+    return {
+        "kind": kind,
+        "value": probabilities,
+        "confidence": answer.get("confidence"),
+        "legend": answer.get("legend"),
+        "usage": usage,
+    }
 
 
 def build_tool(definition, executor):

@@ -171,6 +171,7 @@ class PluginToolSnapshotTests(TestCase):
             snapshot.resolved_config["arguments"]["path"],
             "README.md",
         )
+        self.assertNotIn("source", snapshot.resolved_config)
         self.assertNotIn("github-tool-secret", json.dumps(response.data))
         self.assertNotIn(
             "github-tool-secret",
@@ -186,6 +187,28 @@ class PluginToolSnapshotTests(TestCase):
         )
         self.assertNotIn("README.md", json.dumps(invocation.resource_summary))
         self.assertNotIn("github-tool-secret", str(invocation.__dict__))
+
+    def test_tool_snapshot_records_a_decision_source(self):
+        run = self._create_active_run()
+
+        response = self._create_snapshot(run, source="decision_gate")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(
+            uuid=response.data["snapshot_uuid"]
+        )
+        self.assertEqual(
+            snapshot.resolved_config["source"],
+            "decision_gate",
+        )
+
+    def test_tool_snapshot_rejects_an_unknown_source(self):
+        run = self._create_active_run()
+
+        response = self._create_snapshot(run, source="not_a_source")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["detail"], "TOOL_REQUEST_INVALID")
 
     def test_tool_snapshot_rejects_connection_not_frozen_in_run(self):
         run = self._create_active_run()

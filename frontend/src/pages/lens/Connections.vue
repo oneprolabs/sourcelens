@@ -826,7 +826,10 @@ function connectionUsageLabels(row) {
   const manifest = pluginManifests.value[row.plugin_key] || {}
   const labels = []
   const hasDatasource = connectionHasDatasource(row.plugin_key)
-  const hasTool = Array.isArray(manifest.tools) && manifest.tools.length > 0
+  const isDecision = manifest.plugin_type === 'decision'
+  const modelTools = Array.isArray(manifest.tools)
+    ? manifest.tools.filter((tool) => tool.exposure !== 'internal')
+    : []
   if (hasDatasource) {
     labels.push({
       key: 'datasource',
@@ -834,7 +837,13 @@ function connectionUsageLabels(row) {
       className: 'border-amber-200 bg-amber-50 text-amber-700'
     })
   }
-  if (hasTool) {
+  if (isDecision) {
+    labels.push({
+      key: 'decision',
+      text: t('lensAdmin.connections.decisionLabel'),
+      className: 'border-violet-200 bg-violet-50 text-violet-700'
+    })
+  } else if (modelTools.length > 0) {
     labels.push({
       key: 'tool',
       text: t('lensAdmin.connections.toolLabel'),

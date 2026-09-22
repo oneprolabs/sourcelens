@@ -264,7 +264,9 @@ const pluginConnections = computed(() =>
   connections.value.filter((connection) => {
     const tools = pluginManifests.value[connection.plugin_key]?.tools
     return (
-      connection.status === 'active' && Array.isArray(tools) && tools.length > 0
+      connection.status === 'active' &&
+      Array.isArray(tools) &&
+      tools.some((tool) => tool.exposure !== 'internal')
     )
   })
 )
@@ -275,7 +277,8 @@ const selectedConnection = computed(() =>
 )
 const pluginTools = computed(() => {
   const pluginKey = selectedConnection.value?.plugin_key
-  return pluginManifests.value[pluginKey]?.tools || []
+  const tools = pluginManifests.value[pluginKey]?.tools || []
+  return tools.filter((tool) => tool.exposure !== 'internal')
 })
 
 const columns = computed(() =>

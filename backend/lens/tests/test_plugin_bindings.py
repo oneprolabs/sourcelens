@@ -21,7 +21,11 @@ from lens.models import (
     Session,
     Skill,
 )
+from lens.plugins.decisions import validate_decision_gates
+from lens.plugins.registry import PluginRegistryError, installed_plugin
 from lens.services import (
+    build_decision_analyses,
+    build_decision_gates,
     build_loaded_mcps,
     build_loaded_plugin_skills,
     build_loaded_plugins,
@@ -692,3 +696,469 @@ class AssistantPluginBindingTests(TestCase):
             [tool["key"] for tool in run.execution.loaded_plugins[0]["tools"]],
             ["github_read_file", "github_search_code"],
         )
+
+
+class DecisionGateBindingTests(TestCase):
+    """Verify Assistant bindings for Decision Plugin control gates."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="decision-admin",
+            is_staff=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.lensnode = LensNode.objects.create(
+            name="Decision node",
+            status=LensNode.Status.ONLINE,
+            enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+            workspace_path="/workspace",
+            available_dirs=[{"path": "/workspace/repo"}],
+            tasks=[
+                {"name": "general_chat"},
+                {"name": "knowledge_qa"},
+            ],
+        )
+        material = SecretMaterial.objects.create(name="TypeSafe token")
+        version = SecretVersion(material=material)
+        version.set_value("typesafe-runtime-secret")
+        version.save()
+        self.connection = Connection.objects.create(
+            name="TypeSafe",
+            plugin_key="typesafe",
+            endpoint="https://api.typesafe.ai",
+            allowed_scope={},
+            secret_version=version,
+        )
+
+    @contextmanager
+    def decision_plugin_root(self, decisions=None, tool_exposure="model"):
+        """Install one trusted Decision Plugin manifest for a test."""
+
+        tool = {
+            "key": "typesafe_noul",
+            "description": "Return one bounded probability.",
+            "capability": "decision.evaluate",
+            "side_effect": "none",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string"},
+                    "instructions": {"type": "string"},
+                },
+                "required": ["state", "instructions"],
+            },
+        }
+        if tool_exposure != "model":
+            tool["exposure"] = tool_exposure
+        manifest = {
+            "key": "typesafe",
+            "version": "1.3.0",
+            "protocol_version": 1,
+            "plugin_type": "decision",
+            "handlers": {
+                "runtime": "python_v1",
+                "control": "python_v1",
+            },
+            "tools": [tool],
+            "decisions": (
+                decisions
+                if decisions is not None
+                else [
+                    {
+                        "key": "search_needed",
+                        "mode": "control",
+                        "kind": "noul",
+                        "applies_to": ["knowledge_qa", "code_analysis"],
+                        "tool_keys": ["typesafe_noul"],
+                    },
+                    {
+                        "key": "evidence_requirement",
+                        "mode": "control",
+                        "kind": "noul",
+                        "applies_to": ["general_chat"],
+                        "tool_keys": ["typesafe_noul"],
+                    },
+                ]
+            ),
+        }
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "typesafe"
+            path.mkdir(parents=True)
+            (path / "plugin.json").write_text(json.dumps(manifest))
+            (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
+            (path / "runtime.py").write_text("PLUGIN_API_VERSION = 1\n")
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                yield
+
+    def _create(self, slug, task, bindings):
+        return self.client.post(
+            "/api/lens/assistants/",
+            {
+                "name": slug,
+                "slug": slug,
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "selected_task": task,
+                "selected_dirs": (
+                    [{"path": "/workspace/repo"}]
+                    if task != "general_chat"
+                    else []
+                ),
+                "plugin_bindings": bindings,
+            },
+            format="json",
+        )
+
+    def test_knowledge_qa_accepts_the_search_needed_gate(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-knowledge",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {
+                            "search_needed": {
+                                "threshold": 0.6,
+                                "margin": 0.2,
+                            }
+                        },
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-knowledge")
+            loaded = build_loaded_plugins(assistant)
+
+        gates = loaded[0]["decision_gates"]["search_needed"]
+        self.assertEqual(gates["tool_key"], "typesafe_noul")
+        self.assertEqual(gates["kind"], "noul")
+        self.assertEqual(gates["threshold"], 0.6)
+        self.assertEqual(gates["margin"], 0.2)
+        self.assertEqual(gates["max_state_chars"], 4000)
+
+    def test_command_carries_frozen_decision_gates(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-command",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {
+                            "search_needed": {"threshold": 0.7}
+                        },
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-command")
+            loaded = build_loaded_plugins(assistant)
+            gates = build_decision_gates(loaded)
+
+        self.assertEqual(len(gates), 1)
+        self.assertEqual(gates[0]["plugin_key"], "typesafe")
+        self.assertEqual(gates[0]["plugin_version"], "1.3.0")
+        self.assertEqual(
+            gates[0]["connection_uuid"],
+            str(self.connection.uuid),
+        )
+        self.assertEqual(
+            gates[0]["gates"]["search_needed"]["tool_key"],
+            "typesafe_noul",
+        )
+
+    def test_internal_decision_tool_still_freezes_gates(self):
+        with self.decision_plugin_root(tool_exposure="internal"):
+            response = self._create(
+                "decision-internal",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-internal")
+            loaded = build_loaded_plugins(assistant)
+            gates = build_decision_gates(loaded)
+
+        self.assertEqual(loaded[0]["tools"][0]["exposure"], "internal")
+        self.assertEqual(
+            gates[0]["gates"]["search_needed"]["tool_key"],
+            "typesafe_noul",
+        )
+
+    def test_pure_decision_plugin_has_no_model_tools_or_virtual_skill(self):
+        with self.decision_plugin_root(tool_exposure="internal"):
+            response = self._create(
+                "decision-pure",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-pure")
+            loaded = build_loaded_plugins(assistant)
+            skills = build_loaded_plugin_skills(
+                assistant,
+                loaded_plugins=loaded,
+            )
+
+        self.assertEqual(
+            [tool["exposure"] for tool in loaded[0]["tools"]],
+            ["internal"],
+        )
+        self.assertEqual(skills, [])
+
+    def test_stale_gate_survives_unrelated_assistant_edits(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-stale",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-stale")
+
+        with self.decision_plugin_root(decisions=[]):
+            response = self.client.patch(
+                f"/api/lens/assistants/{assistant.uuid}/",
+                {"name": "Renamed"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        assistant.refresh_from_db()
+        self.assertEqual(assistant.name, "Renamed")
+        gates = assistant.plugin_bindings.get().decision_gates
+        self.assertEqual(set(gates), {"search_needed"})
+        self.assertEqual(gates["search_needed"]["threshold"], 0.5)
+
+    def test_binding_without_gates_keeps_the_legacy_snapshot_shape(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-plain",
+                "knowledge_qa",
+                [{"connection_uuid": str(self.connection.uuid)}],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-plain")
+            loaded = build_loaded_plugins(assistant)
+
+        self.assertNotIn("decision_gates", loaded[0])
+
+    def test_general_chat_rejects_the_search_needed_gate(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-general",
+                "general_chat",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    }
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("plugin_bindings", response.data)
+
+    def test_rejects_an_undeclared_gate(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-unknown",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"answer_supported": {}},
+                    }
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+
+    def test_rejects_gates_from_two_bindings_of_one_plugin(self):
+        second = Connection.objects.create(
+            name="TypeSafe two",
+            plugin_key="typesafe",
+            endpoint="https://api.typesafe.ai",
+            allowed_scope={},
+            secret_version=self.connection.secret_version,
+        )
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-double",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    },
+                    {
+                        "connection_uuid": str(second.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    },
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+
+    def test_rejects_gates_for_an_integration_plugin(self):
+        manifest = {
+            "key": "typesafe",
+            "version": "1.3.0",
+            "protocol_version": 1,
+            "handlers": {
+                "runtime": "python_v1",
+                "control": "python_v1",
+            },
+            "tools": [],
+        }
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "typesafe"
+            path.mkdir(parents=True)
+            (path / "plugin.json").write_text(json.dumps(manifest))
+            (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
+            (path / "runtime.py").write_text("PLUGIN_API_VERSION = 1\n")
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("typesafe")
+
+        self.assertEqual(plugin.plugin_type, "integration")
+        with self.assertRaises(PluginRegistryError):
+            validate_decision_gates(plugin, {"search_needed": {}})
+
+    def test_analysis_binding_is_frozen_into_the_command(self):
+        decisions = [
+            {
+                "key": "plan_quality",
+                "mode": "analysis",
+                "kind": "score",
+                "summary": "Score one candidate plan.",
+                "rubric": ["weak", "acceptable", "strong"],
+                "tool_keys": ["typesafe_noul"],
+            }
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            response = self._create(
+                "decision-analysis",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_analyses": {"plan_quality": {}},
+                    }
+                ],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            assistant = Assistant.objects.get(slug="decision-analysis")
+            loaded = build_loaded_plugins(assistant)
+            analyses = build_decision_analyses(loaded)
+
+        frozen = loaded[0]["decision_analyses"]["plan_quality"]
+        self.assertEqual(frozen["tool_key"], "typesafe_noul")
+        self.assertEqual(frozen["kind"], "score")
+        self.assertEqual(
+            frozen["rubric"],
+            ["weak", "acceptable", "strong"],
+        )
+        self.assertEqual(len(analyses), 1)
+        self.assertEqual(analyses[0]["plugin_version"], "1.3.0")
+        self.assertEqual(
+            analyses[0]["analyses"]["plan_quality"]["kind"],
+            "score",
+        )
+
+    def test_rejects_an_unrankable_analysis(self):
+        decisions = [
+            {
+                "key": "plan_quality",
+                "mode": "analysis",
+                "kind": "choice",
+                "target_option": "good",
+                "tool_keys": ["typesafe_noul"],
+            }
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            response = self._create(
+                "decision-unrankable",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_analyses": {"plan_quality": {}},
+                    }
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("plugin_bindings", response.data)
+
+    def test_rejects_an_undeclared_analysis(self):
+        with self.decision_plugin_root():
+            response = self._create(
+                "decision-missing-analysis",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_analyses": {"plan_quality": {}},
+                    }
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+
+    def test_rejects_gates_and_analyses_from_two_bindings(self):
+        second = Connection.objects.create(
+            name="TypeSafe three",
+            plugin_key="typesafe",
+            endpoint="https://api.typesafe.ai",
+            allowed_scope={},
+            secret_version=self.connection.secret_version,
+        )
+        decisions = [
+            {
+                "key": "search_needed",
+                "mode": "control",
+                "kind": "noul",
+                "applies_to": ["knowledge_qa"],
+                "tool_keys": ["typesafe_noul"],
+            },
+            {
+                "key": "plan_quality",
+                "mode": "analysis",
+                "kind": "score",
+                "rubric": ["weak", "strong"],
+                "tool_keys": ["typesafe_noul"],
+            },
+        ]
+        with self.decision_plugin_root(decisions=decisions):
+            response = self._create(
+                "decision-mixed",
+                "knowledge_qa",
+                [
+                    {
+                        "connection_uuid": str(self.connection.uuid),
+                        "decision_gates": {"search_needed": {}},
+                    },
+                    {
+                        "connection_uuid": str(second.uuid),
+                        "decision_analyses": {"plan_quality": {}},
+                    },
+                ],
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)

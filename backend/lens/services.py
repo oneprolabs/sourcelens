@@ -61,6 +61,10 @@ from .models import (
     RunTraceExport,
     Session,
 )
+from .plugins.decisions import (
+    resolve_decision_analyses,
+    resolve_decision_gates,
+)
 from .plugins.registry import installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
@@ -1842,14 +1846,26 @@ def build_loaded_plugins(assistant):
         "mcp__connection__uuid",
     )
     bindings = [
-        (binding.connection, None, True)
+        (
+            binding.connection,
+            None,
+            True,
+            binding.decision_gates or {},
+            binding.decision_analyses or {},
+        )
         for binding in direct_bindings
     ]
     bindings.extend(
-        (binding.mcp.connection, binding.mcp.tools, False)
+        (binding.mcp.connection, binding.mcp.tools, False, {}, {})
         for binding in adapter_bindings
     )
-    for connection, selected_tool_keys, use_all_tools in bindings:
+    for (
+        connection,
+        selected_tool_keys,
+        use_all_tools,
+        gate_config,
+        analysis_config,
+    ) in bindings:
         secret_version = connection.secret_version
         if secret_version is None or secret_version.status != "active":
             continue
@@ -1880,26 +1896,66 @@ def build_loaded_plugins(assistant):
                     "capability": tool.capability,
                     "capability_family": tool.capability_family,
                     "side_effect": tool.side_effect,
+                    "exposure": tool.exposure,
                     "input_schema": tool.input_schema,
                 }
             )
-        if tools:
-            loaded.append(
-                {
-                    "connection_uuid": str(connection.uuid),
-                    "plugin_key": plugin.key,
-                    "plugin_display_name": plugin.display_name,
-                    "plugin_version": plugin.version,
-                    "protocol_version": plugin.protocol_version,
-                    "plugin_description": plugin.description,
-                    "assistant_guidance": plugin.assistant_guidance,
-                    "allowed_scope": _public_plugin_scope(
-                        connection.allowed_scope
-                    ),
-                    "tools": tools,
-                }
-            )
+        if tools or gate_config or analysis_config:
+            entry = {
+                "connection_uuid": str(connection.uuid),
+                "plugin_key": plugin.key,
+                "plugin_display_name": plugin.display_name,
+                "plugin_version": plugin.version,
+                "protocol_version": plugin.protocol_version,
+                "plugin_description": plugin.description,
+                "assistant_guidance": plugin.assistant_guidance,
+                "allowed_scope": _public_plugin_scope(
+                    connection.allowed_scope
+                ),
+                "tools": tools,
+            }
+            if gate_config:
+                entry["decision_gates"] = resolve_decision_gates(
+                    plugin,
+                    gate_config,
+                )
+            if analysis_config:
+                entry["decision_analyses"] = resolve_decision_analyses(
+                    plugin,
+                    analysis_config,
+                )
+            loaded.append(entry)
     return loaded
+
+
+def build_decision_gates(loaded_plugins):
+    """Return frozen Decision gate bindings for one LensNode command."""
+
+    return [
+        {
+            "plugin_key": item.get("plugin_key", ""),
+            "plugin_version": item.get("plugin_version", ""),
+            "connection_uuid": item.get("connection_uuid", ""),
+            "gates": item.get("decision_gates") or {},
+        }
+        for item in loaded_plugins or []
+        if item.get("decision_gates")
+    ]
+
+
+def build_decision_analyses(loaded_plugins):
+    """Return frozen Decision analysis bindings for one LensNode command."""
+
+    return [
+        {
+            "plugin_key": item.get("plugin_key", ""),
+            "plugin_version": item.get("plugin_version", ""),
+            "connection_uuid": item.get("connection_uuid", ""),
+            "analyses": item.get("decision_analyses") or {},
+        }
+        for item in loaded_plugins or []
+        if item.get("decision_analyses")
+    ]
 
 
 def build_loaded_plugin_skills(assistant, loaded_plugins=None):
@@ -1952,14 +2008,21 @@ def build_loaded_plugin_skills(assistant, loaded_plugins=None):
                         "details": details,
                     }
                 )
+        model_tools = [
+            item
+            for item in (plugin.get("tools") or [])
+            if isinstance(item, dict)
+            and item.get("exposure", "model") != "internal"
+        ]
+        if not model_tools:
+            continue
         tools = [
             {
                 "description": str(item.get("description") or "")[:600],
                 "capability": str(item.get("capability") or "")[:128],
                 "side_effect": str(item.get("side_effect") or "")[:32],
             }
-            for item in (plugin.get("tools") or [])
-            if isinstance(item, dict)
+            for item in model_tools
         ]
         descriptor = {
             "plugin_virtual": True,
@@ -3105,6 +3168,8 @@ def dispatch_run_to_lensnode(
     )
     last_trace_sequence = int(trace_cursor["last_sequence"] or 0)
     last_trace_attempt = int(trace_cursor["last_attempt"] or 0)
+    decision_gates = build_decision_gates(execution.loaded_plugins)
+    decision_analyses = build_decision_analyses(execution.loaded_plugins)
     _publish_lensnode_message(
         channel_layer,
         run.lensnode.uuid,
@@ -3157,6 +3222,8 @@ def dispatch_run_to_lensnode(
                 ),
                 "loaded_mcps": resolve_loaded_mcp_environment(execution.loaded_mcps),
                 "loaded_plugins": execution.loaded_plugins,
+                "decision_gates": decision_gates,
+                "decision_analyses": decision_analyses,
                 "agent_model_ref": (agent_model_ref),
                 "agent_rounds": agent_rounds,
                 "max_agent_turns": max_agent_turns_for_rounds(agent_rounds),

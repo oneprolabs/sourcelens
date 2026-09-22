@@ -17,6 +17,14 @@ CONNECTION_WRITE_TARGET_PATTERN = re.compile(
 )
 SUPPORTED_PROTOCOL_VERSION = 1
 SUPPORTED_CAPABILITY_FAMILIES = frozenset({"plugin"})
+PLUGIN_TYPES = frozenset({"integration", "decision"})
+DECISION_MODES = frozenset({"control", "analysis"})
+DECISION_KINDS = frozenset({"noul", "choice", "score"})
+DECISION_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+DECISION_MAX_ENTRIES = 32
+DECISION_RUBRIC_MIN = 2
+DECISION_RUBRIC_MAX = 10
+TOOL_EXPOSURES = frozenset({"model", "internal"})
 ALLOWED_HANDLERS = frozenset(
     {
         "python_v1",
@@ -81,6 +89,8 @@ class InstalledPlugin:
     tools: tuple
     assistant_guidance: dict
     path: Path
+    plugin_type: str = "integration"
+    decisions: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +103,7 @@ class InstalledPluginTool:
     capability_family: str
     side_effect: str
     input_schema: dict
+    exposure: str = "model"
 
 
 def discover_plugins():
@@ -251,6 +262,14 @@ def _load_plugin(root, plugin_dir, expected_key=None):
         manifest.get("tools") or [],
         capability_family=capability_family,
     )
+    plugin_type = manifest.get("plugin_type", "integration")
+    if plugin_type not in PLUGIN_TYPES:
+        raise PluginRegistryError("plugin type is not allowed")
+    if plugin_type != "decision" and manifest.get("decisions") is not None:
+        raise PluginRegistryError(
+            "plugin decisions require a decision plugin type"
+        )
+    decisions = _validate_decisions(manifest.get("decisions"), tools)
     assistant_guidance = _validate_assistant_guidance(
         manifest.get("assistant_guidance"),
         tools,
@@ -310,7 +329,102 @@ def _load_plugin(root, plugin_dir, expected_key=None):
         tools=tools,
         assistant_guidance=assistant_guidance,
         path=plugin_dir.resolve(),
+        plugin_type=plugin_type,
+        decisions=decisions,
     )
+
+
+def _validate_decisions(value, tools):
+    """Return validated Decision declarations from one manifest."""
+
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > DECISION_MAX_ENTRIES:
+        raise PluginRegistryError("plugin decisions are invalid")
+    declared_tools = {tool.key for tool in tools}
+    seen = set()
+    decisions = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise PluginRegistryError("plugin decisions are invalid")
+        key = item.get("key")
+        mode = item.get("mode")
+        kind = item.get("kind")
+        if (
+            not isinstance(key, str)
+            or not DECISION_KEY_PATTERN.fullmatch(key)
+            or key in seen
+            or mode not in DECISION_MODES
+            or kind not in DECISION_KINDS
+        ):
+            raise PluginRegistryError("plugin decisions are invalid")
+        seen.add(key)
+        tool_keys = item.get("tool_keys")
+        if (
+            not isinstance(tool_keys, list)
+            or not tool_keys
+            or any(
+                not isinstance(tool_key, str)
+                or tool_key not in declared_tools
+                for tool_key in tool_keys
+            )
+        ):
+            raise PluginRegistryError("plugin decision tools are invalid")
+        decision = {
+            "key": key,
+            "mode": mode,
+            "kind": kind,
+            "tool_keys": list(tool_keys),
+        }
+        applies_to = item.get("applies_to")
+        if mode == "control":
+            if (
+                not isinstance(applies_to, list)
+                or not applies_to
+                or any(
+                    not isinstance(mode_name, str) or not mode_name
+                    for mode_name in applies_to
+                )
+            ):
+                raise PluginRegistryError(
+                    "plugin control decision needs applies_to"
+                )
+            decision["applies_to"] = list(applies_to)
+        else:
+            rubric = item.get("rubric")
+            if kind == "score":
+                if (
+                    not isinstance(rubric, list)
+                    or not DECISION_RUBRIC_MIN
+                    <= len(rubric)
+                    <= DECISION_RUBRIC_MAX
+                    or any(
+                        not isinstance(level, str) or not level
+                        for level in rubric
+                    )
+                ):
+                    raise PluginRegistryError(
+                        "plugin analysis rubric is invalid"
+                    )
+                decision["rubric"] = list(rubric)
+            target_option = item.get("target_option")
+            if target_option is not None:
+                if kind != "choice" or not isinstance(
+                    target_option, str
+                ) or not target_option:
+                    raise PluginRegistryError(
+                        "plugin analysis target is invalid"
+                    )
+                decision["target_option"] = target_option
+            summary = item.get("summary")
+            if summary is not None:
+                decision["summary"] = _bounded_manifest_text(
+                    summary,
+                    "plugin decision summary",
+                    400,
+                )
+        decisions.append(decision)
+    return tuple(decisions)
 
 
 def _validate_assistant_guidance(value, tools):
@@ -342,7 +456,9 @@ def _validate_assistant_guidance(value, tools):
         )
         for item in when_to_use
     ]
-    tool_keys = {tool.key for tool in tools}
+    model_tool_keys = {
+        tool.key for tool in tools if tool.exposure == "model"
+    }
     topics = value.get("topics") or []
     if not isinstance(topics, list) or len(topics) > GUIDANCE_MAX_TOPICS:
         raise PluginRegistryError(
@@ -379,7 +495,7 @@ def _validate_assistant_guidance(value, tools):
             != len(topic_tools)
             or any(
                 not isinstance(tool_key, str)
-                or tool_key not in tool_keys
+                or tool_key not in model_tool_keys
                 for tool_key in topic_tools
             )
         ):
@@ -583,6 +699,9 @@ def _validate_tools(value, capability_family="plugin"):
             )
         if side_effect != "none":
             raise PluginRegistryError("plugin tool side effect is not allowed")
+        exposure = item.get("exposure", "model")
+        if exposure not in TOOL_EXPOSURES:
+            raise PluginRegistryError("plugin tool exposure is not allowed")
         schema = _validate_tool_schema(
             key,
             item.get("input_schema"),
@@ -596,6 +715,7 @@ def _validate_tools(value, capability_family="plugin"):
                 capability_family=tool_capability_family,
                 side_effect=side_effect,
                 input_schema=schema,
+                exposure=exposure,
             )
         )
     return tuple(tools)

@@ -18,7 +18,7 @@ from lens.plugins.providers.base import (
 
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "typesafe"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.3.0"
 TYPESAFE_MODEL = "jev-1.13.0"
 TYPESAFE_API_SUFFIX = "/v1/systemone"
 MAX_STATE_LENGTH = 100_000

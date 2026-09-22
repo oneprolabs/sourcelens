@@ -27,6 +27,7 @@ from ..checkpoint import (
     checkpoint_enabled,
     get_checkpoint_saver,
     load_resume_state,
+    save_decision_gates,
     save_initial_checkpoint,
     save_resume_metadata,
     save_runtime_state,
@@ -57,6 +58,11 @@ from ..runtime_modes import runtime_mode_for
 from .assembly import _agent_middleware, _fast_subagent
 from .capabilities import CapabilityBoundaryMiddleware
 from .capability_protocol import CAPABILITY_FAMILIES
+from .decision_policy import (
+    ModelDecisionPolicy,
+    build_decision_policy,
+    build_decision_ranker,
+)
 from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
@@ -106,7 +112,6 @@ from .resume import (
 from .restrictions import NoTaskMiddleware as _NoTaskMiddleware
 from .routing import (
     _message_needs_retrieval,
-    _normalize_route_evidence_capabilities,
     _parse_route_decision,
     _parse_route_decision_or_none,
     _select_general_chat_route,
@@ -138,6 +143,45 @@ from ..runtime_resources import (
 )
 
 LOGGER = logging.getLogger("lensnode")
+
+
+def _model_decision_policy():
+    """Return the default policy bound to this module's classifiers."""
+
+    return ModelDecisionPolicy(
+        _message_needs_retrieval,
+        _select_general_chat_route,
+    )
+
+
+def _post_run_decision_gates(state, answer):
+    """Return advisory post-run gate verdicts, replaying resume metadata.
+
+    The verdicts never block: they are recorded for observability and
+    persisted so a resumed run replays them instead of calling out again.
+    """
+
+    resume_state = getattr(state, "resume_state", None)
+    if resume_state is not None and resume_state.decision_gates:
+        return dict(resume_state.decision_gates)
+    policy = getattr(state, "decision_policy", None)
+    if policy is None:
+        return {}
+    verdicts = policy.post_run_checks(
+        state.question,
+        answer,
+        getattr(state, "runtime_evidence", None),
+    )
+    if verdicts and getattr(state, "checkpoint_ready", False):
+        try:
+            save_decision_gates(
+                state.run_uuid,
+                state.config.workspace_path,
+                verdicts,
+            )
+        except Exception:
+            LOGGER.exception("Failed to persist decision gate verdicts")
+    return verdicts
 
 
 def _high_confidence_report_route(command):
@@ -430,6 +474,13 @@ class LensDeepAgentRuntime:
                 for resources in getattr(state, "subagent_resources", []):
                     cleanup_runtime_resources(resources)
 
+    def _decision_policy(self, state):
+        """Return the assembled control policy, or the model default."""
+
+        return getattr(state, "decision_policy", None) or (
+            _model_decision_policy()
+        )
+
     def _maybe_answer_without_retrieval(self, state):
         """Answer messages with no information need without retrieval.
 
@@ -459,7 +510,7 @@ class LensDeepAgentRuntime:
         ).strip()
         if not question:
             return None
-        if _message_needs_retrieval(
+        if self._decision_policy(state).needs_retrieval(
             model,
             question,
             command.get("history"),
@@ -670,6 +721,8 @@ class LensDeepAgentRuntime:
             cancel_event=cancel_event,
             wrapup_event=wrapup_event,
             on_checkpoint_ready=on_checkpoint_ready,
+            decision_policy=None,
+            decision_ranker=None,
             config=self.config,
             http_client=self.http_client,
             trajectory=trajectory,
@@ -976,6 +1029,24 @@ class LensDeepAgentRuntime:
             plugin_http_pool=self.plugin_http_pool,
         )
         state.tools.extend(state.plugin_tools)
+        state.decision_policy = build_decision_policy(
+            state.command,
+            self.config,
+            self.http_client,
+            plugin_http_pool=self.plugin_http_pool,
+            emit_event=state.emit_agent_event,
+            run_uuid=state.run_uuid,
+            inner=_model_decision_policy(),
+        )
+        state.decision_ranker = build_decision_ranker(
+            state.command,
+            self.config,
+            self.http_client,
+            plugin_http_pool=self.plugin_http_pool,
+            emit_event=state.emit_agent_event,
+            run_uuid=state.run_uuid,
+        )
+        state.tools.extend(state.decision_ranker.as_tools())
         state.mcp_tools = load_mcp_tools(
             state.resources.mcp_configs,
             discovery_timeout_s=getattr(
@@ -1070,7 +1141,7 @@ class LensDeepAgentRuntime:
                     LOGGER.exception("Failed to enable route checkpoint")
             state.route_decision = _high_confidence_report_route(
                 state.command
-            ) or _select_general_chat_route(
+            ) or self._decision_policy(state).select_route(
                 state.model,
                 state.question,
                 history=state.command.get("history"),
@@ -1596,6 +1667,12 @@ class LensDeepAgentRuntime:
             execution_gate_enabled=state.runtime_mode.execution_gates,
             runtime_evidence=state.runtime_evidence,
         )
+        post_run_gates = _post_run_decision_gates(state, answer)
+        if post_run_gates:
+            termination_detail = {
+                **termination_detail,
+                "decision_gates": post_run_gates,
+            }
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",
