@@ -21,6 +21,12 @@ test('password login submits an email credential', async () => {
   assert.match(baseInput, /name:\s*\{\s*type: String/)
 })
 
+test('password login is the default mode', async () => {
+  const component = await source('components/auth/LoginForm.vue')
+
+  assert.match(component, /const mode = ref\('password'\)/)
+})
+
 test('password login messages identify email in both locales', async () => {
   const [english, chinese] = await Promise.all([
     source('locales/en.json'),
