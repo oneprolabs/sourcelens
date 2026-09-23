@@ -115,10 +115,13 @@ def test_tools_use_real_pool_and_authorized_snapshot(kind, criteria, answer):
                     "connection_uuid": "connection-1",
                     "protocol_version": 1,
                     "tools": [
-                        next(
-                            t for t in MANIFEST["tools"]
-                            if t["key"] == key
-                        )
+                        {
+                            **next(
+                                t for t in MANIFEST["tools"]
+                                if t["key"] == key
+                            ),
+                            "exposure": "model",
+                        }
                     ],
                 }]},
                 SimpleNamespace(

@@ -32,19 +32,79 @@ class TypesafePluginManifestTests(TestCase):
             )
         )
 
-    def test_bundled_plugin_guidance_covers_decision_semantics(self):
+    def test_bundled_plugin_declares_control_decisions(self):
         plugin = installed_plugin("typesafe")
-        guidance = plugin.assistant_guidance
 
-        self.assertTrue(guidance["summary"])
-        self.assertTrue(guidance["when_to_use"])
-        topics = {topic["key"]: topic for topic in guidance["topics"]}
-        self.assertEqual(set(topics), {"noul", "choice", "score"})
-        tool_keys = {tool.key for tool in plugin.tools}
-        for topic in topics.values():
-            self.assertTrue(set(topic["tool_keys"]).issubset(tool_keys))
-        self.assertIn("no confidence", topics["noul"]["details"])
-        self.assertIn("zero-based", topics["score"]["details"])
+        self.assertEqual(plugin.plugin_type, "decision")
+        decisions = {
+            item["key"]: item
+            for item in plugin.decisions
+            if item["mode"] == "control"
+        }
+        self.assertEqual(
+            set(decisions),
+            {
+                "search_needed",
+                "evidence_requirement",
+                "evidence_sufficient",
+                "answer_supported",
+            },
+        )
+        self.assertEqual(
+            decisions["search_needed"]["applies_to"],
+            ["knowledge_qa", "code_analysis"],
+        )
+        self.assertEqual(
+            decisions["evidence_requirement"]["applies_to"],
+            ["general_chat"],
+        )
+        self.assertEqual(
+            decisions["evidence_sufficient"]["kind"],
+            "noul",
+        )
+        self.assertEqual(
+            decisions["evidence_sufficient"]["applies_to"],
+            ["knowledge_qa", "code_analysis", "general_chat"],
+        )
+        self.assertEqual(
+            decisions["answer_supported"]["kind"],
+            "choice",
+        )
+        self.assertEqual(
+            decisions["answer_supported"]["tool_keys"],
+            ["typesafe_choice"],
+        )
+
+    def test_bundled_plugin_declares_a_rankable_analysis(self):
+        plugin = installed_plugin("typesafe")
+
+        analyses = {
+            item["key"]: item
+            for item in plugin.decisions
+            if item["mode"] == "analysis"
+        }
+        self.assertIn("plan_quality", analyses)
+        self.assertEqual(analyses["plan_quality"]["kind"], "score")
+        self.assertEqual(
+            analyses["plan_quality"]["rubric"],
+            ["weak", "acceptable", "strong"],
+        )
+        self.assertEqual(
+            analyses["plan_quality"]["tool_keys"],
+            ["typesafe_score"],
+        )
+
+    def test_bundled_plugin_is_a_pure_decision_backend(self):
+        plugin = installed_plugin("typesafe")
+
+        self.assertEqual(plugin.assistant_guidance["topics"], [])
+        self.assertTrue(
+            all(tool.exposure == "internal" for tool in plugin.tools)
+        )
+        self.assertEqual(
+            {tool.key for tool in plugin.tools},
+            {"typesafe_noul", "typesafe_choice", "typesafe_score"},
+        )
 
 
 class TypesafeConnectionProviderTests(TestCase):

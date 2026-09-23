@@ -11,6 +11,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from lensnode import plugin_tools
 from lensnode.plugin_runtime import PluginRuntimeError
 from lensnode.plugin_package_loader import load_runtime_contract
 from lensnode.plugin_tools import (
@@ -258,8 +259,10 @@ def test_plugin_tool_uses_connection_scoped_provider_http_client():
         def __init__(self):
             self.bindings = []
 
-        def bind(self, plugin_key, connection_uuid, origins):
-            self.bindings.append((plugin_key, connection_uuid, origins))
+        def bind(self, plugin_key, connection_uuid, origins, post_paths=()):
+            self.bindings.append(
+                (plugin_key, connection_uuid, origins, post_paths)
+            )
             return control_client
 
     pool = Pool()
@@ -282,6 +285,7 @@ def test_plugin_tool_uses_connection_scoped_provider_http_client():
             "github",
             "connection-1",
             ("https://api.github.com",),
+            (),
         )
     ]
 
@@ -602,3 +606,84 @@ def test_deep_agent_executes_independent_plugin_calls_in_parallel():
     assert len(github_requests) == 2
     assert len(tool_messages) == 2
     assert all(json.loads(message.content)["ok"] for message in tool_messages)
+
+
+def test_runtime_contract_allows_a_decision_only_runtime(tmp_path):
+    package = tmp_path / "decideonly"
+    package.mkdir()
+    (package / "runtime.py").write_text(
+        "PLUGIN_API_VERSION = 1\n"
+        "PLUGIN_KEY = 'decideonly'\n"
+        "PLUGIN_VERSION = '1.0.0'\n"
+        "def execute_tool(key, client, arguments, secret, endpoint, config):\n"
+        "    return {'ok': True}\n"
+    )
+
+    contract = load_runtime_contract(
+        "decideonly",
+        "1.0.0",
+        roots=[str(tmp_path)],
+    )
+
+    assert contract.build_tool is None
+    assert callable(contract.execute_tool)
+
+
+def test_build_plugin_tools_requires_build_tool_for_exposed_tools(monkeypatch):
+    contract = SimpleNamespace(
+        build_tool=None,
+        execute_tool=lambda *args, **kwargs: {"ok": True},
+        http_origins=None,
+        http_post_paths=None,
+    )
+    monkeypatch.setattr(
+        plugin_tools,
+        "load_runtime_contract",
+        lambda *args, **kwargs: contract,
+    )
+
+    with pytest.raises(PluginToolError):
+        build_plugin_tools(
+            _command("github_read_file"),
+            _config(),
+            GitHubRuntimeClient(),
+        )
+
+
+def test_build_plugin_tools_hides_internal_tools():
+    command = _command("github_read_file")
+    command["loaded_plugins"][0]["tools"][0]["exposure"] = "internal"
+
+    tools = build_plugin_tools(command, _config(), GitHubRuntimeClient())
+
+    assert tools == []
+
+
+def test_build_plugin_tools_keeps_model_tools_alongside_internal_ones():
+    command = _command("github_read_file", "github_search_code")
+    command["loaded_plugins"][0]["tools"][0]["exposure"] = "internal"
+
+    tools = build_plugin_tools(command, _config(), GitHubRuntimeClient())
+
+    assert [item.name for item in tools] == ["github_search_code"]
+
+
+def test_build_plugin_tools_accepts_a_decision_family_tool():
+    command = _command("github_read_file")
+    command["loaded_plugins"][0]["tools"][0]["capability_family"] = "decision"
+
+    tools = build_plugin_tools(command, _config(), GitHubRuntimeClient())
+
+    assert [item.name for item in tools] == ["github_read_file"]
+    assert tools[0].metadata["capability_family"] == "decision"
+
+
+def test_decision_capability_is_never_an_evidence_family():
+    from lensnode.agent_runtime import capability_protocol
+
+    assert capability_protocol.is_capability_family("decision")
+    assert "decision" not in capability_protocol.CAPABILITY_FAMILY_ORDER
+    assert (
+        "decision"
+        not in capability_protocol.EVIDENCE_CAPABILITY_FAMILIES
+    )

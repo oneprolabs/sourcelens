@@ -1365,6 +1365,13 @@ class LensNodeClient:
                     plugin_key,
                     connection_scope,
                     runtime.http_origins(endpoint),
+                    (
+                        runtime.http_post_paths(endpoint)
+                        if callable(
+                            getattr(runtime, "http_post_paths", None)
+                        )
+                        else ()
+                    ),
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]

@@ -40,7 +40,7 @@ class PluginHttpClientPool:
         self._closed = False
         self._lock = threading.Lock()
 
-    def bind(self, plugin_key, connection_uuid, origins):
+    def bind(self, plugin_key, connection_uuid, origins, post_paths=()):
         """Return a request facade restricted to declared HTTP origins."""
 
         plugin_key = str(plugin_key or "").strip()
@@ -50,6 +50,9 @@ class PluginHttpClientPool:
         normalized = frozenset(_normalize_origin(item) for item in origins)
         if not normalized:
             raise PluginHttpClientError("PLUGIN_HTTP_ORIGIN_REQUIRED")
+        allowed_post_paths = frozenset(
+            _normalize_post_path(item) for item in post_paths or ()
+        )
         with self._lock:
             if self._closed:
                 raise PluginHttpClientError("PLUGIN_HTTP_POOL_CLOSED")
@@ -58,6 +61,7 @@ class PluginHttpClientPool:
             plugin_key,
             connection_uuid,
             normalized,
+            allowed_post_paths,
         )
 
     def _client_for(self, plugin_key, connection_uuid, origin):
@@ -100,11 +104,12 @@ class PluginHttpClientPool:
 class PluginHttpClient:
     """Minimal streaming HTTP interface exposed to one Plugin Connection."""
 
-    def __init__(self, pool, plugin_key, connection_uuid, origins):
+    def __init__(self, pool, plugin_key, connection_uuid, origins, post_paths):
         self._pool = pool
         self._plugin_key = plugin_key
         self._connection_uuid = connection_uuid
         self._origins = origins
+        self._post_paths = post_paths
 
     @contextmanager
     def stream(self, method, url, **kwargs):
@@ -112,12 +117,15 @@ class PluginHttpClient:
 
         method = str(method or "").upper()
         url_value = str(url or "")
+        parsed = urlsplit(url_value)
+        # Plain HTTP is allowed for self-hosted Plugins on a private network
+        # (e.g. docker-compose service names); the origin and POST path are
+        # still restricted to what the Plugin runtime declares.
         evaluation = (
-            self._plugin_key == "typesafe"
-            and method == "POST"
-            and urlsplit(url_value).scheme == "https"
-            and urlsplit(url_value).path.endswith("/v1/systemone")
-            and not urlsplit(url_value).query
+            method == "POST"
+            and parsed.scheme in {"http", "https"}
+            and not parsed.query
+            and parsed.path in self._post_paths
         )
         if method not in {"GET", "HEAD"} and not evaluation:
             raise PluginHttpClientError("PLUGIN_HTTP_METHOD_REJECTED")
@@ -164,6 +172,23 @@ class PluginHttpClient:
         )
         with client.stream(method, url, **kwargs) as response:
             yield response
+
+
+def _normalize_post_path(value):
+    """Return one canonical POST path declared by a Plugin runtime."""
+
+    path = str(value or "")
+    if (
+        not path.startswith("/")
+        or path == "/"
+        or "?" in path
+        or "#" in path
+        or "\\" in path
+        or ".." in path
+        or len(path) > 500
+    ):
+        raise PluginHttpClientError("PLUGIN_HTTP_SCOPE_INVALID")
+    return path
 
 
 def _normalize_origin(value):

@@ -11,6 +11,7 @@ from lens.plugins.registry import (
     discover_plugins,
     installed_plugin,
     latest_plugin,
+    plugin_requires_secret,
 )
 from rest_framework.test import APIClient
 
@@ -426,6 +427,8 @@ class PluginRegistryTests(TestCase):
                     "version": "1.0.0",
                     "protocol_version": 1,
                     "capability_family": "plugin",
+                    "plugin_type": "integration",
+                    "decisions": [],
                     "display_name": "github",
                     "description": "",
                     "assistant_guidance": {
@@ -525,6 +528,15 @@ class PluginRegistryTests(TestCase):
         )
         self.assertNotIn("handlers", response.data)
         self.assertNotIn("path", response.data)
+        self.assertEqual(response.data["gate_active_phase"], "P3")
+        self.assertEqual(response.data["gate_phases"]["search_needed"], "P1")
+        self.assertEqual(
+            response.data["gate_phases"]["evidence_requirement"],
+            "P3",
+        )
+        # A gate stays active once its phase is reached: P1 is active under P3.
+        self.assertTrue(response.data["gate_active"]["search_needed"])
+        self.assertTrue(response.data["gate_active"]["evidence_requirement"])
 
     def test_admin_can_read_the_bundled_plugin_icon(self):
         admin = User.objects.create_user("icon-admin", is_staff=True)
@@ -575,4 +587,371 @@ class PluginRegistryTests(TestCase):
             self._write_manifest(root, manifest)
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
                 with self.assertRaisesMessage(PluginRegistryError, "tool"):
+                    discover_plugins()
+
+    def _decision_manifest(self, **overrides):
+        manifest = {
+            "key": "github",
+            "protocol_version": 1,
+            "plugin_type": "decision",
+            "handlers": {
+                "runtime": "python_v1",
+                "control": "python_v1",
+            },
+            "tools": [
+                {
+                    "key": "github_decide",
+                    "description": "Return one bounded probability.",
+                    "capability": "decision.evaluate",
+                    "side_effect": "none",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"state": {"type": "string"}},
+                        "required": ["state"],
+                    },
+                }
+            ],
+            "decisions": [
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                }
+            ],
+        }
+        manifest.update(overrides)
+        return manifest
+
+    def test_accepts_a_decision_manifest_with_control_gates(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, self._decision_manifest())
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.plugin_type, "decision")
+        self.assertEqual(
+            [decision["key"] for decision in plugin.decisions],
+            ["search_needed"],
+        )
+        self.assertEqual(
+            plugin.decisions[0]["applies_to"],
+            ["knowledge_qa"],
+        )
+
+    def test_accepts_and_exposes_control_gate_defaults(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {
+                        "threshold": 0.7,
+                        "margin": 0.2,
+                        "max_state_chars": 2000,
+                    },
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(
+            plugin.decisions[0]["defaults"],
+            {"threshold": 0.7, "margin": 0.2, "max_state_chars": 2000},
+        )
+
+    def test_rejects_a_threshold_default_on_a_choice_gate(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "answer_supported",
+                    "mode": "control",
+                    "kind": "choice",
+                    "applies_to": ["general_chat"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {"threshold": 0.5},
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaises(PluginRegistryError):
+                    installed_plugin("github")
+
+    def test_rejects_an_unknown_control_gate_default(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                    "defaults": {"thresholds": 0.5},
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaises(PluginRegistryError):
+                    installed_plugin("github")
+
+    def test_plugin_requires_secret_follows_the_connection_schema(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(
+                root,
+                self._decision_manifest(
+                    connection_schema={
+                        "type": "object",
+                        "properties": {
+                            "token": {
+                                "type": "string",
+                                "write_to": "secret_value",
+                            }
+                        },
+                        "required": ["token"],
+                    }
+                ),
+            )
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                required = plugin_requires_secret(
+                    installed_plugin("github")
+                )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, self._decision_manifest())
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                optional = plugin_requires_secret(
+                    installed_plugin("github")
+                )
+
+        self.assertTrue(required)
+        self.assertFalse(optional)
+
+    def test_defaults_to_an_integration_plugin_type(self):
+        manifest = {
+            "key": "github",
+            "protocol_version": 1,
+            "handlers": {
+                "runtime": "python_v1",
+                "datasource": "python_v1",
+            },
+        }
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.plugin_type, "integration")
+        self.assertEqual(plugin.decisions, ())
+
+    def test_rejects_decisions_without_a_decision_plugin_type(self):
+        manifest = self._decision_manifest()
+        manifest.pop("plugin_type")
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "decision plugin type",
+                ):
+                    discover_plugins()
+
+    def test_rejects_an_unknown_decision_mode(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "orchestration",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_decide"],
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "decisions",
+                ):
+                    discover_plugins()
+
+    def test_rejects_a_decision_tool_not_declared_by_the_manifest(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "applies_to": ["knowledge_qa"],
+                    "tool_keys": ["github_missing"],
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "decision tools",
+                ):
+                    discover_plugins()
+
+    def test_rejects_a_control_decision_without_applies_to(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "search_needed",
+                    "mode": "control",
+                    "kind": "noul",
+                    "tool_keys": ["github_decide"],
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "applies_to",
+                ):
+                    discover_plugins()
+
+    def test_defaults_tool_exposure_to_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, self._decision_manifest())
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.tools[0].exposure, "model")
+
+    def test_rejects_an_unknown_tool_exposure(self):
+        manifest = self._decision_manifest()
+        manifest["tools"][0]["exposure"] = "public"
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "exposure",
+                ):
+                    discover_plugins()
+
+    def test_accepts_an_internal_tool(self):
+        manifest = self._decision_manifest()
+        manifest["tools"][0]["exposure"] = "internal"
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.tools[0].exposure, "internal")
+
+    def test_rejects_guidance_that_references_an_internal_tool(self):
+        manifest = self._decision_manifest()
+        manifest["tools"][0]["exposure"] = "internal"
+        manifest["assistant_guidance"] = {
+            "summary": "",
+            "when_to_use": [],
+            "topics": [
+                {
+                    "key": "gate",
+                    "summary": "Internal gate primitive.",
+                    "details": "",
+                    "tool_keys": ["github_decide"],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "topic tools",
+                ):
+                    discover_plugins()
+
+    def test_accepts_a_choice_analysis_with_a_target_option(self):
+        manifest = self._decision_manifest(
+            tools=[
+                {
+                    "key": "github_decide",
+                    "description": "Return one bounded choice.",
+                    "capability": "decision.evaluate",
+                    "capability_family": "decision",
+                    "side_effect": "none",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"state": {"type": "string"}},
+                        "required": ["state"],
+                    },
+                }
+            ],
+            decisions=[
+                {
+                    "key": "plan_quality",
+                    "mode": "analysis",
+                    "kind": "choice",
+                    "rubric": ["weak", "acceptable", "strong"],
+                    "target_option": "strong",
+                    "tool_keys": ["github_decide"],
+                }
+            ],
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                plugin = installed_plugin("github")
+
+        self.assertEqual(plugin.tools[0].capability_family, "decision")
+        decision = plugin.decisions[0]
+        self.assertEqual(decision["kind"], "choice")
+        self.assertEqual(decision["target_option"], "strong")
+        self.assertEqual(
+            decision["rubric"],
+            ["weak", "acceptable", "strong"],
+        )
+
+    def test_rejects_a_choice_analysis_target_outside_the_rubric(self):
+        manifest = self._decision_manifest(
+            decisions=[
+                {
+                    "key": "plan_quality",
+                    "mode": "analysis",
+                    "kind": "choice",
+                    "rubric": ["weak", "strong"],
+                    "target_option": "excellent",
+                    "tool_keys": ["github_decide"],
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "analysis target",
+                ):
+                    discover_plugins()
+
+    def test_rejects_an_unknown_tool_capability_family(self):
+        manifest = self._decision_manifest()
+        manifest["tools"][0]["capability_family"] = "orchestrator"
+        with tempfile.TemporaryDirectory() as root:
+            self._write_manifest(root, manifest)
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                with self.assertRaisesMessage(
+                    PluginRegistryError,
+                    "capability family",
+                ):
                     discover_plugins()

@@ -118,6 +118,7 @@ def build_agent_tools(
     config=None,
     emit_event=None,
     source_recorder=None,
+    evidence_reranker=None,
 ):
     """Build read-only tools scoped to the selected workspace dirs."""
 
@@ -128,6 +129,31 @@ def build_agent_tools(
     def emit(name, detail=None):
         if emit_event is not None:
             emit_event(name, detail or {})
+
+    rerank_question = str(command.get("question") or "")
+
+    def build_evidence_rerank(stats):
+        """Build one per-call rerank seam recording its own outcome."""
+
+        def evidence_rerank(matches):
+            """Return rerank indices for one search window, or None to skip."""
+
+            candidates = [
+                {"label": str(index), "content": _rerank_candidate_text(match)}
+                for index, match in enumerate(matches)
+            ]
+            order = evidence_reranker.rank_evidence(candidates, rerank_question)
+            if order is None:
+                return None
+            try:
+                indices = [int(label) for label in order]
+            except (TypeError, ValueError):
+                return None
+            stats["applied"] = True
+            stats["candidate_count"] = len(candidates)
+            return indices
+
+        return evidence_rerank
 
     @tool("search_workspace")
     def search_workspace(
@@ -168,6 +194,7 @@ def build_agent_tools(
             },
         )
         started = time.monotonic()
+        rerank_stats = {"applied": False, "candidate_count": 0}
         result = search_workspace_files(
             target_dirs,
             query,
@@ -178,6 +205,11 @@ def build_agent_tools(
             output_mode=output_mode,
             context_lines=context_lines,
             case_sensitive=case_sensitive,
+            rerank=(
+                build_evidence_rerank(rerank_stats)
+                if evidence_reranker is not None
+                else None
+            ),
         )
         matches = result.get("matches") or []
         files = result.get("files") or []
@@ -196,6 +228,8 @@ def build_agent_tools(
                 "paths": paths[:8],
                 "summary": _search_done_summary(result, matches, files, counts, paths),
                 "preview": _clip(matches[0]["text"], 140) if matches else "",
+                "rerank_applied": rerank_stats["applied"],
+                "rerank_candidate_count": rerank_stats["candidate_count"],
                 "duration_ms": int((time.monotonic() - started) * 1000),
             },
         )
@@ -3558,6 +3592,21 @@ def _names(paths, limit=3):
     if extra > 0:
         text += f" +{extra}"
     return text
+
+
+def _rerank_candidate_text(match):
+    """Return the text one search match contributes to an evidence rerank."""
+
+    location = str(match.get("path") or "")
+    line = match.get("line")
+    if line is not None:
+        location = f"{location}:{line}"
+    text = str(match.get("text") or "").strip()
+    context = match.get("before") or []
+    if context:
+        context_text = " ".join(str(item).strip() for item in context).strip()
+        text = f"{context_text}\n{text}".strip()
+    return f"{location}: {text}" if text else location
 
 
 def _search_summary(query, regex, glob, output_mode):

@@ -75,7 +75,18 @@ from .models import (
     assistant_mode_for,
 )
 from .plugins.providers import DatasourceProviderError, get_datasource_provider
-from .plugins.registry import PluginRegistryError, installed_plugin
+from .plugins.decisions import (
+    analysis_decision,
+    control_decision,
+    rank_eligible,
+    validate_decision_analyses,
+    validate_decision_gates,
+)
+from .plugins.registry import (
+    PluginRegistryError,
+    installed_plugin,
+    plugin_requires_secret,
+)
 from .plugins.skill_requirements import (
     SkillPluginRequirementError,
     validate_required_plugins,
@@ -505,6 +516,9 @@ class PluginBindingsField(serializers.Field):
                 "tools": list(binding.tools or []),
                 "all_tools": True,
                 "enabled": binding.enabled,
+                "decision_gates": dict(binding.decision_gates or {}),
+                "decision_analyses": dict(binding.decision_analyses or {}),
+                "decision_auto": binding.decision_auto,
             }
             for binding in bindings.select_related("connection").all()
         ]
@@ -522,6 +536,7 @@ class PluginBindingsField(serializers.Field):
             raise serializers.ValidationError("Expected a list of bindings.")
         validated = []
         seen = set()
+        decision_seen = None
         for item in data:
             if not isinstance(item, dict):
                 raise serializers.ValidationError(
@@ -549,9 +564,8 @@ class PluginBindingsField(serializers.Field):
                     "Plugin binding enabled must be a boolean."
                 )
             secret_version = connection.secret_version
-            if enabled and (
-                secret_version is None
-                or secret_version.status != "active"
+            if secret_version is not None and (
+                secret_version.status != "active"
                 or secret_version.material.status != "active"
             ):
                 raise serializers.ValidationError(
@@ -561,6 +575,20 @@ class PluginBindingsField(serializers.Field):
                 plugin = installed_plugin(connection.plugin_key)
             except PluginRegistryError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
+            if (
+                enabled
+                and secret_version is None
+                and plugin_requires_secret(plugin)
+            ):
+                raise serializers.ValidationError(
+                    "Plugin Connection secret is unavailable."
+                )
+            if plugin.plugin_type == "decision":
+                if decision_seen is not None:
+                    raise serializers.ValidationError(
+                        "Only one Decision Plugin can be bound per Assistant."
+                    )
+                decision_seen = connection.pk
             available = {tool.key for tool in plugin.tools}
             requested = item.get("tools")
             if requested is None or requested == []:
@@ -576,11 +604,36 @@ class PluginBindingsField(serializers.Field):
                     "Plugin tools must be installed read-only tools."
                 )
             seen.add(connection.pk)
+            decision_gates = item.get("decision_gates") or {}
+            decision_analyses = item.get("decision_analyses") or {}
+            decision_auto = item.get("decision_auto")
+            if decision_auto is None:
+                # Legacy callers that send explicit decision config are manual;
+                # an untouched binding defaults to the Plugin's auto values.
+                decision_auto = not (decision_gates or decision_analyses)
+            if not isinstance(decision_auto, bool):
+                raise serializers.ValidationError(
+                    "Plugin decision mode must be a boolean."
+                )
+            try:
+                decision_gates = validate_decision_gates(
+                    plugin,
+                    decision_gates,
+                )
+                decision_analyses = validate_decision_analyses(
+                    plugin,
+                    decision_analyses,
+                )
+            except PluginRegistryError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
             validated.append(
                 {
                     "connection": connection,
                     "tools": requested,
                     "enabled": enabled,
+                    "decision_gates": decision_gates,
+                    "decision_analyses": decision_analyses,
+                    "decision_auto": decision_auto,
                 }
             )
         return validated
@@ -1156,6 +1209,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                     )
         self._validate_skill_plugin_requirements(attrs)
         self._validate_plugin_tool_uniqueness(attrs)
+        self._validate_decision_bindings(attrs, capability)
         settings = attrs.get(
             "settings",
             getattr(self.instance, "settings", {}),
@@ -1322,6 +1376,89 @@ class AssistantSerializer(serializers.ModelSerializer):
                 }
             )
 
+    def _validate_decision_bindings(self, attrs, capability):
+        """Reject Decision gates that do not apply to this Assistant."""
+
+        plugin_bindings = attrs.get("plugin_bindings")
+        from_client = plugin_bindings is not None
+        if (
+            plugin_bindings is None
+            and getattr(self.instance, "pk", None) is not None
+        ):
+            plugin_bindings = [
+                {
+                    "connection": binding.connection,
+                    "decision_gates": binding.decision_gates or {},
+                    "decision_analyses": binding.decision_analyses or {},
+                    "decision_auto": binding.decision_auto,
+                }
+                for binding in self.instance.plugin_bindings.all()
+            ]
+        providers = []
+        for binding in plugin_bindings or []:
+            if binding.get("decision_auto", False):
+                # Auto bindings derive their gates from the Plugin manifest at
+                # freeze time, so there is nothing stored to validate here.
+                continue
+            gates = binding.get("decision_gates") or {}
+            analyses = binding.get("decision_analyses") or {}
+            connection = binding.get("connection")
+            if not gates and not analyses:
+                continue
+            if connection is None:
+                continue
+            plugin = installed_plugin(connection.plugin_key)
+            for key in gates:
+                decision = control_decision(plugin, key)
+                if decision is None:
+                    if not from_client:
+                        # A Plugin upgrade removed the gate. Stored bindings
+                        # stay inert at assembly time (not_declared) rather
+                        # than blocking unrelated Assistant edits.
+                        continue
+                    raise serializers.ValidationError(
+                        {"plugin_bindings": "Decision gate is not declared."}
+                    )
+                if capability not in (decision.get("applies_to") or []):
+                    raise serializers.ValidationError(
+                        {
+                            "plugin_bindings": (
+                                "Decision gate does not apply to this "
+                                "Assistant capability."
+                            )
+                        }
+                    )
+            for key in analyses:
+                decision = analysis_decision(plugin, key)
+                if decision is None:
+                    if not from_client:
+                        continue
+                    raise serializers.ValidationError(
+                        {
+                            "plugin_bindings": (
+                                "Decision analysis is not declared."
+                            )
+                        }
+                    )
+                if not rank_eligible(decision):
+                    raise serializers.ValidationError(
+                        {
+                            "plugin_bindings": (
+                                "Decision analysis cannot be ranked."
+                            )
+                        }
+                    )
+            if connection.plugin_key in providers:
+                raise serializers.ValidationError(
+                    {
+                        "plugin_bindings": (
+                            "Only one binding per Plugin may provide "
+                            "Decision gates."
+                        )
+                    }
+                )
+            providers.append(connection.plugin_key)
+
     def _plugin_mcp_adapters(self, attrs):
         """Return valid Plugin adapters from effective Assistant MCP bindings."""
 
@@ -1480,6 +1617,11 @@ class AssistantSerializer(serializers.ModelSerializer):
                     assistant=assistant,
                     connection=binding["connection"],
                     tools=binding["tools"],
+                    decision_gates=binding.get("decision_gates") or {},
+                    decision_analyses=(
+                        binding.get("decision_analyses") or {}
+                    ),
+                    decision_auto=binding.get("decision_auto", True),
                     enabled=binding.get("enabled", True),
                 )
 
@@ -1807,7 +1949,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
         _validate_plugin_json(config, "config")
         _validate_plugin_json(allowed_scope, "allowed_scope")
         try:
-            installed_plugin(plugin_key)
+            plugin = installed_plugin(plugin_key)
             provider = get_datasource_provider(plugin_key)
         except PluginRegistryError as exc:
             raise serializers.ValidationError({"plugin_key": str(exc)})
@@ -1835,6 +1977,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
         if (
             status_value == Connection.Status.ACTIVE
             and not secret_value
+            and plugin_requires_secret(plugin)
             and (
                 current_version is None
                 or current_version.status != "active"

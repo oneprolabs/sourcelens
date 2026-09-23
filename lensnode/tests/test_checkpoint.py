@@ -574,3 +574,58 @@ def test_checkpoint_ttl_hours_uses_effective_environment(monkeypatch):
     monkeypatch.setenv("LENSNODE_CHECKPOINT_TTL_HOURS", "6.5")
 
     assert checkpoint.checkpoint_ttl_hours() == 6.5
+
+
+def test_resume_replays_persisted_decision_gate_verdicts(tmp_path, monkeypatch):
+    monkeypatch.setenv("LENSNODE_CHECKPOINT_DIR", str(tmp_path))
+    checkpoint._saver = None
+    run_uuid = "00000000-0000-0000-0000-0000000000f1"
+    saver = checkpoint.get_checkpoint_saver(str(tmp_path))
+    saved = empty_checkpoint()
+    saved["channel_values"] = {"messages": [AIMessage(content="answer")]}
+    checkpoint.save_resume_metadata(run_uuid, str(tmp_path))
+    saver.put(
+        checkpoint.thread_config(run_uuid),
+        saved,
+        {"source": "loop", "step": 1, "parents": {}},
+        {},
+    )
+    checkpoint.save_runtime_state(run_uuid, str(tmp_path))
+    verdicts = {
+        "answer_supported": "unsupported",
+        "evidence_sufficient": False,
+    }
+
+    try:
+        assert checkpoint.save_decision_gates(run_uuid, str(tmp_path), verdicts)
+        state = checkpoint.load_resume_state(run_uuid, str(tmp_path))
+    finally:
+        saver.conn.close()
+        checkpoint._saver = None
+
+    assert state.decision_gates == verdicts
+
+
+def test_resume_defaults_to_no_decision_gate_verdicts(tmp_path, monkeypatch):
+    monkeypatch.setenv("LENSNODE_CHECKPOINT_DIR", str(tmp_path))
+    checkpoint._saver = None
+    run_uuid = "00000000-0000-0000-0000-0000000000f2"
+    saver = checkpoint.get_checkpoint_saver(str(tmp_path))
+    saved = empty_checkpoint()
+    saved["channel_values"] = {"messages": [AIMessage(content="answer")]}
+    checkpoint.save_resume_metadata(run_uuid, str(tmp_path))
+    saver.put(
+        checkpoint.thread_config(run_uuid),
+        saved,
+        {"source": "loop", "step": 1, "parents": {}},
+        {},
+    )
+    checkpoint.save_runtime_state(run_uuid, str(tmp_path))
+
+    try:
+        state = checkpoint.load_resume_state(run_uuid, str(tmp_path))
+    finally:
+        saver.conn.close()
+        checkpoint._saver = None
+
+    assert state.decision_gates == {}

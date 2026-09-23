@@ -67,10 +67,12 @@ def build_plugin_tools(
             )
             if not tool_key:
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
+            if definition.get("exposure") == "internal":
+                continue
             capability_family = str(
                 definition.get("capability_family") or "plugin"
             )
-            if capability_family != "plugin":
+            if capability_family not in {"plugin", "decision"}:
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
             if tool_key in seen_keys:
                 raise PluginToolError("PLUGIN_TOOL_NAME_CONFLICT")
@@ -99,10 +101,13 @@ def build_plugin_tools(
                     emit_event,
                     plugin_http_pool=plugin_http_pool,
                     http_origins=_contract.http_origins,
+                    http_post_paths=_contract.http_post_paths,
                     result_cache=result_cache,
                     result_cache_lock=result_cache_lock,
                 )
 
+            if not callable(contract.build_tool):
+                raise PluginToolError("PLUGIN_TOOL_INVALID")
             try:
                 registered = contract.build_tool(definition, executor)
             except Exception as exc:
@@ -137,8 +142,10 @@ def _execute_plugin_tool(
     emit_event,
     plugin_http_pool=None,
     http_origins=None,
+    http_post_paths=None,
     result_cache=None,
     result_cache_lock=None,
+    source="model_tool",
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
@@ -184,6 +191,7 @@ def _execute_plugin_tool(
             tool_key,
             call_id,
             arguments,
+            source=source,
         )
         snapshot_uuid = snapshot["snapshot_uuid"]
         resolved = fetch_plugin_snapshot(
@@ -225,10 +233,16 @@ def _execute_plugin_tool(
                 if callable(http_origins)
                 else (endpoint,)
             )
+            post_paths = (
+                http_post_paths(endpoint)
+                if callable(http_post_paths)
+                else ()
+            )
             provider_client = plugin_http_pool.bind(
                 plugin_key,
                 connection_uuid,
                 origins,
+                post_paths,
             )
         result = handler(
             tool_key,

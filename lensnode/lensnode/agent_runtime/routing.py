@@ -234,13 +234,45 @@ def _parse_route_decision_or_none(content):
             if "artifact_delivery" in capabilities
             else "tool_result"
         )
-    return {
-        "intent": intent,
-        "complexity": complexity,
-        "route": route,
-        "required_capabilities": capabilities,
-        "evidence_requirement": evidence_requirement,
-    }
+    return _enforce_route_evidence_invariants(
+        {
+            "intent": intent,
+            "complexity": complexity,
+            "route": route,
+            "required_capabilities": capabilities,
+            "evidence_requirement": evidence_requirement,
+        }
+    )
+
+
+def _enforce_route_evidence_invariants(decision):
+    """Apply the deterministic route <-> evidence coupling in place.
+
+    A gate may only propose the ``evidence_requirement`` field; this helper
+    decides the final value so the gate can never write a combination the
+    runtime considers illegal (``direct_answer`` with tool evidence, or
+    ``direct_execute`` with no evidence).
+    """
+
+    route = decision.get("route")
+    capabilities = decision.get("required_capabilities") or []
+    intent = decision.get("intent")
+    evidence_requirement = decision.get("evidence_requirement")
+    if (
+        route == "direct_answer"
+        and evidence_requirement in {"tool_result", "artifact"}
+    ):
+        decision["route"] = "direct_execute"
+    if evidence_requirement == "none" and (
+        route == "direct_execute"
+        or (route == "plan_execute" and intent == "action")
+    ):
+        decision["evidence_requirement"] = (
+            "artifact"
+            if "artifact_delivery" in capabilities
+            else "tool_result"
+        )
+    return decision
 
 
 def _select_general_chat_route(
