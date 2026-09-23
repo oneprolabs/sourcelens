@@ -1113,7 +1113,7 @@
                           "
                         />
                         <span class="text-xs font-medium text-ink-800">
-                          {{ gate.key }}
+                          {{ decisionTitle(connection.plugin_key, gate) }}
                         </span>
                         <span
                           v-if="!gateIsActive(connection, gate.key)"
@@ -1126,12 +1126,18 @@
                           }}
                         </span>
                       </label>
+                      <p
+                        v-if="decisionDescription(connection.plugin_key, gate)"
+                        class="pl-6 text-[11px] leading-5 text-ink-500"
+                      >
+                        {{ decisionDescription(connection.plugin_key, gate) }}
+                      </p>
                       <div
                         v-if="
                           gateConfig(connection.uuid, gate.key) &&
                           gate.kind !== 'choice'
                         "
-                        class="flex flex-wrap items-center gap-3 pl-6"
+                        class="grid gap-1 pl-6"
                       >
                         <label
                           class="flex items-center gap-1 text-xs text-ink-600"
@@ -1156,6 +1162,9 @@
                             "
                           />
                         </label>
+                        <p class="text-[11px] leading-5 text-ink-500">
+                          {{ t('lensAdmin.wizard.decisionGateThresholdHint') }}
+                        </p>
                         <label
                           class="flex items-center gap-1 text-xs text-ink-600"
                         >
@@ -1179,6 +1188,9 @@
                             "
                           />
                         </label>
+                        <p class="text-[11px] leading-5 text-ink-500">
+                          {{ t('lensAdmin.wizard.decisionGateMarginHint') }}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1218,10 +1230,29 @@
                       />
                       <span class="min-w-0 flex-1">
                         <span class="block text-xs font-medium text-ink-800">
-                          {{ analysis.key }}
+                          {{ decisionTitle(connection.plugin_key, analysis) }}
                         </span>
-                        <span class="mt-0.5 block text-xs text-ink-500">
-                          {{ (analysis.rubric || []).join(' · ') }}
+                        <span
+                          v-if="(analysis.rubric || []).length"
+                          class="mt-0.5 block text-xs text-ink-500"
+                        >
+                          {{
+                            analysis.rubric
+                              .map((level) =>
+                                rubricLabel(connection.plugin_key, level)
+                              )
+                              .join(' · ')
+                          }}
+                        </span>
+                        <span
+                          v-if="
+                            decisionDescription(connection.plugin_key, analysis)
+                          "
+                          class="mt-0.5 block text-xs leading-5 text-ink-500"
+                        >
+                          {{
+                            decisionDescription(connection.plugin_key, analysis)
+                          }}
                         </span>
                       </span>
                     </label>
@@ -2223,6 +2254,29 @@ function pluginDisplayName(pluginKey) {
     translatedPluginDisplayName(props.pluginManifests?.[pluginKey], t, te) ||
     pluginKey
   )
+}
+
+function decisionTitle(pluginKey, decision) {
+  const key = `lensAdmin.plugins.${pluginKey}.decisions.${decision?.key}.title`
+  return te(key) ? t(key) : humanizeDecisionKey(decision?.key)
+}
+
+function decisionDescription(pluginKey, decision) {
+  const key = `lensAdmin.plugins.${pluginKey}.decisions.${decision?.key}.description`
+  if (te(key)) return t(key)
+  return decision?.summary || ''
+}
+
+function rubricLabel(pluginKey, level) {
+  const key = `lensAdmin.plugins.${pluginKey}.rubric.${level}`
+  return te(key) ? t(key) : String(level || '')
+}
+
+function humanizeDecisionKey(value) {
+  const text = String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : ''
 }
 
 function pluginIconUrl(pluginKey) {

@@ -1458,7 +1458,42 @@
             "description": "固定使用的模型版本。"
           }
         },
-        "datasourceFields": {}
+        "datasourceFields": {},
+        "decisions": {
+          "search_needed": {
+            "title": "是否需要检索",
+            "description": "判断回答最新消息是否需要检索工作区或已提供的文档。"
+          },
+          "evidence_requirement": {
+            "title": "是否需要证据",
+            "description": "判断回答是否需要工具、文档或用户提供的证据，而不是直接作答。"
+          },
+          "evidence_sufficient": {
+            "title": "证据是否充分",
+            "description": "检查回答是否只依赖实际检索到或用户提供的证据。"
+          },
+          "answer_supported": {
+            "title": "回答是否有依据",
+            "description": "检查回答是否得到已检索证据的支持。"
+          },
+          "plan_quality": {
+            "title": "计划质量",
+            "description": "按同一有序评分标准为候选计划打分。"
+          },
+          "evidence_relevance": {
+            "title": "证据相关性",
+            "description": "按对回答问题的帮助程度为检索到的片段打分。"
+          }
+        },
+        "rubric": {
+          "weak": "较弱",
+          "acceptable": "可接受",
+          "strong": "较强",
+          "irrelevant": "不相关",
+          "related": "相关",
+          "helpful": "有帮助",
+          "direct_answer": "直接回答"
+        }
       }
     },
     "connections": {
@@ -2302,7 +2337,9 @@
       "decisionGates": "决策 Gate",
       "decisionGatesHint": "启用后按判定结果影响控制流；低置信会自动回退到主模型。",
       "decisionGateThreshold": "阈值",
+      "decisionGateThresholdHint": "0 到 1 之间的判定边界。是非判断的取值必须离边界足够远，选项判断的获胜选项概率必须达到该值，才会被采纳。",
       "decisionGateMargin": "容差",
+      "decisionGateMarginHint": "0 到 1 之间的不确定区间，围绕阈值分布。落在区间内的结果视为置信度不足，回退到主模型。",
       "decisionGateInactive": "未生效（{phase}）",
       "decisionAnalyses": "决策排序",
       "decisionAnalysesHint": "绑定后模型可用 decision_rank 按同一 rubric 对候选排序。",
