@@ -16,144 +16,176 @@
         v-if="isTreeField(field) && shouldRenderTree(field)"
         class="overflow-hidden rounded-xl border border-line bg-surface"
       >
-        <div class="space-y-2.5 border-b border-line bg-surface-sunken p-3">
-          <div class="relative">
-            <svg
-              class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
-              viewBox="0 0 20 20"
-              fill="none"
-              aria-hidden="true"
-            >
-              <circle
-                cx="9"
-                cy="9"
-                r="5.5"
-                stroke="currentColor"
-                stroke-width="1.5"
-              />
-              <path
-                d="m13 13 4 4"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-width="1.5"
-              />
-            </svg>
-            <input
-              :id="`${fieldId(field)}-search`"
-              :value="treeSearchQuery(field)"
-              type="search"
-              class="w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-              :placeholder="treeSearchPlaceholder"
-              @input="setTreeSearch(field, $event.target.value)"
-            />
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-medium text-ink-600">
-              {{ resourceCountLabel }}：{{ filteredTreeItemCount(field) }}
-            </span>
-            <span
-              class="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
-            >
-              {{ arrayValue(field).length }} {{ selectedCountLabel }}
-            </span>
-          </div>
-        </div>
-        <div class="max-h-72 space-y-2 overflow-y-auto p-2">
-          <div
-            v-for="group in filteredTreeGroups(field)"
-            :key="group.owner"
-            class="overflow-hidden rounded-lg border border-line bg-surface"
+        <div
+          v-if="field.allow_all"
+          class="border-b border-line bg-surface-sunken p-3"
+        >
+          <label
+            class="flex items-start gap-2.5"
+            :class="readOnly ? 'cursor-default' : 'cursor-pointer'"
           >
-            <div
-              class="flex items-center gap-2.5 bg-surface-sunken px-3 py-2.5 text-sm font-medium hover:bg-line-soft"
-            >
-              <input
-                type="checkbox"
-                class="resource-checkbox"
-                :checked="groupSelected(field, group)"
-                :indeterminate="groupPartial(field, group)"
-                :aria-label="group.owner"
-                :disabled="readOnly"
-                @change="toggleGroup(field, group, $event.target.checked)"
-              />
-              <button
-                type="button"
-                class="flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
-                :aria-expanded="!isTreeGroupCollapsed(field, group)"
-                :aria-controls="treeGroupId(field, group)"
-                @click="toggleTreeGroup(field, group)"
+            <input
+              type="checkbox"
+              class="resource-checkbox mt-0.5"
+              :checked="isAllowAll(field)"
+              :disabled="readOnly"
+              @change="toggleAllowAll(field, $event.target.checked)"
+            />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-ink-800">
+                {{ allowAllLabel }}
+              </span>
+              <span
+                v-if="allowAllHint"
+                class="mt-0.5 block text-xs leading-5 text-ink-500"
               >
-                <svg
-                  class="h-4 w-4 shrink-0 text-ink-400 transition-transform"
-                  :class="{ '-rotate-90': isTreeGroupCollapsed(field, group) }"
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="m6 8 4 4 4-4"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="1.5"
-                  />
-                </svg>
-                <span
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-[10px] font-semibold uppercase text-ink-500"
-                >
-                  {{ group.owner.slice(0, 2) }}
-                </span>
-                <span class="min-w-0 flex-1 truncate text-ink-800">{{
-                  group.owner
-                }}</span>
-                <span
-                  class="rounded-full bg-surface px-2 py-0.5 text-xs font-normal text-ink-500"
-                  >{{ group.items.length }}</span
-                >
-              </button>
+                {{ allowAllHint }}
+              </span>
+            </span>
+          </label>
+        </div>
+        <template v-if="!isAllowAll(field)">
+          <div class="space-y-2.5 border-b border-line bg-surface-sunken p-3">
+            <div class="relative">
+              <svg
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="9"
+                  cy="9"
+                  r="5.5"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+                <path
+                  d="m13 13 4 4"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-width="1.5"
+                />
+              </svg>
+              <input
+                :id="`${fieldId(field)}-search`"
+                :value="treeSearchQuery(field)"
+                type="search"
+                class="w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
+                :placeholder="treeSearchPlaceholder"
+                @input="setTreeSearch(field, $event.target.value)"
+              />
             </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-ink-600">
+                {{ resourceCountLabel }}：{{ filteredTreeItemCount(field) }}
+              </span>
+              <span
+                class="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
+              >
+                {{ arrayValue(field).length }} {{ selectedCountLabel }}
+              </span>
+            </div>
+          </div>
+          <div class="max-h-72 space-y-2 overflow-y-auto p-2">
             <div
-              v-show="!isTreeGroupCollapsed(field, group)"
-              :id="treeGroupId(field, group)"
-              class="divide-y divide-line border-t border-line px-2"
+              v-for="group in filteredTreeGroups(field)"
+              :key="group.owner"
+              class="overflow-hidden rounded-lg border border-line bg-surface"
             >
-              <label
-                v-for="item in group.items"
-                :key="optionValue(item)"
-                class="flex items-center gap-2.5 rounded px-2 py-2.5 text-sm hover:bg-surface-sunken"
-                :class="readOnly ? 'cursor-default' : 'cursor-pointer'"
+              <div
+                class="flex items-center gap-2.5 bg-surface-sunken px-3 py-2.5 text-sm font-medium hover:bg-line-soft"
               >
                 <input
                   type="checkbox"
                   class="resource-checkbox"
-                  :checked="arrayValue(field).includes(optionValue(item))"
+                  :checked="groupSelected(field, group)"
+                  :indeterminate="groupPartial(field, group)"
+                  :aria-label="group.owner"
                   :disabled="readOnly"
-                  @change="
-                    toggleArrayItem(
-                      field,
-                      optionValue(item),
-                      $event.target.checked
-                    )
-                  "
+                  @change="toggleGroup(field, group, $event.target.checked)"
                 />
-                <span class="min-w-0 flex-1 truncate text-ink-700">{{
-                  repositoryName(item)
-                }}</span>
-                <span
-                  v-if="item.metadata?.private"
-                  class="rounded border border-line bg-surface-sunken px-1.5 py-0.5 text-[11px] text-ink-500"
-                  >{{ privateResourceLabel }}</span
+                <button
+                  type="button"
+                  class="flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+                  :aria-expanded="!isTreeGroupCollapsed(field, group)"
+                  :aria-controls="treeGroupId(field, group)"
+                  @click="toggleTreeGroup(field, group)"
                 >
-              </label>
+                  <svg
+                    class="h-4 w-4 shrink-0 text-ink-400 transition-transform"
+                    :class="{
+                      '-rotate-90': isTreeGroupCollapsed(field, group)
+                    }"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="m6 8 4 4 4-4"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                    />
+                  </svg>
+                  <span
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-[10px] font-semibold uppercase text-ink-500"
+                  >
+                    {{ group.owner.slice(0, 2) }}
+                  </span>
+                  <span class="min-w-0 flex-1 truncate text-ink-800">{{
+                    group.owner
+                  }}</span>
+                  <span
+                    class="rounded-full bg-surface px-2 py-0.5 text-xs font-normal text-ink-500"
+                    >{{ group.items.length }}</span
+                  >
+                </button>
+              </div>
+              <div
+                v-show="!isTreeGroupCollapsed(field, group)"
+                :id="treeGroupId(field, group)"
+                class="divide-y divide-line border-t border-line px-2"
+              >
+                <label
+                  v-for="item in group.items"
+                  :key="optionValue(item)"
+                  class="flex items-center gap-2.5 rounded px-2 py-2.5 text-sm hover:bg-surface-sunken"
+                  :class="readOnly ? 'cursor-default' : 'cursor-pointer'"
+                >
+                  <input
+                    type="checkbox"
+                    class="resource-checkbox"
+                    :checked="arrayValue(field).includes(optionValue(item))"
+                    :disabled="readOnly"
+                    @change="
+                      toggleArrayItem(
+                        field,
+                        optionValue(item),
+                        $event.target.checked
+                      )
+                    "
+                  />
+                  <span class="min-w-0 flex-1 truncate text-ink-700">{{
+                    repositoryName(item)
+                  }}</span>
+                  <span
+                    v-if="item.metadata?.private"
+                    class="rounded border border-line bg-surface-sunken px-1.5 py-0.5 text-[11px] text-ink-500"
+                    >{{ privateResourceLabel }}</span
+                  >
+                </label>
+              </div>
             </div>
+            <p
+              v-if="!filteredTreeGroups(field).length"
+              class="px-3 py-6 text-center text-sm text-ink-500"
+            >
+              {{ resourceSearchEmptyText }}
+            </p>
           </div>
-          <p
-            v-if="!filteredTreeGroups(field).length"
-            class="px-3 py-6 text-center text-sm text-ink-500"
-          >
-            {{ resourceSearchEmptyText }}
-          </p>
-        </div>
+        </template>
       </div>
       <div
         v-else-if="isTreeField(field)"
@@ -286,6 +318,8 @@ const props = defineProps({
   resourceCountLabel: { type: String, default: 'resources' },
   selectedCountLabel: { type: String, default: 'selected' },
   privateResourceLabel: { type: String, default: 'Private' },
+  allowAllLabel: { type: String, default: 'Allow all resources' },
+  allowAllHint: { type: String, default: '' },
   addArrayItemLabel: { type: String, default: 'Add' },
   removeArrayItemLabel: { type: String, default: 'Remove' },
   selectOptionLabel: { type: String, default: 'Select an option' },
@@ -402,7 +436,22 @@ function isTreeField(field) {
 }
 
 function shouldRenderTree(field) {
-  return optionsFor(field).length > 0
+  return optionsFor(field).length > 0 || field.allow_all === true
+}
+
+function allowAllValue(field) {
+  return field.all_value || '*'
+}
+
+function isAllowAll(field) {
+  return (
+    field.allow_all === true && arrayValue(field).includes(allowAllValue(field))
+  )
+}
+
+function toggleAllowAll(field, checked) {
+  if (props.readOnly) return
+  setField(field, checked ? [allowAllValue(field)] : [])
 }
 
 function treeGroups(field) {

@@ -1370,7 +1370,7 @@
           },
           "repositories": {
             "title": "Repositorios permitidos",
-            "description": "Valores owner/repository explícitos a los que puede acceder esta conexión."
+            "description": "Valores owner/repository explícitos a los que puede acceder esta conexión, o todos los repositorios que el token pueda leer."
           }
         },
         "datasourceFields": {
@@ -1401,7 +1401,7 @@
           },
           "projects": {
             "title": "Proyectos permitidos",
-            "description": "Valores namespace/project explícitos a los que puede acceder esta conexión."
+            "description": "Valores namespace/project explícitos a los que puede acceder esta conexión, o todos los proyectos que el token pueda leer."
           }
         },
         "datasourceFields": {
@@ -1505,7 +1505,7 @@
       "githubGuidePullsPermission": "Solo lectura · requerido para pull requests",
       "githubGuideActionsPermission": "Solo lectura · requerido para ejecuciones de workflow",
       "githubGuideConnectTitle": "Validar y guardar el alcance permitido",
-      "githubGuideConnectHint": "Introduce el token, descubre los repositorios accesibles y autoriza solo los necesarios. Las fuentes sincronizan únicamente archivos; Issues, pull requests, releases y Actions se consultan mediante herramientas de solo lectura.",
+      "githubGuideConnectHint": "Introduce el token, descubre los repositorios accesibles y autoriza repositorios concretos o todos los que el token pueda leer. Las fuentes sincronizan únicamente archivos; Issues, pull requests, releases y Actions se consultan mediante herramientas de solo lectura.",
       "githubGuideCreateLink": "Crear un token detallado",
       "githubGuideTokenDocsLink": "Documentación de tokens de GitHub",
       "githubGuidePermissionDocsLink": "Permisos de tokens detallados",
@@ -1519,7 +1519,7 @@
       "gitlabGuideApiScope": "Necesario para descubrir proyectos y usar APIs/herramientas de solo lectura",
       "gitlabGuideRepositoryScope": "Necesario para sincronizar archivos del repositorio",
       "gitlabGuideProjectTitle": "Descubrir y limitar los proyectos permitidos",
-      "gitlabGuideProjectHint": "Después de introducir el endpoint y el token, descubre los proyectos a los que pertenece la cuenta y selecciona solo los namespace/project usados para sincronización o consultas del asistente. La cuenta necesita acceso de lectura; la lista de SourceLens no concede permisos de GitLab.",
+      "gitlabGuideProjectHint": "Después de introducir el endpoint y el token, descubre los proyectos a los que pertenece la cuenta y selecciona namespace/project concretos o todos los proyectos que el token pueda leer. La cuenta necesita acceso de lectura; la lista de SourceLens no concede permisos de GitLab.",
       "gitlabGuideBoundaryTitle": "Confirmar los límites de la fuente y las herramientas de solo lectura",
       "gitlabGuideBoundaryHint": "Las fuentes sincronizan únicamente archivos del repositorio del proyecto, rama y directorio seleccionados. Commits, merge requests e issues no se indexan y se consultan mediante herramientas de solo lectura. SourceLens no crea, modifica ni elimina recursos de GitLab.",
       "gitlabGuideTokenDocsLink": "Documentación de tokens personales de GitLab",
@@ -1576,6 +1576,12 @@
       "resourceSearchEmpty": "No hay repositorios coincidentes",
       "resourceCountLabel": "recursos",
       "selectedCountLabel": "seleccionados",
+      "allowAllRepositories": "Permitir todos los repositorios",
+      "allowAllRepositoriesHint": "Autoriza todos los repositorios que el token pueda leer. Las fuentes siguen eligiendo qué repositorios sincronizar.",
+      "allowAllProjects": "Permitir todos los proyectos",
+      "allowAllProjectsHint": "Autoriza todos los proyectos que el token pueda leer. Las fuentes siguen eligiendo qué proyectos sincronizar.",
+      "allRepositories": "Todos los repositorios",
+      "allProjects": "Todos los proyectos",
       "createTitle": "Crear conexión",
       "editTitle": "Editar conexión",
       "loadFailed": "No se pudieron cargar las conexiones",

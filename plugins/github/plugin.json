@@ -100,8 +100,9 @@
         "format": "provider-resource",
         "resource": "repositories",
         "title": "Allowed repositories",
-        "description": "Explicit owner/repository values this connection may access.",
+        "description": "Explicit owner/repository values this connection may access, or allow every repository the token can read.",
         "write_to": "allowed_scope.repositories",
+        "allow_all": true,
         "items": {
           "type": "string"
         }

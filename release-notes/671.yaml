@@ -1,0 +1,10 @@
+type: feature
+audience: admin
+en: >-
+  Added an "allow all" option to GitHub and GitLab Connections: administrators
+  can authorize every repository or project a token can read instead of
+  listing them individually. Data sources still choose which repositories or
+  projects to synchronize.
+zh-CN: >-
+  GitHub 与 GitLab 连接新增“允许全部”选项：管理员可授权令牌可读取的全部仓库
+  或项目，无需逐个列出。数据源仍需选择要同步的仓库或项目。
