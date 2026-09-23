@@ -329,9 +329,10 @@ def _activity_arguments(arguments, config):
     allowed = scope.get("projects") if isinstance(scope, dict) else None
     if not isinstance(allowed, list):
         raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
-    allowed_projects = {str(item).casefold() for item in allowed}
-    if any(project.casefold() not in allowed_projects for project in projects):
-        raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
+    if "*" not in allowed:
+        allowed_projects = {str(item).casefold() for item in allowed}
+        if any(project.casefold() not in allowed_projects for project in projects):
+            raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
     since = _timestamp(arguments.get("since"))
     until = _timestamp(arguments.get("until"))
     if since > until:
@@ -397,7 +398,9 @@ def build_datasource_command(snapshot, material, trigger):
     allowed = {
         str(item).casefold() for item in scope.get("projects", [])
     }
-    if any(item.casefold() not in allowed for item in projects):
+    if "*" not in allowed and any(
+        item.casefold() not in allowed for item in projects
+    ):
         raise PluginRuntimeError("PLUGIN_SCOPE_VIOLATION")
     config = {
         "branch": datasource.get("branch") or "",

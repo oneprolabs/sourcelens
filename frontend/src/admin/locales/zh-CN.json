@@ -1370,7 +1370,7 @@
           },
           "repositories": {
             "title": "允许访问的仓库",
-            "description": "明确指定此连接可以访问的 owner/repository。"
+            "description": "明确指定此连接可以访问的 owner/repository，或允许该令牌可读取的全部仓库。"
           }
         },
         "datasourceFields": {
@@ -1401,7 +1401,7 @@
           },
           "projects": {
             "title": "允许访问的项目",
-            "description": "明确指定此连接可以访问的 namespace/project。"
+            "description": "明确指定此连接可以访问的 namespace/project，或允许该令牌可读取的全部项目。"
           }
         },
         "datasourceFields": {
@@ -1505,7 +1505,7 @@
       "githubGuidePullsPermission": "只读 · 使用 PR 工具时需要",
       "githubGuideActionsPermission": "只读 · 查看工作流运行时需要",
       "githubGuideConnectTitle": "验证并保存允许范围",
-      "githubGuideConnectHint": "填写 Token 后获取可访问仓库，只选择要授权的仓库。数据源只同步仓库文件；Issue、PR、Release 和 Actions 不进入知识库，仍通过只读助手工具按需查询。",
+      "githubGuideConnectHint": "填写 Token 后获取可访问仓库，可选择具体仓库，也可允许该令牌可读取的全部仓库。数据源只同步仓库文件；Issue、PR、Release 和 Actions 不进入知识库，仍通过只读助手工具按需查询。",
       "githubGuideCreateLink": "创建细粒度 Token",
       "githubGuideTokenDocsLink": "GitHub Token 配置文档",
       "githubGuidePermissionDocsLink": "细粒度 Token 权限说明",
@@ -1519,7 +1519,7 @@
       "gitlabGuideApiScope": "项目发现与只读 API/Tool 必需",
       "gitlabGuideRepositoryScope": "数据源同步仓库文件必需",
       "gitlabGuideProjectTitle": "获取并限制允许项目",
-      "gitlabGuideProjectHint": "填写服务地址和 Token 后获取该账号加入的项目，并只选择需要同步或供助手查询的 namespace/project。账号本身必须拥有项目读取权限；SourceLens 的允许项目范围不会授予 GitLab 权限。",
+      "gitlabGuideProjectHint": "填写服务地址和 Token 后获取该账号加入的项目，可选择具体 namespace/project，也可允许该令牌可读取的全部项目。账号本身必须拥有项目读取权限；SourceLens 的允许项目范围不会授予 GitLab 权限。",
       "gitlabGuideBoundaryTitle": "确认数据源与只读 Tool 边界",
       "gitlabGuideBoundaryHint": "数据源只同步所选项目、分支和目录中的仓库文件；提交、Merge Request 和 Issue 不进入知识库，仍由助手通过只读 Tool 查询。SourceLens 不创建、修改或删除 GitLab 资源。",
       "gitlabGuideTokenDocsLink": "GitLab 个人访问令牌文档",
@@ -1576,6 +1576,12 @@
       "resourceSearchEmpty": "没有匹配的仓库",
       "resourceCountLabel": "个资源",
       "selectedCountLabel": "个已选择",
+      "allowAllRepositories": "允许全部仓库",
+      "allowAllRepositoriesHint": "授权该令牌可读取的所有仓库。数据源仍需选择要同步的仓库。",
+      "allowAllProjects": "允许全部项目",
+      "allowAllProjectsHint": "授权该令牌可读取的所有项目。数据源仍需选择要同步的项目。",
+      "allRepositories": "全部仓库",
+      "allProjects": "全部项目",
       "createTitle": "新建连接",
       "editTitle": "编辑连接",
       "loadFailed": "连接加载失败",

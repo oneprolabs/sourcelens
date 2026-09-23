@@ -38,6 +38,8 @@ GITLAB_TIMEOUT_SECONDS = 15
 GITLAB_MAX_RESPONSE_BYTES = 500_000
 GITLAB_MAX_BRANCH_LENGTH = 255
 GITLAB_MAX_DIRECTORY_LENGTH = 1000
+GITLAB_ALL_PROJECTS = "*"
+GITLAB_MAX_DISCOVERED_PROJECTS = 100
 
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "gitlab"
@@ -68,7 +70,7 @@ class GitLabDatasourceProvider(DatasourceProvider):
         return _endpoint(endpoint)
 
     def validate_connection_scope(self, connection_scope):
-        """Normalize the explicit project allowlist for one Connection."""
+        """Normalize an explicit or all-projects allowlist for one Connection."""
 
         if not isinstance(connection_scope, dict):
             raise DatasourceProviderError("connection scope must be an object")
@@ -79,6 +81,12 @@ class GitLabDatasourceProvider(DatasourceProvider):
         projects = connection_scope.get("projects")
         if not isinstance(projects, list) or not projects:
             raise DatasourceProviderError("connection scope requires projects")
+        if GITLAB_ALL_PROJECTS in projects:
+            if len(projects) != 1:
+                raise DatasourceProviderError(
+                    "connection scope cannot mix all projects with explicit values"
+                )
+            return {"projects": [GITLAB_ALL_PROJECTS]}
         if len(projects) > GITLAB_MAX_PROJECTS:
             raise DatasourceProviderError(
                 "connection scope contains too many projects"
@@ -140,9 +148,18 @@ class GitLabDatasourceProvider(DatasourceProvider):
         client=None,
         request_context=None,
     ):
-        """Return the explicit project allowlist without remote requests."""
+        """Return explicit allowlist entries or all visible projects."""
 
         self.validate_connection(endpoint, connection_config)
+        if _scope_allows_all(connection_scope):
+            return self.discover_connection_resources(
+                secret,
+                endpoint=endpoint,
+                connection_config=connection_config,
+                limit=GITLAB_MAX_DISCOVERED_PROJECTS,
+                client=client,
+                request_context=request_context,
+            )
         scope = self.validate_connection_scope(connection_scope)
         del secret, client, request_context
         return {
@@ -183,13 +200,8 @@ class GitLabDatasourceProvider(DatasourceProvider):
                 else None
             )
         project = _project_name(project_value)
-        allowed = {
-            item.casefold()
-            for item in self.validate_connection_scope(
-                connection_scope
-            )["projects"]
-        }
-        if project.casefold() not in allowed:
+        allowed = _allowed_projects(connection_scope)
+        if allowed is not None and project.casefold() not in allowed:
             raise DatasourceProviderError("project is outside connection scope")
         token = _secret_value(secret)
         context = request_context or PluginRequestContext(
@@ -320,13 +332,10 @@ class GitLabDatasourceProvider(DatasourceProvider):
         projects = [_project_name(value) for value in raw_projects]
         if len({item.casefold() for item in projects}) != len(projects):
             raise DatasourceProviderError("projects must be unique")
-        allowed = {
-            item.casefold()
-            for item in self.validate_connection_scope(
-                connection_scope
-            )["projects"]
-        }
-        if any(item.casefold() not in allowed for item in projects):
+        allowed = _allowed_projects(connection_scope)
+        if allowed is not None and any(
+            item.casefold() not in allowed for item in projects
+        ):
             raise DatasourceProviderError("project is outside connection scope")
         normalized = {"projects": projects}
         if "project" in datasource_config and "projects" not in datasource_config:
@@ -342,6 +351,26 @@ class GitLabDatasourceProvider(DatasourceProvider):
         if directory:
             normalized["directory"] = directory
         return normalized
+
+
+def _allowed_projects(connection_scope):
+    """Return allowed project identities, or None when all are allowed."""
+
+    if _scope_allows_all(connection_scope):
+        return None
+    normalized = GitLabDatasourceProvider().validate_connection_scope(
+        connection_scope
+    )
+    return {project.casefold() for project in normalized["projects"]}
+
+
+def _scope_allows_all(connection_scope):
+    """Return whether one Connection scope authorizes every project."""
+
+    normalized = GitLabDatasourceProvider().validate_connection_scope(
+        connection_scope
+    )
+    return normalized["projects"] == [GITLAB_ALL_PROJECTS]
 
 
 def _endpoint(value):
@@ -546,18 +575,16 @@ class GitLabToolProvider:
 
         try:
             endpoint = _endpoint(endpoint)
-            allowed = {
-                item.casefold()
-                for item in GitLabDatasourceProvider()
-                .validate_connection_scope(allowed_scope)["projects"]
-            }
+            allowed = _allowed_projects(allowed_scope)
         except DatasourceProviderError as exc:
             raise ToolProviderError(str(exc)) from exc
         if not isinstance(arguments, dict):
             raise ToolProviderError("tool arguments must be an object")
         if tool_key == "gitlab_activity_summary":
             projects = _tool_projects(arguments.get("projects"))
-            if any(project.casefold() not in allowed for project in projects):
+            if allowed is not None and any(
+                project.casefold() not in allowed for project in projects
+            ):
                 raise ToolProviderError("project is outside connection scope")
             since = _tool_timestamp(arguments.get("since"), "since")
             until = _tool_timestamp(arguments.get("until"), "until")
@@ -577,7 +604,7 @@ class GitLabToolProvider:
             project = _project_name(arguments.get("project"))
         except DatasourceProviderError as exc:
             raise ToolProviderError(str(exc)) from exc
-        if project.casefold() not in allowed:
+        if allowed is not None and project.casefold() not in allowed:
             raise ToolProviderError("project is outside connection scope")
         if tool_key == "gitlab_read_file":
             normalized = {

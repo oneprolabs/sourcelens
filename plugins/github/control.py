@@ -38,6 +38,8 @@ GITHUB_MAX_RESPONSE_BYTES = 500_000
 GITHUB_MAX_REPOSITORIES = 50
 GITHUB_MAX_BRANCHES = 100
 GITHUB_DISCOVERY_WORKERS = 5
+GITHUB_ALL_REPOSITORIES = "*"
+GITHUB_MAX_DISCOVERED_REPOSITORIES = 100
 GITHUB_TIMEOUT_SECONDS = 15
 GITHUB_MAX_BRANCH_LENGTH = 255
 GITHUB_MAX_DIRECTORY_LENGTH = 1000
@@ -154,7 +156,7 @@ class GitHubDatasourceProvider(DatasourceProvider):
         return "https://github.com"
 
     def validate_connection_scope(self, connection_scope):
-        """Normalize the explicit repository allowlist for one Connection."""
+        """Normalize an explicit or all-repositories allowlist for one Connection."""
 
         if not isinstance(connection_scope, dict):
             raise DatasourceProviderError("connection scope must be an object")
@@ -167,6 +169,12 @@ class GitHubDatasourceProvider(DatasourceProvider):
             raise DatasourceProviderError(
                 "connection scope requires repositories"
             )
+        if GITHUB_ALL_REPOSITORIES in repositories:
+            if len(repositories) != 1:
+                raise DatasourceProviderError(
+                    "connection scope cannot mix all repositories with explicit values"
+                )
+            return {"repositories": [GITHUB_ALL_REPOSITORIES]}
         if len(repositories) > GITHUB_MAX_REPOSITORIES:
             raise DatasourceProviderError(
                 "connection scope contains too many repositories"
@@ -223,10 +231,19 @@ class GitHubDatasourceProvider(DatasourceProvider):
         client=None,
         request_context=None,
     ):
-        """Return the explicit repository allowlist without remote requests."""
+        """Return explicit allowlist entries or all visible repositories."""
 
         if endpoint or connection_config:
             self.validate_connection(endpoint, connection_config)
+        if _scope_allows_all(connection_scope):
+            return self.discover_connection_resources(
+                secret,
+                endpoint=endpoint,
+                connection_config=connection_config,
+                limit=GITHUB_MAX_DISCOVERED_REPOSITORIES,
+                client=client,
+                request_context=request_context,
+            )
         scope = self.validate_connection_scope(connection_scope)
         del secret, client, request_context
         return {
@@ -268,7 +285,8 @@ class GitHubDatasourceProvider(DatasourceProvider):
                 else None
             )
         repository = _repository_name(repository_value)
-        if repository.casefold() not in _allowed_repositories(connection_scope):
+        allowed = _allowed_repositories(connection_scope)
+        if allowed is not None and repository.casefold() not in allowed:
             raise DatasourceProviderError("repository is outside connection scope")
         token = _secret_value(secret)
         context = request_context or PluginRequestContext(
@@ -395,7 +413,9 @@ class GitHubDatasourceProvider(DatasourceProvider):
         repositories = [_repository_name(value) for value in raw_repositories]
         if len({item.casefold() for item in repositories}) != len(repositories):
             raise DatasourceProviderError("repositories must be unique")
-        if any(item.casefold() not in allowed_repositories for item in repositories):
+        if allowed_repositories is not None and any(
+            item.casefold() not in allowed_repositories for item in repositories
+        ):
             raise DatasourceProviderError(
                 "repository is outside connection scope"
             )
@@ -414,12 +434,23 @@ class GitHubDatasourceProvider(DatasourceProvider):
 
 
 def _allowed_repositories(connection_scope):
-    """Return explicitly allowed V1 repositories from one Connection scope."""
+    """Return allowed repository identities, or None when all are allowed."""
 
+    if _scope_allows_all(connection_scope):
+        return None
     normalized = GitHubDatasourceProvider().validate_connection_scope(
         connection_scope
     )
     return {repository.casefold() for repository in normalized["repositories"]}
+
+
+def _scope_allows_all(connection_scope):
+    """Return whether one Connection scope authorizes every repository."""
+
+    normalized = GitHubDatasourceProvider().validate_connection_scope(
+        connection_scope
+    )
+    return normalized["repositories"] == [GITHUB_ALL_REPOSITORIES]
 
 
 def _repository_name(value):
@@ -623,7 +654,7 @@ class GitHubToolProvider:
                     raise DatasourceProviderError(
                         "repositories must be unique"
                     )
-                if not identities.issubset(allowed):
+                if allowed is not None and not identities.issubset(allowed):
                     raise DatasourceProviderError(
                         "repository is outside connection scope"
                     )
@@ -652,7 +683,7 @@ class GitHubToolProvider:
             )
         except DatasourceProviderError as exc:
             raise ToolProviderError(str(exc)) from exc
-        if repository.casefold() not in allowed:
+        if allowed is not None and repository.casefold() not in allowed:
             raise ToolProviderError("repository is outside connection scope")
         normalized = {"repository": repository}
         if tool_key == "github_read_file":

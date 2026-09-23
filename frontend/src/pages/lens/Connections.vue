@@ -562,6 +562,8 @@
                 :private-resource-label="
                   t('lensAdmin.connections.privateResource')
                 "
+                :allow-all-label="allowAllLabel"
+                :allow-all-hint="allowAllHint"
                 :select-option-label="t('lensAdmin.pluginForm.selectOption')"
                 :loading-options-label="
                   t('lensAdmin.pluginForm.loadingOptions')
@@ -753,6 +755,20 @@ const connectionResourceField = computed(() =>
 const hasStoredSecret = computed(
   () => mode.value === 'edit' && Boolean(form.value.has_secret)
 )
+const allowAllLabel = computed(() =>
+  t(
+    form.value.plugin_key === 'gitlab'
+      ? 'lensAdmin.connections.allowAllProjects'
+      : 'lensAdmin.connections.allowAllRepositories'
+  )
+)
+const allowAllHint = computed(() =>
+  t(
+    form.value.plugin_key === 'gitlab'
+      ? 'lensAdmin.connections.allowAllProjectsHint'
+      : 'lensAdmin.connections.allowAllRepositoriesHint'
+  )
+)
 const canDiscoverConnectionResources = computed(
   () => hasFieldValue(form.value.secret_value) || hasStoredSecret.value
 )
@@ -790,9 +806,22 @@ function hasFieldValue(value) {
 }
 
 function scopeValues(row) {
-  const repositories = row.allowed_scope?.repositories
-  if (Array.isArray(repositories)) return repositories
   const scope = row.allowed_scope || {}
+  const primary = ['repositories', 'projects']
+    .map((key) => scope[key])
+    .find((value) => Array.isArray(value))
+  if (primary) {
+    if (primary.length === 1 && primary[0] === '*') {
+      return [
+        t(
+          row.plugin_key === 'gitlab'
+            ? 'lensAdmin.connections.allProjects'
+            : 'lensAdmin.connections.allRepositories'
+        )
+      ]
+    }
+    return primary
+  }
   return Object.entries(scope).flatMap(([key, value]) => {
     if (Array.isArray(value)) return value
     if (value === undefined || value === null || value === '') return []

@@ -964,6 +964,17 @@ def _validate_form_schema(value, label):
             raise PluginRegistryError(
                 f"plugin {label} field resource is invalid"
             )
+        allow_all = field.get("allow_all")
+        if allow_all is not None:
+            if (
+                label != "connection"
+                or field_format != "provider-resource"
+                or not isinstance(allow_all, bool)
+            ):
+                raise PluginRegistryError(
+                    f"plugin {label} field allow-all flag is invalid"
+                )
+            safe_field["allow_all"] = allow_all
         if "default" in field and isinstance(
             field["default"],
             (str, int, bool),

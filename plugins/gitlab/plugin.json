@@ -78,8 +78,9 @@
         "format": "provider-resource",
         "resource": "projects",
         "title": "Allowed projects",
-        "description": "Explicit namespace/project values this connection may access.",
+        "description": "Explicit namespace/project values this connection may access, or allow every project the token can read.",
         "write_to": "allowed_scope.projects",
+        "allow_all": true,
         "items": {
           "type": "string"
         }

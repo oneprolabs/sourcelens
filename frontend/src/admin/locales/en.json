@@ -1370,7 +1370,7 @@
           },
           "repositories": {
             "title": "Allowed repositories",
-            "description": "Explicit owner/repository values this connection may access."
+            "description": "Explicit owner/repository values this connection may access, or allow every repository the token can read."
           }
         },
         "datasourceFields": {
@@ -1401,7 +1401,7 @@
           },
           "projects": {
             "title": "Allowed projects",
-            "description": "Explicit namespace/project values this connection may access."
+            "description": "Explicit namespace/project values this connection may access, or allow every project the token can read."
           }
         },
         "datasourceFields": {
@@ -1505,7 +1505,7 @@
       "githubGuidePullsPermission": "Read-only · required for pull request tools",
       "githubGuideActionsPermission": "Read-only · required for workflow runs",
       "githubGuideConnectTitle": "Validate and save the allowed scope",
-      "githubGuideConnectHint": "Enter the token, discover accessible repositories, and select only those to authorize. Data sources synchronize repository files only; Issues, pull requests, releases, and Actions stay available through read-only Assistant tools.",
+      "githubGuideConnectHint": "Enter the token, discover accessible repositories, and either select specific repositories or allow all repositories the token can read. Data sources synchronize repository files only; Issues, pull requests, releases, and Actions stay available through read-only Assistant tools.",
       "githubGuideCreateLink": "Create a fine-grained token",
       "githubGuideTokenDocsLink": "GitHub token documentation",
       "githubGuidePermissionDocsLink": "Fine-grained token permissions",
@@ -1519,7 +1519,7 @@
       "gitlabGuideApiScope": "Required for project discovery and read-only APIs/tools",
       "gitlabGuideRepositoryScope": "Required to synchronize repository files",
       "gitlabGuideProjectTitle": "Discover and limit approved projects",
-      "gitlabGuideProjectHint": "After entering the endpoint and token, discover projects the account has joined and select only the namespace/project values used for synchronization or assistant queries. The account still needs project read access; the SourceLens allowlist does not grant GitLab permissions.",
+      "gitlabGuideProjectHint": "After entering the endpoint and token, discover projects the account has joined and either select specific namespace/project values or allow all projects the token can read. The account still needs project read access; the SourceLens allowlist does not grant GitLab permissions.",
       "gitlabGuideBoundaryTitle": "Confirm datasource and read-only tool boundaries",
       "gitlabGuideBoundaryHint": "Data sources synchronize only repository files from the selected project, branch, and directory. Commits, merge requests, and issues are not indexed and remain available through read-only assistant tools. SourceLens does not create, modify, or delete GitLab resources.",
       "gitlabGuideTokenDocsLink": "GitLab personal access token documentation",
@@ -1576,6 +1576,12 @@
       "resourceSearchEmpty": "No matching repositories",
       "resourceCountLabel": "resources",
       "selectedCountLabel": "selected",
+      "allowAllRepositories": "Allow all repositories",
+      "allowAllRepositoriesHint": "Authorize every repository the token can read. Data sources still choose which repositories to synchronize.",
+      "allowAllProjects": "Allow all projects",
+      "allowAllProjectsHint": "Authorize every project the token can read. Data sources still choose which projects to synchronize.",
+      "allRepositories": "All repositories",
+      "allProjects": "All projects",
       "createTitle": "Create Connection",
       "editTitle": "Edit Connection",
       "loadFailed": "Failed to load Connections",

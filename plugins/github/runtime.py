@@ -1039,6 +1039,8 @@ def _validate_repository_scope(repository, scope):
     normalized = _repository_identity(repository)
     if normalized is None:
         raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
+    if "*" in repositories:
+        return
     allowed = {
         identity
         for value in repositories
