@@ -100,7 +100,7 @@ const { t, locale } = useI18n()
 const userStore = useUserStore()
 const passwordText = computed(() => getPasswordManagementText(locale.value))
 
-const mode = ref('code')
+const mode = ref('password')
 const loading = ref(false)
 const errorMessage = ref('')
 const formData = reactive({ email: '', password: '' })
