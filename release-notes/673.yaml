@@ -1,0 +1,8 @@
+type: improvement
+audience: admin
+en: >-
+  Assistant configuration now shows readable, localized names and descriptions
+  for TypeSafe Decision Plugin gates and ranking rubrics, along with hints
+  explaining the decision Threshold and Margin settings.
+zh-CN: >-
+  助手配置页面现在会为 TypeSafe 决策插件的判定 Gate 与排序评分标准显示可读的本地化名称和说明，并新增对判定阈值（Threshold）与容差（Margin）的解释。

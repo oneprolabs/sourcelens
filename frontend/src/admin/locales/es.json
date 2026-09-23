@@ -1458,7 +1458,42 @@
             "description": "Versión de modelo fija."
           }
         },
-        "datasourceFields": {}
+        "datasourceFields": {},
+        "decisions": {
+          "search_needed": {
+            "title": "¿Se necesita búsqueda?",
+            "description": "Decide si responder al último mensaje requiere buscar en el espacio de trabajo o en los documentos proporcionados."
+          },
+          "evidence_requirement": {
+            "title": "¿Se requiere evidencia?",
+            "description": "Decide si la respuesta necesita evidencia de herramientas, documentos o del usuario en lugar de responder directamente."
+          },
+          "evidence_sufficient": {
+            "title": "¿Evidencia suficiente?",
+            "description": "Comprueba si la respuesta se apoya solo en evidencia realmente recuperada o proporcionada."
+          },
+          "answer_supported": {
+            "title": "¿Respuesta respaldada?",
+            "description": "Comprueba si la respuesta está respaldada por la evidencia recuperada."
+          },
+          "plan_quality": {
+            "title": "Calidad del plan",
+            "description": "Puntúa un plan candidato según la rúbrica ordenada compartida."
+          },
+          "evidence_relevance": {
+            "title": "Relevancia de la evidencia",
+            "description": "Puntúa un fragmento recuperado según cuánto ayuda a responder la pregunta."
+          }
+        },
+        "rubric": {
+          "weak": "Débil",
+          "acceptable": "Aceptable",
+          "strong": "Sólido",
+          "irrelevant": "Irrelevante",
+          "related": "Relacionado",
+          "helpful": "Útil",
+          "direct_answer": "Respuesta directa"
+        }
       }
     },
     "connections": {
@@ -2296,7 +2331,9 @@
       "decisionGates": "Gates de decisión",
       "decisionGatesHint": "Los gates habilitados guían el flujo de control; la baja confianza revierte al modelo principal.",
       "decisionGateThreshold": "Umbral",
+      "decisionGateThresholdHint": "Frontera de decisión de 0 a 1. Un valor sí/no debe alejarse lo suficiente de la frontera y la opción ganadora debe alcanzar esta probabilidad para aceptarse.",
       "decisionGateMargin": "Margen",
+      "decisionGateMarginHint": "Banda de incertidumbre de 0 a 1 alrededor del umbral. Los resultados dentro de la banda se consideran de baja confianza y se delegan al modelo principal.",
       "decisionGateInactive": "Aún no activo ({phase})",
       "decisionAnalyses": "Ranking de decisión",
       "decisionAnalysesHint": "Los análisis vinculados permiten al modelo ordenar candidatos con decision_rank usando un mismo rubric.",

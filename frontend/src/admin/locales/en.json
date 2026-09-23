@@ -1458,7 +1458,42 @@
             "description": "Pinned System One model version used for reproducible decisions."
           }
         },
-        "datasourceFields": {}
+        "datasourceFields": {},
+        "decisions": {
+          "search_needed": {
+            "title": "Search needed",
+            "description": "Decide whether answering the latest message requires searching the workspace or the provided documents."
+          },
+          "evidence_requirement": {
+            "title": "Evidence required",
+            "description": "Decide whether the answer needs tool, document, or user-provided evidence instead of a direct reply."
+          },
+          "evidence_sufficient": {
+            "title": "Evidence sufficient",
+            "description": "Check whether the answer relies only on evidence that was actually retrieved or provided."
+          },
+          "answer_supported": {
+            "title": "Answer supported",
+            "description": "Check whether the answer is supported by the evidence that was retrieved."
+          },
+          "plan_quality": {
+            "title": "Plan quality",
+            "description": "Score one candidate plan against the shared ordered rubric."
+          },
+          "evidence_relevance": {
+            "title": "Evidence relevance",
+            "description": "Score one retrieved excerpt by how much it helps answer the question."
+          }
+        },
+        "rubric": {
+          "weak": "Weak",
+          "acceptable": "Acceptable",
+          "strong": "Strong",
+          "irrelevant": "Irrelevant",
+          "related": "Related",
+          "helpful": "Helpful",
+          "direct_answer": "Direct answer"
+        }
       }
     },
     "connections": {
@@ -2296,7 +2331,9 @@
       "decisionGates": "Decision gates",
       "decisionGatesHint": "Enabled gates steer control flow; low confidence falls back to the primary model.",
       "decisionGateThreshold": "Threshold",
+      "decisionGateThresholdHint": "Decision boundary from 0 to 1. A yes/no value must sit this far from the boundary, and a choice option must reach this probability, to be accepted.",
       "decisionGateMargin": "Margin",
+      "decisionGateMarginHint": "Uncertainty band from 0 to 1 around the threshold. Results inside the band are treated as low confidence and fall back to the primary model.",
       "decisionGateInactive": "Not active yet ({phase})",
       "decisionAnalyses": "Decision ranking",
       "decisionAnalysesHint": "Bound analyses let the model rank candidates with decision_rank against one rubric.",
