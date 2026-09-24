@@ -67,6 +67,7 @@ from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
 )
+from .evidence_gate import EvidenceGateMiddleware
 from .execution import (
     EmptyAgentResponseError,
     _emit_new_model_calls,
@@ -191,6 +192,24 @@ def _post_run_decision_gates(state, answer):
         except Exception:
             LOGGER.exception("Failed to persist decision gate verdicts")
     return verdicts
+
+
+def _build_evidence_middleware(state):
+    """Build the answer-grounding Decision gate, or None when unbound."""
+
+    policy = getattr(state, "decision_policy", None)
+    checker = getattr(policy, "has_evidence_gates", None)
+    if checker is None or not checker():
+        return None
+    command = getattr(state, "command", None) or {}
+    question = str(
+        getattr(state, "question", None) or command.get("question") or ""
+    )
+    return EvidenceGateMiddleware(
+        policy,
+        question,
+        emit_event=getattr(state, "emit_agent_event", None),
+    )
 
 
 def _high_confidence_report_route(command):
@@ -1424,6 +1443,7 @@ class LensDeepAgentRuntime:
             capability_middleware=state.capability_middleware,
             mcp_middleware=state.mcp_middleware,
             trace_middleware=state.trace_middleware,
+            evidence_middleware=_build_evidence_middleware(state),
             runtime_middleware=state.runtime_middleware,
             allow_task_tool=use_subagents,
         )

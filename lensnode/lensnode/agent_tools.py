@@ -131,6 +131,7 @@ def build_agent_tools(
             emit_event(name, detail or {})
 
     rerank_question = str(command.get("question") or "")
+    search_cache = {}
 
     def build_evidence_rerank(stats):
         """Build one per-call rerank seam recording its own outcome."""
@@ -172,15 +173,54 @@ def build_agent_tools(
         match; "count" returns per-file match counts.
 
         query is keywords (fixed-string, case-folded) by default; set
-        regex=True to pass a ripgrep regular expression. glob restricts the
-        search by path/type (e.g. "**/*.md", "*.py"). Use keywords/terms as
-        they appear in the files (translate names into the documents'
-        language when needed). File size is not a constraint. In content
-        mode, when nothing matches a 'files' listing of the scope is
-        returned so you can read files directly with read_workspace_file.
-        Converted documents are identified by their original source paths,
-        never by internal .sourcelens sidecar paths.
+        regex=True to pass a ripgrep regular expression. Batch alternative
+        keywords in ONE call with "|" (OR), e.g.
+        "昇腾|Ascend|910B|算力卡" — prefer this over several separate
+        searches for the same idea. glob restricts the search by path/type
+        (e.g. "**/*.md", "*.py"). Use keywords/terms as they appear in the
+        files (translate names into the documents' language when needed).
+        File size is not a constraint. In content mode, when nothing matches
+        a 'files' listing of the scope is returned so you can read files
+        directly with read_workspace_file. Converted documents are identified
+        by their original source paths, never by internal .sourcelens sidecar
+        paths.
         """
+
+        cache_key = (
+            str(query or "").strip(),
+            bool(regex),
+            str(glob or "").strip(),
+            str(output_mode or "content"),
+            int(context_lines),
+            bool(case_sensitive),
+        )
+        cached = search_cache.get(cache_key)
+        if cached is not None:
+            emit(
+                "tool.search_workspace.done",
+                {
+                    "mode": cached["mode"],
+                    "count": cached["count"],
+                    "paths": cached["paths"][:8],
+                    "summary": f"repeat of an identical earlier search · {cached['summary']}",
+                    "cached": True,
+                    "duration_ms": 0,
+                },
+            )
+            return _json(
+                {
+                    "mode": cached["mode"],
+                    "cached": True,
+                    "note": (
+                        "This exact search already ran earlier in this run "
+                        "and returned the same results. Do NOT repeat it. "
+                        "Reuse those matches, refine the keywords (batch "
+                        "variants with '|'), add a glob, or read the matched "
+                        "files with read_workspace_file."
+                    ),
+                    "paths": cached["paths"][:10],
+                }
+            )
 
         emit(
             "tool.search_workspace.start",
@@ -220,13 +260,20 @@ def build_agent_tools(
             except Exception:
                 LOGGER.exception("Failed to record consulted search sources")
         paths = list(dict.fromkeys(item["path"] for item in matches))
+        done_summary = _search_done_summary(result, matches, files, counts, paths)
+        search_cache[cache_key] = {
+            "mode": result.get("mode"),
+            "count": len(matches) or len(files) or len(counts),
+            "paths": paths,
+            "summary": done_summary,
+        }
         emit(
             "tool.search_workspace.done",
             {
                 "mode": result.get("mode"),
                 "count": len(matches) or len(files) or len(counts),
                 "paths": paths[:8],
-                "summary": _search_done_summary(result, matches, files, counts, paths),
+                "summary": done_summary,
                 "preview": _clip(matches[0]["text"], 140) if matches else "",
                 "rerank_applied": rerank_stats["applied"],
                 "rerank_candidate_count": rerank_stats["candidate_count"],
