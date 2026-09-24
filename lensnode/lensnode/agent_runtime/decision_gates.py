@@ -17,7 +17,9 @@ GATE_SOURCE = "decision_gate"
 GATE_PHASE = "P3"
 PHASE_ORDER = {"P1": 1, "P3": 3}
 GATE_TIMEOUT_S = 3.0
-GATE_RUN_BUDGET = 8
+# Three post-run gates may be evaluated during the initial answer and one
+# verification retry. The final verdict reuses the middleware result.
+GATE_RUN_BUDGET = 16
 DEFAULT_HISTORY_TURNS = 4
 DEFAULT_MAX_STATE_CHARS = 4000
 
@@ -58,8 +60,10 @@ GATE_REGISTRY = {
             "retrieved or provided?"
         ),
         "criteria_true": (
-            "Every factual claim in the answer is backed by retrieved tool "
-            "output, a provided document, or the user's own input."
+            "Every positive factual claim is backed by retrieved or provided "
+            "evidence. A clearly scoped statement that the available evidence "
+            "does not establish actual execution is also sufficient if the "
+            "answer does not assert that execution occurred."
         ),
         "criteria_false": (
             "The answer asserts facts that were not retrieved and are not "
@@ -76,10 +80,59 @@ GATE_REGISTRY = {
         ),
         "criteria": {
             "supported": (
-                "The answer follows from retrieved or provided evidence."
+                "The answer follows from retrieved or provided evidence, or "
+                "accurately limits a conclusion to what those materials show."
             ),
             "unsupported": (
                 "The answer goes beyond or contradicts the evidence."
+            ),
+        },
+    },
+    "evidence_strength": {
+        "kind": "choice",
+        "fallback": "fixed",
+        "phase": "P3",
+        "pass_option": "unknown",
+        "instructions": (
+            "What is the weakest evidence level of any material factual "
+            "claim in the answer? Choose the weakest applicable level. "
+            "Judge the answer's actual claims, including explicit limits, "
+            "rather than treating a cited plan or example as a claim of execution."
+        ),
+        "criteria": {
+            "direct": (
+                "The material factual claims are directly stated by the "
+                "retrieved or provided evidence."
+            ),
+            "derived": (
+                "The material factual claims are reasonable conclusions "
+                "from multiple retrieved or provided facts."
+            ),
+            "qualified_weak": (
+                "The answer explicitly says the available material shows only "
+                "compatibility, adaptation, examples, or plans, or cannot confirm "
+                "actual execution. It makes no unqualified material claim of "
+                "actual operation, validation, or completion."
+            ),
+            "adapted_only": (
+                "The answer claims actual execution or validation, but the "
+                "evidence only shows compatibility, adaptation, or support."
+            ),
+            "example_only": (
+                "The answer claims a real deployment or observed outcome, but "
+                "the evidence is only an example, sample, or template."
+            ),
+            "planned": (
+                "The answer claims completed work, but the evidence describes "
+                "only a plan, roadmap, intention, or future work."
+            ),
+            "unsupported": (
+                "The material factual claim has no retrieved or provided "
+                "evidence."
+            ),
+            "contradicted": (
+                "The material factual claim conflicts with the retrieved or "
+                "provided evidence."
             ),
         },
     },

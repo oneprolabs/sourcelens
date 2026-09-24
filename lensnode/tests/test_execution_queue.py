@@ -62,6 +62,73 @@ def test_exclusive_work_does_not_block_later_standard_work():
     asyncio.run(exercise())
 
 
+def test_exclusive_barrier_waits_for_active_runs_and_blocks_new_runs():
+    async def exercise():
+        queue = LensNodeExecutionQueue(
+            max_standard_concurrency=2,
+            exclusive_barrier=True,
+        )
+        await queue.acquire(ExecutionClass.STANDARD)
+        await queue.acquire(ExecutionClass.DELEGATED)
+
+        exclusive_started = asyncio.Event()
+        later_standard_started = asyncio.Event()
+        later_delegated_started = asyncio.Event()
+
+        async def acquire_exclusive():
+            await queue.acquire(ExecutionClass.EXCLUSIVE)
+            exclusive_started.set()
+
+        async def acquire_later_standard():
+            await queue.acquire(ExecutionClass.STANDARD)
+            later_standard_started.set()
+
+        async def acquire_later_delegated():
+            await queue.acquire(ExecutionClass.DELEGATED)
+            later_delegated_started.set()
+
+        exclusive = asyncio.create_task(acquire_exclusive())
+        await asyncio.sleep(0)
+        later_standard = asyncio.create_task(acquire_later_standard())
+        later_delegated = asyncio.create_task(acquire_later_delegated())
+        await asyncio.sleep(0)
+
+        assert not exclusive_started.is_set()
+        assert not later_standard_started.is_set()
+        await asyncio.wait_for(later_delegated_started.wait(), timeout=1)
+
+        await queue.release(ExecutionClass.DELEGATED)
+        await queue.release(ExecutionClass.DELEGATED)
+        await queue.release(ExecutionClass.STANDARD)
+        await asyncio.wait_for(exclusive_started.wait(), timeout=1)
+        assert not later_standard_started.is_set()
+
+        blocked_delegated_started = asyncio.Event()
+
+        async def acquire_blocked_delegated():
+            await queue.acquire(ExecutionClass.DELEGATED)
+            blocked_delegated_started.set()
+
+        blocked_delegated = asyncio.create_task(acquire_blocked_delegated())
+        await asyncio.sleep(0)
+        assert not blocked_delegated_started.is_set()
+
+        await queue.release(ExecutionClass.EXCLUSIVE)
+        await asyncio.wait_for(later_standard_started.wait(), timeout=1)
+        await asyncio.wait_for(blocked_delegated_started.wait(), timeout=1)
+
+        await queue.release(ExecutionClass.STANDARD)
+        await queue.release(ExecutionClass.DELEGATED)
+        await asyncio.gather(
+            exclusive,
+            later_standard,
+            later_delegated,
+            blocked_delegated,
+        )
+
+    asyncio.run(exercise())
+
+
 def test_exclusive_work_is_limited_independently():
     async def exercise():
         queue = LensNodeExecutionQueue(

@@ -127,6 +127,7 @@ def search_workspace(
         root = Path(item.get("path", ""))
         if root.exists() and root.is_dir():
             dirs.append((root, target_scope(item)))
+    allowed = _path_gate(dirs, policy)
 
     if output_mode == "files":
         files = []
@@ -139,7 +140,7 @@ def search_workspace(
             )
             if len(files) >= max_results:
                 break
-        files = _visible_paths(files, dirs, policy)
+        files = _visible_paths(files, dirs, policy, allowed=allowed)
         return {"mode": "files", "files": files[:max_results]}
 
     if output_mode == "count":
@@ -153,7 +154,7 @@ def search_workspace(
             )
             if len(counts) >= max_results:
                 break
-        counts = _visible_counts(counts, dirs, policy)
+        counts = _visible_counts(counts, dirs, policy, allowed=allowed)
         counts.sort(key=lambda item: (-item["count"], item["path"]))
         return {"mode": "count", "counts": counts[:max_results]}
 
@@ -175,13 +176,10 @@ def search_workspace(
             break
 
     if matches:
-        matches = [
-            match
-            for match in matches
-            if _path_allowed_in_dirs(match["path"], dirs, policy)
-        ]
+        matches = [match for match in matches if allowed(match["path"])]
+        visible = {}
         for match in matches:
-            match["path"] = str(citation_path(match["path"]))
+            match["path"] = _visible_value(match["path"], visible)
         matches = _rank_matches(matches, terms)
         matches = _apply_rerank(matches, rerank)
         if matches:
@@ -233,7 +231,7 @@ def search_workspace(
     return {
         "mode": "content",
         "matches": [],
-        "files": _visible_paths(files, dirs, policy),
+        "files": _visible_paths(files, dirs, policy, allowed=allowed),
         "note": note,
     }
 
@@ -487,28 +485,65 @@ def _path_allowed_in_dirs(path_value, dirs, policy):
     return False
 
 
-def _visible_paths(paths, dirs, policy):
+def _path_gate(dirs, policy):
+    """Return a per-call memoized allowlist predicate.
+
+    ``_path_allowed_in_dirs`` re-resolves the same file once per matched
+    line and once per selected root, so a broad search over a large
+    datasource repeats the same filesystem work thousands of times. The
+    verdict depends only on the path for a fixed ``dirs``/``policy``, so a
+    per-call cache collapses those repeats without changing the result.
+    """
+
+    cache = {}
+
+    def allowed(path_value):
+        key = str(path_value)
+        if key not in cache:
+            cache[key] = _path_allowed_in_dirs(path_value, dirs, policy)
+        return cache[key]
+
+    return allowed
+
+
+def _visible_value(path_value, cache):
+    """Return the user-facing path for one result, memoized per call."""
+
+    key = str(path_value)
+    if key not in cache:
+        cache[key] = str(citation_path(path_value))
+    return cache[key]
+
+
+def _visible_paths(paths, dirs, policy, allowed=None):
     """Return unique allowed paths with conversion artifacts normalized."""
 
+    check = allowed or _path_gate(dirs, policy)
+    cache = {}
     visible = []
+    seen = set()
     for path in paths:
-        if not _path_allowed_in_dirs(path, dirs, policy):
+        if not check(path):
             continue
-        value = str(citation_path(path))
-        if value not in visible:
-            visible.append(value)
+        value = _visible_value(path, cache)
+        if value in seen:
+            continue
+        seen.add(value)
+        visible.append(value)
     return visible
 
 
-def _visible_counts(counts, dirs, policy):
+def _visible_counts(counts, dirs, policy, allowed=None):
     """Merge match counts under their user-facing source paths."""
 
+    check = allowed or _path_gate(dirs, policy)
+    cache = {}
     visible = {}
     for item in counts:
         path = item["path"]
-        if not _path_allowed_in_dirs(path, dirs, policy):
+        if not check(path):
             continue
-        value = str(citation_path(path))
+        value = _visible_value(path, cache)
         visible[value] = visible.get(value, 0) + int(item["count"])
     return [
         {"path": path, "count": count}

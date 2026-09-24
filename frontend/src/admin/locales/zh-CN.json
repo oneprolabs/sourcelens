@@ -1476,6 +1476,10 @@
             "title": "回答是否有依据",
             "description": "检查回答是否得到已检索证据的支持。"
           },
+          "evidence_strength": {
+            "title": "证据强度",
+            "description": "判断回答中重要事实声明所依赖的最弱证据等级。"
+          },
           "plan_quality": {
             "title": "计划质量",
             "description": "按同一有序评分标准为候选计划打分。"
@@ -1492,7 +1496,14 @@
           "irrelevant": "不相关",
           "related": "相关",
           "helpful": "有帮助",
-          "direct_answer": "直接回答"
+          "direct_answer": "直接回答",
+          "direct": "直接证据",
+          "derived": "推导证据",
+          "adapted_only": "仅适配或兼容性证据",
+          "example_only": "仅示例",
+          "planned": "计划或未来工作",
+          "unsupported": "没有证据支持",
+          "contradicted": "与证据冲突"
         }
       }
     },

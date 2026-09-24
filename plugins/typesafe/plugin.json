@@ -38,6 +38,14 @@
       "defaults": {"max_state_chars": 4000}
     },
     {
+      "key": "evidence_strength",
+      "mode": "control",
+      "kind": "choice",
+      "applies_to": ["knowledge_qa", "code_analysis", "general_chat"],
+      "tool_keys": ["typesafe_choice"],
+      "defaults": {"max_state_chars": 6000}
+    },
+    {
       "key": "plan_quality",
       "mode": "analysis",
       "kind": "score",

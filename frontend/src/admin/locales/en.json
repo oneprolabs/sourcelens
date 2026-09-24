@@ -1476,6 +1476,10 @@
             "title": "Answer supported",
             "description": "Check whether the answer is supported by the evidence that was retrieved."
           },
+          "evidence_strength": {
+            "title": "Evidence strength",
+            "description": "Classify the weakest evidence level behind the answer's material factual claims."
+          },
           "plan_quality": {
             "title": "Plan quality",
             "description": "Score one candidate plan against the shared ordered rubric."
@@ -1492,7 +1496,14 @@
           "irrelevant": "Irrelevant",
           "related": "Related",
           "helpful": "Helpful",
-          "direct_answer": "Direct answer"
+          "direct_answer": "Direct answer",
+          "direct": "Direct evidence",
+          "derived": "Derived evidence",
+          "adapted_only": "Adaptation or compatibility only",
+          "example_only": "Example only",
+          "planned": "Planned or future work",
+          "unsupported": "Unsupported",
+          "contradicted": "Contradicted"
         }
       }
     },
