@@ -232,9 +232,14 @@ class GitLabRuntimeClient:
         self,
         endpoint="https://gitlab.example",
         allowed_projects=None,
+        activity_projects=None,
     ):
         self.endpoint = endpoint
         self.allowed_projects = allowed_projects or [
+            "platform/sourcelens",
+            "platform/ops",
+        ]
+        self.activity_projects = activity_projects or [
             "platform/sourcelens",
             "platform/ops",
         ]
@@ -280,10 +285,7 @@ class GitLabRuntimeClient:
             if "activity" in snapshot_uuid:
                 tool_key = "gitlab_activity_summary"
                 arguments = {
-                    "projects": [
-                        "platform/sourcelens",
-                        "platform/ops",
-                    ],
+                    "projects": list(self.activity_projects),
                     "since": "2026-09-01T00:00:00Z",
                     "until": "2026-09-01T23:59:59Z",
                     "max_results": 2,
@@ -328,6 +330,15 @@ class GitLabRuntimeClient:
         assert method == "GET"
         assert kwargs["headers"]["PRIVATE-TOKEN"] == "gitlab-secret"
         self.provider_requests.append((url, kwargs.get("params") or {}))
+        if url.endswith("/api/v4/projects"):
+            yield httpx.Response(
+                200,
+                json=[
+                    {"path_with_namespace": "platform/sourcelens"},
+                    {"path_with_namespace": "platform/ops"},
+                ],
+            )
+            return
         if url.endswith("/raw"):
             yield httpx.Response(200, text="# GitLab project\n")
             return
@@ -510,4 +521,54 @@ def test_gitlab_activity_summary_rechecks_frozen_project_scope():
     ))
 
     assert result == {"ok": False, "error": "PLUGIN_SCOPE_MISMATCH"}
+    assert client.provider_requests == []
+
+
+def test_gitlab_activity_summary_expands_all_projects():
+    client = GitLabRuntimeClient(
+        allowed_projects=["*"],
+        activity_projects=["*"],
+    )
+    tool = build_plugin_tools(
+        _command("gitlab_activity_summary"),
+        _config(),
+        client,
+    )[0]
+
+    result = json.loads(tool.func(
+        projects=["*"],
+        since="2026-09-01T00:00:00Z",
+        until="2026-09-01T23:59:59Z",
+        max_results=2,
+        runtime=SimpleNamespace(tool_call_id="activity-all-1"),
+    ))
+
+    assert result["ok"] is True
+    assert [
+        item["project"] for item in result["projects"]
+    ] == ["platform/sourcelens", "platform/ops"]
+    assert result["projects_truncated"] is False
+    assert "gitlab-secret" not in json.dumps(result)
+
+
+def test_gitlab_activity_summary_rejects_mixed_all_projects():
+    client = GitLabRuntimeClient(
+        allowed_projects=["*"],
+        activity_projects=["*", "platform/ops"],
+    )
+    tool = build_plugin_tools(
+        _command("gitlab_activity_summary"),
+        _config(),
+        client,
+    )[0]
+
+    result = json.loads(tool.func(
+        projects=["*", "platform/ops"],
+        since="2026-09-01T00:00:00Z",
+        until="2026-09-01T23:59:59Z",
+        max_results=2,
+        runtime=SimpleNamespace(tool_call_id="activity-mixed-1"),
+    ))
+
+    assert result == {"ok": False, "error": "PLUGIN_ARGUMENTS_INVALID"}
     assert client.provider_requests == []

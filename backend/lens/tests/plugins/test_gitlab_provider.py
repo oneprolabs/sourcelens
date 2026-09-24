@@ -293,6 +293,47 @@ class GitLabToolProviderTests(TestCase):
                 },
             )
 
+    def test_activity_summary_accepts_all_projects_sentinel(self):
+        endpoint, arguments = self.provider.validate_request(
+            "https://gitlab.internal.example",
+            {"projects": ["*"]},
+            "gitlab_activity_summary",
+            {
+                "projects": ["*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(endpoint, "https://gitlab.internal.example")
+        self.assertEqual(arguments["projects"], ["*"])
+
+    def test_activity_summary_rejects_all_projects_outside_all_scope(self):
+        with self.assertRaisesMessage(ToolProviderError, "scope"):
+            self.provider.validate_request(
+                "https://gitlab.internal.example",
+                self.scope,
+                "gitlab_activity_summary",
+                {
+                    "projects": ["*"],
+                    "since": "2026-09-01T16:00:00Z",
+                    "until": "2026-09-02T15:59:59Z",
+                },
+            )
+
+    def test_activity_summary_rejects_mixed_all_projects(self):
+        with self.assertRaises(ToolProviderError):
+            self.provider.validate_request(
+                "https://gitlab.internal.example",
+                {"projects": ["*"]},
+                "gitlab_activity_summary",
+                {
+                    "projects": ["*", "group/ops"],
+                    "since": "2026-09-01T16:00:00Z",
+                    "until": "2026-09-02T15:59:59Z",
+                },
+            )
+
 
 @override_settings(
     CACHES={
@@ -373,3 +414,71 @@ class GitLabToolSnapshotTests(TestCase):
             "https://gitlab.internal.example",
         )
         self.assertNotIn("gitlab-tool-secret", str(snapshot.resolved_config))
+
+    def test_activity_snapshot_accepts_all_projects_for_all_scope(self):
+        user = get_user_model().objects.create_user("gitlab-all-user")
+        node = LensNode.objects.create(
+            name="GitLab all node",
+            status=LensNode.Status.ONLINE,
+            enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+            tasks=[{"name": "general_chat"}],
+        )
+        token = issue_lensnode_token(node)
+        material = SecretMaterial.objects.create(name="GitLab all PAT")
+        version = SecretVersion(material=material)
+        version.set_value("gitlab-all-secret")
+        version.save()
+        connection = Connection.objects.create(
+            name="GitLab all projects",
+            plugin_key="gitlab",
+            endpoint="https://gitlab.internal.example",
+            allowed_scope={"projects": ["*"]},
+            secret_version=version,
+        )
+        assistant = Assistant.objects.create(
+            name="GitLab all Assistant",
+            slug="gitlab-all-assistant",
+            lensnode=node,
+            selected_task="general_chat",
+            visibility=Assistant.Visibility.PUBLIC,
+        )
+        AssistantPluginBinding.objects.create(
+            assistant=assistant,
+            connection=connection,
+            tools=["gitlab_activity_summary"],
+        )
+        session = Session.objects.create(assistant=assistant, user=user)
+        run = create_execution_run(
+            session,
+            "Summarize activity",
+            enqueue=False,
+        )
+        run.status = Run.Status.STREAMING
+        run.save(update_fields=["status"])
+        client = APIClient()
+
+        response = client.post(
+            "/api/lens/plugin-runtime/tool-snapshots/",
+            {
+                "run_uuid": str(run.uuid),
+                "connection_uuid": str(connection.uuid),
+                "tool_key": "gitlab_activity_summary",
+                "call_id": "gitlab-all-call-1",
+                "arguments": {
+                    "projects": ["*"],
+                    "since": "2026-09-01T16:00:00Z",
+                    "until": "2026-09-02T15:59:59Z",
+                },
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(
+            uuid=response.data["snapshot_uuid"]
+        )
+        self.assertEqual(
+            snapshot.resolved_config["arguments"]["projects"],
+            ["*"],
+        )
