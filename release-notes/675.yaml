@@ -1,0 +1,10 @@
+type: feature
+audience: admin
+en: >-
+  The admin Run observation view now shows a semantic Trace Workbench: a
+  relative-time timeline of typed execution steps (model, retrieval, decision,
+  tool, artifact, message, reasoning) together with an execution graph for
+  causal flow and call hierarchy, including each step's duration, tokens, and
+  details.
+zh-CN: >-
+  管理台 Run 观测页新增语义化 Trace 工作台：以相对时间轴展示分类执行步骤（模型、检索、决策、工具、产物、消息、推理），并提供因果流与调用层级的执行图，包含每一步的耗时、Token 与详情。
