@@ -15,6 +15,7 @@ from ..gateway_model import (
 from .messages import (
     extract_streamed_plan_steps as _extract_streamed_plan_steps,
     extract_final_message as _extract_final_message,
+    extract_final_answer as _extract_final_answer,
     normalize_plan_steps as _normalize_plan_steps,
     tool_call_summary as _tool_call_summary,
 )
@@ -219,7 +220,7 @@ def _run_agent_with_turn_limit(
         if emit_event is not None:
             emit_event("deepagents.agent.token_budget", {})
 
-    answer = _extract_final_message(last_state or {})
+    answer = _extract_final_answer(last_state or {})
     force_wrapup = truncation_reason in {
         "soft_deadline",
         "token_budget_wrapup",

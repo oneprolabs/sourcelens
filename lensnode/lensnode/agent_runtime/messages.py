@@ -19,9 +19,35 @@ def extract_final_message(response):
         return ""
     last = messages[-1]
     content = getattr(last, "content", None)
+    if content is None and isinstance(last, dict):
+        content = last.get("content")
     if isinstance(content, str):
         return content.strip()
     return str(content or "").strip()
+
+
+def extract_final_answer(response):
+    """Extract the assistant's final text, never a tool/human message.
+
+    The graph can end right after a tool result — for example when a runtime
+    brake stops the loop between the tools node and the model — leaving a
+    ToolMessage as the last message. Raw tool output is not an answer, so
+    return "" and let the caller synthesize a wrap-up answer instead of
+    surfacing tool JSON as the user-facing answer.
+    """
+
+    if not isinstance(response, dict):
+        return str(response).strip()
+    messages = response.get("messages") or []
+    if not messages:
+        return ""
+    last = messages[-1]
+    kind = getattr(last, "type", None)
+    if kind is None and isinstance(last, dict):
+        kind = last.get("role")
+    if kind not in {"ai", "assistant"}:
+        return ""
+    return extract_final_message(response)
 
 
 def detail_lines(detail):

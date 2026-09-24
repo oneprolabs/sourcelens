@@ -1,8 +1,50 @@
 from lensnode.agent_runtime.direct_answer import _answer_general_chat_directly
 from lensnode.agent_runtime.messages import (
     build_initial_messages,
+    extract_final_answer,
+    extract_final_message,
     extract_streamed_plan_steps,
 )
+
+
+def test_extract_final_answer_accepts_assistant_message():
+    from langchain_core.messages import AIMessage
+
+    state = {"messages": [AIMessage(content="the answer")]}
+
+    assert extract_final_answer(state) == "the answer"
+
+
+def test_extract_final_answer_never_returns_tool_output():
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "search_workspace", "args": {}, "id": "c1"}
+                ],
+            ),
+            ToolMessage(content='{"mode": "files", "files": []}', tool_call_id="c1"),
+        ]
+    }
+
+    # Raw tool output must not surface as the answer; the caller synthesizes.
+    assert extract_final_answer(state) == ""
+    assert extract_final_message(state) == '{"mode": "files", "files": []}'
+
+
+def test_extract_final_answer_accepts_dict_assistant_message():
+    state = {"messages": [{"role": "assistant", "content": "dict answer"}]}
+
+    assert extract_final_answer(state) == "dict answer"
+
+
+def test_extract_final_answer_handles_empty_state():
+    assert extract_final_answer({"messages": []}) == ""
+    assert extract_final_answer({}) == ""
+
 
 
 def test_build_initial_messages_includes_current_images():
