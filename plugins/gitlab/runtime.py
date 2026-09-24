@@ -21,6 +21,8 @@ READ_MAX_BYTES = 200_000
 SEARCH_MAX_BYTES = 1_000_000
 ACTIVITY_DEFAULT_MAX_RESULTS = 50
 ACTIVITY_MAX_RESULTS = 100
+ACTIVITY_MAX_PROJECTS = 50
+GITLAB_ALL_PROJECTS = "*"
 ACTIVITY_RESOURCE_MAX = {
     "commits": 50,
     "merge_requests": 20,
@@ -130,6 +132,14 @@ def _activity_summary(client, arguments, secret, endpoint, config):
     )
     if not secret:
         raise PluginRuntimeError("PLUGIN_SNAPSHOT_MISMATCH")
+    scope_all = projects == [GITLAB_ALL_PROJECTS]
+    projects_truncated = False
+    if scope_all:
+        projects, projects_truncated = _all_activity_projects(
+            client,
+            endpoint,
+            secret,
+        )
     results = {
         project: {
             "project": project,
@@ -178,7 +188,7 @@ def _activity_summary(client, arguments, secret, endpoint, config):
             successful_resources += 1
     if not successful_resources:
         raise PluginRuntimeError("GITLAB_REQUEST_FAILED")
-    return {
+    payload = {
         "ok": True,
         "since": arguments["since"],
         "until": arguments["until"],
@@ -188,6 +198,57 @@ def _activity_summary(client, arguments, secret, endpoint, config):
         },
         "projects": [results[project] for project in projects],
     }
+    if scope_all:
+        payload["projects_truncated"] = projects_truncated
+    return payload
+
+
+def _all_activity_projects(client, endpoint, secret):
+    """Resolve the all-projects sentinel to visible project identities."""
+
+    status, body, truncated = _get(
+        client,
+        f"{endpoint}/api/v4/projects",
+        secret,
+        {
+            "membership": "true",
+            "simple": "true",
+            "order_by": "last_activity_at",
+            "sort": "desc",
+            "per_page": min(ACTIVITY_MAX_PROJECTS + 1, 100),
+            "page": 1,
+        },
+        SEARCH_MAX_BYTES,
+        False,
+    )
+    _status(status)
+    if truncated:
+        raise PluginRuntimeError("GITLAB_RESPONSE_TOO_LARGE")
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PluginRuntimeError("GITLAB_RESPONSE_INVALID") from exc
+    if not isinstance(payload, list):
+        raise PluginRuntimeError("GITLAB_RESPONSE_INVALID")
+    projects = []
+    seen = set()
+    for item in payload:
+        name = item.get("path_with_namespace") if isinstance(item, dict) else None
+        if not isinstance(name, str):
+            continue
+        value = name.strip().strip("/")
+        if "/" not in value or len(value) > 255:
+            continue
+        identity = value.casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        projects.append(value)
+        if len(projects) >= ACTIVITY_MAX_PROJECTS:
+            break
+    if not projects:
+        raise PluginRuntimeError("GITLAB_PROJECTS_UNAVAILABLE")
+    return projects, len(projects) < len(payload)
 
 
 def _gitlab_activity_resource(
@@ -324,6 +385,8 @@ def _activity_arguments(arguments, config):
         or any(not isinstance(item, str) or not item for item in projects)
         or len({item.casefold() for item in projects}) != len(projects)
     ):
+        raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
+    if GITLAB_ALL_PROJECTS in projects and len(projects) != 1:
         raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
     scope = config.get("__allowed_scope")
     allowed = scope.get("projects") if isinstance(scope, dict) else None
