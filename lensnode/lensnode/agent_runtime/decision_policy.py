@@ -60,6 +60,11 @@ class ControlDecisionPolicy:
 
         return {}
 
+    def has_evidence_gates(self):
+        """Return whether any answer-grounding gate is bound."""
+
+        return False
+
 
 class ModelDecisionPolicy(ControlDecisionPolicy):
     """Default policy: today's primary-model classification, unchanged."""
@@ -162,6 +167,13 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 or self.runner.default_verdict("answer_supported")
             )
         return verdicts
+
+    def has_evidence_gates(self):
+        """Return whether an answer-grounding gate is bound."""
+
+        return bool(
+            {"evidence_sufficient", "answer_supported"} & set(self.gates)
+        )
 
 
 def build_decision_policy(
