@@ -47,7 +47,7 @@ dependencies = [
     "opentelemetry-sdk==1.28.0",
     "opentelemetry-exporter-otlp==1.28.0",
     "pydantic-settings",
-    "agentcore-metering>=0.3.0",
+    "agentcore-metering>=0.3.1",
     "agentcore-task>=0.1.0",
     "agentcore-notifier>=0.1.0",
 ]
