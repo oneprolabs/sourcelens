@@ -246,6 +246,12 @@ def test_unknown_choice_gate_falls_back_to_the_fixed_verdict():
     assert runner.default_verdict("evidence_sufficient") is True
 
 
+def test_evidence_strength_uses_unknown_as_the_unavailable_verdict():
+    runner = _runner(_command("evidence_strength"))
+
+    assert runner.default_verdict("evidence_strength") == "unknown"
+
+
 def test_bound_gate_without_a_tool_is_unknown():
     events = []
     command = _command()
@@ -467,14 +473,14 @@ def test_select_route_corrects_evidence_requirement(monkeypatch):
     assert route["route"] == "direct_execute"
 
 
-def _choice_payload(probabilities):
+def _choice_payload(probabilities, choice="supported"):
     return json.dumps(
         {
             "ok": True,
             "answers": {
                 "decision": {
                     "type": "choice",
-                    "choice": "supported",
+                    "choice": choice,
                     "probabilities": probabilities,
                     "confidence": 0.9,
                 }
@@ -504,6 +510,11 @@ def _post_run_command():
                         "tool_key": "typesafe_choice",
                         "kind": "choice",
                         "max_state_chars": 4000,
+                    },
+                    "evidence_strength": {
+                        "tool_key": "typesafe_choice",
+                        "kind": "choice",
+                        "max_state_chars": 6000,
                     },
                 },
             }
@@ -565,6 +576,36 @@ def test_post_run_checks_report_sufficiency_and_support(monkeypatch):
     assert verdicts == {
         "evidence_sufficient": True,
         "answer_supported": "supported",
+    }
+
+
+def test_post_run_checks_report_evidence_strength(monkeypatch):
+    events = []
+
+    def fake_execute(*args, **kwargs):
+        if args[6] == "typesafe_choice":
+            return _choice_payload(
+                {
+                    "direct": 0.1,
+                    "derived": 0.1,
+                    "adapted_only": 0.7,
+                    "example_only": 0.02,
+                    "planned": 0.02,
+                    "unsupported": 0.03,
+                    "contradicted": 0.03,
+                },
+                choice="adapted_only",
+            )
+        return _noul_payload(0.9)
+
+    monkeypatch.setattr(decision_gates, "_execute_plugin_tool", fake_execute)
+    policy = _post_run_policy(
+        _runner(_post_run_command(), events),
+        ["evidence_strength"],
+    )
+
+    assert policy.post_run_checks("question", "answer") == {
+        "evidence_strength": "adapted_only",
     }
 
 

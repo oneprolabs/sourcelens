@@ -177,11 +177,19 @@ def _post_run_decision_gates(state, answer):
     policy = getattr(state, "decision_policy", None)
     if policy is None:
         return {}
-    verdicts = policy.post_run_checks(
-        state.question,
-        answer,
-        getattr(state, "runtime_evidence", None),
+    runtime_evidence = getattr(state, "runtime_evidence", None)
+    evidence_middleware = getattr(state, "evidence_middleware", None)
+    verdicts = (
+        evidence_middleware.cached_verdicts(answer, runtime_evidence)
+        if evidence_middleware is not None
+        else None
     )
+    if verdicts is None:
+        verdicts = policy.post_run_checks(
+            state.question,
+            answer,
+            runtime_evidence,
+        )
     if verdicts and getattr(state, "checkpoint_ready", False):
         try:
             save_decision_gates(
@@ -208,6 +216,7 @@ def _build_evidence_middleware(state):
     return EvidenceGateMiddleware(
         policy,
         question,
+        evidence=getattr(state, "runtime_evidence", None),
         emit_event=getattr(state, "emit_agent_event", None),
     )
 
@@ -1436,6 +1445,7 @@ class LensDeepAgentRuntime:
             emit_observation=state.emit_trace_observation,
             trajectory=state.trajectory,
         )
+        state.evidence_middleware = _build_evidence_middleware(state)
         middleware = _agent_middleware(
             state.command,
             state.summarizer,
@@ -1443,7 +1453,7 @@ class LensDeepAgentRuntime:
             capability_middleware=state.capability_middleware,
             mcp_middleware=state.mcp_middleware,
             trace_middleware=state.trace_middleware,
-            evidence_middleware=_build_evidence_middleware(state),
+            evidence_middleware=state.evidence_middleware,
             runtime_middleware=state.runtime_middleware,
             allow_task_tool=use_subagents,
         )

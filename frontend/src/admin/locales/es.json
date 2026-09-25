@@ -1476,6 +1476,10 @@
             "title": "¿Respuesta respaldada?",
             "description": "Comprueba si la respuesta está respaldada por la evidencia recuperada."
           },
+          "evidence_strength": {
+            "title": "Solidez de la evidencia",
+            "description": "Clasifica el nivel de evidencia más débil de las afirmaciones fácticas importantes."
+          },
           "plan_quality": {
             "title": "Calidad del plan",
             "description": "Puntúa un plan candidato según la rúbrica ordenada compartida."
@@ -1492,7 +1496,14 @@
           "irrelevant": "Irrelevante",
           "related": "Relacionado",
           "helpful": "Útil",
-          "direct_answer": "Respuesta directa"
+          "direct_answer": "Respuesta directa",
+          "direct": "Evidencia directa",
+          "derived": "Evidencia derivada",
+          "adapted_only": "Solo adaptación o compatibilidad",
+          "example_only": "Solo ejemplo",
+          "planned": "Trabajo planificado o futuro",
+          "unsupported": "Sin respaldo",
+          "contradicted": "Contradicha"
         }
       }
     },

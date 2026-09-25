@@ -1,6 +1,6 @@
 """Automatic evidence-gate verification inside the agent loop."""
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode.agent_runtime.evidence_gate import (
     EvidenceGateMiddleware,
@@ -20,7 +20,7 @@ class _Policy:
         return self._active
 
     def post_run_checks(self, question, answer, evidence=None):
-        self.calls.append((question, answer))
+        self.calls.append((question, answer, evidence))
         return dict(self._verdicts)
 
 
@@ -52,7 +52,27 @@ def test_supported_answer_is_accepted():
     middleware = EvidenceGateMiddleware(policy, "q")
 
     assert middleware.after_model(_answer_state(), None) is None
-    assert policy.calls == [("q", "final answer")]
+    assert policy.calls == [("q", "final answer", None)]
+
+
+def test_tool_results_are_available_to_evidence_review():
+    policy = _Policy({"answer_supported": "supported"})
+    middleware = EvidenceGateMiddleware(policy, "q")
+    state = {
+        "messages": [
+            ToolMessage(
+                name="search_workspace",
+                tool_call_id="call-1",
+                content="docs/ascend.md: vLLM-Ascend is supported.",
+            ),
+            AIMessage(content="It is supported."),
+        ]
+    }
+
+    assert middleware.after_model(state, None) is None
+    assert policy.calls[0][2]["retrieved_evidence"][0]["tool"] == (
+        "search_workspace"
+    )
 
 
 def test_unsupported_answer_is_bounced_back_then_accepted():
@@ -65,7 +85,7 @@ def test_unsupported_answer_is_bounced_back_then_accepted():
     assert len(policy.calls) == 1
 
     # The nudge budget is spent: the best-effort answer is accepted.
-    assert middleware.after_model(_answer_state(), None) is None
+    assert middleware.after_model(_answer_state("revised answer"), None) is None
     assert len(policy.calls) == 2
 
 
@@ -139,3 +159,58 @@ def test_verdicts_supported_helper():
     assert _verdicts_supported({"evidence_sufficient": True}) is True
     assert _verdicts_supported({"answer_supported": "unsupported"}) is False
     assert _verdicts_supported({"evidence_sufficient": False}) is False
+
+
+def test_weak_evidence_strength_requires_a_qualified_answer():
+    assert _verdicts_supported({"evidence_strength": "direct"}) is True
+    assert _verdicts_supported({"evidence_strength": "derived"}) is True
+    assert _verdicts_supported({"evidence_strength": "qualified_weak"}) is True
+    assert _verdicts_supported({"evidence_strength": "adapted_only"}) is False
+    assert _verdicts_supported({"evidence_strength": "example_only"}) is False
+    assert _verdicts_supported({"evidence_strength": "unknown"}) is False
+
+
+def test_qualified_weak_answer_is_accepted_without_recheck():
+    policy = _Policy(
+        {
+            "evidence_sufficient": True,
+            "answer_supported": "supported",
+            "evidence_strength": "qualified_weak",
+        }
+    )
+    middleware = EvidenceGateMiddleware(policy, "Which models are running on Ascend?")
+
+    answer = "The available examples do not confirm any model running on Ascend."
+    assert middleware.after_model(_answer_state(answer), None) is None
+    assert len(policy.calls) == 1
+
+
+def test_default_recheck_budget_is_one():
+    policy = _Policy({"answer_supported": "unsupported"})
+    middleware = EvidenceGateMiddleware(policy, "q")
+
+    assert middleware.after_model(_answer_state("Unsupported claim"), None)[
+        "jump_to"
+    ] == "model"
+    assert middleware.after_model(_answer_state("Still unsupported"), None) is None
+    assert middleware.answer_nudges == 1
+
+
+def test_verification_reuses_only_identical_answer_and_evidence():
+    policy = _Policy({"answer_supported": "supported"})
+    evidence = {"record": "first"}
+    middleware = EvidenceGateMiddleware(policy, "q", evidence=evidence)
+    state = _answer_state("First answer")
+
+    assert middleware.after_model(state, None) is None
+    assert middleware.after_model(state, None) is None
+    assert len(policy.calls) == 1
+    assert middleware.cached_verdicts("First answer", evidence) == {
+        "answer_supported": "supported"
+    }
+    assert middleware.cached_verdicts("Different answer", evidence) is None
+
+    evidence["record"] = "new evidence"
+    assert middleware.cached_verdicts("First answer", evidence) is None
+    assert middleware.after_model(state, None) is None
+    assert len(policy.calls) == 2

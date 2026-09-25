@@ -166,13 +166,27 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 option
                 or self.runner.default_verdict("answer_supported")
             )
+        if "evidence_strength" in self.gates:
+            option = self.runner.evaluate_choice(
+                "evidence_strength",
+                question=state_text,
+            )
+            verdicts["evidence_strength"] = (
+                option
+                or self.runner.default_verdict("evidence_strength")
+            )
         return verdicts
 
     def has_evidence_gates(self):
         """Return whether an answer-grounding gate is bound."""
 
         return bool(
-            {"evidence_sufficient", "answer_supported"} & set(self.gates)
+            {
+                "evidence_sufficient",
+                "answer_supported",
+                "evidence_strength",
+            }
+            & set(self.gates)
         )
 
 
@@ -226,7 +240,7 @@ def _post_run_state(question, answer, evidence=None):
                     ensure_ascii=False,
                     sort_keys=True,
                     default=str,
-                )[:2000],
+                )[:6000],
             ]
         )
     return "\n".join(parts).strip()

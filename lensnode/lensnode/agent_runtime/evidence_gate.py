@@ -1,5 +1,6 @@
 """Decision-gated verification of an answer inside the agent loop."""
 
+import json
 import logging
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
@@ -8,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 LOGGER = logging.getLogger("lensnode")
 
 DEFAULT_INTERVAL = 8
-DEFAULT_MAX_NUDGES = 2
+DEFAULT_MAX_NUDGES = 1
 DEFAULT_MAX_CONVERGENCE_NUDGES = 2
 
 _RECHECK_GUIDANCE = (
@@ -18,8 +19,11 @@ _RECHECK_GUIDANCE = (
     "alternative keywords with \"|\" in ONE search_workspace call (for "
     "example \"昇腾|Ascend|910B\") and read the most relevant matched files "
     "— then give a final answer that every claim traces to retrieved "
-    "evidence. If the workspace genuinely lacks the information, say so "
-    "explicitly and state what you searched."
+    "evidence. Distinguish directly documented facts from derived "
+    "conclusions, compatibility or adaptation, examples, plans, and "
+    "actual execution. Do not describe adaptation, examples, or plans as "
+    "actual operation or validation. If the workspace genuinely lacks the "
+    "information, say so explicitly and state what you searched."
 )
 
 _CONVERGENCE_GUIDANCE = (
@@ -58,6 +62,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         policy,
         question,
         *,
+        evidence=None,
         interval=DEFAULT_INTERVAL,
         max_nudges=DEFAULT_MAX_NUDGES,
         max_convergence_nudges=DEFAULT_MAX_CONVERGENCE_NUDGES,
@@ -65,6 +70,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
     ):
         self.policy = policy
         self.question = str(question or "")
+        self.evidence = evidence
         self.interval = max(int(interval), 1)
         self.max_nudges = max(int(max_nudges), 0)
         self.max_convergence_nudges = max(int(max_convergence_nudges), 0)
@@ -73,6 +79,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.answer_nudges = 0
         self.convergence_nudges = 0
         self.saw_final_answer = False
+        self._last_verification = None
 
     def _emit(self, event, payload):
         if self.emit_event is not None:
@@ -85,15 +92,49 @@ class EvidenceGateMiddleware(AgentMiddleware):
         checker = getattr(self.policy, "has_evidence_gates", None)
         return bool(checker is not None and checker())
 
-    def _verify(self, answer):
+    def _verify(self, answer, state=None):
+        evidence = self.evidence
+        base_signature = _evidence_signature(evidence)
+        message_evidence = _tool_evidence(state)
+        if message_evidence:
+            evidence = {
+                **(evidence if isinstance(evidence, dict) else {}),
+                "retrieved_evidence": message_evidence,
+            }
+        signature = _evidence_signature(evidence)
+        if self._last_verification is not None:
+            cached_answer, _, cached_signature, cached_verdicts = self._last_verification
+            if cached_answer == answer and cached_signature == signature:
+                return dict(cached_verdicts)
         try:
-            verdicts = self.policy.post_run_checks(self.question, answer)
+            if evidence is None:
+                verdicts = self.policy.post_run_checks(
+                    self.question,
+                    answer,
+                )
+            else:
+                verdicts = self.policy.post_run_checks(
+                    self.question,
+                    answer,
+                    evidence,
+                )
         except Exception:
             LOGGER.exception("Evidence gate verification failed")
             return None
         if not isinstance(verdicts, dict) or not verdicts:
             return None
+        self._last_verification = (answer, base_signature, signature, dict(verdicts))
         return verdicts
+
+    def cached_verdicts(self, answer, base_evidence):
+        """Return the last verdict only for an unchanged answer and runtime evidence."""
+
+        if self._last_verification is None:
+            return None
+        cached_answer, base_signature, _, verdicts = self._last_verification
+        if cached_answer != answer or base_signature != _evidence_signature(base_evidence):
+            return None
+        return dict(verdicts)
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
@@ -149,7 +190,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if not answer.strip():
             return None
         self.saw_final_answer = True
-        verdicts = self._verify(answer)
+        verdicts = self._verify(answer, state)
         if verdicts is None:
             return None
         if _verdicts_supported(verdicts):
@@ -188,6 +229,33 @@ def _message_text(message):
     return str(content or "")
 
 
+def _tool_evidence(state):
+    """Return a bounded view of retrieved tool output for post-run review."""
+
+    if not isinstance(state, dict):
+        return []
+    evidence = []
+    for message in state.get("messages") or []:
+        if getattr(message, "type", "") != "tool":
+            continue
+        content = _message_text(message).strip()
+        if not content:
+            continue
+        evidence.append(
+            {
+                "tool": str(getattr(message, "name", "") or "tool")[:80],
+                "content": content[:1200],
+            }
+        )
+    return evidence[-8:]
+
+
+def _evidence_signature(evidence):
+    """Serialize evidence so in-place changes invalidate verification reuse."""
+
+    return json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)
+
+
 def _verdicts_supported(verdicts):
     """Return whether every reported verdict passed."""
 
@@ -195,5 +263,17 @@ def _verdicts_supported(verdicts):
         return False
     option = verdicts.get("answer_supported")
     if isinstance(option, str) and option and option != "supported":
+        return False
+    strength = verdicts.get("evidence_strength")
+    if strength == "qualified_weak":
+        return True
+    if strength in {
+        "adapted_only",
+        "example_only",
+        "planned",
+        "unsupported",
+        "contradicted",
+        "unknown",
+    }:
         return False
     return True

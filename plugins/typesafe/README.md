@@ -26,6 +26,16 @@ The tools are:
 - `typesafe_choice` — one option from a bounded, mutually exclusive JSON object rubric.
 - `typesafe_score` — a probability-weighted position on an ordered JSON array rubric of two to ten levels.
 
+When bound to an Assistant, the host can use TypeSafe to classify the weakest
+evidence level behind a final answer. The `evidence_strength` decision uses
+`direct`, `derived`, `qualified_weak`, `adapted_only`, `example_only`, `planned`,
+`unsupported`, and `contradicted` options. `qualified_weak` accepts an answer
+that explicitly limits its conclusion to examples, plans, or unconfirmed
+execution. An answer that presents such material as actual execution gets one
+verification retry. The final gate verdict reuses the in-loop result when the
+answer and evidence are unchanged. Assistants without a TypeSafe binding keep
+the model-owned workflow and do not pay for these decision calls.
+
 ## Judgments
 
 Each tool maps to one System One primitive:

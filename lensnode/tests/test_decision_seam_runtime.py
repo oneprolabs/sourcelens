@@ -389,6 +389,37 @@ def test_post_run_decision_gates_are_empty_without_a_policy():
     assert agent_runtime._post_run_decision_gates(state, "answer") == {}
 
 
+def test_post_run_reuses_matching_middleware_verdict():
+    class Policy:
+        def __init__(self):
+            self.calls = 0
+
+        def has_evidence_gates(self):
+            return True
+
+        def post_run_checks(self, question, answer, evidence=None):
+            self.calls += 1
+            return {"evidence_strength": "qualified_weak"}
+
+    from langchain_core.messages import AIMessage
+
+    policy = Policy()
+    state = _post_run_state(policy)
+    state.runtime_evidence = {"record": "example"}
+    middleware = agent_runtime._build_evidence_middleware(state)
+    state.evidence_middleware = middleware
+    middleware.after_model({"messages": [AIMessage(content="Only an example is documented.")]}, None)
+
+    assert agent_runtime._post_run_decision_gates(state, "Only an example is documented.") == {
+        "evidence_strength": "qualified_weak"
+    }
+    assert policy.calls == 1
+
+    state.runtime_evidence["record"] = "updated"
+    agent_runtime._post_run_decision_gates(state, "Only an example is documented.")
+    assert policy.calls == 2
+
+
 def test_smart_collaboration_still_exposes_the_decision_rank_tool(
     monkeypatch,
     tmp_path,

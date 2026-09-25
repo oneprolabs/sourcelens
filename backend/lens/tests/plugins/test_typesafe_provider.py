@@ -48,6 +48,7 @@ class TypesafePluginManifestTests(TestCase):
                 "evidence_requirement",
                 "evidence_sufficient",
                 "answer_supported",
+                "evidence_strength",
             },
         )
         self.assertEqual(
@@ -73,6 +74,10 @@ class TypesafePluginManifestTests(TestCase):
         self.assertEqual(
             decisions["answer_supported"]["tool_keys"],
             ["typesafe_choice"],
+        )
+        self.assertEqual(
+            decisions["evidence_strength"]["kind"],
+            "choice",
         )
 
     def test_bundled_plugin_declares_a_rankable_analysis(self):
