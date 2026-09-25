@@ -1395,7 +1395,7 @@
                   </button>
                 </div>
 
-                <RunTrajectoryPanel
+                <RunTraceWorkbench
                   v-show="activeExecutionView === 'trace'"
                   :run-uuid="selectedUuid"
                   :assistant-name="detail.assistant_name"
@@ -1709,7 +1709,7 @@ import {
 } from '@/api/lens'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import RunDiagnosisPanel from '@/admin/pages/lens/RunDiagnosisPanel.vue'
-import RunTrajectoryPanel from '@/admin/pages/lens/RunTrajectoryPanel.vue'
+import RunTraceWorkbench from '@/admin/pages/lens/RunTraceWorkbench.vue'
 import {
   formatOperationMetric,
   resolveRunSummary

@@ -126,6 +126,7 @@ export async function streamAdminRunTrajectory(
     sequence = 0,
     q = '',
     category = '',
+    mode = '',
     signal,
     onEvent
   } = {}
@@ -136,6 +137,7 @@ export async function streamAdminRunTrajectory(
   if (sequence) params.set('sequence', String(sequence))
   if (q) params.set('q', q)
   if (category) params.set('category', category)
+  if (mode) params.set('mode', mode)
   const query = params.toString()
   const baseUrl = String(api.defaults.baseURL || '/api').replace(/\/$/, '')
   const token = localStorage.getItem('access_token')
