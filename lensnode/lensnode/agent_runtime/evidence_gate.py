@@ -23,13 +23,20 @@ _RECHECK_GUIDANCE = (
     "conclusions, compatibility or adaptation, examples, plans, and "
     "actual execution. Do not describe adaptation, examples, or plans as "
     "actual operation or validation. If the workspace genuinely lacks the "
-    "information, say so explicitly and state what you searched."
+    "information, state that limitation briefly. Return the answer itself, "
+    "not a search log, evidence inventory, list of files to read, or a "
+    "promise to investigate later. Keep the existing answer structure and "
+    "focus on the user's question."
 )
 
 _CONVERGENCE_GUIDANCE = (
     "You have run several search rounds. If the evidence you already have "
-    "supports an answer, STOP searching now and write the final answer "
-    "with inline [[source: <path>]] markers. Search again only for one "
+    "supports an answer, STOP searching now and write the final answer in "
+    "a concise, user-facing structure: lead with the direct conclusion, "
+    "then give only the key supporting points and necessary caveats. Use "
+    "inline [[source: <path>]] markers. Do not describe your search "
+    "process, enumerate retrieved evidence, list documents still to read, "
+    "or add a generic follow-up reading plan. Search again only for one "
     "specific missing fact, using batched keywords (\"a|b|c\") and a "
     "narrower glob; do not repeat queries you already ran."
 )

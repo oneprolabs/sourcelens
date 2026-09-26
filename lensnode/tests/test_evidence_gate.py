@@ -4,6 +4,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode.agent_runtime.evidence_gate import (
     EvidenceGateMiddleware,
+    _CONVERGENCE_GUIDANCE,
+    _RECHECK_GUIDANCE,
     _verdicts_supported,
 )
 
@@ -194,6 +196,13 @@ def test_default_recheck_budget_is_one():
     ] == "model"
     assert middleware.after_model(_answer_state("Still unsupported"), None) is None
     assert middleware.answer_nudges == 1
+
+
+def test_gate_guidance_preserves_user_facing_answer_shape():
+    assert "not a search log" in _RECHECK_GUIDANCE
+    assert "evidence inventory" in _RECHECK_GUIDANCE
+    assert "lead with the direct conclusion" in _CONVERGENCE_GUIDANCE
+    assert "list documents still to read" in _CONVERGENCE_GUIDANCE
 
 
 def test_verification_reuses_only_identical_answer_and_evidence():

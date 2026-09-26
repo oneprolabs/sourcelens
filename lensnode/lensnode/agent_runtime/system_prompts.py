@@ -246,9 +246,14 @@ def _knowledge_system_prompt(
             "is answered briefly with no tool calls; do not search merely "
             "because an earlier turn did.\n"
             "- Stop after two independent searches return no relevant "
-            "evidence. Report what you searched and that the information is "
-            "not in the current workspace; do not keep re-querying with "
-            "reworded keywords.\n"
+            "evidence. State the limitation briefly and do not list the "
+            "searches, retrieved files, or documents still to read; do not "
+            "keep re-querying with reworded keywords.\n"
+            "- In the final answer, lead with the direct conclusion, then "
+            "present only the key supporting points and necessary caveats. "
+            "Keep the answer concise and reader-facing. Do not include a "
+            "search log, evidence inventory, unfinished research checklist, "
+            "or generic suggestion to read more documents.\n"
         )
     collaboration_guidance = ""
     if command.get("routing_mode") == "smart":
