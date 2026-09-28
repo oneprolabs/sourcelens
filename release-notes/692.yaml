@@ -1,0 +1,14 @@
+type: improvement
+audience: admin
+en: >-
+  The AI model setup wizard and the admin LLM config page now offer only chat
+  models: embedding and image-generation entries are hidden, and model lists are
+  sorted by name. Long catalogs scroll within the terminal, Esc returns to
+  provider selection, and AGIOne shows its provider label and catalog icon.
+  Testing an edited config now uses the stored API key instead of the masked
+  value.
+zh-CN: >-
+  AI 模型安装向导与管理台 LLM 配置页现在只提供对话模型：隐藏 embedding 与图像生成
+  条目，模型列表按名称排序。长列表在终端内滚动显示，Esc 可返回上级选择提供方，
+  AGIOne 会显示其提供方名称与目录图标。测试已编辑的配置时改用已保存的 API Key，
+  而不是掩码值。

@@ -2,6 +2,7 @@
 
 import os
 import select
+import shutil
 import sys
 import termios
 import tty
@@ -37,6 +38,10 @@ FIELD_LABELS = {
 
 class SetupAborted(Exception):
     """Raised when the user chooses to leave the wizard before saving."""
+
+
+class BackToProvider(Exception):
+    """Raised when the user returns from model configuration to providers."""
 
 
 class Command(BaseCommand):
@@ -108,7 +113,10 @@ class Command(BaseCommand):
 
         while True:
             provider = self._select_provider()
-            config = self._collect_config(provider)
+            try:
+                config = self._collect_config(provider)
+            except BackToProvider:
+                continue
             provider_id = provider["id"]
             self.stdout.write("Testing the model connection...")
             ok, message = validate_llm_config(
@@ -154,41 +162,44 @@ class Command(BaseCommand):
     def _collect_config(self, provider):
         """Collect only the model fields needed for first-time setup."""
 
-        provider_id = provider["id"]
-        schema = get_provider_params_schema()["providers"][provider_id]
-        config = {"model": self._select_model(provider, schema)}
-        required = set(schema.get("required") or [])
-        default_endpoint = schema.get("default_api_base") or ""
+        try:
+            provider_id = provider["id"]
+            schema = get_provider_params_schema()["providers"][provider_id]
+            config = {"model": self._select_model(provider, schema)}
+            required = set(schema.get("required") or [])
+            default_endpoint = schema.get("default_api_base") or ""
 
-        if "api_base" in required or default_endpoint:
-            endpoint = self._required_or_default(
-                FIELD_LABELS["api_base"],
-                default_endpoint,
-                required="api_base" in required,
-            )
-            if endpoint:
-                config["api_base"] = endpoint
+            if "api_base" in required or default_endpoint:
+                endpoint = self._required_or_default(
+                    FIELD_LABELS["api_base"],
+                    default_endpoint,
+                    required="api_base" in required,
+                )
+                if endpoint:
+                    config["api_base"] = endpoint
 
-        if "deployment" in required:
-            config["deployment"] = self._required_or_default(
-                FIELD_LABELS["deployment"], "", required=True
-            )
-        if "api_version" in schema.get("editable_params", []):
-            api_version = self._required_or_default(
-                FIELD_LABELS["api_version"],
-                "2024-02-15-preview",
-                required=False,
-            )
-            if api_version:
-                config["api_version"] = api_version
+            if "deployment" in required:
+                config["deployment"] = self._required_or_default(
+                    FIELD_LABELS["deployment"], "", required=True
+                )
+            if "api_version" in schema.get("editable_params", []):
+                api_version = self._required_or_default(
+                    FIELD_LABELS["api_version"],
+                    "2024-02-15-preview",
+                    required=False,
+                )
+                if api_version:
+                    config["api_version"] = api_version
 
-        while True:
-            api_key = self._secret_input("API key: ").strip()
-            if api_key:
-                config["api_key"] = api_key
-                break
-            self.stdout.write(self.style.WARNING("API key is required."))
-        return config
+            while True:
+                api_key = self._secret_input("API key: ").strip()
+                if api_key:
+                    config["api_key"] = api_key
+                    break
+                self.stdout.write(self.style.WARNING("API key is required."))
+            return config
+        except SetupAborted as exc:
+            raise BackToProvider from exc
 
     def _select_model(self, provider, schema):
         """Select a chat model while still allowing custom model ids."""
@@ -197,7 +208,12 @@ class Command(BaseCommand):
             model
             for model in provider.get("models", [])
             if model.get("mode", "chat") == "chat"
+            and not {
+                "text-to-image",
+                "embedding",
+            }.intersection(model.get("capabilities") or [])
         ]
+        models.sort(key=lambda model: str(model.get("label") or "").casefold())
         default_model = schema.get("default_model") or ""
         if not models:
             return self._required_or_default(
@@ -208,16 +224,14 @@ class Command(BaseCommand):
         labels = []
         for index, model in enumerate(models):
             marker = " (default)" if model["id"] == default_model else ""
-            labels.append(f"{model['label']} [{model['id']}]{marker}")
+            labels.append(f"{model['label']}{marker}")
             if marker:
                 default_index = index
         labels.append("Custom model")
         selected = self._select_option(
             f"Models from {provider['label']}",
             labels,
-            selected=(
-                default_index if default_index is not None else len(models)
-            ),
+            selected=(default_index if default_index is not None else 0),
         )
         if selected == len(models):
             return self._required_or_default("Model", "", required=True)
@@ -226,11 +240,17 @@ class Command(BaseCommand):
     def _select_option(self, title, options, selected=0):
         """Select one option using arrow keys and Enter."""
 
-        self.stdout.write("")
-        self.stdout.write(
-            f"{title} (use ↑/↓ and press Enter, Esc to skip):"
+        page_size = min(
+            len(options),
+            max(5, shutil.get_terminal_size((80, 24)).lines - 6),
         )
-        self._render_options(options, selected)
+        window_start = max(0, selected - page_size + 1)
+        self.stdout.write("")
+        self.stdout.write(f"{title} (use ↑/↓ and press Enter, Esc to skip):")
+        self._render_options(
+            options[window_start : window_start + page_size],
+            selected - window_start,
+        )
         while True:
             key = self._read_key()
             if key == "up":
@@ -243,11 +263,19 @@ class Command(BaseCommand):
                 raise SetupAborted
             else:
                 continue
+            next_window_start = min(
+                max(0, selected - page_size + 1),
+                max(0, len(options) - page_size),
+            )
             self.stdout.write(
-                f"\033[{len(options)}A",
+                f"\033[{page_size}A",
                 ending="",
             )
-            self._render_options(options, selected)
+            window_start = next_window_start
+            self._render_options(
+                options[window_start : window_start + page_size],
+                selected - window_start,
+            )
 
     def _render_options(self, options, selected):
         """Render a terminal selection menu at the current cursor."""

@@ -23,6 +23,7 @@ const PROVIDER_ICON_ALIASES = {
 
 /** Brand color for fallback letter circle. */
 export const PROVIDER_COLORS = {
+  agione: '#A040F0',
   openai: '#412991',
   azure_openai: '#0078D4',
   gemini: '#4285F4',

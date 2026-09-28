@@ -131,7 +131,11 @@
 
                     <div class="min-w-0 flex-1 pt-1">
                       <div class="flex min-w-0 items-center gap-2">
-                        <ProviderIcon :provider="row.provider" size="sm" />
+                        <ProviderIcon
+                          :provider="row.provider"
+                          :icon="providerIconUrl(row.provider)"
+                          size="sm"
+                        />
                         <h2
                           class="min-w-0 break-words text-sm font-semibold text-gray-900"
                         >
@@ -392,7 +396,11 @@
                       <td
                         class="px-4 py-4 whitespace-nowrap text-sm text-gray-900"
                       >
-                        <ProviderIcon :provider="row.provider" size="sm">
+                        <ProviderIcon
+                          :provider="row.provider"
+                          :icon="providerIconUrl(row.provider)"
+                          size="sm"
+                        >
                           <span class="text-gray-900">{{
                             providerLabel(row.provider)
                           }}</span>
@@ -804,7 +812,11 @@
             <div
               class="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm"
             >
-              <ProviderIcon :provider="form.provider" size="sm" />
+              <ProviderIcon
+                :provider="form.provider"
+                :icon="providerIconUrl(form.provider)"
+                size="sm"
+              />
               <BaseSelect
                 v-model="form.provider"
                 class="min-w-0 flex-1"
@@ -855,7 +867,7 @@
                 class="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg"
               >
                 <button
-                  v-for="m in currentProviderModels"
+                  v-for="m in selectableModels"
                   :key="m.id"
                   type="button"
                   class="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
@@ -1110,6 +1122,7 @@ import { llmAdminApi } from '@/admin/api'
 import { DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS } from '@/admin/api/llmTimeout'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import ProviderIcon from '@/components/llm/ProviderIcon.vue'
+import { selectableChatModels } from '@/components/llm/providerModels.js'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -1122,6 +1135,7 @@ import { useTableSelection } from '@/composables/useTableSelection'
 import { useToast } from '@/composables/useToast'
 
 const PROVIDER_LABELS = {
+  agione: 'AGIOne',
   openai: 'OpenAI',
   openai_compatible: 'OpenAI Compatible',
   azure_openai: 'Azure OpenAI',
@@ -1245,6 +1259,22 @@ const providersFromModels = computed(() => {
   }))
 })
 
+// Provider logo URLs come from the provider catalog (agentcore) so provider
+// branding is single-sourced; the icon component falls back to its bundled
+// lobehub set when the catalog has no icon.
+const providerIconUrls = computed(() => {
+  const map = {}
+  for (const p of modelsData.value?.providers || []) {
+    const id = (p.id || '').toLowerCase()
+    if (id && p.icon) map[id] = p.icon
+  }
+  return map
+})
+
+function providerIconUrl(provider) {
+  return providerIconUrls.value[(provider || '').toLowerCase()] || ''
+}
+
 const currentProviderSchema = computed(
   () => providerSchemas.value[form.provider] || null
 )
@@ -1263,6 +1293,12 @@ const currentProviderModels = computed(() => {
   )
   return list?.models || []
 })
+
+// This page configures chat models only; embedding and image-generation
+// models stay in the catalog but are filtered out of the model dropdown.
+const selectableModels = computed(() =>
+  selectableChatModels(currentProviderModels.value)
+)
 
 const defaultApiBaseForProvider = computed(() => {
   if (currentProviderSchema.value?.default_api_base) {
@@ -1864,6 +1900,16 @@ async function testConnection() {
     const payload = {
       provider: form.provider,
       config: buildFormConfigPayload()
+    }
+    // When editing a saved config the form's api_key is the masked value from
+    // the read API; send the config id so the server can resolve it from
+    // storage instead of testing the mask as the key.
+    if (editingId.value) {
+      if (typeof editingId.value === 'number') {
+        payload.config_id = editingId.value
+      } else {
+        payload.config_uuid = editingId.value
+      }
     }
     const res = await llmAdminApi.postLLMConfigTest(payload)
     if (res?.ok) {

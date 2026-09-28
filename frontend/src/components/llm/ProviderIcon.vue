@@ -35,14 +35,17 @@ import {
 
 const props = defineProps({
   provider: { type: String, default: '' },
+  // Logo URL supplied by the provider catalog (agentcore). Takes precedence
+  // over the bundled lobehub icon set; falls back to it, then to a letter.
+  icon: { type: String, default: '' },
   size: { type: String, default: 'md' }
 })
 
 const imgFailed = ref(false)
 
 const iconUrl = computed(() => {
-  if (imgFailed.value || !props.provider) return null
-  return getProviderIconUrl(props.provider)
+  if (imgFailed.value) return null
+  return props.icon || getProviderIconUrl(props.provider)
 })
 
 const fallbackLetter = computed(() => getProviderFallbackLetter(props.provider))
