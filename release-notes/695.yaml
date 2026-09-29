@@ -1,0 +1,6 @@
+type: fix
+audience: user
+en: >-
+  Fixed the email verification success message so it updates when the UI language changes.
+zh-CN: >-
+  修复切换界面语言后邮箱验证码发送成功提示未同步更新的问题。
