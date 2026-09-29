@@ -58,7 +58,7 @@
       v-if="infoMessage"
       class="rounded-lg border border-primary-100 bg-primary-50 p-4"
     >
-      <p class="text-sm text-primary-700">{{ infoMessage }}</p>
+      <p class="text-sm text-primary-700">{{ t(infoMessage) }}</p>
     </div>
 
     <BaseButton
@@ -153,7 +153,7 @@ const handleSendCode = async () => {
       language: locale.value
     })
     codeSent.value = true
-    infoMessage.value = t('auth.codeLogin.codeSent')
+    infoMessage.value = 'auth.codeLogin.codeSent'
     startCooldown(60)
   } catch (error) {
     errorMessage.value =

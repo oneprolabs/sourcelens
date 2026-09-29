@@ -53,6 +53,13 @@ test('email code verification submits the detected UI language', async () => {
   )
 })
 
+test('email code success message is translated when rendered', async () => {
+  const component = await source('components/auth/EmailCodeLogin.vue')
+
+  assert.match(component, /\{\{ t\(infoMessage\) \}\}/)
+  assert.match(component, /infoMessage\.value = 'auth\.codeLogin\.codeSent'/)
+})
+
 test('email code verification maps actionable errors in every locale', async () => {
   const [component, utility, english, chinese, spanish] = await Promise.all([
     source('components/auth/EmailCodeLogin.vue'),
