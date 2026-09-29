@@ -42,6 +42,7 @@ from lens.services import (
     supports_run_admission_checkpoint,
     supports_run_checkpoint_resume,
 )
+from lens.trace_steps import build_trace_steps
 
 from .base import _authenticate_stream_request
 
@@ -1385,6 +1386,21 @@ def _trace_event_response(
     }
 
 
+def _trace_steps_response(ordered_events, trace_runs_by_id, root_run):
+    """Build the semantic trace contract from all visible events."""
+
+    events = [
+        _trace_event_response(
+            event,
+            trace_run=trace_runs_by_id[event.run_id],
+            root_run=root_run,
+            display_sequence=sequence,
+        )
+        for sequence, event in enumerate(ordered_events, start=1)
+    ]
+    return build_trace_steps(events, run_start=root_run.started_at)
+
+
 def _run_trace_progress(root_run, trace_runs, events):
     """Return the parent and logical delegated tasks with their attempts."""
 
@@ -1791,6 +1807,7 @@ def _trajectory_stream_snapshot(
     display_sequence=0,
     known_revision="",
     include_summary=False,
+    steps_only=False,
 ):
     """Build one resumable trajectory stream snapshot from durable state."""
 
@@ -1819,19 +1836,23 @@ def _trajectory_stream_snapshot(
         ]
     )
     raw_batch = pending[:TRAJECTORY_STREAM_BATCH_SIZE]
-    rows = [
-        _trace_event_response(
-            event,
-            trace_run=trace_runs_by_id[event.run_id],
-            root_run=run,
-            display_sequence=sequence,
-        )
-        for sequence, event in enumerate(
-            raw_batch,
-            start=display_sequence + 1,
-        )
-        if _trajectory_event_matches(event, filters)
-    ]
+    rows = (
+        []
+        if steps_only
+        else [
+            _trace_event_response(
+                event,
+                trace_run=trace_runs_by_id[event.run_id],
+                root_run=run,
+                display_sequence=sequence,
+            )
+            for sequence, event in enumerate(
+                raw_batch,
+                start=display_sequence + 1,
+            )
+            if _trajectory_event_matches(event, filters)
+        ]
+    )
     latest_event = all_events.order_by("created_at", "uuid").last()
     next_event = raw_batch[-1] if raw_batch else None
     latest_cursor = _encode_trajectory_cursor(latest_event)
@@ -1844,6 +1865,11 @@ def _trajectory_stream_snapshot(
         sorted(state_runs.values(), key=lambda item: str(item.uuid)),
         latest_cursor,
     )
+    if include_summary or revision != known_revision:
+        ordered_events = list(all_events.order_by("created_at", "uuid"))
+        trace_steps = _trace_steps_response(ordered_events, trace_runs_by_id, run)
+    else:
+        trace_steps = None
     return {
         "events": rows,
         "cursor": next_cursor,
@@ -1862,6 +1888,8 @@ def _trajectory_stream_snapshot(
             if include_summary or revision != known_revision
             else None
         ),
+        "steps": trace_steps["steps"] if trace_steps else None,
+        "edges": trace_steps["edges"] if trace_steps else None,
         "terminal": run.status in TERMINAL_RUN_STATUSES,
     }
 
@@ -1875,6 +1903,7 @@ async def stream_admin_run_trajectory_events_async(
     display_sequence=0,
     poll_interval=TRAJECTORY_STREAM_POLL_INTERVAL_SECONDS,
     terminal_quiet_polls=TRAJECTORY_STREAM_TERMINAL_QUIET_POLLS,
+    steps_only=False,
 ):
     """Yield resumable admin trajectory updates from the database."""
 
@@ -1895,6 +1924,7 @@ async def stream_admin_run_trajectory_events_async(
             display_sequence=current_sequence,
             known_revision=current_revision,
             include_summary=event_type == "sync",
+            steps_only=steps_only,
         )
         if snapshot is None:
             return
@@ -1911,9 +1941,11 @@ async def stream_admin_run_trajectory_events_async(
                 "revision": snapshot["revision"],
                 "cursor": snapshot["cursor"],
                 "sequence": snapshot["display_sequence"],
-                "events": snapshot["events"],
+                "events": [] if steps_only else snapshot["events"],
                 "summary": current_summary,
                 "run": snapshot["run"],
+                "steps": snapshot["steps"],
+                "edges": snapshot["edges"],
             }
             yield payload
             current_revision = snapshot["revision"]
@@ -1986,6 +2018,7 @@ class AdminRunTrajectoryView(APIView):
                 run__in=trace_runs,
             ).order_by("created_at", "uuid")
         )
+        trace_steps = _trace_steps_response(ordered_events, trace_runs_by_id, run)
         trace_events = [
             (sequence, event, trace_runs_by_id[event.run_id])
             for sequence, event in enumerate(ordered_events, start=1)
@@ -2012,6 +2045,16 @@ class AdminRunTrajectoryView(APIView):
                 for item in trace_events
                 if item[1].call_id == call_id
                 or item[1].parent_call_id == call_id
+            ]
+        event_ids_param = (params.get("event_ids") or "").strip()[:8192]
+        if event_ids_param:
+            wanted_ids = {
+                value.strip() for value in event_ids_param.split(",") if value.strip()
+            }
+            trace_events = [
+                item
+                for item in trace_events
+                if str(item[1].event_id) in wanted_ids
             ]
         keyword = (params.get("q") or "").strip()[:256]
         if keyword:
@@ -2068,6 +2111,8 @@ class AdminRunTrajectoryView(APIView):
                     progress_root=progress_root,
                     progress_runs=progress_runs,
                 ),
+                "steps": trace_steps["steps"],
+                "edges": trace_steps["edges"],
             }
         )
 
@@ -2099,6 +2144,7 @@ async def admin_run_trajectory_stream_view(request, run_uuid):
         return HttpResponse("Invalid trajectory cursor", status=400)
 
     revision = (request.GET.get("revision") or "").strip()[:128]
+    steps_only = (request.GET.get("mode") or "").strip().lower() == "steps"
     display_sequence = _admin_safe_int(
         request.GET.get("sequence"),
         0,
@@ -2120,6 +2166,7 @@ async def admin_run_trajectory_stream_view(request, run_uuid):
             revision=revision,
             filters=filters,
             display_sequence=display_sequence,
+            steps_only=steps_only,
         ):
             payload = json.dumps(event, ensure_ascii=False)
             yield f"data: {payload}\n\n".encode("utf-8")
