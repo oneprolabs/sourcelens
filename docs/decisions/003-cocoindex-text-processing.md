@@ -38,6 +38,8 @@ and datasource lifecycle cleanup remain work in issue #698.
 - The complete retained manifest is the desired corpus. `changed_paths` alone
   cannot represent this corpus. Catalogs without an explicit item list, catalogs
   reporting an incomplete scan/failure, and invalid paths fail the build.
+  Identical repeated records are processed once; conflicting identities at one
+  path reject publication.
 - Missing-but-retained files stay indexed; confirmed `deleted` entries are removed.
   Non-indexable extensions and internal paths are excluded. Failed conversions
   block publication rather than silently removing previously searchable material.
@@ -132,7 +134,8 @@ docker exec sourcelens-lensnode-dev python -m lensnode.text_index index \
 ```
 
 The command returns JSON with `status`, generation, profile, file count, changed
-files, and deleted files. There is no model download, credential configuration,
+files, and deleted files. Python and native library diagnostics are routed to
+stderr so stdout remains a JSON response. There is no model download, credential configuration,
 or PostgreSQL extension setup. Repeat the command after updates; use
 `--full-reprocess` only when explicitly rebuilding all derived text.
 
@@ -150,6 +153,9 @@ validation, Chinese lexical search, profile mismatch, source citation ranges,
 tool fallback, and actual CLI-to-Agent subprocess integration. These tests use
 local fixtures and no model or external database. Broader product/UI acceptance
 and performance comparison remain in #698.
+
+The full local verification results, real datasource checks, and baseline failures
+are recorded in [the local verification report](../verification/698-cocoindex-local.md).
 
 ## Sources
 
