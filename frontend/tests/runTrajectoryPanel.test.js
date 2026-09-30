@@ -34,9 +34,20 @@ test('switching trajectory steps preserves the active inspector tab', async () =
   assert.doesNotMatch(selectEvent.groups.body, /inspectorTab\.value/)
   assert.ok(inspectorTabs?.groups?.body)
   assert.match(inspectorTabs.groups.body, /id: 'summary'/)
-  assert.match(inspectorTabs.groups.body, /id: 'payload'/)
-  assert.match(inspectorTabs.groups.body, /id: 'raw'/)
-  assert.doesNotMatch(inspectorTabs.groups.body, /selectedEvent/)
+  assert.match(inspectorTabs.groups.body, /id: 'data'/)
+  assert.match(inspectorTabs.groups.body, /id: 'timing'/)
+  assert.match(inspectorTabs.groups.body, /trajectoryInspectorData/)
+  assert.doesNotMatch(selectEvent.groups.body, /inspectorTab\.value/)
+})
+
+test('trajectory timing details live in a tab after raw data', async () => {
+  const contents = await source()
+
+  assert.match(contents, /inspectorTab === 'data'/)
+  assert.match(contents, /inspectorTab === 'timing'/)
+  assert.match(contents, /lensRuns\.trajectoryInspectorTiming/)
+  assert.match(contents, /lensRuns\.cachedTokens/)
+  assert.doesNotMatch(contents, /inspectorTab === 'raw'/)
 })
 
 test('trajectory inspector exposes an accessible drag separator', async () => {
@@ -58,13 +69,86 @@ test('trajectory rows expose bounded depth indentation styles', async () => {
   assert.match(contents, /function rowIndentStyle\(row\)/)
   assert.match(contents, /--trajectory-indent/)
   assert.match(contents, /padding-left: calc\(34px \+ var\(--trajectory-indent/)
-  assert.match(contents, /padding-left: calc\(8px \+ var\(--trajectory-indent/)
+  assert.match(contents, /padding-left: calc\(30px \+ var\(--trajectory-indent/)
 })
 
-test('trajectory summary exposes tool input and output previews', async () => {
+test('trajectory ledger renders a span tree with a waterfall column', async () => {
   const contents = await source()
 
-  assert.match(contents, /输入 \/ 输出/)
+  assert.match(contents, /class="span-header"/)
+  assert.match(contents, /class="waterfall-header"/)
+  assert.match(contents, /class="waterfall-track"/)
+  assert.match(contents, /:style="waterfallStyle\(row\)"/)
+  assert.match(contents, /function waterfallStyle\(row\)/)
+  assert.match(contents, /@click\.stop="toggleSpan\(row\.span\.id\)"/)
+  assert.match(contents, /function toggleSpan\(spanId\)/)
+  assert.match(contents, /:class="rowStatusClass\(row\)"/)
+})
+
+test('trajectory spans expose human-readable step labels', async () => {
+  const contents = await source()
+
+  assert.match(contents, /const SPAN_LABEL_KEYS = \{/)
+  assert.match(contents, /const STAGE_LABEL_KEYS = \{/)
+  assert.match(contents, /function spanLabel\(span\)/)
+  assert.match(
+    contents,
+    /'deepagents\.agent\.invoke': 'trajectoryStepAgentInvoke'/
+  )
+  assert.match(contents, /trajectoryStepRuntimeStage/)
+  assert.match(contents, /function rowTitle\(row\)/)
+  assert.match(contents, /return spanLabel\(row\?\.span\)/)
+})
+
+test('trajectory spans expose a workload summary line', async () => {
+  const contents = await source()
+
+  assert.match(contents, /function spanSummary\(span, showTiming = true\)/)
+  assert.match(contents, /function rowSummary\(row\)/)
+  assert.match(contents, /class="content-summary"/)
+  assert.match(contents, /class="inspector-event-card-summary"/)
+  assert.match(contents, /const GATE_LABEL_KEYS = \{/)
+  assert.match(contents, /trajectorySummaryHits/)
+})
+
+test('trajectory spans render plugin and skill chips', async () => {
+  const contents = await source()
+
+  assert.match(contents, /row\.span\.plugin/)
+  assert.match(contents, /row\.span\.skill/)
+  assert.match(contents, /class="plugin-chip"/)
+  assert.match(contents, /plugin-chip-skill/)
+  assert.match(contents, /\.plugin-chip \{/)
+})
+
+test('trajectory rows tag plugin, skill and system types', async () => {
+  const contents = await source()
+
+  assert.match(contents, /plugin: 'PLUGIN'/)
+  assert.match(contents, /skill: 'SKILL'/)
+  assert.match(contents, /stage: 'STAGE'/)
+  assert.match(contents, /gate: 'GATE'/)
+  assert.match(contents, /evidence: 'EVIDENCE'/)
+  assert.match(contents, /agent: 'AGENT'/)
+  assert.match(contents, /step: 'system'/)
+  assert.match(contents, /if \(span\?\.skill\) return 'skill'/)
+  assert.match(contents, /if \(span\?\.plugin\) return 'plugin'/)
+  assert.match(contents, /const SPAN_KIND_BY_BASE = \{/)
+  assert.match(contents, /'deepagents\.agent\.create': 'agent'/)
+  assert.match(contents, /\.tag-plugin \{/)
+  assert.match(contents, /\.tag-skill \{/)
+  assert.match(contents, /\.tag-stage \{/)
+  assert.match(contents, /\.tag-gate \{/)
+  assert.match(contents, /\.tag-evidence \{/)
+  assert.match(contents, /\.tag-agent \{/)
+})
+
+test('trajectory data tab exposes tool input and output previews', async () => {
+  const contents = await source()
+
+  assert.match(contents, /inspectorTab === 'data'/)
+  assert.match(contents, /trajectoryDetailInput/)
+  assert.match(contents, /trajectoryDetailOutput/)
   assert.match(contents, /inspectorInput\(selectedEvent\)/)
   assert.match(contents, /inspectorOutput\(selectedEvent\)/)
   assert.match(contents, /function inspectorValue\(value\)/)

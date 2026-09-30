@@ -1,0 +1,11 @@
+type: improvement
+audience: admin
+en: >-
+  The Run observation trajectory now renders an explicit call tree with
+  lifecycle, outcome, and health badges, flags incomplete or late records as
+  diagnostics, and reports recorded model tokens separately from metered usage.
+  The Run detail drawer is resizable.
+zh-CN: >-
+  Run 观测轨迹现在按显式调用树渲染，并展示生命周期、结果与健康状态标记；对缺失或
+  迟到记录给出诊断提示，并将已记录的模型 Token 与计量用量分开统计。Run 详情抽屉
+  支持拖拽调整宽度。

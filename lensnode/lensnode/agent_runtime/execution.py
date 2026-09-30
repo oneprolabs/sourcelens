@@ -404,7 +404,11 @@ def _stream_agent_states_with_recovery(
             )
             return
         except GatewayStreamError as exc:
-            if not thread or remaining_attempts <= 0:
+            if (
+                exc.code == "MODEL_INVALID_REQUEST"
+                or not thread
+                or remaining_attempts <= 0
+            ):
                 raise
             attempt += 1
             remaining_attempts -= 1

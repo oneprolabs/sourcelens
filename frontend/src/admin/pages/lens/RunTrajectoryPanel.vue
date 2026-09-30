@@ -46,7 +46,15 @@
           <dd>{{ summary.tool_calls || 0 }}</dd>
         </div>
         <div class="stat">
-          <dt>{{ t('lensRuns.totalTokens') }}</dt>
+          <dt>
+            {{
+              t(
+                summary.usage_scope === 'metered'
+                  ? 'lensRuns.trajectoryMeteredTokens'
+                  : 'lensRuns.trajectoryObservedTokens'
+              )
+            }}
+          </dt>
           <dd>{{ (summary.total_tokens || 0).toLocaleString() }}</dd>
         </div>
         <div class="stat stat-error">
@@ -55,6 +63,22 @@
         </div>
       </dl>
 
+      <details v-if="diagnosticSpans.length" class="trajectory-diagnostics">
+        <summary>
+          {{
+            t('lensRuns.trajectoryDiagnostics', { n: diagnosticSpans.length })
+          }}
+        </summary>
+        <button
+          v-for="span in diagnosticSpans"
+          :key="span.id"
+          type="button"
+          @click="selectAncestor(span.id)"
+        >
+          <strong>{{ spanLabel(span) || span.name }}</strong>
+          <span>{{ diagnosticText(span) }}</span>
+        </button>
+      </details>
       <section
         v-if="childProgress.length"
         class="assistant-progress"
@@ -242,8 +266,11 @@
           <table class="trajectory-table">
             <thead>
               <tr>
-                <th class="event-header">Event</th>
-                <th>Content</th>
+                <th class="span-header">Span</th>
+                <th class="status-header">Status</th>
+                <th class="duration-header">Duration</th>
+                <th class="tokens-header">Tokens</th>
+                <th class="waterfall-header">Waterfall</th>
               </tr>
             </thead>
             <tbody>
@@ -251,11 +278,14 @@
                 v-for="(row, index) in rows"
                 :key="trajectoryEventKey(row.event)"
                 class="ledger-row"
-                :class="{ 'turn-start-row': index === 0 }"
+                :class="{
+                  'turn-start-row': index === 0,
+                  'hierarchy-row': row.hasChildren
+                }"
                 :data-turn-start="index === 0 || undefined"
                 :data-turn-end="index === rows.length - 1 || undefined"
                 :data-selected="isSelected(row.event) || undefined"
-                :data-error="isErrorEvent(row.event) || undefined"
+                :data-error="isErrorRow(row) || undefined"
                 :style="rowIndentStyle(row)"
                 @click="selectEvent(row.event)"
                 @keydown.enter="selectEvent(row.event)"
@@ -267,7 +297,24 @@
                     class="request-dot"
                     aria-hidden="true"
                   />
-                  <span class="seq">#{{ row.event.sequence }}</span>
+                  <span v-if="row.stepNumber !== null" class="seq">
+                    #{{ row.stepNumber }}
+                  </span>
+                  <button
+                    v-if="row.hasChildren"
+                    type="button"
+                    class="row-expand"
+                    :aria-label="t('lensRuns.trajectoryToggle')"
+                    :aria-expanded="!row.isCollapsed"
+                    @click.stop="toggleSpan(row.span.id)"
+                  >
+                    <ChevronRight
+                      v-if="collapsed.has(row.span.id)"
+                      :size="14"
+                    />
+                    <ChevronDown v-else :size="14" />
+                  </button>
+                  <span v-else class="row-expand-spacer" aria-hidden="true" />
                   <span class="kind-tag" :class="tagClass(row.event)">
                     <span class="kind-tag-label">{{
                       kindLabel(row.event)
@@ -279,56 +326,68 @@
                   >
                     {{ row.event.assistant_name || 'Subagent' }}
                   </span>
-                </td>
-                <td class="content-cell">
-                  <button
-                    v-if="row.hasChildren"
-                    type="button"
-                    class="row-expand"
-                    :aria-label="t('lensRuns.trajectoryToggle')"
-                    @click.stop="toggleCall(row.event.call_id)"
-                  >
-                    <ChevronRight
-                      v-if="collapsed.has(row.event.call_id)"
-                      :size="14"
-                    />
-                    <ChevronDown v-else :size="14" />
-                  </button>
                   <span class="content-text">
                     <span
-                      v-if="toolCallText(row.event)"
-                      class="content-title content-title-code"
-                    >
-                      {{ toolCallText(row.event).name }}
-                    </span>
-                    <span
-                      v-else
                       class="content-title"
-                      :class="{
-                        'content-title-error': isErrorEvent(row.event)
-                      }"
+                      :class="{ 'content-title-error': isErrorRow(row) }"
                     >
-                      {{ eventTitle(row.event) }}
+                      {{ rowTitle(row) }}
                     </span>
-                    <span
-                      v-if="toolCallText(row.event)?.args"
-                      class="content-args"
-                    >
-                      {{ toolCallText(row.event).args }}
+                    <span v-if="rowSummary(row)" class="content-summary">
+                      {{ rowSummary(row) }}
                     </span>
                   </span>
-                  <span class="content-trailing">
+                  <span v-if="row.span.plugin" class="plugin-chip">
+                    {{ row.span.plugin }}
+                  </span>
+                  <span
+                    v-if="row.span.skill"
+                    class="plugin-chip plugin-chip-skill"
+                  >
+                    {{ row.span.skill }}
+                  </span>
+                  <span v-if="row.span.events.length > 1" class="content-count">
+                    {{
+                      t('lensRuns.trajectoryDetailEventsCount', {
+                        n: row.span.events.length
+                      })
+                    }}
+                  </span>
+                </td>
+                <td class="status-cell">
+                  <span :class="rowStatusClass(row)">{{
+                    rowStatusLabel(row)
+                  }}</span>
+                </td>
+                <td class="duration-cell">
+                  <span v-if="row.showDuration">{{
+                    durationText(row.displayDurationMs)
+                  }}</span>
+                </td>
+                <td
+                  class="tokens-cell"
+                  :title="
+                    row.showTokens
+                      ? tokenDetailText(row.displayTokens)
+                      : undefined
+                  "
+                >
+                  <span v-if="row.showTokens">{{
+                    tokenText(row.displayTokens)
+                  }}</span>
+                </td>
+                <td class="waterfall-cell">
+                  <span
+                    v-if="row.showDuration"
+                    class="waterfall-track"
+                    aria-hidden="true"
+                  >
                     <span
-                      class="content-metrics"
-                      :class="{
-                        'content-metrics-error': isErrorEvent(row.event)
-                      }"
-                    >
-                      {{ eventMetric(row.event) }}
-                    </span>
-                    <time class="content-time">
-                      {{ timeText(row.event.timestamp) }}
-                    </time>
+                      class="waterfall-bar"
+                      :class="tagClass(row.event)"
+                      :data-status="row.span.status"
+                      :style="waterfallStyle(row)"
+                    />
                   </span>
                 </td>
               </tr>
@@ -360,16 +419,13 @@
             <div class="inspector-title">
               <span class="inspector-dot" aria-hidden="true" />
               <span class="inspector-name">{{
-                eventTitle(selectedEvent)
-              }}</span>
-              <span class="inspector-location">{{
-                selectedEvent.event_type
+                spanLabel(selectedEvent.span) || eventTitle(selectedEvent)
               }}</span>
             </div>
             <div class="inspector-header-meta">
-              <span class="inspector-sequence"
-                >#{{ selectedEvent.sequence }}</span
-              >
+              <span v-if="selectedStepNumber" class="inspector-sequence">
+                #{{ selectedStepNumber }}
+              </span>
               <span class="kind-tag" :class="tagClass(selectedEvent)">
                 {{ kindLabel(selectedEvent) }}
               </span>
@@ -389,6 +445,7 @@
               :key="tab.id"
               type="button"
               role="tab"
+              :aria-selected="inspectorTab === tab.id"
               class="inspector-tab"
               :class="{ 'inspector-tab-active': inspectorTab === tab.id }"
               @click="inspectorTab = tab.id"
@@ -398,51 +455,223 @@
           </div>
           <div class="inspector-body">
             <template v-if="inspectorTab === 'summary'">
-              <div class="inspector-event-card">
+              <div class="inspector-event-card inspector-hero-card">
                 <div class="inspector-event-card-title">
-                  {{ eventTitle(selectedEvent) }}
+                  {{
+                    spanLabel(selectedEvent.span) || eventTitle(selectedEvent)
+                  }}
                 </div>
-                <div class="inspector-event-card-type">
-                  {{ selectedEvent.event_type }}
+                <div
+                  v-if="spanSummary(selectedEvent.span)"
+                  class="inspector-event-card-summary"
+                >
+                  {{ spanSummary(selectedEvent.span) }}
                 </div>
+                <p
+                  v-if="selectedEvent.span?.diagnostics?.length"
+                  class="diagnostic-message"
+                >
+                  {{ diagnosticText(selectedEvent.span) }}
+                </p>
+                <dl
+                  v-if="selectedEvent.span?.category === 'run'"
+                  class="overview"
+                >
+                  <div>
+                    <dt>{{ t('lensRuns.trajectoryLifecycle') }}</dt>
+                    <dd>{{ stateLabel(selectedEvent.span.lifecycle) }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('lensRuns.trajectoryOutcome') }}</dt>
+                    <dd>{{ stateLabel(selectedEvent.span.outcome) }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('lensRuns.trajectoryHealth') }}</dt>
+                    <dd>
+                      {{
+                        stateLabel(
+                          selectedEvent.span.health === 'failed'
+                            ? 'failed'
+                            : selectedEvent.span.hasWarnings
+                              ? 'degraded'
+                              : selectedEvent.span.health
+                        )
+                      }}
+                    </dd>
+                  </div>
+                </dl>
                 <div class="inspector-event-chips">
-                  <span :class="statusClass(selectedEvent)">{{
-                    statusLabel(selectedEvent)
-                  }}</span>
-                  <span class="inspector-chip"
-                    >Sequence {{ selectedEvent.sequence }}</span
-                  >
                   <span
                     v-if="selectedEvent.attempt != null"
                     class="inspector-chip"
                   >
-                    Attempt {{ selectedEvent.attempt }}
+                    {{
+                      t('lensRuns.trajectoryDetailAttempt', {
+                        n: selectedEvent.attempt
+                      })
+                    }}
+                  </span>
+                  <span
+                    v-if="selectedEvent.span?.events?.length > 1"
+                    class="inspector-chip"
+                  >
+                    {{
+                      t('lensRuns.trajectoryDetailEventsCount', {
+                        n: selectedEvent.span.events.length
+                      })
+                    }}
+                  </span>
+                  <span v-if="selectedEvent.span?.plugin" class="plugin-chip">
+                    {{ selectedEvent.span.plugin }}
+                  </span>
+                  <span
+                    v-if="selectedEvent.span?.skill"
+                    class="plugin-chip plugin-chip-skill"
+                  >
+                    {{ selectedEvent.span.skill }}
                   </span>
                 </div>
               </div>
-              <dl class="overview">
-                <div>
-                  <dt>Hierarchy</dt>
-                  <dd class="mono hierarchy-value">
-                    <span v-if="selectedEvent.call_id"
-                      >Call {{ selectedEvent.call_id }}</span
+              <div class="inspector-kpi-grid">
+                <div class="inspector-kpi">
+                  <span>{{ t('lensRuns.trajectoryDetailStatus') }}</span>
+                  <strong :class="rowStatusClass({ span: selectedEvent.span })">
+                    {{ eventLifecycleLabel(selectedEvent) }}
+                  </strong>
+                </div>
+                <div
+                  v-if="selectedEvent.span?.recordType === 'call'"
+                  class="inspector-kpi"
+                >
+                  <span>{{ t('lensRuns.trajectoryDetailDuration') }}</span>
+                  <strong>{{
+                    durationText(eventDuration(selectedEvent))
+                  }}</strong>
+                </div>
+                <div
+                  v-if="selectedEvent.span?.totalTokens != null"
+                  class="inspector-kpi"
+                >
+                  <span>{{ t('lensRuns.totalTokens') }}</span>
+                  <strong>{{ tokenText(selectedEvent.span) }}</strong>
+                </div>
+                <div class="inspector-kpi">
+                  <span>{{ t('lensRuns.trajectoryEvents') }}</span>
+                  <strong>{{ selectedEvent.span?.events?.length || 1 }}</strong>
+                </div>
+              </div>
+              <section class="execution-context-card">
+                <div class="execution-context-heading">
+                  <span class="overview-heading">
+                    {{ t('lensRuns.trajectoryDetailExecutionContext') }}
+                  </span>
+                </div>
+                <div
+                  class="execution-path"
+                  :aria-label="t('lensRuns.trajectoryDetailExecutionContext')"
+                >
+                  <template
+                    v-for="(item, index) in executionPath(selectedEvent)"
+                    :key="item.id || `${item.label}-${index}`"
+                  >
+                    <span v-if="index > 0" class="execution-path-separator">
+                      ›
+                    </span>
+                    <button
+                      v-if="index < executionPath(selectedEvent).length - 1"
+                      type="button"
+                      class="execution-path-item execution-path-link"
+                      @click="selectAncestor(item.id)"
                     >
-                    <span v-if="selectedEvent.parent_call_id"
-                      >Parent {{ selectedEvent.parent_call_id }}</span
-                    >
+                      {{ item.label }}
+                    </button>
                     <span
-                      v-if="
-                        !selectedEvent.call_id && !selectedEvent.parent_call_id
-                      "
-                      >-</span
+                      v-else
+                      class="execution-path-item"
+                      :class="{
+                        'execution-path-current':
+                          index === executionPath(selectedEvent).length - 1
+                      }"
                     >
+                      {{ item.label }}
+                    </span>
+                  </template>
+                </div>
+              </section>
+              <dl class="overview inspector-summary-details">
+                <div>
+                  <dt>
+                    {{
+                      t(
+                        selectedEvent.span?.recordType === 'call'
+                          ? 'lensRuns.trajectoryDetailStarted'
+                          : 'lensRuns.trajectoryDetailTime'
+                      )
+                    }}
+                  </dt>
+                  <dd class="execution-time-value">
+                    <strong>{{ eventTimeLabel(selectedEvent) }}</strong>
+                    <span>{{ eventRelativeTime(selectedEvent) }}</span>
                   </dd>
                 </div>
-                <div>
-                  <dt>Timestamp</dt>
-                  <dd class="mono wrap-value">{{ selectedEvent.timestamp }}</dd>
+                <div v-if="selectedEvent.span?.recordType === 'call'">
+                  <dt>{{ t('lensRuns.trajectoryDetailEnded') }}</dt>
+                  <dd class="execution-time-value">
+                    <strong>{{ eventTimeLabel(selectedEvent, true) }}</strong>
+                    <span>{{ eventRelativeTime(selectedEvent, true) }}</span>
+                  </dd>
                 </div>
               </dl>
+              <details class="technical-details">
+                <summary>
+                  {{ t('lensRuns.trajectoryDetailTechnical') }}
+                </summary>
+                <button
+                  type="button"
+                  class="technical-copy"
+                  @click="copyTechnicalDetails"
+                >
+                  {{ t('lensRuns.trajectoryDetailCopy') }}
+                </button>
+                <dl
+                  class="overview inspector-summary-details technical-details-grid"
+                >
+                  <div>
+                    <dt>{{ t('lensRuns.trajectoryDetailEventType') }}</dt>
+                    <dd class="mono wrap-value">
+                      {{ selectedEvent.event_type }}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('lensRuns.trajectoryDetailSequence') }}</dt>
+                    <dd class="mono">#{{ selectedEvent.sequence }}</dd>
+                  </div>
+                  <div
+                    v-if="selectedEvent.span?.callId || selectedEvent.call_id"
+                  >
+                    <dt>{{ t('lensRuns.trajectoryDetailCall') }}</dt>
+                    <dd class="mono wrap-value">
+                      {{ selectedEvent.span?.callId || selectedEvent.call_id }}
+                    </dd>
+                  </div>
+                  <div
+                    v-if="
+                      selectedEvent.span?.parentCallId ||
+                      selectedEvent.parent_call_id
+                    "
+                  >
+                    <dt>{{ t('lensRuns.trajectoryDetailParent') }}</dt>
+                    <dd class="mono wrap-value">
+                      {{
+                        selectedEvent.span?.parentCallId ||
+                        selectedEvent.parent_call_id
+                      }}
+                    </dd>
+                  </div>
+                </dl>
+              </details>
+            </template>
+            <template v-else-if="inspectorTab === 'data'">
               <section
                 v-if="
                   inspectorInput(selectedEvent) !== undefined ||
@@ -450,76 +679,153 @@
                 "
                 class="overview-section inspector-io-section"
               >
-                <h4 class="overview-heading">输入 / 输出</h4>
+                <h4 class="overview-heading">
+                  {{ dataTabLabel(selectedEvent) }}
+                </h4>
                 <div
                   v-if="inspectorInput(selectedEvent) !== undefined"
                   class="inspector-data-block"
+                  :title="inspectorValue(inspectorInput(selectedEvent))"
                 >
-                  <span class="inspector-data-label">Input</span>
-                  <pre>{{ inspectorValue(inspectorInput(selectedEvent)) }}</pre>
+                  <span class="inspector-data-label">
+                    {{ t('lensRuns.trajectoryDetailInput') }}
+                  </span>
+                  <TrajectoryValue :value="inspectorInput(selectedEvent)" />
                 </div>
                 <div
                   v-if="inspectorOutput(selectedEvent) !== undefined"
                   class="inspector-data-block"
+                  :title="inspectorValue(inspectorOutput(selectedEvent))"
                 >
-                  <span class="inspector-data-label">Output</span>
-                  <pre>{{
-                    inspectorValue(inspectorOutput(selectedEvent))
-                  }}</pre>
+                  <span class="inspector-data-label">
+                    {{ t('lensRuns.trajectoryDetailOutput') }}
+                  </span>
+                  <TrajectoryValue :value="inspectorOutput(selectedEvent)" />
                 </div>
               </section>
+              <section
+                v-if="
+                  selectedEvent.span?.end &&
+                  inspectorOutput(selectedEvent) === undefined
+                "
+                class="overview-section"
+              >
+                <h4 class="overview-heading">
+                  {{ t('lensRuns.trajectoryDetailEndResult') }}
+                </h4>
+                <div class="inspector-data-block">
+                  <span class="inspector-data-label">
+                    {{ selectedEvent.span.end.event_type }}
+                  </span>
+                  <TrajectoryValue
+                    :value="
+                      inspectorOutput(selectedEvent.span.end) ??
+                      selectedEvent.span.end.payload
+                    "
+                  />
+                </div>
+              </section>
+              <section
+                v-if="selectedEvent.span?.events?.length > 1"
+                class="overview-section"
+              >
+                <h4 class="overview-heading">
+                  {{ t('lensRuns.trajectoryDetailEvents') }}
+                </h4>
+                <ol class="span-event-list">
+                  <li
+                    v-for="event in selectedEvent.span.events"
+                    :key="trajectoryEventKey(event)"
+                    class="span-event-row"
+                  >
+                    <span class="span-event-seq">#{{ event.sequence }}</span>
+                    <span class="span-event-type">
+                      <strong>{{ eventTypeLabel(event) }}</strong>
+                      <small>{{ event.event_type }}</small>
+                    </span>
+                    <time class="span-event-time">{{
+                      relativeEventTime(event, selectedEvent.span)
+                    }}</time>
+                  </li>
+                </ol>
+              </section>
+              <div
+                v-if="!hasStructuredData(selectedEvent)"
+                class="inspector-json-card"
+              >
+                <JsonTree :data="selectedEvent.payload" :indent="8" />
+              </div>
+            </template>
+            <template v-else-if="inspectorTab === 'timing'">
               <section class="overview-section">
                 <h4 class="overview-heading">
-                  {{ t('lensRuns.trajectoryTiming') }}
+                  {{ t('lensRuns.trajectoryInspectorTiming') }}
                 </h4>
                 <dl class="overview">
-                  <div>
-                    <dt>Duration</dt>
-                    <dd>
-                      {{ durationText(selectedEvent.payload?.duration_ms) }}
-                    </dd>
+                  <div v-if="selectedEvent.span?.recordType === 'call'">
+                    <dt>{{ t('lensRuns.trajectoryDetailDuration') }}</dt>
+                    <dd>{{ durationText(eventDuration(selectedEvent)) }}</dd>
                   </div>
-                  <div v-if="selectedEvent.payload?.ttft_ms != null">
-                    <dt>TTFT</dt>
-                    <dd>{{ durationText(selectedEvent.payload.ttft_ms) }}</dd>
-                  </div>
-                  <div
-                    v-if="selectedEvent.payload?.usage?.total_tokens != null"
-                  >
-                    <dt>Tokens</dt>
-                    <dd>{{ selectedEvent.payload.usage.total_tokens }}</dd>
-                  </div>
-                  <div
-                    v-if="selectedEvent.payload?.usage?.input_tokens != null"
-                  >
-                    <dt class="indent">Input</dt>
-                    <dd>{{ selectedEvent.payload.usage.input_tokens }}</dd>
-                  </div>
-                  <div
-                    v-if="selectedEvent.payload?.usage?.output_tokens != null"
-                  >
-                    <dt class="indent">Output</dt>
-                    <dd>{{ selectedEvent.payload.usage.output_tokens }}</dd>
+                  <div v-else>
+                    <dt>{{ t('lensRuns.trajectoryDetailTime') }}</dt>
+                    <dd>{{ eventTimeLabel(selectedEvent) }}</dd>
                   </div>
                   <div
                     v-if="
-                      selectedEvent.payload?.usage?.reasoning_tokens != null
+                      selectedEvent.span?.ttftMs != null ||
+                      selectedEvent.payload?.ttft_ms != null
                     "
                   >
-                    <dt class="indent">Reasoning</dt>
+                    <dt>{{ t('lensRuns.ttft') }}</dt>
                     <dd>
-                      {{ selectedEvent.payload.usage.reasoning_tokens }}
+                      {{ ttftText(selectedEvent) }}
+                    </dd>
+                  </div>
+                  <div v-if="selectedEvent.span?.usageSource">
+                    <dt>{{ t('lensRuns.trajectoryUsageSource') }}</dt>
+                    <dd>
+                      {{
+                        t(
+                          `lensRuns.trajectorySource_${selectedEvent.span.usageSource}`
+                        )
+                      }}
+                    </dd>
+                  </div>
+                  <div v-if="selectedEvent.span?.totalTokens != null">
+                    <dt>{{ t('lensRuns.totalTokens') }}</dt>
+                    <dd>
+                      {{ formatTokenCount(selectedEvent.span.totalTokens) }}
                     </dd>
                   </div>
                 </dl>
+                <div
+                  v-if="tokenBreakdown(selectedEvent.span).length"
+                  class="token-usage-list"
+                >
+                  <div
+                    v-for="item in tokenBreakdown(selectedEvent.span)"
+                    :key="item.key"
+                    class="token-usage-row"
+                  >
+                    <div class="token-usage-label">
+                      <span
+                        class="token-usage-dot"
+                        :class="`token-usage-dot-${item.key}`"
+                      />
+                      <span>{{ item.label }}</span>
+                    </div>
+                    <strong>{{ formatTokenCount(item.value) }}</strong>
+                    <div class="token-usage-track">
+                      <span
+                        class="token-usage-fill"
+                        :class="`token-usage-fill-${item.key}`"
+                        :style="{ width: `${item.percent}%` }"
+                      />
+                    </div>
+                  </div>
+                </div>
               </section>
             </template>
-            <JsonTree
-              v-else-if="inspectorTab === 'payload'"
-              :data="selectedEvent.payload"
-              :indent="8"
-            />
-            <JsonTree v-else :data="selectedEvent" :indent="8" />
           </div>
         </aside>
       </div>
@@ -543,21 +849,27 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, Search } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { getAdminRunTrajectory, streamAdminRunTrajectory } from '@/api/lens'
+import {
+  getAdminRunTrajectory,
+  listDataSources,
+  streamAdminRunTrajectory
+} from '@/api/lens'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import JsonTree from '@/components/ui/JsonTree.vue'
+import TrajectoryValue from './TrajectoryValue.vue'
 import TrajectoryTimeline from './TrajectoryTimeline.vue'
 import {
   ACTIVE_TRAJECTORY_RUN_STATUSES,
   applyTrajectoryStreamUpdate,
   buildTimelineGroups,
   buildTrajectoryRows,
+  buildTrajectorySpans,
   childRunAttempts,
   childRunProgress,
   clampInspectorWidth,
@@ -565,19 +877,22 @@ import {
   groupTrajectoryRows,
   mergeTrajectoryEvents,
   shouldKeepTrajectoryStream,
-  trajectoryEventKey
+  trajectoryEventKey,
+  trajectoryStepNumber,
+  workspaceRelativePath
 } from './runTrajectory'
 
 const props = defineProps({
   runUuid: { type: String, default: '' },
   assistantName: { type: String, default: '' },
   active: { type: Boolean, default: false },
-  runStatus: { type: String, default: '' }
+  runStatus: { type: String, default: '' },
+  workspaceRoot: { type: String, default: '' }
 })
 const emit = defineEmits(['run-update'])
 
-const { t } = useI18n()
-const { showError } = useToast()
+const { t, locale } = useI18n()
+const { showError, showSuccess } = useToast()
 
 const events = ref([])
 const summary = ref({})
@@ -623,6 +938,8 @@ const inspectorStyle = computed(() =>
 
 const KIND_BY_CATEGORY = {
   model: 'model',
+  assistant: 'model',
+  reasoning: 'model',
   tool: 'tool',
   subtool: 'subtool',
   user: 'user',
@@ -633,12 +950,14 @@ const KIND_BY_CATEGORY = {
   retry: 'retry',
   checkpoint: 'checkpoint',
   cancelled: 'cancelled',
+  interrupted: 'cancelled',
   system: 'system',
   run: 'system',
-  step: 'step'
+  step: 'system'
 }
 
 const KIND_LABEL = {
+  run: 'RUN',
   system: 'SYSTEM',
   user: 'USER',
   context: 'CONTEXT',
@@ -649,7 +968,120 @@ const KIND_LABEL = {
   retry: 'RETRY',
   checkpoint: 'CHECKPOINT',
   cancelled: 'CANCELLED',
-  step: 'STEP'
+  plugin: 'PLUGIN',
+  skill: 'SKILL',
+  stage: 'STAGE',
+  gate: 'GATE',
+  evidence: 'EVIDENCE',
+  agent: 'AGENT'
+}
+
+const SPAN_KIND_BY_BASE = {
+  'deepagents.runtime': 'run',
+  'deepagents.runtime.stage': 'stage',
+  'deepagents.decision.gate': 'gate',
+  'deepagents.evidence.review': 'evidence',
+  'deepagents.evidence.verified': 'evidence',
+  'deepagents.evidence.convergence': 'evidence',
+  'deepagents.agent.create': 'agent',
+  'deepagents.agent.invoke': 'agent'
+}
+
+const SPAN_LABEL_KEYS = {
+  run: 'trajectoryStepRuntime',
+  'deepagents.runtime': 'trajectoryStepRuntime',
+  'deepagents.runtime.stage': 'trajectoryStepRuntimeStage',
+  'deepagents.agent.invoke': 'trajectoryStepAgentInvoke',
+  'deepagents.agent.create': 'trajectoryStepAgentCreate',
+  'deepagents.offload.configured': 'trajectoryStepOffload',
+  'deepagents.decision.gate': 'trajectoryStepDecisionGate',
+  'deepagents.evidence.verified': 'trajectoryStepEvidenceVerified',
+  'deepagents.evidence.convergence': 'trajectoryStepEvidenceConvergence',
+  'deepagents.evidence.review': 'trajectoryStepEvidenceReview',
+  'deepagents.capability.warning': 'trajectoryStepCapabilityWarning',
+  'deepagents.stream.recovering': 'trajectoryStepStreamRecovering',
+  'deepagents.plan.ready': 'trajectoryStepPlanReady',
+  'deepagents.summarization.enabled': 'trajectoryStepSummarization',
+  'deepagents.summarization.compacted': 'trajectoryStepSummarization',
+  'resources.materialized': 'trajectoryStepResourcesMaterialized',
+  'workflow.phase.changed': 'trajectoryStepPhaseChanged',
+  'workflow.plan.updated': 'trajectoryStepPlanUpdated',
+  'workflow.route.selected': 'trajectoryStepRouteSelected',
+  'tool.plugin': 'trajectoryStepToolPlugin',
+  'model.agent': 'trajectoryStepModelAgent',
+  'model.control': 'trajectoryStepModelControl',
+  'request.started': 'trajectoryStepRequest',
+  'request.completed': 'trajectoryStepRequestDone',
+  'user.message': 'trajectoryStepUserMessage',
+  'run.completed': 'trajectoryStepRunCompleted',
+  'checkpoint.saved': 'trajectoryStepCheckpoint',
+  'system.snapshot': 'trajectoryStepSystemSnapshot',
+  'tools.snapshot': 'trajectoryStepToolsSnapshot',
+  'compaction.event': 'trajectoryStepCompaction',
+  'compaction.completed': 'trajectoryStepCompaction'
+}
+
+const STAGE_LABEL_KEYS = {
+  resources: 'trajectoryStageResources',
+  model_tools: 'trajectoryStageModelTools',
+  routing: 'trajectoryStageRouting'
+}
+
+const GATE_LABEL_KEYS = {
+  search_needed: 'trajectoryGateSearchNeeded',
+  evidence_sufficient: 'trajectoryGateEvidenceSufficient',
+  answer_supported: 'trajectoryGateAnswerSupported',
+  evidence_strength: 'trajectoryGateEvidenceStrength'
+}
+
+function humanizeSpanName(name) {
+  return String(name)
+    .replace(/^(deepagents|workflow)\./, '')
+    .replace(/[._]/g, ' ')
+}
+
+function spanLabel(span) {
+  const name = String(span?.name || '')
+  if (!name) return ''
+  const operations = {
+    search_workspace: 'trajectoryOperationSearch',
+    find_files: 'trajectoryOperationFind',
+    read_workspace_file: 'trajectoryOperationRead',
+    read_file: 'trajectoryOperationRead'
+  }
+  if (span.category === 'tool' || span.category === 'subtool') {
+    return operations[name] ? t(`lensRuns.${operations[name]}`) : name
+  }
+  const toolEvent = /^tool\.(.+)\.(start|done|failed)$/.exec(name)
+  if (toolEvent) {
+    const phases = {
+      start: 'trajectoryDetailPhaseStart',
+      done: 'statusDone',
+      failed: 'statusFailed'
+    }
+    const operation = operations[toolEvent[1]]
+      ? t(`lensRuns.${operations[toolEvent[1]]}`)
+      : toolEvent[1]
+    return `${operation} · ${t(`lensRuns.${phases[toolEvent[2]]}`)}`
+  }
+  const base = name.split(' · ')[0]
+  const stage = span.stage || (name.includes(' · ') ? name.split(' · ')[1] : '')
+  if (base === 'deepagents.runtime.stage' && stage) {
+    return STAGE_LABEL_KEYS[stage]
+      ? t(`lensRuns.${STAGE_LABEL_KEYS[stage]}`)
+      : humanizeSpanName(stage)
+  }
+  if (base === 'deepagents.decision.gate' && span.gate) {
+    return GATE_LABEL_KEYS[span.gate]
+      ? t(`lensRuns.${GATE_LABEL_KEYS[span.gate]}`)
+      : humanizeSpanName(span.gate)
+  }
+  if (base === 'deepagents.agent.invoke') {
+    return t('lensRuns.trajectoryStepAgentLoop')
+  }
+  const key = SPAN_LABEL_KEYS[base] || SPAN_LABEL_KEYS[name]
+  if (key) return t(`lensRuns.${key}`)
+  return humanizeSpanName(name)
 }
 
 const ACTIVE_RUN_STATUSES = ACTIVE_TRAJECTORY_RUN_STATUSES
@@ -689,8 +1121,69 @@ const filteredEvents = computed(() => {
   return baseEvents.value.filter((event) => !isOutsideTimelineRange(event))
 })
 
+const trajectoryOptions = computed(() => ({
+  aggregateCalls: true,
+  complete:
+    !hasMore.value &&
+    !query.value.trim() &&
+    category.value === 'all' &&
+    !timelineRange.value,
+  runStatuses: {
+    [props.runUuid]: props.runStatus,
+    ...Object.fromEntries(
+      (summary.value.run_progress || []).flatMap((run) =>
+        (run.attempts || [run]).map((attempt) => [
+          attempt.run_uuid,
+          attempt.status
+        ])
+      )
+    )
+  }
+}))
+const fullSpans = computed(() =>
+  buildTrajectorySpans(events.value, trajectoryOptions.value)
+)
+const diagnosticSpans = computed(() =>
+  fullSpans.value.filter(
+    (span) =>
+      span.diagnostics.length ||
+      [
+        'failed',
+        'interrupted',
+        'incomplete',
+        'fallback',
+        'timeout',
+        'partial',
+        'blocked',
+        'degraded'
+      ].includes(span.status)
+  )
+)
 const rows = computed(() =>
-  buildTrajectoryRows(filteredEvents.value, collapsed.value)
+  buildTrajectoryRows(
+    filteredEvents.value,
+    collapsed.value,
+    trajectoryOptions.value
+  )
+)
+
+function stateLabel(state) {
+  return state ? t(`lensRuns.trajectoryState_${state}`) : '—'
+}
+
+function diagnosticText(span) {
+  const messages = span.diagnostics.map((code) =>
+    t(`lensRuns.trajectoryDiagnostic_${code}`)
+  )
+  if (span.status !== 'completed' && span.status !== 'point')
+    messages.unshift(stateLabel(span.status))
+  return [...new Set(messages)].join(' · ')
+}
+
+const selectedStepNumber = computed(() =>
+  trajectoryStepNumber(
+    selectedEvent.value?.span?.startEvent || selectedEvent.value
+  )
 )
 
 const groupedRows = computed(() => groupTrajectoryRows(rows.value))
@@ -757,7 +1250,9 @@ const groupBoundaries = computed(() => {
 })
 
 const collapsibleCallIds = computed(() =>
-  rows.value.filter((row) => row.hasChildren).map((row) => row.event.call_id)
+  rows.value
+    .filter((row) => row.hasChildren)
+    .map((row) => row.span?.id || row.event.call_id)
 )
 
 const allCallsCollapsed = computed(
@@ -768,28 +1263,31 @@ const allCallsCollapsed = computed(
 
 const inspectorTabs = computed(() => [
   { id: 'summary', label: t('lensRuns.trajectoryInspectorSummary') },
-  { id: 'payload', label: t('lensRuns.trajectoryInspectorPayload') },
-  { id: 'raw', label: t('lensRuns.trajectoryInspectorRaw') }
+  { id: 'data', label: t('lensRuns.trajectoryInspectorData') },
+  { id: 'timing', label: t('lensRuns.trajectoryInspectorTiming') }
 ])
 
+const runStartMs = computed(() => {
+  const root = summary.value.run_progress?.find((run) => run.role === 'parent')
+  return root?.started_at ? new Date(root.started_at).getTime() : null
+})
+
 function kindOf(event) {
+  const span = event?.span
+  const base = span ? String(span.name).split(' · ')[0] : ''
+  if (SPAN_KIND_BY_BASE[base]) return SPAN_KIND_BY_BASE[base]
+  if (span?.skill) return 'skill'
+  if (span?.plugin) return 'plugin'
   const categoryValue = eventCategory(event)
   return KIND_BY_CATEGORY[categoryValue] || 'system'
 }
 
 function kindLabel(event) {
-  return KIND_LABEL[kindOf(event)] || 'EVENT'
+  return KIND_LABEL[kindOf(event)] || 'SYSTEM'
 }
 
 function tagClass(event) {
   return `tag-${kindOf(event)}`
-}
-
-function isErrorEvent(event) {
-  const status = String(event.event_type || '')
-    .split('.')
-    .pop()
-  return ['failed', 'cancelled', 'interrupted'].includes(status)
 }
 
 function isSelected(event) {
@@ -820,6 +1318,7 @@ const eventTimeRange = computed(() => {
 })
 
 function eventTime(event) {
+  if (!event) return NaN
   if (event._ms !== undefined && Number.isFinite(event._ms)) return event._ms
   return new Date(event.timestamp).getTime()
 }
@@ -837,77 +1336,529 @@ function isOutsideTimelineRange(event) {
   )
 }
 
-function toolCallText(event) {
-  const kind = kindOf(event)
-  if (kind !== 'tool' && kind !== 'subtool') return null
-  const text = eventTitle(event)
-  const separator = text.indexOf(' · ')
-  if (separator === -1) return { name: text, args: '' }
-  return { name: text.slice(0, separator), args: text.slice(separator + 3) }
+const FAILED_SPAN_STATUSES = new Set(['failed'])
+const WARNING_SPAN_STATUSES = new Set([
+  'cancelled',
+  'interrupted',
+  'incomplete',
+  'timeout',
+  'fallback',
+  'degraded',
+  'partial',
+  'blocked'
+])
+
+function isErrorRow(row) {
+  return FAILED_SPAN_STATUSES.has(row?.span?.status)
 }
 
-function eventTitle(event) {
-  return event.payload?.name || event.payload?.model_ref || event.event_type
+function rowTitle(row) {
+  return spanLabel(row?.span) || eventTitle(row?.event)
 }
 
-function eventMetric(event) {
-  const payload = event.payload || {}
+function joinSummaryParts(parts) {
+  return parts
+    .filter((part) => part !== null && part !== undefined && part !== '')
+    .join(' · ')
+}
+
+function resultContent(payload) {
+  const content = payload?.result?.content
+  if (typeof content !== 'string') return null
+  try {
+    return JSON.parse(content)
+  } catch {
+    return null
+  }
+}
+
+function evidenceSummary(payload) {
   const parts = []
-  if (payload.duration_ms != null) parts.push(durationText(payload.duration_ms))
-  if (payload.ttft_ms != null)
-    parts.push(`TTFT ${durationText(payload.ttft_ms)}`)
-  if (payload.usage?.total_tokens != null) {
-    parts.push(`${payload.usage.total_tokens} tokens`)
+  if (payload.action) parts.push(String(payload.action))
+  for (const [key, value] of Object.entries(payload.verdicts || {})) {
+    const mark = value === true ? '✓' : value === false ? '✗' : value
+    parts.push(`${key} ${mark}`)
   }
   return parts.join(' · ')
 }
 
+function spanSummary(span, showTiming = true) {
+  if (!span) return ''
+  const start = span.startEvent?.payload || {}
+  const end = span.endEvent?.payload || {}
+  const payload = { ...start, ...end }
+  const base = String(span.name).split(' · ')[0]
+
+  if (base === 'deepagents.decision.gate') {
+    const parts = []
+    if (payload.value != null && payload.threshold != null) {
+      parts.push(`${payload.value} / ${payload.threshold}`)
+    } else if (payload.value != null) {
+      parts.push(String(payload.value))
+    }
+    if (payload.fallback_reason) {
+      parts.push(
+        t('lensRuns.trajectorySummaryFallback', {
+          reason: payload.fallback_reason
+        })
+      )
+    } else if (payload.verdict) {
+      parts.push(String(payload.verdict))
+    }
+    return parts.join(' · ')
+  }
+  if (base === 'tool.plugin') {
+    const failed = payload.ok === false
+    return joinSummaryParts([
+      payload.tool,
+      failed ? '✗' : '✓',
+      failed ? payload.error : ''
+    ])
+  }
+  if (
+    base === 'deepagents.evidence.review' ||
+    base === 'deepagents.evidence.verified'
+  ) {
+    return evidenceSummary(payload)
+  }
+  if (base === 'deepagents.evidence.convergence') {
+    return joinSummaryParts([
+      payload.action,
+      payload.turn != null ? `turn ${payload.turn}` : ''
+    ])
+  }
+  if (base === 'deepagents.offload.configured') {
+    return payload.tool_tokens != null ? `${payload.tool_tokens} tokens` : ''
+  }
+  if (base === 'resources.materialized') {
+    return joinSummaryParts([
+      payload.skill_count != null
+        ? t('lensRuns.trajectorySummarySkills', { n: payload.skill_count })
+        : '',
+      payload.mcp_count != null
+        ? t('lensRuns.trajectorySummaryMcp', { n: payload.mcp_count })
+        : ''
+    ])
+  }
+  if (base === 'workflow.phase.changed') {
+    return String(payload.payload?.phase || '')
+  }
+  if (base === 'workflow.route.selected') {
+    const inner = payload.payload || {}
+    return joinSummaryParts([inner.route, inner.intent, inner.complexity])
+  }
+  if (base === 'workflow.plan.updated') {
+    const steps = payload.payload?.steps
+    if (Array.isArray(steps)) {
+      const revision = payload.payload?.revision
+      return joinSummaryParts([
+        revision != null ? `v${revision}` : '',
+        t('lensRuns.trajectorySummarySteps', { n: steps.length })
+      ])
+    }
+    return ''
+  }
+  if (base === 'deepagents.agent.create') {
+    return joinSummaryParts([
+      span.toolCount != null
+        ? t('lensRuns.trajectorySummaryTools', { n: span.toolCount })
+        : '',
+      span.skillCount
+        ? t('lensRuns.trajectorySummarySkills', { n: span.skillCount })
+        : '',
+      span.pluginToolCount
+        ? t('lensRuns.trajectorySummaryPluginTools', {
+            n: span.pluginToolCount
+          })
+        : ''
+    ])
+  }
+  if (base === 'deepagents.agent.invoke') {
+    return joinSummaryParts([
+      payload.max_agent_turns != null
+        ? t('lensRuns.trajectorySummaryTurns', { n: payload.max_agent_turns })
+        : ''
+    ])
+  }
+  if (base === 'deepagents.plan.ready') {
+    return showTiming && payload.duration_ms != null
+      ? durationText(payload.duration_ms)
+      : ''
+  }
+  if (span.category === 'model') {
+    return joinSummaryParts([
+      span.totalTokens != null
+        ? `${span.totalTokens.toLocaleString()} tokens`
+        : '',
+      showTiming && span.ttftMs != null
+        ? `TTFT ${durationText(span.ttftMs)}`
+        : ''
+    ])
+  }
+  if (span.category === 'tool' || span.category === 'subtool') {
+    const args = start.arguments || {}
+    const result = resultContent(end) || resultContent(start)
+    if (span.name === 'search_workspace') {
+      const count =
+        result?.count ?? result?.matches?.length ?? result?.files?.length
+      return joinSummaryParts([
+        args.query,
+        count != null ? t('lensRuns.trajectorySummaryHits', { n: count }) : ''
+      ])
+    }
+    if (span.name === 'find_files') {
+      const count = result?.files?.length ?? result?.count
+      return joinSummaryParts([
+        args.pattern,
+        count != null ? t('lensRuns.trajectorySummaryFiles', { n: count }) : ''
+      ])
+    }
+    if (span.name === 'read_workspace_file' || span.name === 'read_file') {
+      return result?.returned_lines != null
+        ? t('lensRuns.trajectorySummaryLines', {
+            n: result.returned_lines
+          })
+        : ''
+    }
+  }
+  return ''
+}
+
+function rowSummary(row) {
+  if (row?.span?.category === 'model') {
+    if (!row.showTokens) return ''
+    return spanSummary({ ...row.span, ...row.displayTokens }, row.showDuration)
+  }
+  return spanSummary(row?.span, row?.showDuration)
+}
+
+function rowStatusClass(row) {
+  const status = row?.span?.status
+  if (FAILED_SPAN_STATUSES.has(status)) return 'span-status span-status-error'
+  if (row?.span?.hasWarnings || WARNING_SPAN_STATUSES.has(status))
+    return 'span-status span-status-warning'
+  if (status === 'completed') return 'span-status span-status-success'
+  if (status === 'running') return 'span-status span-status-running'
+  return 'span-status span-status-neutral'
+}
+
+function rowStatusLabel(row) {
+  const status = row?.span?.status
+  if (status === 'completed' && row?.span?.hasWarnings)
+    return stateLabel('degraded')
+  return status === 'point' ? '—' : stateLabel(status)
+}
+
+function waterfallStyle(row) {
+  return {
+    left: `${row?.waterfall?.left ?? 0}%`,
+    width: `${row?.waterfall?.width ?? 0}%`
+  }
+}
+
+function eventTitle(event) {
+  return event?.payload?.name || event?.payload?.model_ref || event?.event_type
+}
+
+function eventDuration(event) {
+  const span = event?.span
+  if (!span) return event?.payload?.duration_ms
+  if (span.recordType !== 'call' || !span.startedAt || !span.finishedAt)
+    return null
+  const start = new Date(span.startedAt).getTime()
+  const end = new Date(span.finishedAt).getTime()
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? end - start
+    : null
+}
+
+function spanPayloads(event) {
+  return [
+    event?.payload,
+    event?.span?.startEvent?.payload,
+    event?.span?.endEvent?.payload
+  ].filter(Boolean)
+}
+
+function payloadValue(event, keys) {
+  for (const payload of spanPayloads(event)) {
+    for (const key of keys) {
+      if (payload[key] !== undefined && payload[key] !== null) {
+        return payload[key]
+      }
+    }
+  }
+  return undefined
+}
+
+function hasStructuredData(event) {
+  return Boolean(
+    inspectorInput(event) !== undefined ||
+      inspectorOutput(event) !== undefined ||
+      event?.span?.end ||
+      event?.span?.events?.length > 1
+  )
+}
+
+function dataTabLabel(event) {
+  if (
+    inspectorInput(event) !== undefined ||
+    inspectorOutput(event) !== undefined
+  ) {
+    return t('lensRuns.trajectoryInspectorInputOutput')
+  }
+  if (event?.span?.events?.length > 1) {
+    return t('lensRuns.trajectoryInspectorEvents')
+  }
+  return t('lensRuns.trajectoryInspectorData')
+}
+
+function modelRequestData(event) {
+  if (event?.span?.category !== 'model') return undefined
+  const payload = event?.span?.startEvent?.payload || event?.payload || {}
+  const fields = {}
+  for (const key of [
+    'model_ref',
+    'messages',
+    'tools',
+    'max_tokens',
+    'temperature',
+    'tool_choice',
+    'reasoning_effort'
+  ]) {
+    if (payload[key] !== undefined && payload[key] !== null) {
+      fields[key] = payload[key]
+    }
+  }
+  return Object.keys(fields).length ? fields : undefined
+}
+
 function inspectorInput(event) {
-  const payload = event?.payload || {}
-  return payload.arguments ?? payload.input ?? payload.params ?? payload.request
+  return (
+    modelRequestData(event) ??
+    payloadValue(event, ['arguments', 'input', 'params', 'request'])
+  )
 }
 
 function inspectorOutput(event) {
-  const payload = event?.payload || {}
-  return payload.result ?? payload.output ?? payload.response
+  return payloadValue(event, ['result', 'output', 'response'])
+}
+
+function relativizeValue(value, depth = 0) {
+  if (depth > 6) return value
+  if (typeof value === 'string') {
+    if (!value.includes('/')) return value
+    return workspaceRelativePath(value, {
+      datasourceNames: datasourceNames.value,
+      workspaceRoot: props.workspaceRoot
+    })
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => relativizeValue(item, depth + 1))
+  }
+  if (value && typeof value === 'object') {
+    const output = {}
+    for (const [key, item] of Object.entries(value)) {
+      output[key] = relativizeValue(item, depth + 1)
+    }
+    return output
+  }
+  return value
 }
 
 function inspectorValue(value) {
-  if (typeof value === 'string') return value.slice(0, 2400)
+  const normalized = relativizeValue(value)
+  if (typeof normalized === 'string') return normalized.slice(0, 2400)
   try {
-    return JSON.stringify(value, null, 2).slice(0, 2400)
+    return JSON.stringify(normalized, null, 2).slice(0, 2400)
   } catch {
-    return String(value)
+    return String(normalized)
   }
 }
 
-function statusClass(event) {
-  const base = 'status-badge'
-  const status = String(event.event_type || '')
-    .split('.')
-    .pop()
-  if (['failed', 'cancelled', 'interrupted'].includes(status)) {
-    return `${base} status-badge-error`
-  }
-  if (['completed', 'done'].includes(status)) {
-    return `${base} status-badge-success`
-  }
-  return `${base} status-badge-neutral`
-}
-
-function statusLabel(event) {
-  const status = String(event.event_type || '')
-    .split('.')
-    .pop()
-  if (['failed', 'cancelled', 'interrupted'].includes(status)) return 'Failed'
+function eventTypeLabel(event) {
+  const type = String(event?.event_type || '')
+  const status = type.split('.').pop()
+  if (['started', 'start'].includes(status)) return 'Started'
   if (['completed', 'done'].includes(status)) return 'Completed'
-  return status || 'Pending'
+  if (['failed', 'cancelled', 'interrupted'].includes(status)) {
+    return status[0].toUpperCase() + status.slice(1)
+  }
+  return type.split('.').slice(-1)[0] || 'Event'
+}
+
+function eventLifecycleLabel(event) {
+  const span = event?.span
+  if (span?.recordType !== 'call')
+    return t('lensRuns.trajectoryDetailInstantEvent')
+  if (span.finishedAt || span.status === 'incomplete')
+    return rowStatusLabel({ span })
+  return t(
+    `lensRuns.${ACTIVE_RUN_STATUSES.has(props.runStatus) ? 'statusRunning' : 'trajectoryDetailEndMissing'}`
+  )
+}
+
+function executionPath(event) {
+  const span = event?.span
+  const ancestors = span?.ancestors || []
+  const path = ancestors.map((ancestor) => ({
+    id: ancestor.id,
+    label: spanLabel(ancestor)
+  }))
+  path.push({
+    id: span?.id || event?.event_id || event?.sequence,
+    label: spanLabel(span) || eventTitle(event)
+  })
+  return path
+}
+
+function absoluteTimeLabel(value) {
+  if (!value) return t('lensRuns.trajectoryDetailNotRecorded')
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  try {
+    return date.toLocaleString(locale.value, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      fractionalSecondDigits: 3,
+      timeZoneName: 'short',
+      hour12: false
+    })
+  } catch {
+    return `${date.toLocaleString([], { hour12: false })}.${String(date.getMilliseconds()).padStart(3, '0')}`
+  }
+}
+
+function eventTimestamp(event, end = false) {
+  if (event?.span?.recordType === 'call') {
+    return end ? event.span.finishedAt : event.span.startedAt
+  }
+  return end ? null : event?.timestamp
+}
+
+function eventTimeLabel(event, end = false) {
+  const timestamp = eventTimestamp(event, end)
+  if (!timestamp && end && ACTIVE_RUN_STATUSES.has(props.runStatus)) {
+    return t('lensRuns.trajectoryDetailAwaitingEnd')
+  }
+  return absoluteTimeLabel(timestamp)
+}
+
+function relativeDurationLabel(value) {
+  if (!Number.isFinite(value)) return '-'
+  return `+${durationText(Math.max(0, value))}`
+}
+
+function eventRelativeTime(event, end = false) {
+  const timestamp = eventTimestamp(event, end)
+  if (!timestamp) return ''
+  const current = new Date(timestamp).getTime()
+  if (!Number.isFinite(current) || !Number.isFinite(runStartMs.value)) return ''
+  return t('lensRuns.trajectoryDetailFromRunStart', {
+    value: relativeDurationLabel(current - runStartMs.value)
+  })
+}
+
+function relativeEventTime(event, span) {
+  const start = eventTime(span?.startEvent || event)
+  const current = eventTime(event)
+  if (!Number.isFinite(start) || !Number.isFinite(current))
+    return timeText(event?.timestamp)
+  return `+${durationText(Math.max(0, current - start))}`
+}
+
+function ttftText(event) {
+  const value = event?.span?.ttftMs ?? event?.payload?.ttft_ms
+  return value == null ? '-' : durationText(value)
+}
+
+function tokenBreakdown(span) {
+  if (!span) return []
+  const items = [
+    {
+      key: 'input',
+      label: t('lensRuns.promptTokens'),
+      value: span.inputTokens
+    },
+    {
+      key: 'output',
+      label: t('lensRuns.completionTokens'),
+      value: span.outputTokens
+    },
+    {
+      key: 'cached',
+      label: t('lensRuns.cachedTokens'),
+      value: span.cachedTokens
+    },
+    {
+      key: 'cache-creation',
+      label: t('lensRuns.cacheCreationTokens'),
+      value: span.cacheCreationTokens
+    },
+    {
+      key: 'reasoning',
+      label: t('lensRuns.reasoningTokens'),
+      value: span.reasoningTokens
+    }
+  ].filter((item) => item.value != null)
+  const total = Math.max(
+    1,
+    span.totalTokens ||
+      items.reduce((sum, item) => sum + Number(item.value || 0), 0)
+  )
+  return items.map((item) => ({
+    ...item,
+    percent: Math.min(100, Math.max(4, (Number(item.value) / total) * 100))
+  }))
 }
 
 function durationText(value) {
   if (value === null || value === undefined) return '-'
   if (value < 1000) return `${Math.round(value)}ms`
   return `${(value / 1000).toFixed(1)}s`
+}
+
+function formatTokenCount(value) {
+  if (value === null || value === undefined) return '-'
+  return Number(value).toLocaleString()
+}
+
+function tokenText(span) {
+  if (!span) return '-'
+  if (span.totalTokens != null) return formatTokenCount(span.totalTokens)
+  const parts = []
+  if (span.inputTokens != null)
+    parts.push(`in ${formatTokenCount(span.inputTokens)}`)
+  if (span.outputTokens != null) {
+    parts.push(`out ${formatTokenCount(span.outputTokens)}`)
+  }
+  return parts.join(' / ') || '-'
+}
+
+function tokenDetailText(span) {
+  if (!span) return ''
+  return joinSummaryParts([
+    span.inputTokens != null
+      ? `${t('lensRuns.promptTokens')}: ${formatTokenCount(span.inputTokens)}`
+      : '',
+    span.outputTokens != null
+      ? `${t('lensRuns.completionTokens')}: ${formatTokenCount(span.outputTokens)}`
+      : '',
+    span.cachedTokens != null
+      ? `${t('lensRuns.cachedTokens')}: ${formatTokenCount(span.cachedTokens)}`
+      : '',
+    span.cacheCreationTokens != null
+      ? `${t('lensRuns.cacheCreationTokens')}: ${formatTokenCount(span.cacheCreationTokens)}`
+      : '',
+    span.reasoningTokens != null
+      ? `${t('lensRuns.reasoningTokens')}: ${formatTokenCount(span.reasoningTokens)}`
+      : '',
+    span.ttftMs != null ? `TTFT: ${durationText(span.ttftMs)}` : ''
+  ])
 }
 
 function timeText(value) {
@@ -920,6 +1871,44 @@ function timeText(value) {
 
 function selectEvent(event) {
   selectedEvent.value = event
+}
+
+async function selectAncestor(id) {
+  const span = fullSpans.value.find((item) => item.id === id)
+  if (!span) return
+  timelineRange.value = null
+  const next = new Set(collapsed.value)
+  for (const ancestor of span.ancestors) next.delete(ancestor.id)
+  collapsed.value = next
+  selectEvent({ ...span.startEvent, span })
+  await nextTick()
+  scrollSelectedIntoView()
+}
+
+async function copyTechnicalDetails() {
+  const event = selectedEvent.value
+  if (!event) return
+  const span = event.span
+  try {
+    await navigator.clipboard.writeText(
+      JSON.stringify(
+        {
+          event_type: event.event_type,
+          sequence: event.sequence,
+          call_id: span?.callId || event.call_id || null,
+          parent_call_id: span?.parentCallId || event.parent_call_id || null,
+          timestamp: event.timestamp,
+          started_at: span?.startedAt || null,
+          finished_at: span?.finishedAt || null
+        },
+        null,
+        2
+      )
+    )
+    showSuccess(t('lensRuns.trajectoryDetailCopied'))
+  } catch {
+    showError(t('lensRuns.trajectoryDetailCopyFailed'))
+  }
 }
 
 function rowIndentStyle(row) {
@@ -969,9 +1958,12 @@ async function scrollSelectedIntoView() {
 }
 
 function onTimelineSelect(sequence) {
-  const event = events.value.find(
-    (candidate) => candidate.sequence === sequence
+  const row = rows.value.find(
+    (candidate) => candidate.event.sequence === sequence
   )
+  const event =
+    row?.event ||
+    events.value.find((candidate) => candidate.sequence === sequence)
   if (event) {
     selectEvent(event)
     scrollSelectedIntoView()
@@ -995,10 +1987,10 @@ async function scrollToLatestTrajectory() {
   pendingNewEventCount.value = 0
 }
 
-function toggleCall(callId) {
+function toggleSpan(spanId) {
   const next = new Set(collapsed.value)
-  if (next.has(callId)) next.delete(callId)
-  else next.add(callId)
+  if (next.has(spanId)) next.delete(spanId)
+  else next.add(spanId)
   collapsed.value = next
 }
 
@@ -1018,10 +2010,16 @@ function setCategory(value) {
 }
 
 function normalizeEvents(items) {
-  return (items || []).map((event) => ({
-    ...event,
-    _ms: new Date(event.timestamp).getTime()
-  }))
+  return (items || []).map((event) => {
+    const payload = event.payload || {}
+    return {
+      ...event,
+      call_id:
+        event.call_id || payload.call_id || payload.invocation_id || null,
+      parent_call_id: event.parent_call_id || payload.parent_call_id || null,
+      _ms: new Date(event.timestamp).getTime()
+    }
+  })
 }
 
 async function fetchTrajectory(
@@ -1061,9 +2059,12 @@ async function fetchTrajectory(
       inspectorTab.value = 'summary'
     } else if (selectedKey) {
       selectedEvent.value =
+        rows.value.find((row) => trajectoryEventKey(row.event) === selectedKey)
+          ?.event ||
         events.value.find(
           (event) => trajectoryEventKey(event) === selectedKey
-        ) || null
+        ) ||
+        null
     }
     return true
   } catch (error) {
@@ -1157,8 +2158,13 @@ function handleTrajectoryStreamEvent(message) {
     void refreshAndFollow(true, true)
     return
   }
+  const selectedSpanId = selectedEvent.value?.span?.id
   events.value = next.events
   summary.value = next.summary
+  if (selectedSpanId) {
+    const span = fullSpans.value.find((item) => item.id === selectedSpanId)
+    if (span) selectedEvent.value = { ...span.startEvent, span }
+  }
   streamRevision.value = next.revision
   streamCursor.value = next.cursor
   streamSequence.value = next.sequence
@@ -1296,6 +2302,28 @@ onBeforeUnmount(() => {
   cancelTerminalSync()
   stopTrajectoryStream()
 })
+
+const datasourceNames = ref(new Map())
+
+async function loadDatasourceNames() {
+  try {
+    const data = await listDataSources({ page_size: 500 })
+    const list = Array.isArray(data) ? data : data?.results || []
+    const map = new Map()
+    for (const item of list) {
+      if (item?.uuid) {
+        map.set(String(item.uuid).toLowerCase(), item.name || '')
+      }
+    }
+    datasourceNames.value = map
+  } catch {
+    // Datasource names are a display nicety; ignore lookup failures.
+  }
+}
+
+onMounted(() => {
+  void loadDatasourceNames()
+})
 </script>
 
 <style scoped>
@@ -1330,6 +2358,14 @@ onBeforeUnmount(() => {
   --t-cancelled: #ec1313;
   --t-cancelled-bg: #fef0f0;
   --t-error: #ec1313;
+  --t-stage: #0ea5e9;
+  --t-stage-bg: #e0f2fe;
+  --t-gate: #8b5cf6;
+  --t-gate-bg: #ede9fe;
+  --t-evidence: #0d9488;
+  --t-evidence-bg: #ccfbf1;
+  --t-agent: #6366f1;
+  --t-agent-bg: #e0e7ff;
 
   display: flex;
   flex-direction: column;
@@ -1410,6 +2446,25 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.plugin-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--t-tool);
+  background: var(--t-tool-bg);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.plugin-chip-skill {
+  color: var(--t-model);
+  background: var(--t-model-bg);
+}
+
 :root[data-theme='dark'] .run-trajectory {
   --t-accent: #679efe;
   --t-bg-1: #232324;
@@ -1441,6 +2496,14 @@ onBeforeUnmount(() => {
   --t-cancelled: #f25a5a;
   --t-cancelled-bg: #3b2626;
   --t-error: #f25a5a;
+  --t-stage: #38bdf8;
+  --t-stage-bg: #12303f;
+  --t-gate: #a78bfa;
+  --t-gate-bg: #2c2440;
+  --t-evidence: #2dd4bf;
+  --t-evidence-bg: #14332f;
+  --t-agent: #818cf8;
+  --t-agent-bg: #242a4a;
 }
 
 /* Stats bar */
@@ -1885,10 +2948,21 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.event-header {
-  width: 122px;
-  padding-right: 4px !important;
-  text-align: right !important;
+.span-header {
+  padding-left: 34px !important;
+}
+
+.status-header {
+  width: 76px;
+}
+
+.duration-header {
+  width: 70px;
+}
+
+.waterfall-header {
+  width: 22%;
+  min-width: 120px;
 }
 
 .trajectory-table td {
@@ -1899,6 +2973,129 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--t-border-l1);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.status-header,
+.status-cell {
+  width: 76px;
+}
+
+.duration-header,
+.duration-cell {
+  width: 70px;
+}
+
+.tokens-header,
+.tokens-cell {
+  width: 88px;
+}
+
+.duration-cell {
+  color: var(--t-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.tokens-cell {
+  color: var(--t-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.span-status {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.trajectory-diagnostics {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--t-border);
+  border-radius: 8px;
+}
+.trajectory-diagnostics summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.trajectory-diagnostics button {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+}
+.trajectory-diagnostics button span,
+.diagnostic-message {
+  color: #b45309;
+}
+.span-status-warning {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+:global(.dark) .span-status-warning,
+:global(.dark) .diagnostic-message {
+  color: #fbbf24;
+}
+.span-status-success {
+  color: var(--t-context);
+  background: var(--t-context-bg);
+}
+
+.span-status-error {
+  color: var(--t-cancelled);
+  background: var(--t-cancelled-bg);
+}
+
+.span-status-running {
+  color: var(--t-accent);
+  background: var(--t-user-bg);
+}
+
+.span-status-neutral {
+  color: var(--t-text-3);
+  background: var(--t-system-bg);
+}
+
+.waterfall-track {
+  position: relative;
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--t-text-4) 16%, transparent);
+}
+
+.waterfall-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  border-radius: 4px;
+  background: var(--t-accent);
+}
+
+.waterfall-bar.tag-model {
+  background: var(--t-model);
+}
+
+.waterfall-bar.tag-tool,
+.waterfall-bar.tag-subtool {
+  background: var(--t-tool);
+}
+
+.waterfall-bar.tag-user,
+.waterfall-bar.tag-context {
+  background: var(--t-context);
+}
+
+.waterfall-bar[data-status='failed'],
+.waterfall-bar[data-status='cancelled'],
+.waterfall-bar[data-status='interrupted'] {
+  background: var(--t-error);
 }
 
 .trajectory-table tbody tr {
@@ -1942,6 +3139,9 @@ onBeforeUnmount(() => {
 
 .event-cell {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding-right: 4px !important;
   padding-left: calc(34px + var(--trajectory-indent, 0px)) !important;
 }
@@ -2059,11 +3259,35 @@ onBeforeUnmount(() => {
   background: var(--t-subtool-bg);
 }
 .tag-system,
+.tag-run,
 .tag-compacted,
-.tag-checkpoint,
-.tag-step {
+.tag-checkpoint {
   color: var(--t-system);
   background: var(--t-system-bg);
+}
+.tag-plugin {
+  color: var(--t-tool);
+  background: var(--t-tool-bg);
+}
+.tag-skill {
+  color: var(--t-model);
+  background: var(--t-model-bg);
+}
+.tag-stage {
+  color: var(--t-stage);
+  background: var(--t-stage-bg);
+}
+.tag-gate {
+  color: var(--t-gate);
+  background: var(--t-gate-bg);
+}
+.tag-evidence {
+  color: var(--t-evidence);
+  background: var(--t-evidence-bg);
+}
+.tag-agent {
+  color: var(--t-agent);
+  background: var(--t-agent-bg);
 }
 .tag-retry {
   color: var(--t-retry);
@@ -2074,15 +3298,7 @@ onBeforeUnmount(() => {
   background: var(--t-cancelled-bg);
 }
 
-/* Content cell */
-.content-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-right: 8px !important;
-  padding-left: calc(8px + var(--trajectory-indent, 0px)) !important;
-}
-
+/* Span row */
 .row-expand {
   display: inline-flex;
   flex: none;
@@ -2099,6 +3315,13 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+.row-expand-spacer {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: -4px;
+}
+
 .row-expand:hover {
   color: var(--t-text-1);
   background: var(--t-bg-hover);
@@ -2111,13 +3334,14 @@ onBeforeUnmount(() => {
 .content-text {
   display: flex;
   flex: 1 1 auto;
-  align-items: center;
+  align-items: baseline;
   min-width: 0;
   gap: 7px;
 }
 
 .content-title {
-  min-width: 0;
+  flex: none;
+  max-width: 60%;
   overflow: hidden;
   color: var(--t-text-1);
   font-size: 12px;
@@ -2126,52 +3350,25 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.content-title-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 400;
-}
-
 .content-title-error {
   color: var(--t-error);
 }
 
-.content-args {
+.content-summary {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--t-text-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  color: var(--t-text-3);
+  font-size: 11px;
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.content-trailing {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 12px;
-}
-
-.content-metrics {
-  color: var(--t-text-3);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.content-metrics-error {
-  color: var(--t-error);
-}
-
-.content-time {
+.content-count {
   flex: none;
   color: var(--t-text-4);
-  font:
-    11px/16px ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-  font-variant-numeric: tabular-nums;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -2417,6 +3614,100 @@ onBeforeUnmount(() => {
     monospace;
 }
 
+.inspector-event-card-summary {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--t-text-2);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.inspector-hero-card {
+  border-color: color-mix(in srgb, var(--t-accent) 28%, var(--t-border-l1));
+  background: color-mix(in srgb, var(--t-accent) 4%, var(--t-bg-2));
+}
+
+.inspector-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 12px 0;
+}
+
+.inspector-kpi {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 6px;
+  background: var(--t-bg-2);
+}
+
+.inspector-kpi span,
+.inspector-timing-card span {
+  display: block;
+  overflow: hidden;
+  color: var(--t-text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-kpi strong,
+.inspector-timing-card strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--t-text-1);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-kpi .span-status {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 3px;
+}
+
+.inspector-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--t-border-l1);
+}
+
+.inspector-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  padding: 3px 14px 8px;
+}
+
+.inspector-detail-grid > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--t-border-l1);
+}
+
+.inspector-detail-grid > div:last-child {
+  border-bottom: 0;
+}
+
+.inspector-detail-grid dt {
+  color: var(--t-text-3);
+  font-size: 11px;
+}
+
+.inspector-detail-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--t-text-1);
+  font-size: 11px;
+}
+
 .inspector-event-chips {
   display: flex;
   align-items: center;
@@ -2508,15 +3799,117 @@ onBeforeUnmount(() => {
   white-space: normal;
 }
 
-.hierarchy-value {
+.execution-context-card {
+  margin: 8px 12px 6px;
+  padding: 10px 11px;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 7px;
+  background: var(--t-bg-2);
+}
+
+.execution-context-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.execution-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 7px;
+  color: var(--t-text-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.execution-path-item {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-path-current {
+  color: var(--t-text-1);
+  font-weight: 650;
+}
+
+.execution-path-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--t-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.execution-path-link:hover {
+  text-decoration: underline;
+}
+
+.execution-path-link:focus-visible,
+.technical-copy:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+
+.execution-path-separator {
+  color: var(--t-text-4);
+}
+
+.overview dd.execution-time-value {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  line-height: 17px;
+  white-space: normal;
 }
 
-.hierarchy-value span {
-  overflow-wrap: anywhere;
+.execution-time-value strong {
+  color: var(--t-text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.execution-time-value span {
+  color: var(--t-text-3);
+  font-size: 11px;
+}
+
+.technical-details {
+  margin: 4px 12px 8px;
+  border-top: 1px solid var(--t-border-l1);
+}
+
+.technical-details summary {
+  padding: 7px 2px 5px;
+  color: var(--t-text-3);
+  cursor: pointer;
+  font-size: 11px;
+  user-select: none;
+}
+
+.technical-details-grid {
+  padding-top: 2px;
+}
+
+.technical-copy {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 4px;
+  background: var(--t-bg-2);
+  color: var(--t-text-2);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.technical-details-grid > div {
+  padding-right: 2px;
+  padding-left: 2px;
 }
 
 .inspector-io-section {
@@ -2525,6 +3918,10 @@ onBeforeUnmount(() => {
 
 .inspector-data-block {
   margin: 5px 12px 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 6px;
+  background: var(--t-bg-2);
 }
 
 .inspector-data-label {
@@ -2554,6 +3951,185 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
+.inspector-data-block > .trajectory-value {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.inspector-data-grid {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
+.inspector-data-card {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--t-border-l1);
+  border-left: 3px solid var(--t-border-l1);
+  border-radius: 6px;
+  background: var(--t-bg-2);
+}
+
+.inspector-data-card-input {
+  border-left-color: var(--t-context);
+}
+
+.inspector-data-card-output {
+  border-left-color: var(--t-model);
+}
+
+.inspector-data-card-neutral {
+  margin: 0 12px 10px;
+  border-left-color: var(--t-text-3);
+}
+
+.inspector-data-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--t-text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.inspector-data-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 27px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--t-text-1);
+  background: var(--t-bg-1);
+  font:
+    600 9px/16px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.inspector-data-card > .trajectory-value {
+  max-height: 300px;
+  overflow: auto;
+}
+
+.inspector-json-card {
+  min-height: 100px;
+  max-height: 360px;
+  margin: 0 12px 10px;
+  overflow: auto;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 6px;
+  background: var(--t-bg-2);
+}
+
+.inspector-json-card .json-tree {
+  background: transparent;
+}
+
+.inspector-timing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px 12px 2px;
+}
+
+.inspector-timing-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 6px;
+  background: var(--t-bg-2);
+}
+
+.inspector-timing-card-primary {
+  border-color: color-mix(in srgb, var(--t-accent) 35%, var(--t-border-l1));
+}
+
+.token-usage-list {
+  padding: 1px 14px 10px;
+}
+
+.token-usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 0;
+}
+
+.token-usage-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--t-text-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-row > strong {
+  color: var(--t-text-1);
+  font:
+    600 11px/16px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.token-usage-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--t-accent);
+}
+
+.token-usage-dot-output {
+  background: var(--t-model);
+}
+.token-usage-dot-cached {
+  background: var(--t-context);
+}
+.token-usage-dot-cache-creation {
+  background: var(--t-stage);
+}
+.token-usage-dot-reasoning {
+  background: var(--t-gate);
+}
+
+.token-usage-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--t-bg-2);
+}
+
+.token-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--t-accent);
+}
+
+.token-usage-fill-output {
+  background: var(--t-model);
+}
+.token-usage-fill-cached {
+  background: var(--t-context);
+}
+.token-usage-fill-cache-creation {
+  background: var(--t-stage);
+}
+.token-usage-fill-reasoning {
+  background: var(--t-gate);
+}
+
 .overview dd .sub {
   color: var(--t-text-3);
 }
@@ -2569,6 +4145,71 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   user-select: none;
+}
+
+.span-event-list {
+  margin: 4px 12px 8px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--t-border-l1);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.span-event-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  gap: 8px;
+  border-bottom: 1px solid var(--t-border-l1);
+  font-size: 11px;
+}
+
+.span-event-row:last-child {
+  border-bottom: 0;
+}
+
+.span-event-seq {
+  color: var(--t-text-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.span-event-type {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  color: var(--t-text-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.span-event-type strong,
+.span-event-type small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.span-event-type strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.span-event-type small {
+  color: var(--t-text-4);
+  font-size: 10px;
+}
+
+.span-event-time {
+  color: var(--t-text-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .trajectory-empty {
@@ -2610,12 +4251,17 @@ onBeforeUnmount(() => {
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.14);
   }
 
-  .event-header {
-    width: 92px;
+  .waterfall-header,
+  .waterfall-cell {
+    display: none;
   }
 
   .event-cell {
-    padding-left: 30px !important;
+    padding-left: calc(30px + var(--trajectory-indent, 0px)) !important;
+  }
+
+  .inspector-timing-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

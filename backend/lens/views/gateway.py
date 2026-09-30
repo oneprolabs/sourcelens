@@ -133,6 +133,7 @@ class LensNodeDatasourceSyncResultView(LensNodeAuthMixin, APIView):
 GATEWAY_STREAM_HEARTBEAT_S = 10
 RUN_BUDGET_LOCK_TIMEOUT_S = 120
 RUN_BUDGET_WAIT_TIMEOUT_S = 30
+MAX_PROVIDER_REQUEST_TOKENS = 393216
 OBSERVATION_ID_PATTERN = re.compile(r"^(?!0{16}$)[0-9a-f]{16}$")
 GENERATION_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 EMPTY_RESPONSE_FINISH_REASON_PATTERN = re.compile(
@@ -249,6 +250,11 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             effective_max_tokens = min(
                 int(effective_max_tokens or remaining_tokens),
                 remaining_tokens,
+            )
+        if effective_max_tokens:
+            effective_max_tokens = min(
+                max(int(effective_max_tokens), 1),
+                MAX_PROVIDER_REQUEST_TOKENS,
             )
         if request.data.get("stream"):
             return self._stream_response(
@@ -561,6 +567,12 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         message = str(exc).upper()
         if "TIMEOUT" in name or "TIMEOUT" in message or "TIMED OUT" in message:
             return "MODEL_TIMEOUT"
+        if (
+            "BADREQUEST" in name
+            or "INVALID REQUEST" in message
+            or "PROVIDER_INVALID_REQUEST" in message
+        ):
+            return "MODEL_INVALID_REQUEST"
         if is_transient_provider_error(exc):
             return MODEL_UNAVAILABLE
         stream_markers = [
