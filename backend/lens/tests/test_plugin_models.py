@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from lens.models import (
@@ -110,7 +112,8 @@ class PluginModelTests(TestCase):
         )
         self.assertIsNone(serializer.validated_data["credential"])
 
-    def test_api_creates_github_datasource_with_connection_identity(self):
+    @patch("lens.views.datasources.validate_connection_datasource_access", return_value={"valid": True})
+    def test_api_creates_github_datasource_with_connection_identity(self, _validate_access):
         response = self.client.post(
             "/api/lens/admin/datasources/",
             {

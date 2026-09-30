@@ -2,12 +2,14 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tarfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 
 import httpx
 import pytest
@@ -984,6 +986,61 @@ def test_delete_datasource_upload_removes_all_archive_versions(tmp_path):
     assert result["deleted"]
     assert not (root / "package").exists()
     assert not (root / "package.v2").exists()
+
+
+def test_anonymous_git_disables_ambient_credentials_and_prompts(monkeypatch):
+    """Anonymous sync cannot inherit a host credential helper or auth header."""
+
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'http.extraHeader=Authorization: test'")
+    environment = _git_auth_environment({"auth_scheme": "none"})
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert "GIT_CONFIG_PARAMETERS" not in environment
+    assert environment["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert environment["GIT_CONFIG_VALUE_0"] == ""
+    assert environment["GIT_CONFIG_KEY_1"] == "http.extraHeader"
+    assert environment["GIT_CONFIG_VALUE_1"] == ""
+
+
+def test_anonymous_git_does_not_send_netrc_credentials(tmp_path, monkeypatch):
+    """An HTTP challenge must not use credentials from the user's netrc."""
+
+    (tmp_path / ".netrc").write_text("machine 127.0.0.1 login unrelated password test-secret\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    authorization = []
+
+    class Handler(BaseHTTPRequestHandler):
+        """Challenge Git without serving repository data."""
+
+        def do_GET(self):
+            """Record whether Git authenticated with the host's credentials."""
+
+            authorization.append(self.headers.get("Authorization"))
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="test"')
+            self.end_headers()
+
+        def log_message(self, *args):
+            """Suppress HTTP server diagnostics for this fixture."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        subprocess.run(
+            ["git", "ls-remote", f"http://127.0.0.1:{server.server_port}/repo.git"],
+            env=_git_auth_environment({"auth_scheme": "none"}),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert authorization
+    assert not any(authorization)
 
 
 def test_git_auth_environment_keeps_token_out_of_repository_url():

@@ -89,6 +89,8 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
     if key == "github_read_file":
         return _read_file(client, arguments, secret)
     if key == "github_search_code":
+        if not secret:
+            raise PluginRuntimeError("GITHUB_AUTHENTICATION_REQUIRED")
         return _search_code(client, arguments, secret)
     repository = _text(arguments, "repository")
     repository_path = quote(repository, safe="/")
@@ -908,10 +910,11 @@ def build_datasource_command(snapshot, material, trigger):
     config = {
         "branch": datasource.get("branch") or "",
         "directory": datasource.get("directory") or "",
-        "auth_scheme": "token",
-        "access_token": material["value"],
+        "auth_scheme": "token" if material["value"] else "none",
         "allow_submodules": False,
     }
+    if material["value"]:
+        config["access_token"] = material["value"]
     config["repositories"] = [
         {
             "repo_url": f"{endpoint}/{repository}.git",
@@ -1121,7 +1124,8 @@ def _resolved(snapshot):
 def _material(material, endpoint):
     if (not isinstance(material, dict) or material.get("plugin_key") != PLUGIN_KEY
             or str(material.get("endpoint") or "").rstrip("/") != endpoint
-            or not material.get("value")):
+            or not isinstance(material.get("value"), str)
+            or (not material["value"] and material.get("authentication") != "anonymous")):
         raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
 
 
@@ -1297,7 +1301,7 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
                 follow_redirects=False,
                 headers={
                     "Accept": accept,
-                    "Authorization": f"Bearer {token}",
+                    **({"Authorization": f"Bearer {token}"} if token else {}),
                     "X-GitHub-Api-Version": API_VERSION,
                     "User-Agent": "SourceLens-LensNode",
                 },

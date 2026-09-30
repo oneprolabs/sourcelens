@@ -4,6 +4,7 @@ from lens.models import Connection
 
 from .http import plugin_http_pool
 from .providers import DatasourceProviderError, get_datasource_provider
+from .registry import installed_plugin, plugin_requires_secret
 
 
 def validate_connection_datasource_access(connection, datasource_config):
@@ -12,13 +13,18 @@ def validate_connection_datasource_access(connection, datasource_config):
     if connection.status != Connection.Status.ACTIVE:
         raise DatasourceProviderError("CONNECTION_DISABLED")
     version = connection.secret_version
-    if version is None or version.status != "active":
-        raise DatasourceProviderError("SECRET_VERSION_DISABLED")
-    if version.material.status != "active":
-        raise DatasourceProviderError("SECRET_MATERIAL_DISABLED")
-    secret = version.get_value()
-    if not secret:
-        raise DatasourceProviderError("SECRET_UNAVAILABLE")
+    if version is None:
+        if plugin_requires_secret(installed_plugin(connection.plugin_key)):
+            raise DatasourceProviderError("SECRET_VERSION_DISABLED")
+        secret = ""
+    else:
+        if version.status != "active":
+            raise DatasourceProviderError("SECRET_VERSION_DISABLED")
+        if version.material.status != "active":
+            raise DatasourceProviderError("SECRET_MATERIAL_DISABLED")
+        secret = version.get_value()
+        if not secret:
+            raise DatasourceProviderError("SECRET_UNAVAILABLE")
 
     provider = get_datasource_provider(connection.plugin_key)
     if not provider.requires_datasource_access_validation:
@@ -38,13 +44,14 @@ def validate_connection_datasource_access(connection, datasource_config):
         connection.uuid,
         origins,
     )
-    return provider.validate_datasource_access(
+    result = provider.validate_datasource_access(
         secret,
         normalized,
         endpoint=connection.endpoint,
         connection_config=connection.config,
         client=client,
     )
+    return {**result, "datasource_config": normalized}
 
 
 def datasource_access_failure_detail(result):

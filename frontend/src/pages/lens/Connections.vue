@@ -166,8 +166,17 @@
                 </div>
               </div>
 
+              <p
+                v-if="row.plugin_key === 'github' && !row.secret_version_uuid"
+                class="mt-3 text-xs text-ink-500"
+              >
+                {{ t('lensAdmin.connections.anonymous') }}
+              </p>
               <div
-                v-if="!row.has_secret"
+                v-if="
+                  !row.has_secret &&
+                  (row.plugin_key !== 'github' || row.secret_version_uuid)
+                "
                 class="pointer-events-none relative z-10 mt-3"
               >
                 <p
@@ -283,7 +292,12 @@
               <dd class="mt-1 font-mono text-sm text-ink-800">
                 {{
                   detailConnection.secret_hint ||
-                  t('lensAdmin.connections.secretMissing')
+                  t(
+                    detailConnection.plugin_key === 'github' &&
+                      !detailConnection.secret_version_uuid
+                      ? 'lensAdmin.connections.anonymous'
+                      : 'lensAdmin.connections.secretMissing'
+                  )
                 }}
               </dd>
             </div>
@@ -340,7 +354,10 @@
           />
         </section>
         <p
-          v-if="!detailConnection.has_secret"
+          v-if="
+            !detailConnection.has_secret &&
+            detailConnection.plugin_key !== 'github'
+          "
           class="rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
         >
           {{ t('lensAdmin.connections.secretMissing') }}
@@ -537,6 +554,15 @@
               <ManifestSchemaForm
                 v-if="manifest?.connection_schema"
                 :model-value="form"
+                :normalize-custom-resource="
+                  form.plugin_key === 'github'
+                    ? normalizeGitHubRepositoryAddress
+                    : undefined
+                "
+                :custom-resource-label="
+                  t('lensAdmin.connections.repositoryAddress')
+                "
+                :add-array-item-label="t('common.add')"
                 :schema="
                   localizedManifest.connection_schema ||
                   manifest.connection_schema
@@ -630,6 +656,7 @@
 </template>
 
 <script setup>
+import { normalizeGitHubRepositoryAddress } from '@/utils/githubRepository'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -756,18 +783,22 @@ const hasStoredSecret = computed(
   () => mode.value === 'edit' && Boolean(form.value.has_secret)
 )
 const allowAllLabel = computed(() =>
-  t(
-    form.value.plugin_key === 'gitlab'
-      ? 'lensAdmin.connections.allowAllProjects'
-      : 'lensAdmin.connections.allowAllRepositories'
-  )
+  form.value.plugin_key === 'github' && !canDiscoverConnectionResources.value
+    ? t('lensAdmin.connections.allowAllPublicRepositories')
+    : t(
+        form.value.plugin_key === 'gitlab'
+          ? 'lensAdmin.connections.allowAllProjects'
+          : 'lensAdmin.connections.allowAllRepositories'
+      )
 )
 const allowAllHint = computed(() =>
-  t(
-    form.value.plugin_key === 'gitlab'
-      ? 'lensAdmin.connections.allowAllProjectsHint'
-      : 'lensAdmin.connections.allowAllRepositoriesHint'
-  )
+  form.value.plugin_key === 'github' && !canDiscoverConnectionResources.value
+    ? t('lensAdmin.connections.allowAllPublicRepositoriesHint')
+    : t(
+        form.value.plugin_key === 'gitlab'
+          ? 'lensAdmin.connections.allowAllProjectsHint'
+          : 'lensAdmin.connections.allowAllRepositoriesHint'
+      )
 )
 const canDiscoverConnectionResources = computed(
   () => hasFieldValue(form.value.secret_value) || hasStoredSecret.value

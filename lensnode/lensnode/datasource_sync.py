@@ -4622,6 +4622,23 @@ def _git_run_options(config):
 def _git_auth_environment(config):
     """Provide Git authentication through process-only configuration."""
 
+    if isinstance(config, dict) and config.get("auth_scheme") == "none":
+        environment = os.environ.copy()
+        environment.pop("GIT_CONFIG_PARAMETERS", None)
+        # Git's libcurl reads netrc independently of Git configuration and helpers.
+        environment["HOME"] = os.devnull
+        environment.update({
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_ASKPASS": "",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "",
+            "GIT_CONFIG_KEY_1": "http.extraHeader",
+            "GIT_CONFIG_VALUE_1": "",
+        })
+        return environment
     if not isinstance(config, dict) or config.get("auth_scheme") != "token":
         return None
     credentials = _load_credentials(config)
