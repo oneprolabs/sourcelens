@@ -24,12 +24,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cocoindex = [
+    "cocoindex==1.0.24",
+]
 dev = [
     "pytest>=7.0.0",
 ]
 
 [project.scripts]
 lensnode = "lensnode.main:main"
+lensnode-text-index = "lensnode.text_index.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
