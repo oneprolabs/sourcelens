@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Added an opt-in CocoIndex text preparation command and local full-text Agent
+  retrieval with source validation and workspace-search fallback. Indexes stay
+  on the LensNode; no embedding model or vector database is required.
+zh-CN: >-
+  新增可选的 CocoIndex 增量文本处理命令与本地全文检索工具，支持来源校验和工作区
+  检索回退。索引保留在 LensNode 本地，无需 Embedding 模型或向量数据库。

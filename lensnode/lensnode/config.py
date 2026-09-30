@@ -52,6 +52,7 @@ class LensNodeConfig:
     max_concurrent_datasource_syncs: int = 1
     runtime_path: str = "/workspace"
     git_max_bytes: int = 1024 * 1024 * 1024
+    text_index_enabled: bool = False
 
 
 def _optional_int(value):
@@ -216,6 +217,7 @@ def load_config():
         mcp_enable_codegraph=_env_bool(
             "LENSNODE_MCP_ENABLE_CODEGRAPH", default=True
         ),
+        text_index_enabled=_env_bool("LENSNODE_TEXT_INDEX_ENABLED"),
         codegraph_command=os.getenv(
             "LENSNODE_CODEGRAPH_COMMAND", "codegraph"
         ),

@@ -1,0 +1,14 @@
+# Optional local text indexing overlay. Keep the base compose project name.
+services:
+  lensnode:
+    build:
+      args:
+        INSTALL_COCOINDEX: "true"
+    environment:
+      LENSNODE_TEXT_INDEX_ENABLED: ${LENSNODE_TEXT_INDEX_ENABLED:-false}
+      LENSNODE_TEXT_INDEX_STATE_PATH: /text-index
+    volumes:
+      - text_index_state:/text-index
+
+volumes:
+  text_index_state:
