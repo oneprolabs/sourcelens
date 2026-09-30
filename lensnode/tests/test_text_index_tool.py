@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,29 @@ from lensnode.agent_tools import build_agent_tools
 from lensnode.consulted_sources import ConsultedSources
 from lensnode.text_index import tool as tool_module
 from lensnode.text_index.config import IndexUnavailable
+
+
+def test_cli_keeps_native_library_logs_out_of_json():
+    """Rust writes directly to stdout's descriptor, bypassing redirect_stdout."""
+
+    script = """
+import os
+import sys
+from lensnode.text_index import __main__ as cli
+
+async def execute(args):
+    os.write(1, b'native library diagnostic\\n')
+    print('Python library diagnostic')
+    return {'status': 'ready'}
+
+cli.execute = execute
+sys.argv = ['text-index', 'query']
+raise SystemExit(cli.main())
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {"status": "ready"}
+    assert "native library diagnostic" in result.stderr
+    assert "Python library diagnostic" in result.stderr
 
 
 def tools_for(root, *, enabled=True, emit=None, recorder=None):

@@ -47,6 +47,26 @@ def test_incomplete_scan_cannot_publish_deletions(corpus):
         collect_documents(root, identity)
 
 
+def test_identical_manifest_records_are_processed_once(corpus):
+    """Existing retained catalogs can contain repeated copies of one entry."""
+
+    root, identity, manifest = corpus
+    expected = collect_documents(root, identity)
+    manifest["items"].append(dict(manifest["items"][0]))
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    assert collect_documents(root, identity) == expected
+
+
+def test_conflicting_source_identities_cannot_share_a_path(corpus):
+    """Deduplication must not hide ambiguous provenance."""
+
+    root, identity, manifest = corpus
+    manifest["items"].append({**manifest["items"][0], "source_id": "another-source"})
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(IndexUnavailable, match="DUPLICATE_PATH"):
+        collect_documents(root, identity)
+
+
 def test_missing_retained_and_confirmed_deleted_removed(corpus):
     root, identity, manifest = corpus
     manifest["items"][0]["status"] = "missing"

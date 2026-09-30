@@ -4,11 +4,27 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 from uuid import UUID
 
 from .config import IndexUnavailable, TextIndexSettings
+
+
+@contextlib.contextmanager
+def library_output_to_stderr():
+    """Redirect Python and native library output away from the JSON channel."""
+
+    sys.stdout.flush()
+    saved_stdout = os.dup(1)
+    try:
+        os.dup2(2, 1)
+        with contextlib.redirect_stdout(sys.stderr):
+            yield
+    finally:
+        os.dup2(saved_stdout, 1)
+        os.close(saved_stdout)
 
 
 async def execute(args):
@@ -51,7 +67,7 @@ def main():
     subparsers.add_parser("query", help="Read a trusted query request from stdin")
     args = parser.parse_args()
     try:
-        with contextlib.redirect_stdout(sys.stderr):
+        with library_output_to_stderr():
             result = asyncio.run(execute(args))
     except IndexUnavailable as exc:
         result = {"error": str(exc)}

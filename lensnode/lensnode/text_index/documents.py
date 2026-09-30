@@ -172,15 +172,17 @@ def collect_documents(root, datasource_uuid):
 
     _, items = read_manifest(root, datasource_uuid)
     documents = []
-    paths = set()
+    paths = {}
     total = 0
     for item in items:
         document = read_document(root, item)
         if document is None:
             continue
         if document.path in paths:
-            raise IndexUnavailable("TEXT_INDEX_DUPLICATE_PATH")
-        paths.add(document.path)
+            if paths[document.path] != document:
+                raise IndexUnavailable("TEXT_INDEX_DUPLICATE_PATH")
+            continue
+        paths[document.path] = document
         total += len(document.text.encode("utf-8"))
         if total > MAX_CORPUS_BYTES:
             raise IndexUnavailable("TEXT_INDEX_SOURCE_LIMIT")
