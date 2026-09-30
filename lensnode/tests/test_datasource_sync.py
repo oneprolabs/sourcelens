@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tarfile
 import zipfile
@@ -984,6 +985,20 @@ def test_delete_datasource_upload_removes_all_archive_versions(tmp_path):
     assert result["deleted"]
     assert not (root / "package").exists()
     assert not (root / "package.v2").exists()
+
+
+def test_anonymous_git_disables_ambient_credentials_and_prompts(monkeypatch):
+    """Anonymous sync cannot inherit a host credential helper or auth header."""
+
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'http.extraHeader=Authorization: test'")
+    environment = _git_auth_environment({"auth_scheme": "none"})
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert "GIT_CONFIG_PARAMETERS" not in environment
+    assert environment["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert environment["GIT_CONFIG_VALUE_0"] == ""
+    assert environment["GIT_CONFIG_KEY_1"] == "http.extraHeader"
+    assert environment["GIT_CONFIG_VALUE_1"] == ""
 
 
 def test_git_auth_environment_keeps_token_out_of_repository_url():

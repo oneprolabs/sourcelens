@@ -118,12 +118,13 @@ def retrieve_plugin_material(client, ai_gateway_url, token, lease_uuid):
         raise PluginRuntimeError("PLUGIN_MATERIAL_REQUEST_FAILED")
     payload = _json_object(response, "PLUGIN_MATERIAL_INVALID_RESPONSE")
     value = payload.get("value")
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or (not value and payload.get("authentication") != "anonymous"):
         raise PluginRuntimeError("PLUGIN_MATERIAL_INVALID_RESPONSE")
     return {
         "plugin_key": str(payload.get("plugin_key") or ""),
         "endpoint": str(payload.get("endpoint") or ""),
         "value": value,
+        "authentication": payload.get("authentication", "token"),
     }
 
 
