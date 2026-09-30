@@ -3,6 +3,7 @@
 import re
 import time
 import uuid
+from contextlib import nullcontext
 
 from langchain.agents.middleware import AgentMiddleware
 
@@ -28,7 +29,12 @@ class TraceObservationMiddleware(AgentMiddleware):
 
         observation_id, trajectory_id = self._start(request)
         try:
-            result = handler(request)
+            with (
+                self.trajectory.tool_call_scope(trajectory_id)
+                if self.trajectory is not None
+                else nullcontext()
+            ):
+                result = handler(request)
         except Exception as exc:
             self._finish(observation_id, trajectory_id, "failed", error=exc)
             raise
@@ -50,7 +56,12 @@ class TraceObservationMiddleware(AgentMiddleware):
 
         observation_id, trajectory_id = self._start(request)
         try:
-            result = await handler(request)
+            with (
+                self.trajectory.tool_call_scope(trajectory_id)
+                if self.trajectory is not None
+                else nullcontext()
+            ):
+                result = await handler(request)
         except Exception as exc:
             self._finish(observation_id, trajectory_id, "failed", error=exc)
             raise

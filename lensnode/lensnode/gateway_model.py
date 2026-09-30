@@ -755,6 +755,7 @@ class LensGatewayChatModel(BaseChatModel):
             name,
             {
                 "model_ref": payload.get("model_ref"),
+                "usage_source": "agent_model",
                 "messages": messages,
                 "tools": tools,
                 "tool_choice": payload.get("tool_choice"),

@@ -335,9 +335,11 @@ class LensNodeExecutor:
             attempt=command.get("trace_attempt") or 1,
         )
         command["_trajectory"] = trajectory
+        run_call_id = f"run:{run_uuid}"
         trajectory.record(
-            "request.started",
+            "run.started",
             {
+                "name": "run",
                 "task": command.get("task"),
                 "question": command.get("question") or "",
                 "history": command.get("history") or [],
@@ -346,7 +348,9 @@ class LensNodeExecutor:
                 "settings": command.get("settings") or {},
                 "resume": bool(command.get("resume")),
             },
+            call_id=run_call_id,
         )
+        trajectory.push_span(run_call_id)
         for history_message in command.get("history") or []:
             trajectory.record(
                 "context.message",
@@ -438,9 +442,6 @@ class LensNodeExecutor:
                 activity["at"] = loop.time()
 
             def emit_progress(message, extra_detail=None):
-                if cancel_event.is_set():
-                    return
-                touch_activity()
                 detail = {
                     "message": message,
                 }
@@ -459,6 +460,9 @@ class LensNodeExecutor:
                         call_id=detail.get("call_id"),
                         parent_call_id=detail.get("parent_call_id"),
                     )
+                if cancel_event.is_set() or trajectory.finished:
+                    return
+                touch_activity()
                 emit(
                     {
                         "type": "run_event",
@@ -470,7 +474,7 @@ class LensNodeExecutor:
                 )
 
             def emit_output(content, reset=False):
-                if cancel_event.is_set():
+                if cancel_event.is_set() or trajectory.finished:
                     return
                 touch_activity()
                 emit(
@@ -667,25 +671,28 @@ class LensNodeExecutor:
                 )
             )
             LOGGER.info(done_message)
+            lifecycle = "failed" if result.get("status") == "failed" else "completed"
+            outcome = result.get("outcome") or ("blocked" if lifecycle == "failed" else "completed")
+            trajectory.interrupt_open_calls("run_finished")
+            health = "failed" if lifecycle == "failed" else trajectory.health
+            if outcome in {"partial", "blocked"}:
+                health = "degraded" if health != "failed" else health
             trajectory.record(
-                "request.completed",
+                f"run.{lifecycle}",
                 {
                     "status": result.get("status") or "done",
-                    "outcome": result.get("outcome") or "completed",
+                    "lifecycle": lifecycle,
+                    "outcome": outcome,
+                    "health": health,
+                    "termination_detail": result.get("termination_detail") or {},
                     "stop_reason": result.get("stop_reason"),
                     "token_usage": result.get("token_usage") or {},
                     "duration_ms": int(
                         (utc_now() - started_at).total_seconds() * 1000
                     ),
                 },
-            )
-            trajectory.record(
-                "run.completed",
-                {
-                    "status": result.get("status") or "done",
-                    "outcome": result.get("outcome") or "completed",
-                    "stop_reason": result.get("stop_reason"),
-                },
+                call_id=run_call_id,
+                parent_call_id="",
             )
             emit(
                 {
@@ -707,17 +714,19 @@ class LensNodeExecutor:
                 }
             )
         except asyncio.CancelledError:
+            cancel_reason = "cancelled" if command.get("_explicit_cancel") else "worker_shutdown"
+            trajectory.interrupt_open_calls(cancel_reason)
             trajectory.record(
-                "cancelled",
-                {"reason": "control_plane_cancel"},
-            )
-            trajectory.record(
-                "request.completed",
-                {"status": "cancelled", "outcome": "blocked"},
-            )
-            trajectory.record(
-                "run.completed",
-                {"status": "cancelled", "outcome": "blocked"},
+                "run.cancelled",
+                {
+                    "status": "cancelled",
+                    "lifecycle": "cancelled",
+                    "health": "degraded",
+                    "outcome": "blocked",
+                    "reason": cancel_reason,
+                },
+                call_id=run_call_id,
+                parent_call_id="",
             )
             raise
         except Exception as exc:
@@ -733,21 +742,22 @@ class LensNodeExecutor:
                 ],
             )
             LOGGER.error(failed_message)
+            trajectory.interrupt_open_calls(
+                "timeout" if isinstance(exc, (RunDeadlineExceededError, RunStalledError)) else "runtime_failure"
+            )
             trajectory.record(
-                "request.failed",
+                "run.failed",
                 {
+                    "status": "failed",
+                    "lifecycle": "failed",
+                    "health": "failed",
+                    "outcome": "blocked",
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                     "code": error_code,
                 },
-            )
-            trajectory.record(
-                "run.completed",
-                {
-                    "status": "failed",
-                    "outcome": "blocked",
-                    "error": error_code,
-                },
+                call_id=run_call_id,
+                parent_call_id="",
             )
             emit(
                 {

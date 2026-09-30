@@ -4609,6 +4609,16 @@ class LensApiTests(TestCase):
             timestamp=timezone.now(),
             call_id="tool-call-1",
         )
+        for sequence, name in enumerate(["tool.plugin.start", "tool.plugin.done"], start=2):
+            RunTraceEvent.objects.create(
+                run=failed,
+                event_id=uuid.uuid4(),
+                sequence=sequence,
+                event_type="step.event",
+                timestamp=timezone.now(),
+                call_id="plugin-call-1",
+                payload={"name": name},
+            )
         retry = create_execution_run(
             session=session,
             question="Retry checkout investigation",
@@ -4643,13 +4653,13 @@ class LensApiTests(TestCase):
             if item["uuid"] == str(failed.uuid)
         )
         self.assertEqual(failed_row["model_ref"], str(model_ref))
-        self.assertEqual(failed_row["tool_call_count"], 1)
+        self.assertEqual(failed_row["tool_call_count"], 2)
         self.assertEqual(failed_row["retry_count"], 1)
         self.assertEqual(failed_row["token_budget_profile"], "deep")
         self.assertEqual(failed_row["token_budget_max_tokens"], 500000)
         detail_response = self.client.get(f"/api/lens/admin/runs/{failed.uuid}/")
         self.assertEqual(detail_response.status_code, 200)
-        self.assertEqual(detail_response.data["tool_call_count"], 1)
+        self.assertEqual(detail_response.data["tool_call_count"], 2)
         self.assertEqual(detail_response.data["retry_count"], 1)
         self.assertEqual(
             detail_response.data["citations"][0]["path"],

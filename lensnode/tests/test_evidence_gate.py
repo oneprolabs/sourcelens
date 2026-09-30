@@ -223,3 +223,28 @@ def test_verification_reuses_only_identical_answer_and_evidence():
     assert middleware.cached_verdicts("First answer", evidence) is None
     assert middleware.after_model(state, None) is None
     assert len(policy.calls) == 2
+
+
+def test_evidence_review_scope_wraps_verification():
+    entered = []
+
+    class _Scope:
+        def __enter__(self):
+            entered.append("enter")
+            return "evidence-span"
+
+        def __exit__(self, *exc):
+            entered.append("exit")
+            return False
+
+    policy = _Policy(
+        {"answer_supported": "supported", "evidence_sufficient": True}
+    )
+    middleware = EvidenceGateMiddleware(
+        policy,
+        "q",
+        review_scope=lambda: _Scope(),
+    )
+
+    assert middleware.after_model(_answer_state(), None) is None
+    assert entered == ["enter", "exit"]

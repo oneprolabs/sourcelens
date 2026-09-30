@@ -61,6 +61,8 @@ class ResumeState:
     open_call_ids: tuple = ()
     open_span_ids: tuple = ()
     parent_call_map: dict = field(default_factory=dict)
+    call_categories: dict = field(default_factory=dict)
+    call_names: dict = field(default_factory=dict)
     consulted_sources: dict = field(default_factory=dict)
 
 
@@ -462,6 +464,8 @@ def load_resume_state(run_uuid, workspace_path) -> ResumeState:
         open_call_ids=tuple(trace_state["open_call_ids"]),
         open_span_ids=tuple(trace_state["open_span_ids"]),
         parent_call_map=trace_state["parent_call_map"],
+        call_categories=trace_state["call_categories"],
+        call_names=trace_state["call_names"],
         consulted_sources=runtime_state.get("consulted_sources") or {},
     )
 
@@ -477,6 +481,8 @@ def _validated_trace_state(value):
             "open_call_ids": [],
             "open_span_ids": [],
             "parent_call_map": {},
+            "call_categories": {},
+            "call_names": {},
         }
     if not isinstance(value, dict):
         raise CheckpointResumeError(
@@ -491,6 +497,8 @@ def _validated_trace_state(value):
     open_call_ids = value.get("open_call_ids")
     open_span_ids = value.get("open_span_ids")
     parent_call_map = value.get("parent_call_map")
+    call_categories = value.get("call_categories", {})
+    call_names = value.get("call_names", {})
     valid_numbers = (
         isinstance(last_trace_seq, int)
         and not isinstance(last_trace_seq, bool)
@@ -504,10 +512,10 @@ def _validated_trace_state(value):
         and all(isinstance(item, str) for item in open_call_ids)
         and isinstance(open_span_ids, list)
         and all(isinstance(item, str) for item in open_span_ids)
-        and isinstance(parent_call_map, dict)
         and all(
-            isinstance(key, str) and isinstance(item, str)
-            for key, item in parent_call_map.items()
+            isinstance(mapping, dict)
+            and all(isinstance(key, str) and isinstance(item, str) for key, item in mapping.items())
+            for mapping in (parent_call_map, call_categories, call_names)
         )
     )
     if not valid_numbers or not valid_collections:
@@ -521,6 +529,8 @@ def _validated_trace_state(value):
         "open_call_ids": open_call_ids,
         "open_span_ids": open_span_ids,
         "parent_call_map": parent_call_map,
+        "call_categories": call_categories,
+        "call_names": call_names,
     }
 
 

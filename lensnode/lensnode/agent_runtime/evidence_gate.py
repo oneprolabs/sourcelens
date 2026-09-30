@@ -3,6 +3,8 @@
 import json
 import logging
 
+from contextlib import nullcontext
+
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -74,6 +76,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         max_nudges=DEFAULT_MAX_NUDGES,
         max_convergence_nudges=DEFAULT_MAX_CONVERGENCE_NUDGES,
         emit_event=None,
+        review_scope=None,
     ):
         self.policy = policy
         self.question = str(question or "")
@@ -82,6 +85,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.max_nudges = max(int(max_nudges), 0)
         self.max_convergence_nudges = max(int(max_convergence_nudges), 0)
         self.emit_event = emit_event
+        self.review_scope = review_scope
         self.model_calls = 0
         self.answer_nudges = 0
         self.convergence_nudges = 0
@@ -197,30 +201,32 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if not answer.strip():
             return None
         self.saw_final_answer = True
-        verdicts = self._verify(answer, state)
-        if verdicts is None:
-            return None
-        if _verdicts_supported(verdicts):
+        scope = self.review_scope() if self.review_scope else nullcontext()
+        with scope:
+            verdicts = self._verify(answer, state)
+            if verdicts is None:
+                return None
+            if _verdicts_supported(verdicts):
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "accept"},
+                )
+                return None
+            if self.answer_nudges >= self.max_nudges:
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "accept_best_effort"},
+                )
+                return None
+            self.answer_nudges += 1
             self._emit(
                 "deepagents.evidence.verified",
-                {"verdicts": verdicts, "action": "accept"},
+                {"verdicts": verdicts, "action": "recheck"},
             )
-            return None
-        if self.answer_nudges >= self.max_nudges:
-            self._emit(
-                "deepagents.evidence.verified",
-                {"verdicts": verdicts, "action": "accept_best_effort"},
-            )
-            return None
-        self.answer_nudges += 1
-        self._emit(
-            "deepagents.evidence.verified",
-            {"verdicts": verdicts, "action": "recheck"},
-        )
-        return {
-            "messages": [HumanMessage(content=_RECHECK_GUIDANCE)],
-            "jump_to": "model",
-        }
+            return {
+                "messages": [HumanMessage(content=_RECHECK_GUIDANCE)],
+                "jump_to": "model",
+            }
 
 
 def _message_text(message):

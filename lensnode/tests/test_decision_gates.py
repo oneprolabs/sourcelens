@@ -321,7 +321,10 @@ def test_timeout_falls_back(monkeypatch):
     runner = _runner(_command(), events)
 
     assert runner.evaluate("search_needed", question="Deploy failed") is None
-    assert events[1][1]["fallback_reason"] == "timeout"
+    interrupted = next(payload for name, payload in events if name == "tool.plugin.interrupted")
+    assert interrupted["reason"] == "timeout"
+    done = next(payload for name, payload in events if name == "deepagents.decision.gate.done")
+    assert done["fallback_reason"] == "timeout"
 
 
 def test_run_budget_falls_back_without_calling_out(monkeypatch):

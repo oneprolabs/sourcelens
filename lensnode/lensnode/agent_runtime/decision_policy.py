@@ -3,6 +3,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 from langchain.tools import tool
 from pydantic import BaseModel, Field
@@ -425,6 +426,7 @@ class DecisionRanker:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
+                    copy_context().run,
                     self._score,
                     decision,
                     binding,

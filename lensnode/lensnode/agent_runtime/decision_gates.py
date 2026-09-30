@@ -2,8 +2,10 @@
 
 import json
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextvars import copy_context
 from types import SimpleNamespace
 
 from ..decision_contract import validate_decision_result
@@ -187,9 +189,11 @@ def run_decision_tool(
     host HTTP policy, same bounded timeout.
     """
 
+    trace_call_id = f"plugin:{uuid.uuid4().hex}"
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         future = executor.submit(
+            copy_context().run,
             _execute_plugin_tool,
             command,
             config,
@@ -206,9 +210,21 @@ def run_decision_tool(
             http_origins=contract.http_origins,
             http_post_paths=contract.http_post_paths,
             source=source,
+            trace_call_id=trace_call_id,
         )
         return future.result(timeout=timeout), ""
     except FuturesTimeoutError:
+        if emit is not None:
+            emit(
+                "tool.plugin.interrupted",
+                {
+                    "call_id": trace_call_id,
+                    "parent_call_id": call_id if source == GATE_SOURCE else None,
+                    "plugin": plugin_key,
+                    "tool": tool_key,
+                    "reason": "timeout",
+                },
+            )
         return None, "timeout"
     except Exception:
         return None, "error"
