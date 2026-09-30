@@ -16,9 +16,11 @@ GitHub HTTPS URL, with an optional `.git` suffix. Other hosts, embedded credenti
 ports, query strings, and repository subpaths are rejected.
 
 `POST /api/lens/admin/connections/{uuid}/validate-datasource/` normalizes repository
-addresses, enforces the connection scope, and checks repository access and any
-selected ref through the GitHub API. Results include the default branch and
-visibility. Creating or updating a datasource repeats this check on the server.
+addresses, enforces the connection scope, and checks repository access and the
+selected or default ref through a lightweight GitHub commit listing. Results
+include the default branch and visibility. Saving an active datasource repeats
+this check on the server; disabling an existing datasource does not require
+remote access. Advancing the wizard reuses an unchanged successful check.
 Changing the selection invalidates the browser's previous result, including any
 late response from a previous request.
 
@@ -26,7 +28,7 @@ Anonymous sync still uses execution snapshots and node-bound leases. Material
 responses explicitly set `authentication: anonymous` and an empty `value`; an
 empty value without this marker is invalid. GitHub generates a Git command with
 `auth_scheme: none`, without an access token. Git disables credential helpers,
-global credentials, auth headers, and interactive prompts for this mode.
+global credentials, netrc credentials, auth headers, and interactive prompts for this mode.
 Backend, bundled plugins, and LensNode must be updated together for anonymous
 sync. No database migration is required.
 

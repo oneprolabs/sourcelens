@@ -2095,7 +2095,15 @@ function validateFeishuResources() {
   )
 }
 
-async function testDatasourceConnection() {
+async function testDatasourceConnection({ automatic = false } = {}) {
+  if (
+    automatic &&
+    form.value.plugin_key === 'github' &&
+    datasourceConnectionResult.value?.status === 'success' &&
+    datasourceConnectionBaseSignature.value === datasourceConnectionSignature()
+  ) {
+    return
+  }
   if (
     isPluginSourceType(form.value.source_type) &&
     form.value.plugin_key === 'feishu'
@@ -2105,7 +2113,7 @@ async function testDatasourceConnection() {
   }
   const requestId = ++datasourceConnectionRequestId
   testingDatasourceConnection.value = true
-  const previousResources =
+  let previousResources =
     datasourceConnectionResult.value?.details?.resources || {}
   datasourceConnectionResult.value = {
     status: 'checking',
@@ -2120,6 +2128,17 @@ async function testDatasourceConnection() {
       isPluginSourceType(form.value.source_type) &&
       datasourceConfig.value.repositories?.length
     ) {
+      if (!previousResources.repositories) {
+        // Enumeration must not block checking explicitly selected repositories.
+        const discovered = await getConnectionResources(
+          form.value.connection_uuid
+        ).catch(() => null)
+        if (requestId !== datasourceConnectionRequestId) return
+        previousResources = {
+          ...previousResources,
+          ...(discovered?.resources || {})
+        }
+      }
       const result = await validateConnectionDatasource(
         form.value.connection_uuid,
         {

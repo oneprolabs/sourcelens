@@ -2517,7 +2517,7 @@ function testConnectionIfVisible() {
     ) {
       return
     }
-    emit('test-connection')
+    emit('test-connection', { automatic: true })
   }
 }
 

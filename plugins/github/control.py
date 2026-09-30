@@ -2,6 +2,7 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
@@ -451,10 +452,13 @@ class GitHubDatasourceProvider(DatasourceProvider):
         self.validate_connection(endpoint, connection_config)
         token = _secret_value(secret)
         repositories = datasource_config.get("repositories") or [datasource_config.get("repository")]
-        context = request_context or PluginRequestContext(timeout_seconds=GITHUB_TIMEOUT_SECONDS)
-        resources = []
+        context = request_context or PluginRequestContext(
+            timeout_seconds=GITHUB_TIMEOUT_SECONDS, deadline_seconds=30
+        )
         with _GitHubClient(client) as github_client:
-            for value in repositories:
+            def validate_repository(value):
+                """Check one repository within the operation's request budget."""
+
                 repository = _repository_name(value)
                 item = {"url": f"https://github.com/{repository}", "repository": repository, "accessible": False}
                 path = f"/repos/{quote(repository, safe='/')}"
@@ -464,15 +468,16 @@ class GitHubDatasourceProvider(DatasourceProvider):
                         raise DatasourceProviderError("GITHUB_RESPONSE_INVALID")
                     if not token and payload.get("private") is not False:
                         raise DatasourceProviderError("GITHUB_ACCESS_DENIED")
-                    ref = datasource_config.get("branch")
-                    if ref:
-                        context.run(
-                            lambda: _github_json(
-                                github_client,
-                                f"{path}/commits/{quote(ref, safe='')}",
-                                token,
-                            )
+                    ref = datasource_config.get("branch") or payload.get("default_branch") or "HEAD"
+                    # Listing one commit verifies Contents access without downloading file patches.
+                    context.run(
+                        lambda: _github_json(
+                            github_client,
+                            f"{path}/commits",
+                            token,
+                            params={"sha": ref, "per_page": 1},
                         )
+                    )
                     item.update(
                         accessible=True,
                         default_branch=payload.get("default_branch", ""),
@@ -480,7 +485,10 @@ class GitHubDatasourceProvider(DatasourceProvider):
                     )
                 except DatasourceProviderError as exc:
                     item["error"] = str(exc)
-                resources.append(item)
+                return item
+
+            with ThreadPoolExecutor(max_workers=min(context.max_concurrency, len(repositories))) as executor:
+                resources = list(executor.map(validate_repository, repositories))
         return {"valid": all(item["accessible"] for item in resources), "resources": resources}
 
 

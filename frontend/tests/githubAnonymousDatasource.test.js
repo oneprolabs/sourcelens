@@ -14,7 +14,7 @@ const functions = [
     source.indexOf('function validateFeishuResources()')
   ),
   source.slice(
-    source.indexOf('async function testDatasourceConnection()'),
+    source.indexOf('async function testDatasourceConnection('),
     source.indexOf('function githubDatasourceAccessError(')
   ),
   source.slice(
@@ -94,6 +94,9 @@ test('manually entered repositories must pass the access check', async () => {
 test('changing the repository discards a late successful access check', async () => {
   let finish
   const context = setup({
+    datasourceConnectionResult: {
+      value: { details: { resources: { repositories: { items: [] } } } }
+    },
     validateConnectionDatasource: () =>
       new Promise((resolve) => {
         finish = resolve
@@ -107,6 +110,72 @@ test('changing the repository discards a late successful access check', async ()
   assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
 })
 
+test('changing the repository discards a late discovery response', async () => {
+  let finish
+  let validations = 0
+  const context = setup({
+    getConnectionResources: () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    validateConnectionDatasource: async () => {
+      validations++
+    }
+  })
+  const pending = context.testDatasourceConnection()
+  context.datasourceConfig.value.repositories = ['owner/another-repo']
+  context.resetDatasourceConnectionResult()
+  finish({ resources: { repositories: { items: [] } } })
+  await pending
+  assert.equal(validations, 0)
+  assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
+})
+
+test('editing a selected repository also loads other available repositories', async () => {
+  let discoveries = 0
+  const context = setup({
+    getConnectionResources: async () => {
+      discoveries++
+      return {
+        resources: {
+          repositories: { items: [{ value: 'owner/another-repo' }] }
+        }
+      }
+    }
+  })
+  await context.testDatasourceConnection()
+  assert.equal(discoveries, 1)
+  assert.equal(context.datasourceConnectionResult.value.status, 'success')
+  assert.equal(
+    context.datasourceConnectionResult.value.details.resources.repositories
+      .items[0].value,
+    'owner/another-repo'
+  )
+  await context.testDatasourceConnection()
+  assert.equal(discoveries, 1)
+})
+
+test('repository discovery failure does not block manual access validation', async () => {
+  let validations = 0
+  const context = setup({
+    getConnectionResources: async () => {
+      throw new Error('GITHUB_RESPONSE_TOO_LARGE')
+    },
+    validateConnectionDatasource: async () => {
+      validations++
+      return { valid: true, resources: [] }
+    },
+    githubDatasourceAccessError: () => '',
+    feishuDatasourceAccessError: () => '',
+    lensNodeErrorMessage: () => '',
+    extractErrorMessage: (error) => error.message,
+    t: (key) => key
+  })
+  await context.testDatasourceConnection()
+  assert.equal(validations, 1)
+  assert.equal(context.datasourceConnectionResult.value.status, 'success')
+})
+
 test('loading branch options cannot approve a GitHub datasource', async () => {
   const context = setup()
   context.resetDatasourceConnectionResult()
@@ -115,6 +184,24 @@ test('loading branch options cannot approve a GitHub datasource', async () => {
     selectedValues: { repositories: ['owner/repo'] }
   })
   assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
+})
+
+test('automatic wizard checks reuse only an unchanged successful validation', async () => {
+  let validations = 0
+  const context = setup({
+    validateConnectionDatasource: async () => {
+      validations++
+      return { valid: true, resources: [] }
+    }
+  })
+  await context.testDatasourceConnection()
+  await context.testDatasourceConnection({ automatic: true })
+  assert.equal(validations, 1)
+  await context.testDatasourceConnection()
+  assert.equal(validations, 2)
+  context.datasourceConnectionSignature = () => 'changed'
+  await context.testDatasourceConnection({ automatic: true })
+  assert.equal(validations, 3)
 })
 
 test('repository URLs become owner/name without altering unsafe input for backend validation', () => {

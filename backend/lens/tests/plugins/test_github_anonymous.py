@@ -1,5 +1,7 @@
 """Anonymous GitHub connections and manually entered repositories."""
 
+from threading import Lock
+from time import sleep
 from unittest.mock import patch
 
 import httpx
@@ -50,7 +52,7 @@ class GitHubAnonymousProviderTests(SimpleTestCase):
     def test_validates_public_repository_without_authorization_header(self):
         def respond(request):
             self.assertNotIn("authorization", request.headers)
-            self.assertEqual(request.url.path, "/repos/owner/repo")
+            self.assertIn(request.url.path, ("/repos/owner/repo", "/repos/owner/repo/commits"))
             return httpx.Response(200, json={"full_name": "owner/repo", "private": False, "default_branch": "main"})
 
         with httpx.Client(transport=httpx.MockTransport(respond)) as client:
@@ -72,6 +74,73 @@ class GitHubAnonymousProviderTests(SimpleTestCase):
         self.assertFalse(result["valid"])
         self.assertEqual(result["resources"][0]["error"], "GITHUB_NOT_FOUND")
 
+    def test_metadata_only_token_cannot_approve_default_branch_access(self):
+        paths = []
+
+        def respond(request):
+            paths.append(request.url.path)
+            if request.url.path.endswith("/commits"):
+                return httpx.Response(403)
+            return httpx.Response(200, json={"full_name": "owner/repo", "private": True, "default_branch": "main"})
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            result = self.provider.validate_datasource_access(
+                "metadata-only-token",
+                {"repositories": ["owner/repo"]},
+                client=client,
+            )
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["resources"][0]["error"], "GITHUB_ACCESS_DENIED")
+        self.assertEqual(paths, ["/repos/owner/repo", "/repos/owner/repo/commits"])
+
+    def test_large_commit_diff_does_not_prevent_access_validation(self):
+        def respond(request):
+            if request.url.path.endswith("/commits/main"):
+                return httpx.Response(200, json={"files": [{"patch": "x" * 500_000}]})
+            if request.url.path.endswith("/commits"):
+                self.assertEqual(request.url.params["sha"], "main")
+                self.assertEqual(request.url.params["per_page"], "1")
+                return httpx.Response(200, json=[{"sha": "a" * 40}])
+            return httpx.Response(200, json={"full_name": "owner/repo", "private": False, "default_branch": "main"})
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            result = self.provider.validate_datasource_access("", {"repositories": ["owner/repo"]}, client=client)
+        self.assertTrue(result["valid"])
+
+    def test_bulk_access_validation_uses_bounded_concurrency(self):
+        repositories = [f"owner/repo-{index}" for index in range(50)]
+        active = 0
+        peak = 0
+        lock = Lock()
+
+        def respond(request):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            sleep(0.01)
+            with lock:
+                active -= 1
+            if request.url.path.endswith("/commits"):
+                return httpx.Response(200, json=[{"sha": "a" * 40}])
+            return httpx.Response(
+                200,
+                json={
+                    "full_name": request.url.path.removeprefix("/repos/"),
+                    "private": False,
+                    "default_branch": "main",
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            result = self.provider.validate_datasource_access(
+                "test-token", {"repositories": repositories}, client=client
+            )
+        self.assertTrue(result["valid"])
+        self.assertEqual([item["repository"] for item in result["resources"]], repositories)
+        self.assertGreater(peak, 1)
+        self.assertLessEqual(peak, 5)
+
     def test_anonymous_discovery_does_not_call_user_repositories(self):
         with httpx.Client(transport=httpx.MockTransport(lambda request: self.fail(str(request.url)))) as client:
             result = self.provider.discover_resources({"repositories": ["*"]}, "", client=client)
@@ -83,7 +152,8 @@ class GitHubAnonymousProviderTests(SimpleTestCase):
         def respond(request):
             paths.append(request.url.path)
             self.assertEqual(request.headers["Authorization"], "Bearer test-token")
-            if "/commits/" in request.url.path:
+            if request.url.path.endswith("/commits"):
+                self.assertEqual(request.url.params["sha"], "missing")
                 return httpx.Response(404)
             return httpx.Response(200, json={"full_name": "owner/repo", "private": True})
 
@@ -94,7 +164,7 @@ class GitHubAnonymousProviderTests(SimpleTestCase):
                 client=client,
             )
         self.assertFalse(result["valid"])
-        self.assertEqual(paths, ["/repos/owner/repo", "/repos/owner/repo/commits/missing"])
+        self.assertEqual(paths, ["/repos/owner/repo", "/repos/owner/repo/commits"])
 
     def test_primary_rate_limit_is_reported_as_rate_limit(self):
         from lens.plugins.providers.base import PluginRequestContext
@@ -241,3 +311,51 @@ class GitHubAnonymousConnectionTests(TestCase):
         response = self.client.post(f"/api/lens/admin/connections/{connection.uuid}/validate/")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["detail"], "SECRET_UNAVAILABLE")
+
+    def test_disabling_skips_remote_access_but_reenabling_checks_it(self):
+        connection = Connection.objects.create(
+            name="Public", plugin_key="github", endpoint="https://github.com", allowed_scope={"repositories": ["*"]}
+        )
+        datasource = DataSource.objects.create(
+            name="Unavailable repository",
+            source_type="git",
+            plugin_key="github",
+            connection=connection,
+            datasource_config={"repositories": ["owner/repo"]},
+        )
+        with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(404))) as client, patch(
+            "lens.plugins.datasource_access.plugin_http_pool.bind", return_value=client
+        ) as bind:
+            response = self.client.patch(
+                f"/api/lens/admin/datasources/{datasource.uuid}/", {"status": "disabled"}, format="json"
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            bind.assert_not_called()
+            response = self.client.patch(
+                f"/api/lens/admin/datasources/{datasource.uuid}/", {"status": "active"}, format="json"
+            )
+            self.assertEqual(response.status_code, 400, response.data)
+            bind.assert_called_once()
+        datasource.refresh_from_db()
+        self.assertEqual(datasource.status, "disabled")
+
+    def test_mcp_adapter_accepts_anonymous_connection_but_rejects_empty_stored_secret(self):
+        connection = Connection.objects.create(
+            name="Public", plugin_key="github", endpoint="https://github.com", allowed_scope={"repositories": ["*"]}
+        )
+        payload = {
+            "name": "Public repository tools",
+            "transport": "plugin",
+            "connection_uuid": str(connection.uuid),
+            "tools": ["github_read_file"],
+        }
+        response = self.client.post("/api/lens/admin/mcp-servers/", payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        material = SecretMaterial.objects.create(name="Broken")
+        connection.secret_version = SecretVersion.objects.create(material=material)
+        connection.save(update_fields=["secret_version"])
+        response = self.client.patch(
+            f'/api/lens/admin/mcp-servers/{response.data["uuid"]}/', {"name": "Renamed"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("connection_uuid", response.data)

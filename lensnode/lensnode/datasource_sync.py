@@ -4625,6 +4625,8 @@ def _git_auth_environment(config):
     if isinstance(config, dict) and config.get("auth_scheme") == "none":
         environment = os.environ.copy()
         environment.pop("GIT_CONFIG_PARAMETERS", None)
+        # Git's libcurl reads netrc independently of Git configuration and helpers.
+        environment["HOME"] = os.devnull
         environment.update({
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_ASKPASS": "",
