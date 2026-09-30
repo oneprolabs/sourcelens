@@ -8,7 +8,7 @@ from uuid import UUID
 
 from ..datasource_manifest import MARKER_FILE, manifest_items, manifest_local_path, manifest_source_id
 from ..path_rules import sidecar_path
-from ..workspace import DEFAULT_EXCLUDED_DIRS, is_path_allowed, target_scope
+from ..workspace import DEFAULT_EXCLUDED_DIRS, is_path_policy_allowed, target_scope
 from .config import MAX_CORPUS_BYTES, MAX_FILE_BYTES, MAX_FILES, IndexUnavailable, digest
 
 TEXT_EXTENSIONS = frozenset(
@@ -63,23 +63,31 @@ class Document:
     converted: bool
 
 
-def safe_file(root, relative):
-    """Reject traversal, internal paths, nested datasources, and symlinks."""
+def source_path(root, relative):
+    """Reject invalid and internal manifest paths without filesystem access."""
 
     path = PurePosixPath(relative)
     if not relative or path.is_absolute() or "\\" in relative or ".." in path.parts:
         raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
-    current = root
     for part in path.parts:
         if part.startswith(".") or part in DEFAULT_EXCLUDED_DIRS or part.endswith(".sourcelens"):
             raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_EXCLUDED")
+    if path.name.lower() in EXCLUDED_NAMES:
+        raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_EXCLUDED")
+    return root / path
+
+
+def safe_file(root, relative):
+    """Reject traversal, internal paths, nested datasources, and symlinks."""
+
+    source_path(root, relative)
+    current = root
+    for part in PurePosixPath(relative).parts:
         current = current / part
         if current.is_symlink():
             raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
         if current != root and current.is_dir() and (current / MARKER_FILE).exists():
             raise IndexUnavailable("TEXT_INDEX_NESTED_DATASOURCE")
-    if path.name.lower() in EXCLUDED_NAMES:
-        raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_EXCLUDED")
     return current
 
 
@@ -199,7 +207,11 @@ def generation_for(documents, profile):
 
 
 def authorized_scopes(settings, target_dirs, policy):
-    """Derive database path filters solely from trusted Run directory bindings."""
+    """Derive logical path filters from current manifests and Run bindings.
+
+    Live filesystem authorization is deferred to ranked candidate files.
+    These filters alone never authorize disclosure of stored chunk text.
+    """
 
     scopes = []
     for entry in target_dirs:
@@ -218,10 +230,10 @@ def authorized_scopes(settings, target_dirs, policy):
                 continue
             relative = manifest_local_path(item)
             try:
-                path = safe_file(root, relative)
+                path = source_path(root, relative)
             except IndexUnavailable:
                 continue
-            if is_path_allowed(selected, path, target_scope(entry), policy):
+            if path.is_relative_to(selected) and is_path_policy_allowed(selected, path, target_scope(entry), policy):
                 allowed[relative] = item
         if allowed:
             scopes.append((root, datasource_uuid, allowed, entry))

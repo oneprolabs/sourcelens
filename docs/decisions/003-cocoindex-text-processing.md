@@ -74,9 +74,13 @@ the pinned SDK contract.
 
 The Agent tool accepts only a query and result count. Its directory bindings and
 retrieval policy come from the trusted Run command. Before retrieving text, the
-worker derives permitted paths from the current manifest and the existing
-`is_path_allowed` rules, then includes that allowlist in the FTS query. It never
-searches all indexes and returns unauthorized rows for the Agent to filter.
+worker derives a logical path allowlist from the current manifest, selected
+directory, and existing retrieval rules, then includes it in the FTS query.
+SQLite initially returns ranked IDs and paths. Each candidate file must pass
+live symlink/nested-datasource checks and the existing `is_path_allowed` rules
+before its stored chunk text is loaded. Rejected candidates are skipped and
+replaced by the next authorized candidates. It never returns unauthorized rows
+for the Agent to filter.
 
 Each result includes source identity, source/text hashes in storage, original path,
 line range, conversion marker, and the published generation. The worker rereads
@@ -99,6 +103,21 @@ The query subprocess is bounded to 45 seconds, queries to 2,000 characters, and
 results to 20 chunks / approximately 12,000 characters. No-match queries return
 no evidence. Error codes and trace fields report fallback reason, timing, count,
 profile and generations without credentials or raw exception messages.
+
+### Query cost reduction — 2026-09-30
+
+Browser acceptance profiling identified repeated filesystem checks across the
+entire manifest as the main query cost. Query authorization now separates the
+logical allowlist from live candidate-file checks. Permission results are reused
+only for repeated chunks of the same file within that query; a subsequent query
+reloads the current manifest and reevaluates the supplied policy and filesystem.
+Source hashes and conversion consistency are still checked before disclosure.
+
+This reduces work without introducing cross-query authorization caches or a
+persistent worker lifecycle. The 45-second subprocess timeout remains enforced.
+The optional engine, FTS schema, ranking, feature flag, and CodeGraph routing are
+unchanged. Measurements and regression coverage are recorded in
+[the optimization report](../verification/698-cocoindex-optimization.md).
 
 ## Local operation
 

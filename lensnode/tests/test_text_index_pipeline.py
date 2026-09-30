@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -227,5 +228,111 @@ def test_cocoindex_component_error_blocks_publication(indexed_source, monkeypatc
         scope = [{"path": str(root), "retrieval_scope": {"exclude_paths": ["private.md"]}}]
         result = await search(settings, scope, {}, "recovery")
         assert {row["generation"] for row in result["matches"]} == {first["generation"]}
+
+    asyncio.run(scenario())
+
+
+def test_query_filesystem_work_is_bounded_by_hits(indexed_source, monkeypatch):
+    """Unrelated catalog files must not cause live filesystem authorization."""
+
+    async def scenario():
+        settings, root, identity, manifest = indexed_source
+        for index in range(80):
+            name = f"unrelated-{index}.md"
+            (root / name).write_text("Unrelated catalog material\n")
+            manifest["items"].append({"source_id": name, "local_path": name})
+        (root / "manifest.json").write_text(json.dumps(manifest))
+        await build_index(settings, root, identity)
+        calls = []
+        original_stat = Path.stat
+
+        def counting_stat(path, *args, **kwargs):
+            calls.append(path)
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", counting_stat)
+        result = await search(settings, [{"path": str(root)}], {}, "recovery")
+        assert len(result["matches"]) == 2
+        assert not any(path.name.startswith("unrelated-") for path in calls)
+        assert len(calls) < 160
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", ["file_link", "directory_link", "nested_source", "policy", "extension", "deleted"])
+def test_repeated_query_rechecks_live_authorization(indexed_source, change):
+    """A previous successful query must not authorize a changed binding or file."""
+
+    async def scenario():
+        settings, root, identity, manifest = indexed_source
+        directory = root / "nested"
+        directory.mkdir()
+        source = directory / "guard.md"
+        source.write_text("UniqueScopeGuard material\n")
+        manifest["items"].append({"source_id": "guard", "local_path": "nested/guard.md"})
+        (root / "manifest.json").write_text(json.dumps(manifest))
+        await build_index(settings, root, identity)
+        scope = [{"path": str(root)}]
+        policy = {}
+        assert (await search(settings, scope, policy, "UniqueScopeGuard"))["matches"]
+        if change == "file_link":
+            target = root / "uncataloged.md"
+            source.rename(target)
+            source.symlink_to(target)
+        elif change == "directory_link":
+            target = root / "uncataloged"
+            directory.rename(target)
+            directory.symlink_to(target, target_is_directory=True)
+        elif change == "nested_source":
+            (directory / ".sourcelens-datasource.json").write_text(json.dumps({"datasource_uuid": str(uuid4())}))
+        elif change == "policy":
+            policy["exclude_paths"] = ["nested/**"]
+        elif change == "extension":
+            scope[0]["retrieval_scope"] = {"exclude_extensions": ["md"]}
+        else:
+            manifest["items"][-1]["status"] = "deleted"
+            (root / "manifest.json").write_text(json.dumps(manifest))
+        if change == "extension":
+            with pytest.raises(IndexUnavailable, match="SCOPE_UNAVAILABLE"):
+                await search(settings, scope, policy, "UniqueScopeGuard")
+        else:
+            assert not (await search(settings, scope, policy, "UniqueScopeGuard"))["matches"]
+
+    asyncio.run(scenario())
+
+
+def test_ranked_candidates_are_authorized_before_text_is_loaded(indexed_source, monkeypatch):
+    """Rejecting the first candidate must refill the result without reading its text."""
+
+    async def scenario():
+        settings, root, identity, _ = indexed_source
+        await build_index(settings, root, identity)
+        statements = []
+        original_connect = store.connect_readonly
+
+        def connect(path):
+            connection = original_connect(path)
+            connection.set_trace_callback(statements.append)
+            return connection
+
+        monkeypatch.setattr(store, "connect_readonly", connect)
+        candidates = []
+
+        def authorize(path):
+            candidates.append(path)
+            return len(candidates) > 1
+
+        rows = store.search_index(
+            settings.state_path / index_key(root, identity) / "index.sqlite3",
+            ["recovery.md", "private.md"],
+            "recovery",
+            settings.profile,
+            1,
+            path_allowed=authorize,
+        )
+        assert len(candidates) == 2
+        assert len(rows) == 1
+        assert rows[0]["path"] == candidates[1]
+        assert len([sql for sql in statements if sql.startswith("SELECT * FROM chunks")]) == 1
 
     asyncio.run(scenario())

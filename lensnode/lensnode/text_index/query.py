@@ -1,7 +1,10 @@
 """Authorized full-text retrieval with source verification before disclosure."""
 
+from pathlib import Path
+
+from ..workspace import is_path_allowed, target_scope
 from .config import MAX_RESULTS, IndexUnavailable, index_key
-from .documents import authorized_scopes, read_document
+from .documents import authorized_scopes, read_document, safe_file
 from .store import search_index
 
 
@@ -17,9 +20,24 @@ async def search(settings, target_dirs, policy, query, limit=8):
         raise IndexUnavailable("TEXT_INDEX_SCOPE_UNAVAILABLE")
     matches = []
     checked = {}
-    for root, datasource_uuid, allowed, _entry in scopes:
+    for root, datasource_uuid, allowed, entry in scopes:
         index_path = settings.state_path / index_key(root, datasource_uuid) / "index.sqlite3"
-        rows = search_index(index_path, allowed, query, settings.profile, limit)
+        selected = Path(entry["path"]).resolve()
+        scope = target_scope(entry)
+        permissions = {}
+
+        def path_allowed(relative):
+            """Check each candidate file once, before SQLite returns its text."""
+
+            if relative not in permissions:
+                try:
+                    path = safe_file(root, relative)
+                    permissions[relative] = is_path_allowed(selected, path, scope, policy)
+                except (IndexUnavailable, OSError):
+                    permissions[relative] = False
+            return permissions[relative]
+
+        rows = search_index(index_path, allowed, query, settings.profile, limit, path_allowed=path_allowed)
         for position, row in enumerate(rows, start=1):
             relative = row["path"]
             cache_key = (str(root), relative)

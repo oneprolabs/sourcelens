@@ -126,7 +126,7 @@ def _delete_document(connection, path):
     connection.execute("DELETE FROM documents WHERE path = ?", (path,))
 
 
-def search_index(path, allowed_paths, query, profile, limit):
+def search_index(path, allowed_paths, query, profile, limit, *, path_allowed=None):
     """Apply the trusted file allowlist before exposing matching chunk text."""
 
     tokens = [token[:128] for token in terms(query)[:20]]
@@ -139,14 +139,22 @@ def search_index(path, allowed_paths, query, profile, limit):
         if meta is None or meta["profile"] != profile:
             raise IndexUnavailable("TEXT_INDEX_PROFILE_STALE")
         placeholders = ",".join("?" for _ in allowed_paths)
-        rows = connection.execute(
-            "SELECT chunks.*, bm25(chunks_fts) AS rank FROM chunks_fts "
+        candidates = connection.execute(
+            "SELECT chunks.id, chunks.path, bm25(chunks_fts) AS rank FROM chunks_fts "
             "JOIN chunks ON chunks.id = chunks_fts.rowid "
             f"WHERE chunks_fts MATCH ? AND chunks.path IN ({placeholders}) "
-            "ORDER BY rank, chunks.path, chunks.start_line LIMIT ?",
-            (expression, *allowed_paths, limit),
+            "ORDER BY rank, chunks.path, chunks.start_line",
+            (expression, *allowed_paths),
         )
-        return [{**dict(row), "generation": meta["generation"]} for row in rows]
+        rows = []
+        for candidate in candidates:
+            if path_allowed is not None and not path_allowed(candidate["path"]):
+                continue
+            row = connection.execute("SELECT * FROM chunks WHERE id = ?", (candidate["id"],)).fetchone()
+            rows.append({**dict(row), "rank": candidate["rank"], "generation": meta["generation"]})
+            if len(rows) >= limit:
+                break
+        return rows
     except sqlite3.Error:
         raise IndexUnavailable("TEXT_INDEX_UNAVAILABLE") from None
     finally:

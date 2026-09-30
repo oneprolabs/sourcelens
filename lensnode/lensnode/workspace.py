@@ -412,9 +412,21 @@ def is_path_allowed(root, path, scope, policy):
         return False
     if not path.is_file():
         return False
-    if is_path_excluded(root, path, scope, policy):
+    if not is_path_policy_allowed(root, path, scope, policy):
         return False
     if _is_sidecar_artifact(path) and converted_source_path(path) is None:
+        return False
+    return True
+
+
+def is_path_policy_allowed(root, path, scope, policy):
+    """Apply retrieval rules to a contained path without filesystem checks.
+
+    Callers must separately validate containment and the live filesystem
+    before reading or returning content.
+    """
+
+    if is_path_excluded(root, path, scope, policy):
         return False
     exclude_extensions = _option(
         scope,
