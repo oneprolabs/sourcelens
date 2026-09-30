@@ -8,7 +8,6 @@ FROM python:3.12-slim-bookworm AS builder
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG PIP_TRUSTED_HOST=pypi.org
-ARG INSTALL_COCOINDEX=false
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -29,13 +28,11 @@ RUN pip install \
 COPY lensnode/pyproject.toml ./
 COPY lensnode/lensnode ./lensnode
 
-RUN install_target="."; \
-    if [ "$INSTALL_COCOINDEX" = "true" ]; then install_target=".[cocoindex]"; fi; \
-    uv pip install \
+RUN uv pip install \
         --python /opt/venv/bin/python \
         --index-url "$PIP_INDEX_URL" \
         --trusted-host "$PIP_TRUSTED_HOST" \
-        "$install_target" \
+        . \
     && rm -rf /root/.cache /tmp/* \
     && find /opt/venv -type d -name __pycache__ -prune \
         -exec rm -rf {} +
