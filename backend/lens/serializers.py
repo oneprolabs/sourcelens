@@ -84,6 +84,7 @@ from .plugins.decisions import (
 )
 from .plugins.registry import (
     PluginRegistryError,
+    connection_secret_is_available,
     installed_plugin,
     plugin_requires_secret,
 )
@@ -1845,7 +1846,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
     secret_value = serializers.CharField(
         write_only=True,
         required=False,
-        allow_blank=False,
+        allow_blank=True,
     )
     has_secret = serializers.SerializerMethodField()
     secret_hint = serializers.SerializerMethodField()
@@ -2319,13 +2320,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"connection_uuid": "Plugin Connection is disabled"}
                 )
-            secret_version = connection.secret_version
-            if (
-                secret_version is None
-                or secret_version.status != "active"
-                or secret_version.material.status != "active"
-                or not secret_version.encrypted_value
-            ):
+            if not connection_secret_is_available(connection):
                 raise serializers.ValidationError(
                     {
                         "connection_uuid": (
