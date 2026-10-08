@@ -1,5 +1,6 @@
 """Metered model failover before any response output is emitted."""
 
+import inspect
 import logging
 from uuid import UUID, uuid4
 
@@ -128,8 +129,17 @@ def _tracked_attempts(*, on_retry=None, **kwargs):
             },
         }
         try:
+            tracker_kwargs = {
+                **kwargs,
+                "model_uuid": selected,
+                "state": attempt_state,
+            }
+            if "reasoning_effort" not in inspect.signature(
+                LLMTracker.call_and_track
+            ).parameters:
+                tracker_kwargs.pop("reasoning_effort", None)
             result = LLMTracker.call_and_track(
-                **{**kwargs, "model_uuid": selected, "state": attempt_state}
+                **tracker_kwargs
             )
             if not kwargs.get("stream"):
                 return result

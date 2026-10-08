@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -37,6 +38,7 @@ def _state(question, *, model=None, command_extra=None, general_chat=False):
     }
     command.update(command_extra or {})
     return SimpleNamespace(
+        exit_span=Mock(),
         runtime_mode=_mode(general_chat),
         resume_state=None,
         run_uuid="gate-run",

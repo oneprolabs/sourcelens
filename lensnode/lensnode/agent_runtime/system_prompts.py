@@ -40,6 +40,16 @@ def _system_prompt(
             "integration may help; matching tools will be available on the "
             "next turn."
         )
+    unavailable_mcps = command.get("unavailable_mcp_services") or []
+    if unavailable_mcps:
+        prompt += (
+            "\n\nRemote MCP services unavailable for this run: "
+            + ", ".join(unavailable_mcps)
+            + ". Their data has not been queried. For requests that need "
+            "these services, explain that the service could not be accessed; "
+            "do not claim an empty result or substitute unrelated workspace "
+            "files. Ordinary conversation can continue normally."
+        )
     return prompt + "\n\n" + _agent_operating_guidance()
 
 
@@ -65,6 +75,14 @@ def _agent_operating_guidance():
         "- Understand before acting: read the relevant evidence first, then "
         "act, then verify the result against the request. A first attempt is "
         "rarely complete, so iterate until the task is genuinely done.\n"
+        "- For records in a connected service, use its remote query tools. "
+        "Workspace documents do not establish the service's complete record "
+        "list. Filter dates by the requested business date field, not by "
+        "another date such as an expiry date. Follow pagination before "
+        "claiming a complete list or total; disclose incomplete retrieval.\n"
+        "- Report monetary aggregates only when returned by the service "
+        "or calculated with a deterministic tool. Keep currencies separate. "
+        "Otherwise report the individual amounts without an estimated sum.\n"
         "- If an action fails the same way twice, stop and analyze why "
         "instead of repeating it. When blocked, say what is missing and ask "
         "one focused question rather than guessing.\n"

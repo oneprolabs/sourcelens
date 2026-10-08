@@ -6,7 +6,12 @@
       <span class="text-[11px] font-semibold text-ink-700">
         {{ t('lensAdmin.wizard.environmentSetValues') }}
       </span>
-      <BaseButton size="sm" variant="outline" @click="toggleReveal">
+      <BaseButton
+        size="sm"
+        variant="outline"
+        :disabled="!scopedValues.some((item) => !item.secret)"
+        @click="toggleReveal"
+      >
         {{
           revealed
             ? t('lensAdmin.environmentVariables.hideValues')
@@ -36,7 +41,7 @@
             class="min-w-0 truncate font-mono text-[11px] text-ink-500"
             :class="revealed ? '' : 'select-none tracking-widest'"
           >
-            {{ revealed ? item.value : '••••••••' }}
+            {{ item.secret || !revealed ? '••••••••' : item.value }}
           </span>
         </div>
       </div>

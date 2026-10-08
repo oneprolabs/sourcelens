@@ -407,6 +407,7 @@
                 <BaseButton
                   size="sm"
                   variant="outline"
+                  :disabled="!viewValues.some((item) => !item.secret)"
                   @click="toggleViewReveal"
                 >
                   {{
@@ -438,7 +439,7 @@
                     class="min-w-0 truncate font-mono text-xs text-ink-500"
                     :class="viewRevealed ? '' : 'select-none tracking-widest'"
                   >
-                    {{ viewRevealed ? item.value : '••••••••' }}
+                    {{ item.secret || !viewRevealed ? '••••••••' : item.value }}
                   </span>
                 </div>
               </div>

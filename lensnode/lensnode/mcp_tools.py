@@ -448,7 +448,10 @@ def _url_server_params(config):
     raw_config = config.get("config") or {}
     load_config = config.get("load_config") or {}
     allowed_schemes = {"https"}
-    if load_config.get("allow_insecure_http") is True:
+    allow_insecure_http = os.getenv(
+        "LENSNODE_ALLOW_INSECURE_HTTP_MCP", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if load_config.get("allow_insecure_http") is True or allow_insecure_http:
         allowed_schemes.add("http")
     if parsed.scheme not in allowed_schemes or not parsed.netloc:
         raise ValueError(
@@ -469,7 +472,9 @@ def _url_server_params(config):
         "url": endpoint,
     }
     headers = raw_config.get("headers")
-    if isinstance(headers, dict):
+    if headers is not None and not isinstance(headers, dict):
+        raise ValueError("MCP headers must be an object")
+    if headers is not None:
         params["headers"] = {
             str(key): str(value)
             for key, value in headers.items()

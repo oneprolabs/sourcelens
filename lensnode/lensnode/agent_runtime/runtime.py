@@ -1185,6 +1185,18 @@ class LensDeepAgentRuntime:
             attempt=_decision_attempt(state),
         )
         state.tools.extend(state.decision_ranker.as_tools())
+        unavailable_mcps = []
+
+        def emit_mcp_event(event, detail):
+            if event in {"mcp.server.failed", "mcp.server.skipped"}:
+                unavailable_mcps.append(detail["server"])
+            elif event == "mcp.runtime.unavailable":
+                unavailable_mcps.extend(
+                    item.get("name", "MCP service")
+                    for item in state.resources.mcp_configs
+                )
+            state.emit_agent_event(event, detail)
+
         state.mcp_tools = load_mcp_tools(
             state.resources.mcp_configs,
             discovery_timeout_s=getattr(
@@ -1197,13 +1209,17 @@ class LensDeepAgentRuntime:
                 "mcp_tool_timeout_s",
                 60,
             ),
-            emit_event=state.emit_agent_event,
+            emit_event=emit_mcp_event,
             stdio_allowlist=getattr(
                 self.config,
                 "mcp_stdio_allowlist",
                 (),
             ),
         )
+        state.command = {
+            **state.command,
+            "unavailable_mcp_services": unavailable_mcps,
+        }
         runtime_contributions = collect_agent_runtime_contributions(
             self.config,
             state.command,

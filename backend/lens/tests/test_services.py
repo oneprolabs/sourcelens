@@ -42,10 +42,12 @@ from lens.lensnode_auth import issue_lensnode_token
 from lens.models import (
     Assistant,
     AssistantDataSourceBinding,
+    AssistantMCP,
     AssistantSkill,
     DataSource,
     GlobalSetting,
     LensNode,
+    MCPServer,
     Message,
     MessageAttachment,
     Run,
@@ -220,6 +222,42 @@ class LensServiceTests(TransactionTestCase):
             session=self.session, question="Another question", enqueue=False
         )
         self.assertEqual(default_run.execution.agent_rounds, "flash")
+
+    @patch("lens.services.async_to_sync")
+    @patch("lens.services.get_channel_layer")
+    def test_legacy_mcp_oauth_settings_do_not_override_bearer_config(
+        self, _get_channel_layer, mock_async_to_sync
+    ):
+        from lens.models import MCPUserOAuthGrant
+
+        mcp = MCPServer.objects.create(
+            name="Bearer API",
+            transport=MCPServer.Transport.URL,
+            endpoint="https://mcp.example.com/api",
+            config={"headers": {"Authorization": "Bearer robot-token"}},
+            oauth_enabled=True,
+            oauth_issuer="https://auth.example.com",
+            oauth_resource="https://mcp.example.com/api",
+        )
+        AssistantMCP.objects.create(assistant=self.assistant, mcp=mcp)
+        grant = MCPUserOAuthGrant(user=self.user, mcp=mcp)
+        grant.set_tokens("obsolete-user-token")
+        grant.save()
+
+        run = create_execution_run(
+            session=self.session, question="List orders", enqueue=False
+        )
+        dispatch_run_to_lensnode(run, "List orders")
+        payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
+        loaded_mcp = payload["loaded_mcps"][0]
+
+        self.assertEqual(
+            loaded_mcp["config"]["headers"]["Authorization"],
+            "Bearer robot-token",
+        )
+        self.assertNotIn("oauth_enabled", loaded_mcp)
+        self.assertNotIn("oauth_access_token", loaded_mcp)
+        self.assertNotIn("obsolete-user-token", str(payload))
 
     @patch(
         "lens.services.async_to_sync",

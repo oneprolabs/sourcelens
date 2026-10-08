@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from django.db import transaction
 from django.http import FileResponse
+from djangorestframework_camel_case.parser import CamelCaseJSONParser
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -382,11 +383,24 @@ class SkillViewSet(BaseAdminViewSet):
         return Response({"content": content})
 
 
+class MCPConfigJSONParser(CamelCaseJSONParser):
+    """Preserve external MCP configuration keys, including HTTP headers."""
+
+    json_underscoreize = {
+        **CamelCaseJSONParser.json_underscoreize,
+        "ignore_fields": (
+            *(CamelCaseJSONParser.json_underscoreize.get("ignore_fields") or ()),
+            "config",
+        ),
+    }
+
+
 class MCPServerViewSet(BaseAdminViewSet):
     """CRUD for MCP servers."""
 
     queryset = MCPServer.objects.all()
     serializer_class = MCPServerSerializer
+    parser_classes = [MCPConfigJSONParser]
 
     def destroy(self, request, *args, **kwargs):
         mcp = self.get_object()

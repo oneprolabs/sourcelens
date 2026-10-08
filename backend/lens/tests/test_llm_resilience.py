@@ -17,6 +17,19 @@ User = get_user_model()
 
 
 class LLMResilienceTests(TestCase):
+    def test_ignores_reasoning_effort_when_tracker_does_not_support_it(self):
+        with patch(
+            "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+            return_value=("answer", {}),
+        ) as tracked_call:
+            result = call_and_track_with_fallback(
+                messages=[{"role": "user", "content": "hello"}],
+                reasoning_effort="medium",
+            )
+
+        self.assertEqual(result, ("answer", {}))
+        self.assertNotIn("reasoning_effort", tracked_call.call_args.kwargs)
+
     def test_stream_fallback_happens_before_first_chunk(self):
         class ProviderBusyError(Exception):
             status_code = 503

@@ -36,6 +36,7 @@ from .environment_variables import (
     declared_environment_references,
     environment_references,
     missing_required_environment_values,
+    secret_environment_names,
     validate_environment_schema,
     validate_environment_values,
     validate_skill_api_policy,
@@ -3542,6 +3543,14 @@ class EnvironmentVariableSetSerializer(serializers.ModelSerializer):
         for field, value in validated_data.items():
             setattr(instance, field, value)
         if values is not None:
+            existing = instance.get_values()
+            secret_names = secret_environment_names(instance)
+            values = {
+                key: existing[key]
+                if value == "********" and key in secret_names and key in existing
+                else value
+                for key, value in values.items()
+            }
             instance.set_values(values)
         instance.save()
         return instance
@@ -3595,6 +3604,21 @@ class MCPServerSerializer(serializers.ModelSerializer):
 
         if not isinstance(value, dict):
             raise serializers.ValidationError("MCP configuration must be an object.")
+        if "headers" in value:
+            headers = value["headers"]
+            if not isinstance(headers, dict):
+                raise serializers.ValidationError(
+                    'headers must be an object, for example '
+                    '{"Authorization": "Bearer ${SERVICE_TOKEN}"}.'
+                )
+            if any(
+                self._normalize_key(key) == "authorization"
+                and str(key).lower() != "authorization"
+                for key in headers
+            ):
+                raise serializers.ValidationError(
+                    "Use the standard Authorization header name."
+                )
         return value
 
     def validate_environment(self, value):

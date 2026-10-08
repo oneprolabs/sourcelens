@@ -3,11 +3,13 @@ import json
 import sys
 from types import ModuleType, SimpleNamespace
 
+import pytest
 from langchain_core.tools import StructuredTool
 
 from lensnode.mcp_tools import (
     DeferredMCPToolMiddleware,
     MCPToolFirstMiddleware,
+    _url_server_params,
     _wrap_mcp_tool,
     build_deferred_mcp_tools,
     load_mcp_tools,
@@ -27,6 +29,16 @@ def _remote_tool(name="lookup"):
 
 def _named_tool(name):
     return SimpleNamespace(name=name)
+
+
+def test_url_mcp_rejects_string_headers_without_leaking_value():
+    with pytest.raises(ValueError, match="MCP headers must be an object"):
+        _url_server_params(
+            {
+                "endpoint": "https://service.example.com/mcp",
+                "config": {"headers": "Bearer secret-value"},
+            }
+        )
 
 
 def _install_fake_adapter(monkeypatch, clients):
@@ -121,6 +133,116 @@ def test_load_mcp_tools_isolates_servers_and_disables_stdio(monkeypatch):
         and detail["duration_ms"] >= 0
         for event, detail in events
     )
+
+
+def test_legacy_oauth_fields_do_not_override_bearer_config(monkeypatch):
+    package = ModuleType("langchain_mcp_adapters")
+    client_module = ModuleType("langchain_mcp_adapters.client")
+    captured = {}
+
+    class HeaderClient:
+        def __init__(self, servers, **_kwargs):
+            captured.update(next(iter(servers.values())))
+            self.server_name = next(iter(servers))
+
+        async def get_tools(self, server_name=None):
+            async def lookup(query: str):
+                return query
+
+            return [
+                StructuredTool.from_function(
+                    coroutine=lookup,
+                    name="lookup",
+                    description="Look up a record.",
+                )
+            ]
+
+    client_module.MultiServerMCPClient = HeaderClient
+    package.client = client_module
+    monkeypatch.setitem(sys.modules, "langchain_mcp_adapters", package)
+    monkeypatch.setitem(sys.modules, "langchain_mcp_adapters.client", client_module)
+    server = {
+        "name": "Orders API",
+        "transport": "url",
+        "endpoint": "https://mcp.example.com/api",
+        "config": {"headers": {"Authorization": "Bearer robot-token"}},
+        "oauth_enabled": True,
+        "oauth_access_token": "obsolete-user-token",
+        "load_config": {},
+    }
+
+    load_mcp_tools([server])
+
+    assert captured["headers"] == {"Authorization": "Bearer robot-token"}
+
+
+def test_bearer_tokens_are_isolated_between_mcp_instances(monkeypatch):
+    calls = []
+    package = ModuleType("langchain_mcp_adapters")
+    client_module = ModuleType("langchain_mcp_adapters.client")
+
+    class HeaderClient:
+        def __init__(self, servers, **_kwargs):
+            self.servers = servers
+            self.server_name = next(iter(servers))
+
+        async def get_tools(self, server_name=None):
+            async def lookup(query: str):
+                calls.append(
+                    self.servers[self.server_name]["headers"]["Authorization"]
+                )
+                return query
+
+            return [
+                StructuredTool.from_function(
+                    coroutine=lookup,
+                    name="lookup",
+                    description="Look up a record.",
+                )
+            ]
+
+    client_module.MultiServerMCPClient = HeaderClient
+    package.client = client_module
+    monkeypatch.setitem(sys.modules, "langchain_mcp_adapters", package)
+    monkeypatch.setitem(sys.modules, "langchain_mcp_adapters.client", client_module)
+    servers = [
+        {
+            "name": "Read-only account",
+            "transport": "url",
+            "endpoint": "https://mcp.example.com/api",
+            "config": {
+                "headers": {"Authorization": "Bearer first-token"}
+            },
+            "oauth_enabled": False,
+            "load_config": {},
+        },
+        {
+            "name": "Sales account",
+            "transport": "url",
+            "endpoint": "https://mcp.example.com/api",
+            "config": {
+                "headers": {"Authorization": "Bearer second-token"}
+            },
+            "oauth_enabled": False,
+            "load_config": {},
+        },
+    ]
+
+    tools = load_mcp_tools(servers)
+    results = [json.loads(tool.invoke({"query": "record"})) for tool in tools]
+
+    assert len(tools) == 2
+    assert results == [
+        {"ok": True, "result": "record"},
+        {"ok": True, "result": "record"},
+    ]
+    assert set(calls) == {"Bearer first-token", "Bearer second-token"}
+    for tool in tools:
+        tool_contract = str(
+            (tool.name, tool.description, tool.args_schema.schema())
+        )
+        assert "first-token" not in tool_contract
+        assert "second-token" not in tool_contract
 
 
 def test_mcp_tool_bounds_large_codegraph_results():

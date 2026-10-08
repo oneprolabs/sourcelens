@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from lensnode import agent_runtime
 from lensnode.checkpoint import ResumeState
@@ -18,6 +19,7 @@ def _workspace_tools():
 def _runtime_state(tmp_path, resume_state=None):
     ready_events = []
     state = SimpleNamespace(
+        exit_span=Mock(),
         runtime_mode=SimpleNamespace(
             name="code_analysis",
             execution_gates=False,

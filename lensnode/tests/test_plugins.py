@@ -32,6 +32,11 @@ def test_codegraph_plugin_contributes_stdio_server(monkeypatch, tmp_path):
         lambda *_args, **_kwargs: True,
     )
 
+    monkeypatch.setattr(
+        "lensnode.plugins.codegraph.shutil.which",
+        lambda _command: "/usr/local/bin/codegraph",
+    )
+
     servers = collect_mcp_servers(
         _config(workspace_path=str(tmp_path)),
         [],

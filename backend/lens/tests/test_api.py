@@ -357,6 +357,69 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["config"]["api_key"], "********")
         self.assertNotIn("mcp-secret", str(response.data))
 
+    def test_mcp_api_rejects_invalid_authentication_headers(self):
+        for headers in (
+            "Bearer ${SERVICE_TOKEN}",
+            {"_authorization": "Bearer secret-value"},
+        ):
+            with self.subTest(headers_type=type(headers).__name__):
+                response = self.client.patch(
+                    f"/api/lens/admin/mcp-servers/{self.mcp.uuid}/",
+                    {"config": {"headers": headers}},
+                    format="json",
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("config", response.data)
+                self.assertNotIn("secret-value", str(response.data))
+                self.mcp.refresh_from_db()
+                self.assertEqual(self.mcp.config, {})
+
+    def test_mcp_api_preserves_external_configuration_keys(self):
+        config = {
+            "headers": {
+                "Authorization": "Bearer secret-value",
+                "X-Tenant-ID": "tenant-1",
+            },
+            "customOption": {"CaseSensitiveKey": "value"},
+        }
+        response = self.client.patch(
+            f"/api/lens/admin/mcp-servers/{self.mcp.uuid}/",
+            {"config": config},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.mcp.refresh_from_db()
+        self.assertEqual(self.mcp.config, config)
+        self.assertNotIn("secret-value", str(response.data))
+
+    def test_mcp_api_no_longer_exposes_or_accepts_oauth_configuration(self):
+        detail_url = f"/api/lens/admin/mcp-servers/{self.mcp.uuid}/"
+        response = self.client.get(detail_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("oauth_enabled", response.data)
+        self.assertNotIn("oauth_issuer", response.data)
+
+        response = self.client.patch(
+            detail_url,
+            {
+                "oauth_enabled": True,
+                "oauth_issuer": "https://auth.example.com",
+                "oauth_resource": "https://orders.example.com/mcp",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.mcp.refresh_from_db()
+        self.assertFalse(self.mcp.oauth_enabled)
+
+    def test_mcp_user_oauth_routes_are_removed(self):
+        response = self.client.get("/api/lens/mcp-oauth/servers/")
+
+        self.assertEqual(response.status_code, 404)
+
     def test_mcp_api_preserves_non_secret_token_settings(self):
         self.mcp.config = {
             "github_token": "secret",
@@ -704,6 +767,94 @@ class LensApiTests(TestCase):
             "Bearer runtime-secret",
         )
         self.assertTrue(runtime[0]["environment_resolved"])
+
+    def test_same_endpoint_mcp_instances_keep_bearer_tokens_isolated(self):
+        declaration = [
+            {"name": "SERVICE_TOKEN", "required": True, "secret": True}
+        ]
+        self.mcp.config = {
+            "headers": {"Authorization": "Bearer ${SERVICE_TOKEN}"}
+        }
+        self.mcp.environment = declaration
+        self.mcp.save(update_fields=["config", "environment"])
+        second_mcp = MCPServer.objects.create(
+            name="Second API account",
+            transport="url",
+            endpoint=self.mcp.endpoint,
+            config={
+                "headers": {"Authorization": "Bearer ${SERVICE_TOKEN}"}
+            },
+            environment=declaration,
+        )
+        first_values = EnvironmentVariableSet.objects.create(
+            name="First API account"
+        )
+        first_values.set_values({"SERVICE_TOKEN": "first-secret"})
+        first_values.save(update_fields=["encrypted_values"])
+        second_values = EnvironmentVariableSet.objects.create(
+            name="Second API account"
+        )
+        second_values.set_values({"SERVICE_TOKEN": "second-secret"})
+        second_values.save(update_fields=["encrypted_values"])
+        AssistantMCP.objects.create(
+            assistant=self.assistant,
+            mcp=self.mcp,
+            environment_variable_set=first_values,
+        )
+        AssistantMCP.objects.create(
+            assistant=self.assistant,
+            mcp=second_mcp,
+            environment_variable_set=second_values,
+        )
+
+        loaded = build_loaded_mcps(self.assistant)
+        self.assertEqual(len(loaded), 2)
+        self.assertEqual(
+            {item["endpoint"] for item in loaded},
+            {self.mcp.endpoint},
+        )
+        self.assertNotIn("first-secret", str(loaded))
+        self.assertNotIn("second-secret", str(loaded))
+        runtime = resolve_loaded_mcp_environment(loaded)
+        headers_by_name = {
+            item["mcp_name"]: item["config"]["headers"]["Authorization"]
+            for item in runtime
+        }
+        self.assertEqual(headers_by_name[self.mcp.name], "Bearer first-secret")
+        self.assertEqual(
+            headers_by_name[second_mcp.name], "Bearer second-secret"
+        )
+        self.assertNotIn("first-secret", first_values.encrypted_values)
+        self.assertNotIn("second-secret", second_values.encrypted_values)
+
+        first_values.set_values({"SERVICE_TOKEN": "rotated-secret"})
+        first_values.save(update_fields=["encrypted_values"])
+        rotated = resolve_loaded_mcp_environment(build_loaded_mcps(self.assistant))
+        headers_by_name = {
+            item["mcp_name"]: item["config"]["headers"]["Authorization"]
+            for item in rotated
+        }
+        self.assertEqual(
+            headers_by_name[self.mcp.name], "Bearer rotated-secret"
+        )
+        self.assertEqual(
+            headers_by_name[second_mcp.name], "Bearer second-secret"
+        )
+
+    def test_non_admin_cannot_read_mcp_or_environment_credentials(self):
+        member = User.objects.create_user(
+            username="mcp-member",
+            password="pass12345",
+        )
+        self.client.force_authenticate(member)
+
+        mcp_response = self.client.get("/api/lens/admin/mcp-servers/")
+        environment_response = self.client.get(
+            "/api/lens/admin/environment-variable-sets/"
+        )
+
+        self.assertEqual(mcp_response.status_code, 403)
+        self.assertEqual(environment_response.status_code, 403)
 
     def test_dispatch_preserves_references_inside_mcp_environment_values(self):
         self.mcp.config = {"headers": {"Authorization": "Bearer ${GITHUB_TOKEN}"}}
@@ -3234,6 +3385,77 @@ class LensApiTests(TestCase):
         self.assertEqual(
             runtime[0]["environment"],
             {"JIRA_API_TOKEN": "secret-token"},
+        )
+
+    def test_environment_secret_values_are_masked_and_preserved_on_update(self):
+        self.mcp.environment = [
+            {"name": "SERVICE_CREDENTIAL", "secret": True},
+            {"name": "PUBLIC_ENDPOINT", "secret": False},
+        ]
+        self.mcp.save(update_fields=["environment"])
+        variable_set = EnvironmentVariableSet.objects.create(
+            name="MCP service credentials"
+        )
+        variable_set.set_values(
+            {
+                "SERVICE_CREDENTIAL": "private-token-value",
+                "PUBLIC_ENDPOINT": "https://old.example.com",
+            }
+        )
+        variable_set.save(update_fields=["encrypted_values"])
+        AssistantMCP.objects.create(
+            assistant=self.assistant,
+            mcp=self.mcp,
+            environment_variable_set=variable_set,
+        )
+        url = (
+            "/api/lens/admin/environment-variable-sets/"
+            f"{variable_set.uuid}/"
+        )
+
+        revealed = self.client.post(f"{url}reveal/")
+
+        self.assertEqual(revealed.status_code, 200)
+        self.assertNotIn("private-token-value", str(revealed.data))
+        self.assertCountEqual(
+            revealed.data["values"],
+            [
+                {
+                    "key": "SERVICE_CREDENTIAL",
+                    "value": "********",
+                    "secret": True,
+                },
+                {
+                    "key": "PUBLIC_ENDPOINT",
+                    "value": "https://old.example.com",
+                    "secret": False,
+                },
+            ],
+        )
+
+        updated = self.client.patch(
+            url,
+            {
+                "values": [
+                    {"key": "SERVICE_CREDENTIAL", "value": "********"},
+                    {
+                        "key": "PUBLIC_ENDPOINT",
+                        "value": "https://new.example.com",
+                    },
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertNotIn("private-token-value", str(updated.data))
+        variable_set.refresh_from_db()
+        self.assertEqual(
+            variable_set.get_values(),
+            {
+                "SERVICE_CREDENTIAL": "private-token-value",
+                "PUBLIC_ENDPOINT": "https://new.example.com",
+            },
         )
 
     def test_assistant_model_check_uses_agent_model_ref(self):
@@ -7919,6 +8141,25 @@ class AssistantAccessTests(TestCase):
         AssistantAccess.objects.create(assistant=self.assistant, user=self.member)
         resp = client.post("/api/lens/sessions/", payload, format="json")
         self.assertEqual(resp.status_code, 201)
+
+    def test_group_permission_is_required_to_run_mcp_enabled_assistant(self):
+        mcp = MCPServer.objects.create(
+            name="Restricted MCP",
+            transport="url",
+            endpoint="https://mcp.example.com/restricted",
+        )
+        AssistantMCP.objects.create(assistant=self.assistant, mcp=mcp)
+        client = self._client(self.member)
+        payload = {"assistant_uuid": str(self.assistant.uuid)}
+
+        denied = client.post("/api/lens/sessions/", payload, format="json")
+        self.assertEqual(denied.status_code, 403)
+
+        group = Group.objects.create(name="Restricted MCP users")
+        self.member.groups.add(group)
+        AssistantAccess.objects.create(assistant=self.assistant, group=group)
+        allowed = client.post("/api/lens/sessions/", payload, format="json")
+        self.assertEqual(allowed.status_code, 201)
 
     def test_run_blocked_after_access_revoked(self):
         self.assistant.visibility = Assistant.Visibility.PUBLIC

@@ -3,6 +3,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -46,7 +47,7 @@ from lensnode.gateway_model import (
 def test_runtime_answer_composes_execution_phases(monkeypatch):
     calls = []
     resources = SimpleNamespace()
-    state = SimpleNamespace(resources=resources)
+    state = SimpleNamespace(resources=resources, exit_span=Mock())
     runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
 
     monkeypatch.setattr(
@@ -78,6 +79,7 @@ def test_runtime_answer_composes_execution_phases(monkeypatch):
     result = runtime._answer_sync({"question": "hello"})
 
     assert result == {"answer": "done"}
+    state.exit_span.assert_called_once_with(None)
     assert calls == ["prepare", "route", "build", "execute", "cleanup"]
 
 
@@ -85,6 +87,9 @@ def test_general_chat_uses_route_classifier_before_agent_loop(monkeypatch):
     events = []
     runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
     state = SimpleNamespace(
+        new_span=Mock(return_value="stage:1:1"),
+        enter_span=Mock(),
+        exit_span=Mock(),
         command={"task": "general_chat", "question": "hello"},
         runtime_mode=SimpleNamespace(
             execution_gates=True,
@@ -124,6 +129,9 @@ def test_general_chat_uses_route_classifier_before_agent_loop(monkeypatch):
     )
 
     assert runtime._route_runtime(state) is None
+    state.new_span.assert_called_once_with("stage")
+    state.enter_span.assert_called_once_with("stage:1:1")
+    state.exit_span.assert_called_once_with("stage:1:1")
     assert state.route_decision["route"] == "plan_execute"
     assert state.command["runtime_route"] == "plan_execute"
     assert state.evidence_requirement == "none"
@@ -197,6 +205,9 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
     events = []
     outputs = []
     state = SimpleNamespace(
+        new_span=Mock(return_value="stage:1:1"),
+        enter_span=Mock(),
+        exit_span=Mock(),
         command={"task": "general_chat", "target_dirs": []},
         emit_agent_event=lambda *args: events.append(args),
         emit_output=lambda content, **_kwargs: outputs.append(content),
@@ -257,6 +268,9 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
 
     result = runtime._route_runtime(state)
 
+    state.new_span.assert_called_once_with("stage")
+    state.enter_span.assert_called_once_with("stage:1:1")
+    state.exit_span.assert_called_once_with("stage:1:1")
     assert "/subject-documents" not in result["answer"]
     assert ".sourcelens" not in result["answer"]
     assert "read_file" not in result["answer"]

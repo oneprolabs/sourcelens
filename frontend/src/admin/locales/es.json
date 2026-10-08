@@ -1158,6 +1158,7 @@
       "sensitiveConfigHint": "Los valores de contraseña, secreto, token, clave API, autorización, credencial y clave privada están enmascarados. Deja un valor enmascarado sin cambios para conservarlo, ingresa un nuevo valor para reemplazarlo, o elimina la fila para borrarlo.",
       "environmentVariablesHelp": "Enumere las variables que este servidor MCP necesita. Proporcionará sus valores al agregar el servidor MCP a un Asistente.",
       "environmentPlaceholderHint": "Refiérase a una variable declarada en el endpoint o Config con {placeholder}. SourceLens la expande solo en la configuración privada por ejecución de MCP.",
+      "bearerTokenHint": "Para la autenticación Bearer de una cuenta de servicio fija, configure Config headers.Authorization con el prefijo Bearer y una referencia a una variable de entorno (consulte el formato anterior). Declare SERVICE_TOKEN como secreto e introduzca su valor al vincular el servidor a un Asistente. El acceso usa la cuenta de servicio representada por el token, no los permisos personales del usuario actual de SourceLens. Los valores se cifran y solo se inyectan en la configuración de ejecución MCP.",
       "pluginConnection": "Conexión de Plugin",
       "selectConnection": "Seleccione una conexión",
       "pluginTools": "Herramientas del Plugin",

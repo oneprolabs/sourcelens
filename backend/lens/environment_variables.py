@@ -6,7 +6,35 @@ from rest_framework import serializers
 
 ENVIRONMENT_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 ENVIRONMENT_REFERENCE_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+SECRET_ENVIRONMENT_NAME_RE = re.compile(
+    r"(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|PRIVATE_KEY)$",
+    re.IGNORECASE,
+)
 ALLOWED_SKILL_API_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+
+def secret_environment_names(variable_set):
+    """Return keys that must never be revealed as plaintext."""
+
+    values = variable_set.get_values()
+    secret_names = {
+        name for name in values if SECRET_ENVIRONMENT_NAME_RE.search(name)
+    }
+    declarations = []
+    for binding in variable_set.mcp_bindings.select_related("mcp"):
+        declarations.extend(binding.mcp.environment or [])
+    for binding in variable_set.skill_bindings.select_related("skill"):
+        definition = binding.skill.definition
+        if isinstance(definition, dict):
+            declarations.extend(definition.get("environment") or [])
+    secret_names.update(
+        item["name"]
+        for item in declarations
+        if isinstance(item, dict)
+        and item.get("secret")
+        and item.get("name") in values
+    )
+    return secret_names
 
 
 def environment_references(value):

@@ -103,7 +103,10 @@
           </FormRow>
           <div class="grid gap-4 md:grid-cols-2">
             <FormRow :label="t('lensAdmin.fields.transport')">
-              <BaseSelect v-model="form.transport">
+              <BaseSelect
+                :model-value="form.transport"
+                @update:model-value="handleTransportChange"
+              >
                 <option value="url">url</option>
                 <option value="stdio">stdio</option>
                 <option value="plugin">plugin</option>
@@ -186,6 +189,9 @@
                   placeholder: '${VARIABLE_NAME}'
                 })
               }}
+            </p>
+            <p class="text-xs leading-5 text-ink-500">
+              {{ t('lensAdmin.mcp.bearerTokenHint') }}
             </p>
           </template>
           <BooleanRow v-model="form.enabled" />
@@ -398,6 +404,10 @@ function handleConnectionChange(connectionUuid) {
   form.value.tools = []
 }
 
+function handleTransportChange(transport) {
+  form.value.transport = transport
+}
+
 function togglePluginTool(toolKey) {
   const tools = new Set(form.value.tools)
   if (tools.has(toolKey)) tools.delete(toolKey)
@@ -476,6 +486,10 @@ onMounted(load)
 <style scoped>
 .form-input {
   @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+}
+
+.form-input:disabled {
+  @apply cursor-not-allowed bg-surface-sunken text-ink-400;
 }
 
 .table-head {

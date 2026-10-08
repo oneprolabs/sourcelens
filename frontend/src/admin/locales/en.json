@@ -1158,6 +1158,7 @@
       "sensitiveConfigHint": "Password, secret, token, API key, authorization, credential, and private-key values are masked. Leave a masked value unchanged to keep it, enter a new value to replace it, or remove the row to clear it.",
       "environmentVariablesHelp": "List the variables this MCP Server needs. You'll provide their values when adding the MCP Server to an Assistant.",
       "environmentPlaceholderHint": "Reference a declared variable in the endpoint or Config with {placeholder}. SourceLens expands it only in the private per-Run MCP configuration.",
+      "bearerTokenHint": "For fixed service-account Bearer auth, set Config headers.Authorization to a Bearer prefix plus an environment-variable reference (see the format above). Declare SERVICE_TOKEN as a secret, then enter its value when binding this server to an Assistant. Access uses the service account represented by the token, not the current SourceLens user's personal permissions. Values are encrypted and injected only into that MCP runtime configuration.",
       "pluginConnection": "Plugin Connection",
       "selectConnection": "Select a Connection",
       "pluginTools": "Plugin tools",

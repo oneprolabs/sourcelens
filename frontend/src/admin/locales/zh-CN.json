@@ -1158,6 +1158,7 @@
       "sensitiveConfigHint": "密码、Secret、Token、API Key、Authorization、Credential 和私钥配置会以掩码显示。保留掩码表示不修改，输入新值表示覆盖，删除该行表示清除。",
       "environmentVariablesHelp": "添加此 MCP Server 运行所需的变量；将 MCP Server 绑定到 Assistant 时再填写变量值。",
       "environmentPlaceholderHint": "可在 Endpoint 或 Config 中使用 {placeholder} 引用已声明变量；SourceLens 只会在每次 Run 的私有 MCP 配置中解析。",
+      "bearerTokenHint": "固定服务账号的 Bearer 认证：在 Config 的 headers.Authorization 中使用 Bearer 前缀和环境变量引用（变量引用格式见上方）；将 SERVICE_TOKEN 声明为敏感变量，绑定到 Assistant 时填写 Token。请求权限由该 Token 对应的服务账号决定，不代表当前 SourceLens 用户的个人权限。变量值加密保存，仅注入本次 MCP 运行配置。",
       "pluginConnection": "插件连接",
       "selectConnection": "请选择连接",
       "pluginTools": "插件工具",

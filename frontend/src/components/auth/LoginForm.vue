@@ -149,7 +149,7 @@ const handleLogin = async () => {
     await userStore.login({
       email: formData.email,
       password: formData.password,
-      turnstileToken: pwTurnstileToken.value
+      turnstile_token: pwTurnstileToken.value
     })
     emit('success')
   } catch (error) {
