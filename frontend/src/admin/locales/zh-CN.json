@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "fileStatus": {
+      "candidate": "候选",
+      "published": "已发布",
+      "superseded": "已替代"
+    },
     "trajectoryDiagnostics": "运行诊断 · {n} 个节点",
     "trajectoryMeteredTokens": "已计量 Token",
     "trajectoryObservedTokens": "已记录模型 Token",
