@@ -1517,7 +1517,7 @@
       },
       "gitlab": {
         "displayName": "GitLab",
-        "description": "Connect approved GitLab.com or self-managed projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
+        "description": "Connect public GitLab.com or self-managed projects anonymously, or approved private projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
         "connectionFields": {
           "endpoint": {
             "title": "GitLab endpoint",
@@ -1525,7 +1525,7 @@
           },
           "secret_value": {
             "title": "Personal access token",
-            "description": "A write-only token with read_api and read_repository access to the approved projects."
+            "description": "Optional for public projects. A write-only token with read_api and read_repository access to approved private projects."
           },
           "projects": {
             "title": "Allowed projects",
@@ -2148,7 +2148,7 @@
       "step1Title": "Source",
       "step1Desc": "Choose the data source type.",
       "step2Title": "Connection and resources",
-      "step2Desc": "Name the data source, select a connection, and choose repositories or resources to sync.",
+      "step2Desc": "Enter a name and resource address, and select an authentication connection when needed.",
       "step3Title": "Sync and processing policy",
       "step3Desc": "Configure the sync policy and document content processing.",
       "summarySource": "Data source",
@@ -2314,6 +2314,7 @@
       "duplicateResourceUrl": "Feishu resource addresses must be unique.",
       "checkRepositoryAccess": "Check availability",
       "repositoriesAccessible": "Repositories are accessible. You can continue.",
+      "publicAccess": "Public access (no credentials)",
       "publicRepository": "Public",
       "githubErrors": {
         "notFound": "Repository or ref not found, or this connection cannot access it.",

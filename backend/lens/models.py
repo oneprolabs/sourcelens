@@ -865,6 +865,7 @@ class Connection(TimestampedUUIDModel):
     endpoint = models.URLField(max_length=500)
     config = models.JSONField(default=dict, blank=True)
     allowed_scope = models.JSONField(default=dict, blank=True)
+    system_key = models.CharField(max_length=80, null=True, blank=True, unique=True, editable=False)
     secret_version = models.ForeignKey(
         SecretVersion,
         null=True,

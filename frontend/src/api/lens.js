@@ -552,6 +552,18 @@ export async function validateConnectionDatasource(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function validatePublicDatasource(payload) {
+  const response = await api.post(
+    '/lens/admin/connections/validate-public-datasource/',
+    payload,
+    {
+      headers: { 'Cache-Control': 'no-store' },
+      timeout: DATASOURCE_ACCESS_TIMEOUT
+    }
+  )
+  return unwrapResponse(response)
+}
+
 export async function getConnectionResources(uuid, params = {}) {
   const response = await api.get(`/lens/admin/connections/${uuid}/resources/`, {
     params

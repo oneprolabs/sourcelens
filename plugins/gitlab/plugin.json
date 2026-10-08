@@ -5,7 +5,7 @@
   "capability_family": "plugin",
   "display_name": "GitLab",
   "icon": "assets/icon.svg",
-  "description": "Connect approved GitLab.com or self-managed projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
+  "description": "Connect public GitLab.com or self-managed projects anonymously, or approved private projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
   "assistant_guidance": {
     "summary": "Use GitLab tools to inspect approved projects, repository files, and time-bounded engineering activity.",
     "when_to_use": [
@@ -70,7 +70,7 @@
         "type": "string",
         "format": "password",
         "title": "Personal access token",
-        "description": "A write-only token with read_api and read_repository access to the approved projects.",
+        "description": "Optional for public projects. A write-only token with read_api and read_repository access to approved private projects.",
         "write_to": "secret_value"
       },
       "projects": {
@@ -86,7 +86,7 @@
         }
       }
     },
-    "required": ["endpoint", "secret_value", "projects"],
+    "required": ["endpoint", "projects"],
     "additionalProperties": false
   },
   "datasource_schema": {
@@ -98,6 +98,7 @@
         "format": "provider-resource",
         "resource": "projects",
         "title": "Projects",
+        "allow_custom": true,
         "minItems": 1,
         "maxItems": 50
       },

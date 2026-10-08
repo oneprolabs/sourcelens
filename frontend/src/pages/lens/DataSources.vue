@@ -485,6 +485,7 @@ import {
   testLensNodeDataSourceConnection,
   updateDataSource,
   validateConnectionDatasource,
+  validatePublicDatasource,
   getDataSourceUploadLimits,
   uploadDataSourceFile,
   deleteDataSourceUpload
@@ -1130,6 +1131,7 @@ function dataSourceConnection(row) {
 }
 
 function connectionName(row) {
+  if (row.connection_is_public) return ''
   return (
     row.connection_name ||
     (typeof row.connection === 'object' ? row.connection?.name : '') ||
@@ -1442,7 +1444,8 @@ function formFromRow(row) {
     target_path: row.target_path || '',
     credential_uuid: row.credential || '',
     credential_configured: !!row.credential_configured,
-    connection_uuid: row.connection || '',
+    connection_uuid: row.connection_is_public ? '' : row.connection || '',
+    public_endpoint: row.connection_is_public ? row.connection_endpoint : '',
     plugin_key: row.plugin_key || '',
     conversion_document: row.sync_policy?.conversion?.document !== false,
     conversion_document_model_ref:
@@ -1568,6 +1571,7 @@ function handleDatasourceTypeChange(seed = null) {
   if (!seed) {
     form.value.credential_uuid = ''
     form.value.connection_uuid = ''
+    form.value.public_endpoint = ''
     form.value.plugin_key = ''
   }
   const sourceType = seed?.source_type || form.value.source_type
@@ -1729,6 +1733,15 @@ function buildPayload() {
     payload.plugin_key = form.value.plugin_key
     payload.connection_uuid = form.value.connection_uuid
     payload.datasource_config = buildPluginDatasourceConfig()
+    if (['github', 'gitlab'].includes(form.value.plugin_key)) {
+      payload.connection_uuid = form.value.connection_uuid || null
+      if (!form.value.connection_uuid) {
+        payload.public_endpoint =
+          datasourceConnectionResult.value?.details?.endpoint ||
+          form.value.public_endpoint ||
+          ''
+      }
+    }
     payload.config = {}
     payload.credential_uuid = null
   } else {
@@ -2014,7 +2027,7 @@ function resetDatasourceConnectionResult() {
     return
   }
   feishuValidation.reset()
-  if (form.value.plugin_key === 'github') {
+  if (['github', 'gitlab'].includes(form.value.plugin_key)) {
     datasourceConnectionResult.value = {
       status: 'unchecked',
       details: {
@@ -2098,7 +2111,7 @@ function validateFeishuResources() {
 async function testDatasourceConnection({ automatic = false } = {}) {
   if (
     automatic &&
-    form.value.plugin_key === 'github' &&
+    ['github', 'gitlab'].includes(form.value.plugin_key) &&
     datasourceConnectionResult.value?.status === 'success' &&
     datasourceConnectionBaseSignature.value === datasourceConnectionSignature()
   ) {
@@ -2124,11 +2137,12 @@ async function testDatasourceConnection({ automatic = false } = {}) {
   }
   try {
     if (
-      form.value.plugin_key === 'github' &&
+      ['github', 'gitlab'].includes(form.value.plugin_key) &&
       isPluginSourceType(form.value.source_type) &&
-      datasourceConfig.value.repositories?.length
+      (datasourceConfig.value.repositories?.length ||
+        datasourceConfig.value.projects?.length)
     ) {
-      if (!previousResources.repositories) {
+      if (form.value.connection_uuid && !previousResources.repositories) {
         // Enumeration must not block checking explicitly selected repositories.
         const discovered = await getConnectionResources(
           form.value.connection_uuid
@@ -2139,19 +2153,33 @@ async function testDatasourceConnection({ automatic = false } = {}) {
           ...(discovered?.resources || {})
         }
       }
-      const result = await validateConnectionDatasource(
-        form.value.connection_uuid,
-        {
-          datasource_config: buildPluginDatasourceConfig()
-        }
-      )
+      const payload = { datasource_config: buildPluginDatasourceConfig() }
+      const result = form.value.connection_uuid
+        ? await validateConnectionDatasource(
+            form.value.connection_uuid,
+            payload
+          )
+        : await validatePublicDatasource({
+            ...payload,
+            plugin_key: form.value.plugin_key,
+            public_endpoint: form.value.public_endpoint || ''
+          })
       if (requestId !== datasourceConnectionRequestId) return
       datasourceConnectionResult.value = {
         status: result.valid ? 'success' : 'failed',
+        message: result.valid
+          ? ''
+          : githubDatasourceAccessError({ response: { data: result } }) ||
+            result.resources?.find((item) => !item.accessible)?.error ||
+            '',
         details: {
-          resources: previousResources,
+          resources: {
+            ...previousResources,
+            ...(datasourceConnectionResult.value?.details?.resources || {})
+          },
           validatedRepositories: result.resources || [],
           normalizedConfig: result.datasource_config,
+          endpoint: result.endpoint,
           connection_uuid: form.value.connection_uuid
         }
       }
@@ -2163,7 +2191,9 @@ async function testDatasourceConnection({ automatic = false } = {}) {
       const resources = await getConnectionResources(form.value.connection_uuid)
       if (requestId !== datasourceConnectionRequestId) return
       datasourceConnectionResult.value = {
-        status: form.value.plugin_key === 'github' ? 'unchecked' : 'success',
+        status: ['github', 'gitlab'].includes(form.value.plugin_key)
+          ? 'unchecked'
+          : 'success',
         message: '',
         details: {
           ...resources,
@@ -2210,7 +2240,7 @@ async function testDatasourceConnection({ automatic = false } = {}) {
 }
 
 function githubDatasourceAccessError(error) {
-  if (form.value.plugin_key !== 'github') return ''
+  if (!['github', 'gitlab'].includes(form.value.plugin_key)) return ''
   const payload = error.response?.data
   const data = payload?.data || payload || {}
   const codes = {
@@ -2218,6 +2248,11 @@ function githubDatasourceAccessError(error) {
     GITHUB_ACCESS_DENIED: 'accessDenied',
     GITHUB_RATE_LIMITED: 'rateLimited',
     GITHUB_REQUEST_FAILED: 'requestFailed',
+    GITLAB_NOT_FOUND: 'notFound',
+    GITLAB_ACCESS_DENIED: 'accessDenied',
+    GITLAB_RATE_LIMITED: 'rateLimited',
+    GITLAB_REQUEST_FAILED: 'requestFailed',
+    'project is outside connection scope': 'outsideScope',
     'repository is outside connection scope': 'outsideScope'
   }
   const failures = Array.isArray(data.resources)
@@ -2255,34 +2290,41 @@ function feishuDatasourceAccessError(error) {
 }
 
 async function loadPluginResourceOptions({ resource, selectedValues }) {
+  await nextTick()
   const connectionUuid = form.value.connection_uuid
   const selection = selectedValues || {}
   if (
-    !connectionUuid ||
+    (!connectionUuid &&
+      !['github', 'gitlab'].includes(form.value.plugin_key)) ||
     !resource ||
     !Object.values(selection).some((value) => String(value || '').trim())
   ) {
     return
   }
   const requestId = ++pluginResourceRequestId
+  const requestSignature = datasourceConnectionSignature(true)
   loadingPluginResourceOptions.value = resource
   try {
-    const resources = await getConnectionResources(connectionUuid, {
-      resource,
-      ...selection
-    })
+    const resources = connectionUuid
+      ? await getConnectionResources(connectionUuid, { resource, ...selection })
+      : await validatePublicDatasource({
+          plugin_key: form.value.plugin_key,
+          public_endpoint: form.value.public_endpoint || '',
+          datasource_config: buildPluginDatasourceConfig(),
+          resource
+        })
     if (
       requestId !== pluginResourceRequestId ||
-      connectionUuid !== form.value.connection_uuid
+      connectionUuid !== form.value.connection_uuid ||
+      requestSignature !== datasourceConnectionSignature(true)
     ) {
       return
     }
     datasourceConnectionResult.value = {
       ...(datasourceConnectionResult.value || {}),
-      status:
-        form.value.plugin_key === 'github'
-          ? datasourceConnectionResult.value?.status || 'unchecked'
-          : 'success',
+      status: ['github', 'gitlab'].includes(form.value.plugin_key)
+        ? datasourceConnectionResult.value?.status || 'unchecked'
+        : 'success',
       details: {
         ...(datasourceConnectionResult.value?.details || {}),
         resources: {
@@ -2429,6 +2471,8 @@ function datasourceConnectionSignature(ignoreBranch = false) {
   return JSON.stringify({
     lensnode_uuid: form.value.lensnode_uuid || '',
     connection_uuid: form.value.connection_uuid || '',
+    public_endpoint: form.value.public_endpoint || '',
+    plugin_key: form.value.plugin_key || '',
     source_type: normalizedSourceType(form.value.source_type) || '',
     config
   })

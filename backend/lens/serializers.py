@@ -82,6 +82,7 @@ from .plugins.decisions import (
     validate_decision_analyses,
     validate_decision_gates,
 )
+from .plugins.public_connections import persist_public_connection, public_datasource_connection
 from .plugins.registry import (
     PluginRegistryError,
     connection_secret_is_available,
@@ -2142,6 +2143,8 @@ class DataSourceSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     connection = serializers.UUIDField(source="connection.uuid", read_only=True)
+    public_endpoint = serializers.URLField(write_only=True, required=False, allow_blank=True)
+    connection_is_public = serializers.SerializerMethodField()
     connection_name = serializers.CharField(
         source="connection.name",
         read_only=True,
@@ -2164,6 +2167,11 @@ class DataSourceSerializer(serializers.ModelSerializer):
     sync_state = serializers.SerializerMethodField()
     storage_usage = serializers.SerializerMethodField()
     deployments = serializers.SerializerMethodField()
+
+    def get_connection_is_public(self, datasource):
+        """Return whether authentication is managed anonymously by the system."""
+
+        return bool(datasource.connection_id and datasource.connection.system_key)
 
     def get_deployments(self, obj):
         """Serialize every runtime copy of the datasource."""
@@ -2278,6 +2286,18 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "plugin_key",
             getattr(self.instance, "plugin_key", ""),
         )
+        public_endpoint = attrs.pop("public_endpoint", "")
+        if plugin_key in {"github", "gitlab"} and (connection is None or connection.system_key):
+            try:
+                connection, datasource_config = public_datasource_connection(
+                    plugin_key,
+                    datasource_config,
+                    public_endpoint or getattr(connection, "endpoint", ""),
+                )
+            except DatasourceProviderError as exc:
+                raise serializers.ValidationError({"datasource_config": str(exc)}) from exc
+            attrs["connection"] = connection
+            attrs["datasource_config"] = datasource_config
         _validate_datasource_config_secret_fields(datasource_config)
         if (
             connection is None
@@ -2626,6 +2646,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a datasource and pin its unified storage directory."""
 
+        self._persist_public_connection(validated_data)
         datasource = DataSource.objects.create(**validated_data)
         self._apply_default_target_path(datasource)
         return datasource
@@ -2633,9 +2654,18 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Update datasource metadata and repin its storage directory."""
 
+        self._persist_public_connection(validated_data)
         datasource = super().update(instance, validated_data)
         self._apply_default_target_path(datasource)
         return datasource
+
+    @staticmethod
+    def _persist_public_connection(validated_data):
+        """Save anonymous infrastructure only after resource validation succeeds."""
+
+        connection = validated_data.get("connection")
+        if connection is not None and connection.system_key:
+            validated_data["connection"] = persist_public_connection(connection)
 
     @staticmethod
     def _apply_default_target_path(datasource):
@@ -2671,6 +2701,8 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "connection_uuid",
             "connection_name",
             "connection_endpoint",
+            "connection_is_public",
+            "public_endpoint",
             "plugin_key",
             "datasource_config",
             "config",

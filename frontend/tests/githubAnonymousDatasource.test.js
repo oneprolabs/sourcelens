@@ -37,6 +37,7 @@ function setup(overrides = {}) {
     },
     datasourceConnectionRequestId: 0,
     pluginResourceRequestId: 0,
+    nextTick: async () => {},
     datasourceConnectionBaseSignature: { value: '' },
     datasourceConnectionResult: { value: null },
     testingDatasourceConnection: { value: false },
@@ -87,6 +88,97 @@ test('manually entered repositories must pass the access check', async () => {
   assert.equal(
     context.datasourceConnectionResult.value.details.validatedRepositories[0]
       .default_branch,
+    'main'
+  )
+})
+
+for (const pluginKey of ['github', 'gitlab']) {
+  test(`${pluginKey} public repositories validate without a connection or discovery`, async () => {
+    let payload
+    const key = pluginKey === 'github' ? 'repositories' : 'projects'
+    const context = setup({
+      form: {
+        value: {
+          plugin_key: pluginKey,
+          source_type: `plugin:${pluginKey}`,
+          connection_uuid: ''
+        }
+      },
+      datasourceConfig: { value: { [key]: ['owner/repo'] } },
+      buildPluginDatasourceConfig: () => ({ [key]: ['owner/repo'] }),
+      getConnectionResources: () => {
+        throw new Error('Public access must not enumerate connections')
+      },
+      validatePublicDatasource: async (value) => {
+        payload = value
+        return {
+          valid: true,
+          resources: [],
+          datasource_config: value.datasource_config
+        }
+      }
+    })
+    await context.testDatasourceConnection()
+    assert.equal(payload.plugin_key, pluginKey)
+    assert.equal(context.datasourceConnectionResult.value.status, 'success')
+  })
+
+  test(`${pluginKey} public branch discovery cannot approve repository access`, async () => {
+    const context = setup({
+      form: {
+        value: {
+          plugin_key: pluginKey,
+          source_type: `plugin:${pluginKey}`,
+          connection_uuid: ''
+        }
+      },
+      validatePublicDatasource: async () => ({
+        resources: { branches: { items: [{ value: 'main' }] } }
+      })
+    })
+    await context.loadPluginResourceOptions({
+      resource: 'branches',
+      selectedValues: { repository: 'owner/repo' }
+    })
+    assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
+    assert.equal(
+      context.datasourceConnectionResult.value.details.resources.branches
+        .items[0].value,
+      'main'
+    )
+  })
+}
+
+test('access validation preserves branch options returned while the check is pending', async () => {
+  let finishValidation
+  const context = setup({
+    form: {
+      value: {
+        plugin_key: 'github',
+        source_type: 'plugin:github',
+        connection_uuid: ''
+      }
+    },
+    validatePublicDatasource: async (payload) => {
+      if (payload.resource) {
+        return { resources: { branches: { items: [{ value: 'main' }] } } }
+      }
+      return new Promise((resolve) => {
+        finishValidation = resolve
+      })
+    }
+  })
+  const pending = context.testDatasourceConnection()
+  await context.loadPluginResourceOptions({
+    resource: 'branches',
+    selectedValues: { repositories: ['owner/repo'] }
+  })
+  finishValidation({ valid: true, resources: [] })
+  await pending
+  assert.equal(context.datasourceConnectionResult.value.status, 'success')
+  assert.equal(
+    context.datasourceConnectionResult.value.details.resources.branches.items[0]
+      .value,
     'main'
   )
 })

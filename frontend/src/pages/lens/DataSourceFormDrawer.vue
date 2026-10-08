@@ -88,13 +88,33 @@
           <template
             v-if="isPluginSourceType(form.source_type) && !isManagedWorkspace"
           >
-            <FormRow :label="t('lensAdmin.pages.connections.label')" required>
+            <FormRow
+              :label="t('lensAdmin.pages.connections.label')"
+              :required="!isRepositoryPlugin"
+            >
               <div
                 class="grid gap-3 sm:grid-cols-2"
                 role="group"
                 :aria-label="t('lensAdmin.pages.connections.label')"
                 :aria-invalid="connectionFieldInvalid"
               >
+                <label
+                  v-if="isRepositoryPlugin"
+                  class="connection-card"
+                  :class="{ 'connection-card-selected': !form.connection_uuid }"
+                >
+                  <input
+                    type="radio"
+                    name="datasource-connection"
+                    value=""
+                    :checked="!form.connection_uuid"
+                    class="h-4 w-4 shrink-0 border-line text-brand-600 focus:ring-brand-500"
+                    @change="handlePluginConnectionChange('')"
+                  />
+                  <span class="text-sm font-medium text-ink-900">
+                    {{ t('lensAdmin.datasourceWizard.publicAccess') }}
+                  </span>
+                </label>
                 <label
                   v-for="connection in pluginConnections"
                   :key="connection.uuid"
@@ -135,7 +155,10 @@
               >
                 {{ t('lensAdmin.datasourceWizard.requiredField') }}
               </p>
-              <p class="mt-1 text-xs text-ink-500">
+              <p
+                v-if="!isRepositoryPlugin || form.connection_uuid"
+                class="mt-1 text-xs text-ink-500"
+              >
                 {{ t('lensAdmin.datasourceWizard.createConnectionHint') }}
                 <a
                   class="font-medium text-brand-600 hover:text-brand-700"
@@ -167,6 +190,11 @@
               "
               :custom-resource-label="
                 t('lensAdmin.connections.repositoryAddress')
+              "
+              :custom-resource-placeholder="
+                form.plugin_key === 'gitlab'
+                  ? 'group/project or https://gitlab.example/group/project'
+                  : 'owner/repo or https://github.com/owner/repo'
               "
               :add-array-item-label="t('common.add')"
               :remove-array-item-label="t('common.delete')"
@@ -225,12 +253,11 @@
                 </span>
               </template>
             </ManifestSchemaForm>
-            <div v-if="form.plugin_key === 'github'" class="space-y-3">
+            <div v-if="isRepositoryPlugin" class="space-y-3">
               <BaseButton
                 variant="outline"
                 :disabled="
-                  !form.connection_uuid ||
-                  !config.repositories?.length ||
+                  (!config.repositories?.length && !config.projects?.length) ||
                   testingConnection
                 "
                 @click="$emit('test-connection')"
@@ -1946,12 +1973,16 @@ const canCreateTargetDirectory = computed(
   () => !!normalizeRelativePathInput(newDirectoryName.value)
 )
 
+const isRepositoryPlugin = computed(() =>
+  ['github', 'gitlab'].includes(props.form.plugin_key)
+)
+
 const canTestConnection = computed(() => {
   if (isManagedWorkspace.value) {
     return false
   }
   if (isPluginSourceType(props.form.source_type)) {
-    return !!props.form.connection_uuid
+    return isRepositoryPlugin.value || !!props.form.connection_uuid
   }
   if (!props.form.lensnode_uuid) {
     return false
@@ -2024,6 +2055,7 @@ const connectionFieldInvalid = computed(
   () =>
     isPluginSourceType(props.form.source_type) &&
     !isManagedWorkspace.value &&
+    !isRepositoryPlugin.value &&
     !props.form.connection_uuid
 )
 
@@ -2049,7 +2081,7 @@ const canProceedWizard = computed(() => {
     }
     if (isPluginSourceType(props.form.source_type)) {
       return Boolean(
-        props.form.connection_uuid &&
+        (isRepositoryPlugin.value || props.form.connection_uuid) &&
           schemaRequiredFieldsHaveValues(datasourceSchema.value, props.config)
       )
     }
@@ -2197,7 +2229,7 @@ function schemaRequiredFieldsHaveValues(schema, value) {
 
 async function handlePluginConnectionChange(connectionUuid) {
   props.form.connection_uuid = connectionUuid
-  if (!connectionUuid) props.form.plugin_key = ''
+  props.form.public_endpoint = ''
   Object.keys(props.config).forEach((key) => delete props.config[key])
   emit('connection-change')
   await nextTick()
@@ -2639,6 +2671,7 @@ watch(
     props.form.source_type,
     props.form.credential_uuid,
     props.form.connection_uuid,
+    props.form.public_endpoint,
     datasourceConnectionConfigSignature()
   ],
   () => {
