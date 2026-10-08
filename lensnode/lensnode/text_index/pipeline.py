@@ -9,7 +9,7 @@ import cocoindex as coco
 from cocoindex.connectors import localfs
 from cocoindex.ops.text import RecursiveSplitter, detect_code_language
 
-from .config import IndexUnavailable, digest, index_key
+from .config import IndexUnavailable, digest, index_directory
 from .documents import Document, collect_documents, generation_for
 from .store import publish
 
@@ -53,14 +53,26 @@ async def index_documents(documents: list[Document], output_dir: Path, chunk_siz
 
 
 async def build_index(settings, root, datasource_uuid, *, full_reprocess=False):
-    """Build off the Agent path and publish only a complete, stable batch."""
+    """Build datasource-local state and publish only a complete, stable batch."""
 
     root = Path(root).resolve(strict=True)
     if root == settings.workspace_path or not root.is_relative_to(settings.workspace_path):
         raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
-    index_dir = settings.state_path / index_key(root, datasource_uuid)
+    index_dir = index_directory(root, datasource_uuid)
     state_dir = index_dir / settings.profile
+    if any(
+        path.is_symlink()
+        for path in (
+            state_dir,
+            state_dir / "prepared",
+            state_dir / "cocoindex.db",
+            index_dir / "writer.lock",
+            index_dir / "index.sqlite3",
+        )
+    ):
+        raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
     state_dir.mkdir(parents=True, exist_ok=True)
+    (index_dir.parent / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
     with (index_dir / "writer.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

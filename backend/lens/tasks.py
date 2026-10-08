@@ -1796,6 +1796,29 @@ def datasource_upload_task(
     return 0
 
 
+def _save_datasource_metadata(datasource, result, task_metadata):
+    """Merge processed retrieval facts while preserving unrelated datasource metadata."""
+
+    incoming = result.get("datasource_metadata") or {}
+    retrieval = incoming.get("retrieval") if isinstance(incoming, dict) else None
+    with transaction.atomic():
+        locked = DataSource.objects.select_for_update().get(pk=datasource.pk)
+        values = dict(locked.metadata or {})
+        if result.get("status") == "success" and isinstance(retrieval, dict):
+            values["retrieval"] = {
+                **retrieval,
+                "lensnode_uuid": str(task_metadata.get("lensnode_uuid") or ""),
+            }
+        elif "retrieval" in values:
+            previous = dict(values["retrieval"])
+            previous["analysis_status"] = "incomplete"
+            previous["index"] = {"status": "unverified"}
+            previous["recommendation"] = {"default_tool": "search_workspace", "performance": "not_measured"}
+            values["retrieval"] = previous
+        locked.metadata = values
+        locked.save(update_fields=["metadata", "updated_at"])
+
+
 def complete_datasource_conversion_task(
     task_id,
     result,
@@ -1858,6 +1881,7 @@ def complete_datasource_conversion_task(
         "conversion_summary": conversion_summary,
     }
     if datasource is not None:
+        _save_datasource_metadata(datasource, result, metadata)
         datasource.last_conversion_status = task_status
         datasource.last_conversion_at = timezone.now()
         datasource.save(
@@ -2281,6 +2305,7 @@ def complete_datasource_sync_task(task_id, result):
         )
 
     if datasource is not None:
+        _save_datasource_metadata(datasource, result, metadata)
         if success:
             usage = metrics.get("storage_usage") or {}
             update_fields = ["last_error", "last_synced_at", "updated_at"]

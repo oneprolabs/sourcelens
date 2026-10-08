@@ -134,6 +134,51 @@ def test_query_filters_are_derived_from_selected_scope(corpus):
 
 
 def test_pipeline_profile_tracks_chunking_parameters(tmp_path):
-    settings = TextIndexSettings(tmp_path / "index", tmp_path / "workspace")
+    settings = TextIndexSettings(tmp_path / "workspace")
     assert settings.profile != replace(settings, chunk_size=800).profile
     assert settings.profile != replace(settings, chunk_overlap=100).profile
+
+
+def test_settings_need_only_workspace(tmp_path, monkeypatch):
+    """Colocated indexes require no external state path configuration."""
+
+    monkeypatch.setenv("LENSNODE_WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.delenv("LENSNODE_TEXT_INDEX_STATE_PATH", raising=False)
+    assert TextIndexSettings.from_env().workspace_path == tmp_path
+
+
+def test_index_location_follows_datasource_and_rejects_symlinks(tmp_path):
+    """Moving a datasource preserves its index layout and identity isolation."""
+
+    from lensnode.text_index.config import index_directory
+
+    identity = str(uuid4())
+    root = tmp_path / "source"
+    root.mkdir()
+    directory = index_directory(root, identity)
+    assert directory.parent == root / ".cocoindex"
+    assert directory != index_directory(root, str(uuid4()))
+    assert directory.relative_to(root) == index_directory(tmp_path / "moved", identity).relative_to(tmp_path / "moved")
+    (root / ".cocoindex").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(IndexUnavailable, match="PATH_INVALID"):
+        index_directory(root, identity)
+
+
+def test_sync_catalog_excludes_and_preserves_cocoindex(corpus):
+    """Generated state is neither counted nor collected as source documents."""
+
+    from lensnode.datasource_manifest import should_skip_dir
+    from lensnode.datasource_sync import _count_file_extensions, _managed_workspace_conversion_items
+
+    root, identity, manifest = corpus
+    internal = root / ".cocoindex" / "prepared"
+    internal.mkdir(parents=True)
+    chunks = internal / "chunks.json"
+    chunks.write_text('{"text": "private recovery"}')
+    manifest["items"].append({"source_id": "index", "local_path": ".cocoindex/prepared/chunks.json"})
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    assert len(collect_documents(root, identity)) == 2
+    assert should_skip_dir(root / ".cocoindex", identity, [])
+    assert _count_file_extensions(root) == {"md": 2}
+    assert {item.local_path for item in _managed_workspace_conversion_items(root, [])} == {"public.md", "private.md"}
+    assert chunks.exists()

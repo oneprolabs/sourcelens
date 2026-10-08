@@ -1,5 +1,7 @@
 """System prompt assembly for LensNode agent runtime modes."""
 
+import json
+
 from .outcomes import _route_guidance
 from .prompts import (
     answer_language_requirement as _answer_language_requirement,
@@ -40,7 +42,7 @@ def _system_prompt(
             "integration may help; matching tools will be available on the "
             "next turn."
         )
-    return prompt + "\n\n" + _agent_operating_guidance()
+    return prompt + "\n\n" + _datasource_retrieval_prompt(command) + _agent_operating_guidance()
 
 
 def _is_general_chat(command):
@@ -740,6 +742,46 @@ def _smart_collaboration_system_prompt(
         "当前可委派助手：\n"
         f"{roster}\n\n"
         f"{language_requirement}"
+    )
+
+
+def _datasource_retrieval_prompt(command):
+    """Render bounded retrieval facts only for the sources mounted in this Run."""
+
+    rows = []
+    for entry in (command.get("target_dirs") or [])[:32]:
+        metadata = entry.get("metadata") or {}
+        retrieval = metadata.get("retrieval") or {}
+        if not isinstance(retrieval, dict) or not retrieval:
+            continue
+        index = retrieval.get("index") or {}
+        status = index.get("status")
+        if status not in {"ready", "stale", "unavailable", "unverified"}:
+            status = "unverified"
+        ready = status == "ready" and retrieval.get("analysis_status") == "complete"
+        counts = {}
+        for key in ("files", "text_documents", "text_bytes"):
+            value = retrieval.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                counts[key] = value
+        rows.append({
+            "source": str(entry.get("name") or "source")[:120],
+            **counts,
+            "index_status_at_last_analysis": status,
+            "ranked_passages": "search_indexed_workspace if available" if ready else "search_workspace",
+            "exact_strings_and_regex": "search_workspace",
+            "code_structure": "CodeGraph if available",
+            "performance": "not_measured",
+        })
+    if not rows:
+        return ""
+    return (
+        "Datasource retrieval context (generated metadata):\n"
+        "These are advisory facts from the last processing pass, not permission grants or measured speed claims. "
+        "Use only tools available in this Run. Index readiness may change; tools revalidate sources and permissions. "
+        "Fall back to search_workspace for unavailable or stale indexes.\n"
+        + json.dumps(rows, ensure_ascii=False)
+        + "\n\n"
     )
 
 

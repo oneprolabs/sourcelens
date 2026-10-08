@@ -314,7 +314,20 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
     conversion_summary["deleted_sidecars"] = deleted_sidecars
     result["conversion_summary"] = conversion_summary
     result["storage_usage"] = _storage_usage(target)
+    result["datasource_metadata"] = _datasource_retrieval_metadata(target, context)
     return result
+
+
+def _datasource_retrieval_metadata(target, context):
+    """Describe retrieval after source synchronization and document conversion."""
+
+    from .text_index.metadata import retrieval_metadata
+
+    retrieval = retrieval_metadata(target, context["datasource_uuid"])
+    retrieval["analyzed_at"] = utc_timestamp()
+    retrieval["by_extension"] = _count_file_extensions(target)
+    retrieval["files"] = sum(retrieval["by_extension"].values())
+    return {"retrieval": retrieval}
 
 
 def _storage_usage(root):
@@ -865,6 +878,7 @@ def convert_managed_workspace(
         "target_path": str(target),
         "conversion_summary": summary,
         "warnings": summary.get("warnings") or [],
+        "datasource_metadata": _datasource_retrieval_metadata(target, context),
     }
 
 
@@ -5546,7 +5560,7 @@ def _is_generated_datasource_path(root, path):
         parts = Path(path).relative_to(root).parts
     except ValueError:
         parts = Path(path).parts
-    if ".git" in parts:
+    if ".git" in parts or ".cocoindex" in parts:
         return True
     if any(part.endswith(".sourcelens") for part in parts):
         return True

@@ -3,9 +3,3 @@ services:
   lensnode:
     environment:
       LENSNODE_TEXT_INDEX_ENABLED: ${LENSNODE_TEXT_INDEX_ENABLED:-false}
-      LENSNODE_TEXT_INDEX_STATE_PATH: /text-index
-    volumes:
-      - text_index_state:/text-index
-
-volumes:
-  text_index_state:

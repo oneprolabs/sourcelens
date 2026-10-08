@@ -286,3 +286,6 @@ uv.lock
 /.stoneforge/.worktrees/
 
 references
+
+# Datasource-local text indexing state
+.cocoindex/

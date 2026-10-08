@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from ..workspace import is_path_allowed, target_scope
-from .config import MAX_RESULTS, IndexUnavailable, index_key
+from .config import MAX_RESULTS, IndexUnavailable, index_directory
 from .documents import authorized_scopes, read_document, safe_file
 from .store import search_index
 
@@ -21,7 +21,9 @@ async def search(settings, target_dirs, policy, query, limit=8):
     matches = []
     checked = {}
     for root, datasource_uuid, allowed, entry in scopes:
-        index_path = settings.state_path / index_key(root, datasource_uuid) / "index.sqlite3"
+        index_path = index_directory(root, datasource_uuid) / "index.sqlite3"
+        if index_path.is_symlink():
+            raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
         selected = Path(entry["path"]).resolve()
         scope = target_scope(entry)
         permissions = {}

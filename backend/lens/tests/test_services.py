@@ -4365,6 +4365,7 @@ class LensServiceTests(TransactionTestCase):
             "managed-conversion",
             {
                 "status": "success",
+                "datasource_metadata": {"retrieval": {"analysis_status": "complete", "files": 3}},
                 "conversion_summary": {
                     "total": 3,
                     "candidates": 3,
@@ -4390,6 +4391,7 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(task.result["overall_status"], "succeeded")
         self.assertEqual(task.result["conversion_summary"]["failed"], 1)
         self.assertEqual(datasource.last_conversion_status, "SUCCESS")
+        self.assertEqual(datasource.metadata["retrieval"]["files"], 3)
         self.assertIsNotNone(datasource.last_conversion_at)
         self.assertEqual(task.metadata["phase"], "COMPLETED")
         self.assertEqual(task.metadata["overall_progress_percent"], 100)
@@ -5131,6 +5133,7 @@ class LensServiceTests(TransactionTestCase):
                 "status": "success",
                 "synced": 1,
                 "files": 3,
+                "datasource_metadata": {"retrieval": {"analysis_status": "complete", "files": 3}},
                 "target_path": self.datasource.target_path,
             },
         )
@@ -5143,6 +5146,7 @@ class LensServiceTests(TransactionTestCase):
         )
         task.refresh_from_db()
         self.assertIsNotNone(self.datasource.last_synced_at)
+        self.assertEqual(self.datasource.metadata["retrieval"]["files"], 3)
         self.assertEqual(record.last_status, "success")
         self.assertEqual(
             record.last_metrics,

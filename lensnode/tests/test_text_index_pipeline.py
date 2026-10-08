@@ -14,14 +14,14 @@ import pytest
 pytest.importorskip("cocoindex")
 
 from lensnode.text_index import pipeline, store
-from lensnode.text_index.config import IndexUnavailable, TextIndexSettings, digest, index_key
+from lensnode.text_index.config import IndexUnavailable, TextIndexSettings, digest, index_directory
 from lensnode.text_index.pipeline import build_index
 from lensnode.text_index.query import search
 
 
 @pytest.fixture
 def indexed_source(tmp_path):
-    """Use a disposable workspace and private index directory."""
+    """Use a disposable workspace with datasource-local indexes."""
 
     workspace = tmp_path / "workspace"
     root = workspace / "source"
@@ -36,7 +36,7 @@ def indexed_source(tmp_path):
         (root / name).write_text(text)
         manifest["items"].append({"source_id": name, "local_path": name, "status": "synced"})
     (root / "manifest.json").write_text(json.dumps(manifest))
-    settings = TextIndexSettings(tmp_path / "state", workspace)
+    settings = TextIndexSettings(workspace)
     return settings, root, identity, manifest
 
 
@@ -58,7 +58,7 @@ def test_real_pipeline_reuses_prepared_files_and_updates_fts(indexed_source, mon
         first = await build_index(settings, root, identity)
         assert first["changed_files"] == 2
         assert len(processed) == 2
-        prepared = settings.state_path / index_key(root, identity) / settings.profile / "prepared"
+        prepared = index_directory(root, identity) / settings.profile / "prepared"
         old_mtimes = {file.name: file.stat().st_mtime_ns for file in prepared.iterdir()}
         second = await build_index(settings, root, identity)
         assert first["generation"] == second["generation"]
@@ -84,7 +84,7 @@ def test_real_pipeline_reuses_prepared_files_and_updates_fts(indexed_source, mon
         deleted = await build_index(settings, root, identity)
         assert deleted["deleted_files"] == 1
         assert not (prepared / (digest("recovery.md") + ".json")).exists()
-        published = settings.state_path / index_key(root, identity) / "index.sqlite3"
+        published = index_directory(root, identity) / "index.sqlite3"
         assert store.search_index(published, ["recovery.md"], "recovery", settings.profile, 8) == []
         with pytest.raises(IndexUnavailable, match="SCOPE_UNAVAILABLE"):
             await search(settings, command_scope, {}, "recovery")
@@ -120,7 +120,7 @@ def test_publication_failure_preserves_previous_generation(indexed_source, monke
 def test_competing_writer_is_rejected(indexed_source):
     async def scenario():
         settings, root, identity, _ = indexed_source
-        directory = settings.state_path / index_key(root, identity)
+        directory = index_directory(root, identity)
         directory.mkdir(parents=True)
         with (directory / "writer.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -155,7 +155,7 @@ def test_incomplete_manifest_preserves_published_index(indexed_source):
     async def scenario():
         settings, root, identity, manifest = indexed_source
         await build_index(settings, root, identity)
-        published = settings.state_path / index_key(root, identity) / "index.sqlite3"
+        published = index_directory(root, identity) / "index.sqlite3"
         before = published.read_bytes()
         manifest["items"] = []
         manifest["stats"]["scan_complete"] = False
@@ -176,7 +176,7 @@ def test_cli_and_agent_tool_end_to_end(indexed_source, monkeypatch):
 
     settings, root, identity, _ = indexed_source
     monkeypatch.setenv("LENSNODE_WORKSPACE_PATH", str(settings.workspace_path))
-    monkeypatch.setenv("LENSNODE_TEXT_INDEX_STATE_PATH", str(settings.state_path))
+    monkeypatch.delenv("LENSNODE_TEXT_INDEX_STATE_PATH", raising=False)
     command = [
         sys.executable,
         "-m",
@@ -323,7 +323,7 @@ def test_ranked_candidates_are_authorized_before_text_is_loaded(indexed_source, 
             return len(candidates) > 1
 
         rows = store.search_index(
-            settings.state_path / index_key(root, identity) / "index.sqlite3",
+            index_directory(root, identity) / "index.sqlite3",
             ["recovery.md", "private.md"],
             "recovery",
             settings.profile,
@@ -336,3 +336,44 @@ def test_ranked_candidates_are_authorized_before_text_is_loaded(indexed_source, 
         assert len([sql for sql in statements if sql.startswith("SELECT * FROM chunks")]) == 1
 
     asyncio.run(scenario())
+
+
+def test_moved_datasource_reuses_its_published_index(indexed_source):
+    """Relocating documents and state keeps queries usable without rebuilding."""
+
+    async def scenario():
+        settings, root, identity, _ = indexed_source
+        built = await build_index(settings, root, identity)
+        moved = root.rename(root.parent / "moved")
+        result = await search(settings, [{"path": str(moved)}], {}, "重试")
+        assert result["matches"][0]["path"] == str(moved / "recovery.md")
+        assert result["matches"][0]["generation"] == built["generation"]
+        assert (await build_index(settings, moved, identity))["changed_files"] == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "linked_path", ["profile", "prepared", "cocoindex.db", "writer.lock", "index.sqlite3", ".gitignore"]
+)
+def test_build_rejects_linked_state_paths(indexed_source, tmp_path, linked_path):
+    """Datasource contents cannot redirect index writes outside their directory."""
+
+    settings, root, identity, _ = indexed_source
+    directory = index_directory(root, identity)
+    profile = directory / settings.profile
+    profile.mkdir(parents=True)
+    candidates = {
+        "profile": profile,
+        "prepared": profile / "prepared",
+        "cocoindex.db": profile / "cocoindex.db",
+        "writer.lock": directory / "writer.lock",
+        "index.sqlite3": directory / "index.sqlite3",
+        ".gitignore": directory.parent / ".gitignore",
+    }
+    candidate = candidates[linked_path]
+    if candidate.is_dir():
+        candidate.rmdir()
+    candidate.symlink_to(tmp_path)
+    with pytest.raises(IndexUnavailable, match="PATH_INVALID"):
+        asyncio.run(build_index(settings, root, identity))
