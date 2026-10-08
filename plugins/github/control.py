@@ -2,6 +2,7 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
@@ -116,6 +117,7 @@ class GitHubDatasourceProvider(DatasourceProvider):
     """Validate read-only GitHub repository datasource selections."""
 
     key = "github"
+    requires_datasource_access_validation = True
 
     def http_origins(self, endpoint, connection_config=None):
         """Return the fixed GitHub REST API origin."""
@@ -182,7 +184,7 @@ class GitHubDatasourceProvider(DatasourceProvider):
         normalized = []
         identities = set()
         for value in repositories:
-            repository = _repository_name(value)
+            repository = _repository_address(value)
             identity = repository.casefold()
             if identity not in identities:
                 identities.add(identity)
@@ -207,10 +209,12 @@ class GitHubDatasourceProvider(DatasourceProvider):
         )
         with _GitHubClient(client) as github_client:
             payload = context.run(
-                lambda: _github_json(github_client, "/user", token)
+                lambda: _github_json(github_client, "/user" if token else "/", token)
             )
         if not isinstance(payload, dict):
             raise DatasourceProviderError("GITHUB_RESPONSE_INVALID")
+        if not token:
+            return {"authentication": "anonymous"}
         login = payload.get("login")
         if not isinstance(login, str) or not login:
             raise DatasourceProviderError("GITHUB_RESPONSE_INVALID")
@@ -284,7 +288,7 @@ class GitHubDatasourceProvider(DatasourceProvider):
                 if isinstance(repositories, list) and repositories
                 else None
             )
-        repository = _repository_name(repository_value)
+        repository = _repository_address(repository_value)
         allowed = _allowed_repositories(connection_scope)
         if allowed is not None and repository.casefold() not in allowed:
             raise DatasourceProviderError("repository is outside connection scope")
@@ -326,6 +330,8 @@ class GitHubDatasourceProvider(DatasourceProvider):
 
         self.validate_connection(endpoint, connection_config)
         token = _secret_value(secret)
+        if not token:
+            return {"resources": {"repositories": {"items": []}}, "next_cursor": ""}
         page = _connection_resource_page(cursor)
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise DatasourceProviderError(
@@ -410,7 +416,7 @@ class GitHubDatasourceProvider(DatasourceProvider):
             raise DatasourceProviderError(
                 "repositories must contain 1 through 50 items"
             )
-        repositories = [_repository_name(value) for value in raw_repositories]
+        repositories = [_repository_address(value) for value in raw_repositories]
         if len({item.casefold() for item in repositories}) != len(repositories):
             raise DatasourceProviderError("repositories must be unique")
         if allowed_repositories is not None and any(
@@ -431,6 +437,78 @@ class GitHubDatasourceProvider(DatasourceProvider):
         if directory:
             normalized["directory"] = directory
         return normalized
+
+    def validate_datasource_access(
+        self,
+        secret,
+        datasource_config,
+        endpoint="",
+        connection_config=None,
+        client=None,
+        request_context=None,
+    ):
+        """Check repository visibility and the selected ref before saving."""
+
+        self.validate_connection(endpoint, connection_config)
+        token = _secret_value(secret)
+        repositories = datasource_config.get("repositories") or [datasource_config.get("repository")]
+        context = request_context or PluginRequestContext(
+            timeout_seconds=GITHUB_TIMEOUT_SECONDS, deadline_seconds=30
+        )
+        with _GitHubClient(client) as github_client:
+            def validate_repository(value):
+                """Check one repository within the operation's request budget."""
+
+                repository = _repository_name(value)
+                item = {"url": f"https://github.com/{repository}", "repository": repository, "accessible": False}
+                path = f"/repos/{quote(repository, safe='/')}"
+                try:
+                    payload = context.run(lambda: _github_json(github_client, path, token))
+                    if not isinstance(payload, dict) or not payload.get("full_name"):
+                        raise DatasourceProviderError("GITHUB_RESPONSE_INVALID")
+                    if not token and payload.get("private") is not False:
+                        raise DatasourceProviderError("GITHUB_ACCESS_DENIED")
+                    ref = datasource_config.get("branch") or payload.get("default_branch") or "HEAD"
+                    # Listing one commit verifies Contents access without downloading file patches.
+                    context.run(
+                        lambda: _github_json(
+                            github_client,
+                            f"{path}/commits",
+                            token,
+                            params={"sha": ref, "per_page": 1},
+                        )
+                    )
+                    item.update(
+                        accessible=True,
+                        default_branch=payload.get("default_branch", ""),
+                        private=bool(payload.get("private")),
+                    )
+                except DatasourceProviderError as exc:
+                    item["error"] = str(exc)
+                return item
+
+            with ThreadPoolExecutor(max_workers=min(context.max_concurrency, len(repositories))) as executor:
+                resources = list(executor.map(validate_repository, repositories))
+        return {"valid": all(item["accessible"] for item in resources), "resources": resources}
+
+
+def _repository_address(value):
+    """Normalize a GitHub HTTPS URL without accepting credentials or extra paths."""
+
+    if not isinstance(value, str):
+        raise DatasourceProviderError("repository is required")
+    value = value.strip()
+    if "://" in value:
+        try:
+            parsed = urlsplit(value)
+        except ValueError as exc:
+            raise DatasourceProviderError("repository must be a GitHub HTTPS URL or owner/repository") from exc
+        if parsed.scheme != "https" or parsed.netloc.lower() != "github.com" or parsed.query or parsed.fragment:
+            raise DatasourceProviderError("repository must be a GitHub HTTPS URL or owner/repository")
+        value = parsed.path.strip("/")
+        if value.endswith(".git"):
+            value = value[:-4]
+    return _repository_name(value)
 
 
 def _allowed_repositories(connection_scope):
@@ -537,9 +615,9 @@ class _GitHubClient:
 
 
 def _secret_value(value):
-    """Return a non-empty secret without persisting or returning it."""
+    """Return an optional token without persisting or returning it."""
 
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str):
         raise DatasourceProviderError("GITHUB_SECRET_UNAVAILABLE")
     return value
 
@@ -567,7 +645,7 @@ def _github_json(client, path, token, params=None):
             params=params,
             headers={
                 "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
+                **({"Authorization": f"Bearer {token}"} if token else {}),
                 "X-GitHub-Api-Version": GITHUB_API_VERSION,
                 "User-Agent": "SourceLens-Control-Plane",
             },
@@ -582,7 +660,9 @@ def _github_json(client, path, token, params=None):
                     else None
                 )
                 raise DatasourceProviderError(
-                    _github_error(response.status_code),
+                    "GITHUB_RATE_LIMITED"
+                    if response.status_code == 403 and response.headers.get("X-RateLimit-Remaining") == "0"
+                    else _github_error(response.status_code),
                     retry_after=retry_after,
                 )
             body = bytearray()

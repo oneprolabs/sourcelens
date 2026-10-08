@@ -92,13 +92,14 @@
         "type": "string",
         "format": "password",
         "title": "Personal access token",
-        "description": "A write-only token with read access to the approved repositories.",
+        "description": "Optional. Leave empty for anonymous public access, or provide a token for authorized repositories.",
         "write_to": "secret_value"
       },
       "repositories": {
         "type": "array",
         "format": "provider-resource",
         "resource": "repositories",
+        "allow_custom": true,
         "title": "Allowed repositories",
         "description": "Explicit owner/repository values this connection may access, or allow every repository the token can read.",
         "write_to": "allowed_scope.repositories",
@@ -108,7 +109,7 @@
         }
       }
     },
-    "required": ["secret_value", "repositories"],
+    "required": ["repositories"],
     "additionalProperties": false
   },
   "datasource_schema": {
@@ -119,6 +120,7 @@
         "items": {"type": "string"},
         "format": "provider-resource",
         "resource": "repositories",
+        "allow_custom": true,
         "title": "Repositories",
         "minItems": 1,
         "maxItems": 50

@@ -57,9 +57,6 @@
         </header>
 
         <div v-if="activeStepKey === 'basic'" class="space-y-5">
-          <FormRow :label="t('lensAdmin.fields.name')" required>
-            <input v-model="form.name" class="form-input" required />
-          </FormRow>
           <FormRow :label="t('lensAdmin.fields.type')" required>
             <BaseSelect
               v-model="form.source_type"
@@ -80,6 +77,14 @@
         </div>
 
         <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
+          <FormRow :label="t('lensAdmin.fields.name')" required>
+            <input
+              v-model="form.name"
+              :aria-label="t('lensAdmin.fields.name')"
+              class="form-input"
+              required
+            />
+          </FormRow>
           <template
             v-if="isPluginSourceType(form.source_type) && !isManagedWorkspace"
           >
@@ -155,6 +160,14 @@
               :resources="pluginResources"
               :loading-resource="loadingResourceOptions"
               :schema="datasourceSchema"
+              :normalize-custom-resource="
+                form.plugin_key === 'github'
+                  ? normalizeGitHubRepositoryAddress
+                  : undefined
+              "
+              :custom-resource-label="
+                t('lensAdmin.connections.repositoryAddress')
+              "
               :add-array-item-label="t('common.add')"
               :remove-array-item-label="t('common.delete')"
               :empty-resource-text="t('lensAdmin.pluginForm.noResourcesLoaded')"
@@ -212,6 +225,40 @@
                 </span>
               </template>
             </ManifestSchemaForm>
+            <div v-if="form.plugin_key === 'github'" class="space-y-3">
+              <BaseButton
+                variant="outline"
+                :disabled="
+                  !form.connection_uuid ||
+                  !config.repositories?.length ||
+                  testingConnection
+                "
+                @click="$emit('test-connection')"
+              >
+                {{ t('lensAdmin.datasourceWizard.checkRepositoryAccess') }}
+              </BaseButton>
+              <p
+                v-if="connectionResult?.status === 'success'"
+                class="text-sm text-success-700"
+                role="status"
+              >
+                {{ t('lensAdmin.datasourceWizard.repositoriesAccessible') }}
+              </p>
+              <div
+                v-for="item in connectionResult?.details
+                  ?.validatedRepositories || []"
+                :key="item.repository"
+                class="text-xs text-ink-600"
+              >
+                {{ item.repository }} ·
+                {{
+                  item.private
+                    ? t('lensAdmin.pluginForm.private')
+                    : t('lensAdmin.datasourceWizard.publicRepository')
+                }}
+                · {{ item.default_branch }}
+              </div>
+            </div>
           </template>
           <template v-else-if="isGitSourceType(form.source_type)">
             <FormRow :label="t('lensAdmin.fields.credential')" required>
@@ -1479,6 +1526,7 @@
 </template>
 
 <script setup>
+import { normalizeGitHubRepositoryAddress } from '@/utils/githubRepository'
 import {
   CheckCircle as CheckCircleIcon,
   Check as CheckIcon,
@@ -1981,10 +2029,11 @@ const connectionFieldInvalid = computed(
 
 const canProceedWizard = computed(() => {
   if (activeStepKey.value === 'basic') {
-    return !!props.form.name?.trim() && !!props.form.source_type
+    return !!props.form.source_type
   }
   if (activeStepKey.value === 'node') return true
   if (activeStepKey.value === 'connection') {
+    if (!props.form.name?.trim()) return false
     if (isManagedWorkspace.value) {
       if (isFileUpload.value) {
         return onlineLensNodes.value.some(
@@ -2468,7 +2517,7 @@ function testConnectionIfVisible() {
     ) {
       return
     }
-    emit('test-connection')
+    emit('test-connection', { automatic: true })
   }
 }
 

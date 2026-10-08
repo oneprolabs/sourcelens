@@ -84,6 +84,7 @@ from .plugins.decisions import (
 )
 from .plugins.registry import (
     PluginRegistryError,
+    connection_secret_is_available,
     installed_plugin,
     plugin_requires_secret,
 )
@@ -1179,15 +1180,14 @@ class AssistantSerializer(serializers.ModelSerializer):
                     plugin_bindings is None
                     and getattr(self.instance, "pk", None) is not None
                 ):
-                    has_enabled_plugin = (
-                        self.instance.plugin_bindings.filter(
+                    has_enabled_plugin = any(
+                        connection_secret_is_available(binding.connection)
+                        for binding in self.instance.plugin_bindings.select_related(
+                            "connection__secret_version__material"
+                        ).filter(
                             enabled=True,
                             connection__status=Connection.Status.ACTIVE,
-                            connection__secret_version__status="active",
-                            connection__secret_version__material__status=(
-                                "active"
-                            ),
-                        ).exists()
+                        )
                     )
                 else:
                     has_enabled_plugin = any(
@@ -1472,33 +1472,33 @@ class AssistantSerializer(serializers.ModelSerializer):
                 mcp__enabled=True,
                 mcp__transport=MCPServer.Transport.PLUGIN,
             ).values_list("mcp_id", flat=True)
-            return list(
-                MCPServer.objects.select_related(
+            return [
+                adapter
+                for adapter in MCPServer.objects.select_related(
                     "connection__secret_version__material"
                 ).filter(
                     pk__in=adapter_ids,
                     connection__status=Connection.Status.ACTIVE,
-                    connection__secret_version__status="active",
-                    connection__secret_version__material__status="active",
                 )
-            )
+                if connection_secret_is_available(adapter.connection)
+            ]
         adapter_uuids = [
             binding.get("mcp_uuid")
             for binding in (mcp_bindings or [])
             if binding.get("enabled", True)
         ]
-        return list(
-            MCPServer.objects.select_related(
+        return [
+            adapter
+            for adapter in MCPServer.objects.select_related(
                 "connection__secret_version__material"
             ).filter(
                 uuid__in=adapter_uuids,
                 enabled=True,
                 transport=MCPServer.Transport.PLUGIN,
                 connection__status=Connection.Status.ACTIVE,
-                connection__secret_version__status="active",
-                connection__secret_version__material__status="active",
             )
-        )
+            if connection_secret_is_available(adapter.connection)
+        ]
 
     def _validate_collaboration_members(self, member_uuids):
         """Validate Smart Assistant members at the API boundary."""
@@ -1845,7 +1845,7 @@ class ConnectionSerializer(serializers.ModelSerializer):
     secret_value = serializers.CharField(
         write_only=True,
         required=False,
-        allow_blank=False,
+        allow_blank=True,
     )
     has_secret = serializers.SerializerMethodField()
     secret_hint = serializers.SerializerMethodField()
@@ -2319,13 +2319,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"connection_uuid": "Plugin Connection is disabled"}
                 )
-            secret_version = connection.secret_version
-            if (
-                secret_version is None
-                or secret_version.status != "active"
-                or secret_version.material.status != "active"
-                or not secret_version.encrypted_value
-            ):
+            if not connection_secret_is_available(connection):
                 raise serializers.ValidationError(
                     {
                         "connection_uuid": (
@@ -3715,12 +3709,7 @@ class MCPServerSerializer(serializers.ModelSerializer):
         errors = {}
         if connection is None:
             errors["connection_uuid"] = "Plugin adapter Connection is required."
-        elif (
-            connection.status != Connection.Status.ACTIVE
-            or connection.secret_version is None
-            or connection.secret_version.status != "active"
-            or connection.secret_version.material.status != "active"
-        ):
+        elif connection.status != Connection.Status.ACTIVE:
             errors["connection_uuid"] = "Plugin adapter Connection is disabled."
         if endpoint:
             errors["endpoint"] = "Plugin adapters cannot define an MCP endpoint."
@@ -3741,6 +3730,10 @@ class MCPServerSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(errors)
         try:
             plugin = installed_plugin(connection.plugin_key)
+            if not connection_secret_is_available(connection):
+                raise serializers.ValidationError(
+                    {"connection_uuid": "Plugin adapter Connection secret is unavailable."}
+                )
         except PluginRegistryError as exc:
             raise serializers.ValidationError(
                 {"connection_uuid": str(exc)}

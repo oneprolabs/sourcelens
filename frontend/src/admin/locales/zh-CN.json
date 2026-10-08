@@ -1494,7 +1494,7 @@
         "connectionFields": {
           "secret_value": {
             "title": "个人访问令牌",
-            "description": "仅用于写入、且对已授权仓库具有读取权限的令牌。"
+            "description": "可选。留空即可匿名访问公共仓库；填写 Token 可访问其授权的仓库。"
           },
           "repositories": {
             "title": "允许访问的仓库",
@@ -1667,9 +1667,9 @@
       "feishuSelfRegisterExpired": "注册请求已过期，请重新开始并扫描新的二维码。",
       "feishuSelfRegisterFailed": "飞书应用注册失败。",
       "githubGuideTitle": "GitHub 连接配置指引",
-      "githubGuideSummary": "创建最小权限的 Token，并只授权需要使用的仓库。",
+      "githubGuideSummary": "公共仓库可以不填 Token；私有仓库需要具有读取权限的 GitHub.com Personal Access Token。",
       "githubGuideCreateTitle": "创建细粒度个人访问令牌",
-      "githubGuideCreateHint": "GitHub 目前建议优先使用细粒度个人访问令牌。SourceLens 当前仅支持 GitHub.com Personal Access Token，不支持 OAuth 或 GitHub Enterprise。",
+      "githubGuideCreateHint": "GitHub 目前建议优先使用细粒度个人访问令牌。公共仓库可以不填 Token；私有仓库需要具有读取权限的 GitHub.com Personal Access Token。",
       "githubGuideRepositoryTitle": "限制仓库访问范围",
       "githubGuideRepositoryHint": "在 Repository access 中选择 Only select repositories，并只勾选需要同步或供助手查询的仓库。",
       "githubGuidePermissionTitle": "授予只读仓库权限",
@@ -1775,7 +1775,11 @@
       "searchPlaceholder": "搜索连接名称、插件或地址",
       "allPlugins": "全部插件",
       "allStatuses": "全部状态",
-      "secret": "密钥"
+      "secret": "密钥",
+      "anonymous": "匿名访问（公共仓库）",
+      "allowAllPublicRepositories": "允许所有公共仓库",
+      "allowAllPublicRepositoriesHint": "创建数据源时填写公共仓库地址，无需逐个预先授权。",
+      "repositoryAddress": "仓库地址"
     },
     "credentials": {
       "secretConfigured": "密钥已配置",
@@ -2142,9 +2146,9 @@
       "editTitle": "编辑数据源",
       "progressLabel": "配置进度",
       "step1Title": "来源",
-      "step1Desc": "设置数据源名称和类型。",
+      "step1Desc": "选择数据源类型。",
       "step2Title": "连接与资源",
-      "step2Desc": "选择连接，并指定需要同步的仓库或资源。",
+      "step2Desc": "填写名称，选择连接，并指定需要同步的仓库或资源。",
       "step3Title": "同步与处理策略",
       "step3Desc": "配置同步策略与文档内容处理。",
       "summarySource": "数据源",
@@ -2307,7 +2311,18 @@
       "feishuDeleteMissingTitle": "删除本地缺失项",
       "feishuDeleteMissingHint": "当飞书远端条目不存在时，删除对应本地文件。建议默认关闭，避免误删。",
       "requiredField": "必填项",
-      "duplicateResourceUrl": "飞书资源地址不能重复。"
+      "duplicateResourceUrl": "飞书资源地址不能重复。",
+      "checkRepositoryAccess": "检查可用性",
+      "repositoriesAccessible": "仓库可访问，可以继续创建数据源。",
+      "publicRepository": "公开",
+      "githubErrors": {
+        "notFound": "仓库或分支不存在，或当前连接无权访问。",
+        "accessDenied": "当前连接没有访问权限。",
+        "rateLimited": "GitHub 请求额度已用尽，请稍后重试或配置 Token。",
+        "requestFailed": "无法连接 GitHub，请检查网络后重试。",
+        "invalidRepository": "请输入有效的 GitHub 仓库地址。",
+        "outsideScope": "该仓库不在所选连接的授权范围内。"
+      }
     },
     "detail": {
       "runtimeLocation": "运行位置",

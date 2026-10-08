@@ -1,0 +1,12 @@
+type: feature
+audience: admin
+en: >-
+  GitHub connections and datasources can now work without a personal access
+  token, enabling anonymous read-only access to public repositories. The
+  datasource wizard accepts owner/repository or a GitHub HTTPS URL, checks
+  repository access and the selected ref before saving, and anonymous sync
+  isolates Git credentials.
+zh-CN: >-
+  GitHub 连接和数据源现在可以不带个人访问令牌使用，从而匿名只读访问公开仓库。
+  数据源向导支持填写 owner/repository 或 GitHub HTTPS 地址，在保存前校验仓库访问权限
+  与所选分支，匿名同步会隔离 Git 凭证。
