@@ -78,6 +78,9 @@ def _mark_run_failed(run, exc):
     run.error = str(exc)
     run.finished_at = timezone.now()
     run.save(update_fields=["status", "error", "finished_at", "updated_at"])
+    from .alerts import schedule_run_alert_evaluation
+
+    schedule_run_alert_evaluation(run.uuid)
     if hasattr(run, "execution"):
         run.execution.status = RunExecution.Status.FAILED
         run.execution.finished_at = run.finished_at

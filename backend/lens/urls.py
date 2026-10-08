@@ -13,6 +13,8 @@ from .views import (
     AdminRunTrajectoryView,
     AdminSharedQAViewSet,
     AdminUserAccessDetailView,
+    AlertEventViewSet,
+    AlertRuleViewSet,
     AssistantViewSet,
     ConnectionViewSet,
     DataSourceCredentialViewSet,
@@ -105,6 +107,16 @@ router.register(
     "admin/global-settings",
     GlobalSettingViewSet,
     basename="lens-admin-global-settings",
+)
+router.register(
+    "admin/alert-rules",
+    AlertRuleViewSet,
+    basename="lens-admin-alert-rules",
+)
+router.register(
+    "admin/alert-events",
+    AlertEventViewSet,
+    basename="lens-admin-alert-events",
 )
 
 urlpatterns = [

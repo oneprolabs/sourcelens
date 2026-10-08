@@ -18,6 +18,7 @@ from .admin_runs import (
     _admin_run_step_counts,
     admin_run_trajectory_stream_view,
 )
+from .alerts import AlertEventViewSet, AlertRuleViewSet
 from .assistants import AssistantViewSet, PublicAssistantView
 from .credentials import DataSourceCredentialViewSet
 from .datasources import DataSourceViewSet
@@ -75,6 +76,8 @@ __all__ = [
     "AdminRunDiagnosticTurnsView",
     "AdminUserAccessDetailView",
     "AdminSharedQAViewSet",
+    "AlertEventViewSet",
+    "AlertRuleViewSet",
     "AssistantViewSet",
     "DataSourceCredentialViewSet",
     "DataSourceViewSet",

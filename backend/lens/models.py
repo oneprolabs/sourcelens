@@ -2139,3 +2139,106 @@ class SharedQAFile(TimestampedUUIDModel):
 
     def __str__(self):
         return self.filename or str(self.uuid)
+
+
+class AlertRule(TimestampedUUIDModel):
+    """Admin-configured rule that notifies on terminal QA Run events.
+
+    An empty ``assistants`` relation means the rule applies to every
+    assistant. ``events`` holds a subset of :class:`AlertEvent.EventType`;
+    token/round thresholds only matter when their event is selected.
+    """
+
+    class Event(models.TextChoices):
+        RUN_FAILED = "run_failed", "Run failed"
+        TOKEN_EXCEEDED = "token_exceeded", "Token exceeded"
+        ROUNDS_EXCEEDED = "rounds_exceeded", "Rounds exceeded"
+
+    name = models.CharField(max_length=160)
+    enabled = models.BooleanField(default=True, db_default=True)
+    events = models.JSONField(default=list, blank=True, db_default=[])
+    token_threshold = models.PositiveIntegerField(null=True, blank=True)
+    rounds_threshold = models.PositiveIntegerField(null=True, blank=True)
+    channel_uuid = models.UUIDField(null=True, blank=True)
+    email_recipients = models.JSONField(default=list, blank=True, db_default=[])
+    assistants = models.ManyToManyField(
+        Assistant,
+        blank=True,
+        related_name="alert_rules",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="lens_alert_rules",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name or str(self.uuid)
+
+    def applies_to_assistant(self, assistant_id):
+        """Return True when the rule targets the given assistant."""
+
+        targets = list(self.assistants.all())
+        if not targets:
+            return True
+        return any(item.pk == assistant_id for item in targets)
+
+
+class AlertEvent(models.Model):
+    """One triggered alert for a Run, used for idempotency and audit."""
+
+    class EventType(models.TextChoices):
+        RUN_FAILED = "run_failed", "Run failed"
+        TOKEN_EXCEEDED = "token_exceeded", "Token exceeded"
+        ROUNDS_EXCEEDED = "rounds_exceeded", "Rounds exceeded"
+
+    class Status(models.TextChoices):
+        DISPATCHED = "dispatched", "Dispatched"
+        SKIPPED = "skipped", "Skipped"
+        FAILED = "failed", "Failed"
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    rule = models.ForeignKey(
+        AlertRule,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="alert_events",
+    )
+    run = models.ForeignKey(
+        Run,
+        on_delete=models.CASCADE,
+        related_name="alert_events",
+    )
+    event_type = models.CharField(max_length=32, choices=EventType.choices)
+    detail = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DISPATCHED,
+    )
+    error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rule", "run", "event_type"],
+                name="lens_alertevent_rule_run_type_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["event_type", "created_at"],
+                name="lens_alertevent_type_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type}:{self.run_id}"
