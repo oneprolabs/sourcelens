@@ -574,7 +574,9 @@ def test_post_run_checks_report_sufficiency_and_support(monkeypatch):
         ["evidence_sufficient", "answer_supported"],
     )
 
-    verdicts = policy.post_run_checks("question", "answer")
+    verdicts = policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    )
 
     assert verdicts == {
         "evidence_sufficient": True,
@@ -607,7 +609,9 @@ def test_post_run_checks_report_evidence_strength(monkeypatch):
         ["evidence_strength"],
     )
 
-    assert policy.post_run_checks("question", "answer") == {
+    assert policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    ) == {
         "evidence_strength": "adapted_only",
     }
 
@@ -626,7 +630,9 @@ def test_post_run_checks_use_fixed_defaults_on_fallback(monkeypatch):
         ["evidence_sufficient", "answer_supported"],
     )
 
-    assert policy.post_run_checks("question", "answer") == {
+    assert policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    ) == {
         "evidence_sufficient": True,
         "answer_supported": "supported",
     }
@@ -641,7 +647,7 @@ def test_post_run_state_includes_the_answer_and_evidence():
 
     assert "Why did it fail?" in state
     assert "Because of the deploy." in state
-    assert "Runtime evidence:" in state
+    assert json.loads(state)["runtime_evidence"]["record_validation"]["valid"] is True
 
 
 def test_gate_not_declared_by_the_manifest_falls_back():

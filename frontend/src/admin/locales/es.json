@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "fileStatus": {
+      "candidate": "Candidato",
+      "published": "Publicado",
+      "superseded": "Sustituido"
+    },
     "trajectoryDiagnostics": "Diagnóstico de ejecución · {n} nodos",
     "trajectoryMeteredTokens": "Tokens contabilizados",
     "trajectoryObservedTokens": "Tokens de modelo registrados",

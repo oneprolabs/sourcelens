@@ -1602,6 +1602,16 @@
                           >
                             {{ file.filename }}
                           </p>
+                          <span
+                            class="text-xs text-gray-500"
+                            data-testid="output-file-status"
+                          >
+                            {{
+                              t(
+                                `lensRuns.fileStatus.${file.status || 'published'}`
+                              )
+                            }}
+                          </span>
                           <dl
                             class="mt-2 grid gap-x-4 gap-y-1 text-xs text-gray-500 sm:grid-cols-3"
                           >

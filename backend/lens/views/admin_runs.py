@@ -922,7 +922,7 @@ def _admin_run_detail(run):
             if str(attachment.get("uuid")) in direct_attachment_uuids
             else "inherited"
         )
-    output_files = RunOutputFileSerializer(run.output_files.all(), many=True).data
+    output_files = RunOutputFileSerializer(run.output_files.all(), many=True, context={"run_status": run.status}).data
     row.update(
         {
             "question": (run.input_message.content if run.input_message else "") or "",

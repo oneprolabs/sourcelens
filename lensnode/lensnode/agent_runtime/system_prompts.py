@@ -306,7 +306,7 @@ def _knowledge_system_prompt(
         "directories. The scratch directory is discarded when the run ends "
         "and the user cannot see it; when you produce a file deliverable "
         "the user should keep, write it to scratch and then call "
-        "save_deliverable(path) to deliver it for download. Files created "
+        "save_deliverable(path) to stage it for final publication. Files created "
         "by external document tools under /tmp are also valid delivery "
         "paths; pass that exact file path to save_deliverable.\n\n"
         "Long-form file deliverables:\n"

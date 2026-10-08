@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "fileStatus": {
+      "candidate": "Candidate",
+      "published": "Published",
+      "superseded": "Superseded"
+    },
     "trajectoryDiagnostics": "Run diagnostics · {n} spans",
     "trajectoryMeteredTokens": "Metered tokens",
     "trajectoryObservedTokens": "Recorded model tokens",

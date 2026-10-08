@@ -13,6 +13,7 @@ from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
@@ -2776,6 +2777,8 @@ def build_run_history_artifacts(run):
         if not _assistant_output_is_trusted(prior):
             continue
         for output in reversed(list(prior.output_files.all())):
+            if output.message_id is None:
+                continue
             byte_size = int(output.byte_size or 0)
             content_hash = (output.content_hash or "").lower()
             if (
@@ -3656,6 +3659,7 @@ def finish_lensnode_run(
     final_content=None,
     citations=None,
     planned_evidence=None,
+    deliverable_uuids=None,
 ):
     """Mark a LensNode-dispatched run finished."""
 
@@ -3753,6 +3757,20 @@ def finish_lensnode_run(
             elapsed,
             BUSY_RETRY_WINDOW_S,
         )
+
+    candidates = run.output_files.filter(message__isnull=True)
+    approved = []
+    if deliverable_uuids is not None:
+        if not isinstance(deliverable_uuids, list):
+            raise ValidationError("Invalid deliverable manifest.")
+        try:
+            approved = list({uuid.UUID(str(value)) for value in deliverable_uuids})
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValidationError("Invalid deliverable UUID.") from exc
+        if candidates.filter(uuid__in=approved).count() != len(approved):
+            raise ValidationError("Deliverables must be candidates belonging to this Run.")
+    if status == Run.Status.DONE and outcome != Run.Outcome.BLOCKED:
+        candidates.filter(uuid__in=approved).update(message=run.output_message)
 
     if status == Run.Status.AWAITING_USER_INPUT:
         run.status = Run.Status.AWAITING_USER_INPUT

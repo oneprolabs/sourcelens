@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Sum
 from django.http import FileResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -858,6 +859,7 @@ class LensNodeHistoryArtifactView(LensNodeAuthMixin, APIView):
                 session_id=current_run.session_id,
                 assistant_id=current_run.session.assistant_id,
                 run__status=Run.Status.DONE,
+                message__isnull=False,
                 run__outcome__in=["", Run.Outcome.COMPLETED],
                 run__input_message__sequence__lt=(
                     current_run.input_message.sequence
@@ -901,6 +903,7 @@ class LensNodeDeliverableUploadView(LensNodeAuthMixin, APIView):
     permission_classes = []
     parser_classes = [MultiPartParser, FormParser]
 
+    @transaction.atomic
     def post(self, request):
         """Store an uploaded deliverable and record it against the run."""
 
@@ -928,9 +931,11 @@ class LensNodeDeliverableUploadView(LensNodeAuthMixin, APIView):
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
         try:
-            run = Run.objects.select_related(
-                "output_message", "session", "session__assistant"
-            ).get(uuid=run_uuid)
+            run = (
+                Run.objects.select_related("output_message", "session", "session__assistant")
+                .select_for_update(of=("self",))
+                .get(uuid=run_uuid)
+            )
         except Run.DoesNotExist:
             return Response(
                 {"detail": "Run not found."},
@@ -941,6 +946,9 @@ class LensNodeDeliverableUploadView(LensNodeAuthMixin, APIView):
                 {"detail": "Run does not belong to this LensNode."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        if run.status in {Run.Status.DONE, Run.Status.FAILED, Run.Status.CANCELLED}:
+            return Response({"detail": "Run has already finished."}, status=409)
 
         digest = hashlib.sha256()
         for chunk in upload.chunks():
@@ -958,9 +966,10 @@ class LensNodeDeliverableUploadView(LensNodeAuthMixin, APIView):
         )
         content_type = content_type[:120]
 
+        staged = str(request.data.get("staged") or "").lower() == "true"
         output = RunOutputFile(
             run=run,
-            message=run.output_message,
+            message=None if staged else run.output_message,
             session=run.session,
             assistant=run.session.assistant,
             filename=filename,

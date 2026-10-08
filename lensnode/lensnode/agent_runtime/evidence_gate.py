@@ -18,8 +18,8 @@ _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
     "fully supported by the evidence you retrieved. Do not answer from "
     "memory. Search again for the specific missing facts — batch "
-    "alternative keywords with \"|\" in ONE search_workspace call (for "
-    "example \"昇腾|Ascend|910B\") and read the most relevant matched files "
+    'alternative keywords with "|" in ONE search_workspace call (for '
+    'example "昇腾|Ascend|910B") and read the most relevant matched files '
     "— then give a final answer that every claim traces to retrieved "
     "evidence. Distinguish directly documented facts from derived "
     "conclusions, compatibility or adaptation, examples, plans, and "
@@ -29,6 +29,8 @@ _RECHECK_GUIDANCE = (
     "not a search log, evidence inventory, list of files to read, or a "
     "promise to investigate later. Keep the existing answer structure and "
     "focus on the user's question."
+    " The previous deliverable batch was discarded. Save every file intended "
+    "for the final answer again with save_deliverable, including unchanged files."
 )
 
 _CONVERGENCE_GUIDANCE = (
@@ -77,6 +79,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
         max_convergence_nudges=DEFAULT_MAX_CONVERGENCE_NUDGES,
         emit_event=None,
         review_scope=None,
+        on_recheck=None,
+        review_state=None,
     ):
         self.policy = policy
         self.question = str(question or "")
@@ -86,13 +90,17 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.max_convergence_nudges = max(int(max_convergence_nudges), 0)
         self.emit_event = emit_event
         self.review_scope = review_scope
+        self.on_recheck = on_recheck
+        self.review_state = review_state if review_state is not None else {}
         self.model_calls = 0
-        self.answer_nudges = 0
+        self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
         self.convergence_nudges = 0
         self.saw_final_answer = False
         self._last_verification = None
 
     def _emit(self, event, payload):
+        if event == "deepagents.evidence.verified":
+            self.review_state.update(answer_nudges=self.answer_nudges, action=payload.get("action"))
         if self.emit_event is not None:
             try:
                 self.emit_event(event, payload or {})
@@ -111,6 +119,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
             evidence = {
                 **(evidence if isinstance(evidence, dict) else {}),
                 "retrieved_evidence": message_evidence,
+                "evidence_completeness": (
+                    "incomplete"
+                    if (isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete")
+                    or any(item.get("truncated") for item in message_evidence)
+                    else "complete"
+                ),
             }
         signature = _evidence_signature(evidence)
         if self._last_verification is not None:
@@ -134,6 +148,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         if not isinstance(verdicts, dict) or not verdicts:
             return None
+        if isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete":
+            verdicts = {**verdicts, "evidence_completeness": "incomplete"}
         self._last_verification = (answer, base_signature, signature, dict(verdicts))
         return verdicts
 
@@ -206,6 +222,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
             verdicts = self._verify(answer, state)
             if verdicts is None:
                 return None
+            if verdicts.get("evidence_completeness") == "incomplete":
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_incomplete"},
+                )
+                return None
             if _verdicts_supported(verdicts):
                 self._emit(
                     "deepagents.evidence.verified",
@@ -215,10 +237,13 @@ class EvidenceGateMiddleware(AgentMiddleware):
             if self.answer_nudges >= self.max_nudges:
                 self._emit(
                     "deepagents.evidence.verified",
-                    {"verdicts": verdicts, "action": "accept_best_effort"},
+                    {"verdicts": verdicts, "action": "accept_best_effort", "fallback_reason": "review_not_passed"},
                 )
                 return None
             self.answer_nudges += 1
+            self.review_state["answer_nudges"] = self.answer_nudges
+            if self.on_recheck is not None:
+                self.on_recheck()
             self._emit(
                 "deepagents.evidence.verified",
                 {"verdicts": verdicts, "action": "recheck"},
@@ -248,24 +273,58 @@ def _tool_evidence(state):
     if not isinstance(state, dict):
         return []
     evidence = []
+    excluded = {
+        "write_todos",
+        "write_file",
+        "edit_file",
+        "append_file",
+        "save_deliverable",
+        "publish_artifact",
+        "ls",
+        "glob",
+        "delete_file",
+        "mkdir",
+    }
     for message in state.get("messages") or []:
         if getattr(message, "type", "") != "tool":
             continue
         content = _message_text(message).strip()
         if not content:
             continue
+        name = str(getattr(message, "name", "") or "tool")[:80]
+        if name in excluded:
+            continue
+        if name == "execute" and ("drwx" in content or content.startswith("total ")):
+            continue
         evidence.append(
             {
-                "tool": str(getattr(message, "name", "") or "tool")[:80],
+                "tool": name,
                 "content": content[:1200],
+                "truncated": (
+                    len(content) > 1200
+                    or content.startswith("Tool result too large,")
+                    or "[Output was truncated due to size limits." in content
+                    or "[Output exceeded the capture size limit" in content
+                ),
             }
         )
-    return evidence[-8:]
+    if len(evidence) > 32:
+        # Keep each tool/source represented before filling the remaining budget.
+        representatives = {}
+        for item in evidence:
+            representatives[item["tool"]] = item
+        selected = list(representatives.values())[:32]
+        selected.extend(item for item in evidence if all(item is not chosen for chosen in selected))
+        evidence = selected[:32]
+        evidence[0] = {**evidence[0], "truncated": True}
+    return evidence
 
 
 def _evidence_signature(evidence):
     """Serialize evidence so in-place changes invalidate verification reuse."""
 
+    if isinstance(evidence, dict):
+        evidence = {key: value for key, value in evidence.items() if not key.startswith("_")}
     return json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)
 
 

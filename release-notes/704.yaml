@@ -1,0 +1,12 @@
+type: fix
+audience: user
+en: >-
+  Reports regenerated after answer review now publish only the final deliverable
+  batch, preventing rejected drafts from appearing alongside replacement files.
+  Incomplete review evidence is marked inconclusive instead of triggering an
+  unsupported regeneration, and missing required final files are reported as
+  partial completion.
+zh-CN: >-
+  回答复核后重新生成的报告现在仅发布最终批次，避免被驳回的草稿与替代文件同时
+  展示。审核证据不完整时标记为无法判定，避免误触发重生成；缺少必需的最终文件
+  时标记为部分完成。
