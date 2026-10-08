@@ -279,6 +279,33 @@
         :placeholder="inputPlaceholder(field)"
         @input="setField(field, normalizeInput(field, $event.target.value))"
       />
+      <div
+        v-if="
+          isTreeField(field) &&
+          field.allow_custom &&
+          !readOnly &&
+          !isAllowAll(field)
+        "
+        class="flex gap-2"
+      >
+        <input
+          v-model="customResources[field.key]"
+          :aria-label="customResourceLabel"
+          :placeholder="customResourcePlaceholder"
+          :class="[controlClass, 'min-w-0 flex-1']"
+          @keydown.enter.prevent="addCustomResource(field)"
+        />
+        <button
+          type="button"
+          class="rounded-md border border-line px-3 py-2 text-sm disabled:opacity-40"
+          :disabled="
+            !customResources[field.key]?.trim() || !canAddArrayItem(field)
+          "
+          @click="addCustomResource(field)"
+        >
+          {{ addArrayItemLabel }}
+        </button>
+      </div>
       <p v-if="isInvalid(field)" class="text-xs text-danger-600">
         {{ requiredFieldError }}
       </p>
@@ -316,6 +343,12 @@ const props = defineProps({
   treeSearchPlaceholder: { type: String, default: 'Search resources' },
   resourceSearchEmptyText: { type: String, default: 'No matching resources.' },
   resourceCountLabel: { type: String, default: 'resources' },
+  customResourceLabel: { type: String, default: 'Repository address' },
+  normalizeCustomResource: { type: Function, default: (value) => value },
+  customResourcePlaceholder: {
+    type: String,
+    default: 'owner/repo or https://github.com/owner/repo'
+  },
   selectedCountLabel: { type: String, default: 'selected' },
   privateResourceLabel: { type: String, default: 'Private' },
   allowAllLabel: { type: String, default: 'Allow all resources' },
@@ -433,6 +466,18 @@ async function removeArrayItem(field, index) {
 
 function isTreeField(field) {
   return isArrayField(field) && field.format === 'provider-resource'
+}
+
+const customResources = ref({})
+
+function addCustomResource(field) {
+  const value = props.normalizeCustomResource(
+    customResources.value[field.key]?.trim()
+  )
+  if (!value || !canAddArrayItem(field)) return
+  const values = arrayValue(field)
+  if (!values.includes(value)) setField(field, [...values, value])
+  customResources.value[field.key] = ''
 }
 
 function shouldRenderTree(field) {
@@ -577,7 +622,7 @@ function optionsFor(field) {
       ? dependentOptions(field)
       : props.resources?.[field.resource]?.items
   const normalized = Array.isArray(options) ? [...options] : []
-  if (isTreeField(field)) return normalized
+  if (isTreeField(field) && !field.allow_custom) return normalized
   const currentValue = fieldValue(field)
   const currentValues = Array.isArray(currentValue)
     ? currentValue

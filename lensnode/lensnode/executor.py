@@ -681,6 +681,7 @@ class LensNodeExecutor:
                 f"run.{lifecycle}",
                 {
                     "status": result.get("status") or "done",
+                    "deliverable_uuids": list((command.get("_deliverables") or {}).values()),
                     "lifecycle": lifecycle,
                     "outcome": outcome,
                     "health": health,
@@ -699,6 +700,7 @@ class LensNodeExecutor:
                     "type": "run_done",
                     "run_uuid": run_uuid,
                     "status": result.get("status") or "done",
+                    "deliverable_uuids": list((command.get("_deliverables") or {}).values()),
                     "outcome": result.get("outcome") or "completed",
                     "final_content": result["answer"],
                     "citations": result.get("citations") or [],

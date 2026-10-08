@@ -303,6 +303,56 @@ class AssistantPluginBindingTests(TestCase):
             ["github_read_file"],
         )
 
+    def test_anonymous_plugin_binding_allows_metadata_updates(self):
+        """A direct anonymous binding still qualifies when bindings are omitted."""
+
+        self.connection.secret_version = None
+        self.connection.save(update_fields=["secret_version"])
+        response = self.client.post(
+            "/api/lens/assistants/",
+            {
+                "name": "Public GitHub Assistant",
+                "slug": "public-github-assistant",
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "selected_task": "general_chat",
+                "plugin_bindings": [{"connection_uuid": str(self.connection.uuid)}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        response = self.client.patch(
+            f'/api/lens/assistants/{response.data["uuid"]}/', {"name": "Renamed"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_anonymous_mcp_adapter_allows_assistant_creation_and_metadata_updates(self):
+        """Anonymous MCP tools qualify for both new and saved Assistant bindings."""
+
+        self.connection.secret_version = None
+        self.connection.save(update_fields=["secret_version"])
+        adapter = MCPServer.objects.create(
+            name="Public GitHub Adapter",
+            transport=MCPServer.Transport.PLUGIN,
+            connection=self.connection,
+            tools=["github_read_file"],
+        )
+        response = self.client.post(
+            "/api/lens/assistants/",
+            {
+                "name": "Public MCP Assistant",
+                "slug": "public-mcp-assistant",
+                "lensnode_uuid": str(self.lensnode.uuid),
+                "selected_task": "general_chat",
+                "mcp_bindings": [{"mcp_uuid": str(adapter.uuid), "enabled": True}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        response = self.client.patch(
+            f'/api/lens/assistants/{response.data["uuid"]}/', {"name": "Renamed"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
     def test_plugin_mcp_adapter_rejects_arbitrary_mcp_configuration(self):
         with self.plugin_root():
             response = self.client.post(

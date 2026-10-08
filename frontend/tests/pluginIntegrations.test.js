@@ -418,7 +418,7 @@ test('connection resource trees stay hidden until scope values exist', async () 
 
   assert.match(renderer, /shouldRenderTree\(field\)/)
   assert.match(renderer, /optionsFor\(field\)\.length > 0/)
-  assert.match(renderer, /if \(isTreeField\(field\)\) return normalized/)
+  assert.match(renderer, /if \(isTreeField\(field\) && !field\.allow_custom\) return normalized/)
   assert.match(renderer, /emptyResourceText/)
   assert.match(renderer, /treeSearchQuery/)
   assert.match(renderer, /filteredTreeGroups/)

@@ -12,6 +12,38 @@ from lensnode.plugin_runtime import PluginRuntimeError
 GITHUB_RUNTIME = load_runtime_contract("github", "1.0.0")
 
 
+def test_anonymous_sync_does_not_inject_credentials():
+    command = GITHUB_RUNTIME.build_datasource_command(
+        {"resolved_config": {
+            "endpoint": "https://github.com",
+            "connection_scope": {"repositories": ["*"]},
+            "datasource_config": {"repositories": ["owner/repo"]},
+        }},
+        {"plugin_key": "github", "endpoint": "https://github.com", "value": "", "authentication": "anonymous"},
+        "manual",
+    )
+    assert command["config"]["auth_scheme"] == "none"
+    assert "access_token" not in command["config"]
+    assert command["config"]["repositories"][0]["repo_url"] == "https://github.com/owner/repo.git"
+
+
+def test_anonymous_tools_omit_authorization_and_reject_code_search():
+    def respond(request):
+        assert "authorization" not in request.headers
+        return httpx.Response(200, json={"full_name": "owner/repo"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        GITHUB_RUNTIME.execute_tool(
+            "github_repository_get", client, {"repository": "owner/repo"}, "", "https://github.com",
+            {"__allowed_scope": {"repositories": ["*"]}},
+        )
+        with pytest.raises(PluginRuntimeError, match="GITHUB_AUTHENTICATION_REQUIRED"):
+            GITHUB_RUNTIME.execute_tool(
+                "github_search_code", client, {"repository": "owner/repo", "query": "hello"}, "",
+                "https://github.com", {"__allowed_scope": {"repositories": ["*"]}},
+            )
+
+
 def test_builds_multi_repository_datasource_command():
     command = GITHUB_RUNTIME.build_datasource_command(
         {

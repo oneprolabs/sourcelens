@@ -570,7 +570,9 @@ class RunOutputFileDownloadView(APIView):
         """Return the file bytes for the session owner or a staff admin."""
 
         output = get_object_or_404(
-            RunOutputFile.objects.select_related("session"),
+            RunOutputFile.objects.select_related("session").filter(
+                **({} if request.user.is_staff else {"message__isnull": False})
+            ),
             uuid=uuid,
         )
         is_owner = output.session.user_id == request.user.id
@@ -741,7 +743,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
             assistant_name=run.session.assistant.name,
             published_at=run.output_message.created_at,
             input_files=input_files,
-            output_files=run.output_files.all(),
+            output_files=run.output_files.filter(message__isnull=False),
             language_code=getattr(request, "LANGUAGE_CODE", "en"),
         )
         filename = build_qa_pdf_filename(run.session.title, question)

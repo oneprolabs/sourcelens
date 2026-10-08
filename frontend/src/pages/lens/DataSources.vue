@@ -1980,7 +1980,9 @@ function buildDatasourcePathCheckConfig() {
     return buildPluginGitPathCheckConfig({
       pluginKey: form.value.plugin_key,
       endpoint: connection?.endpoint,
-      datasourceConfig: buildPluginDatasourceConfig()
+      datasourceConfig:
+        datasourceConnectionResult.value?.details?.normalizedConfig ||
+        buildPluginDatasourceConfig()
     })
   }
   const config = buildDatasourceConfig()
@@ -2012,6 +2014,21 @@ function resetDatasourceConnectionResult() {
     return
   }
   feishuValidation.reset()
+  if (form.value.plugin_key === 'github') {
+    datasourceConnectionResult.value = {
+      status: 'unchecked',
+      details: {
+        resources:
+          datasourceConnectionResult.value?.details?.connection_uuid ===
+          form.value.connection_uuid
+            ? datasourceConnectionResult.value?.details?.resources || {}
+            : {},
+        connection_uuid: form.value.connection_uuid
+      }
+    }
+    datasourceConnectionBaseSignature.value = ''
+    return
+  }
   if (suppressDatasourceConnectionReset.value) {
     suppressDatasourceConnectionReset.value = false
     return
@@ -2078,7 +2095,15 @@ function validateFeishuResources() {
   )
 }
 
-async function testDatasourceConnection() {
+async function testDatasourceConnection({ automatic = false } = {}) {
+  if (
+    automatic &&
+    form.value.plugin_key === 'github' &&
+    datasourceConnectionResult.value?.status === 'success' &&
+    datasourceConnectionBaseSignature.value === datasourceConnectionSignature()
+  ) {
+    return
+  }
   if (
     isPluginSourceType(form.value.source_type) &&
     form.value.plugin_key === 'feishu'
@@ -2088,15 +2113,58 @@ async function testDatasourceConnection() {
   }
   const requestId = ++datasourceConnectionRequestId
   testingDatasourceConnection.value = true
-  datasourceConnectionResult.value = null
+  let previousResources =
+    datasourceConnectionResult.value?.details?.resources || {}
+  datasourceConnectionResult.value = {
+    status: 'checking',
+    details: {
+      resources: previousResources,
+      connection_uuid: form.value.connection_uuid
+    }
+  }
   try {
+    if (
+      form.value.plugin_key === 'github' &&
+      isPluginSourceType(form.value.source_type) &&
+      datasourceConfig.value.repositories?.length
+    ) {
+      if (!previousResources.repositories) {
+        // Enumeration must not block checking explicitly selected repositories.
+        const discovered = await getConnectionResources(
+          form.value.connection_uuid
+        ).catch(() => null)
+        if (requestId !== datasourceConnectionRequestId) return
+        previousResources = {
+          ...previousResources,
+          ...(discovered?.resources || {})
+        }
+      }
+      const result = await validateConnectionDatasource(
+        form.value.connection_uuid,
+        {
+          datasource_config: buildPluginDatasourceConfig()
+        }
+      )
+      if (requestId !== datasourceConnectionRequestId) return
+      datasourceConnectionResult.value = {
+        status: result.valid ? 'success' : 'failed',
+        details: {
+          resources: previousResources,
+          validatedRepositories: result.resources || [],
+          normalizedConfig: result.datasource_config,
+          connection_uuid: form.value.connection_uuid
+        }
+      }
+      datasourceConnectionBaseSignature.value = datasourceConnectionSignature()
+      return
+    }
     if (isPluginSourceType(form.value.source_type)) {
       if (!form.value.connection_uuid) return
       const resources = await getConnectionResources(form.value.connection_uuid)
       if (requestId !== datasourceConnectionRequestId) return
       datasourceConnectionResult.value = {
-        status: 'success',
-        message: 'Plugin Connection resources are available.',
+        status: form.value.plugin_key === 'github' ? 'unchecked' : 'success',
+        message: '',
         details: {
           ...resources,
           connection_uuid: form.value.connection_uuid
@@ -2127,7 +2195,9 @@ async function testDatasourceConnection() {
     if (requestId !== datasourceConnectionRequestId) return
     datasourceConnectionResult.value = {
       status: 'failed',
+      details: { resources: previousResources },
       message:
+        githubDatasourceAccessError(error) ||
         feishuDatasourceAccessError(error) ||
         lensNodeErrorMessage(error.response?.data?.detail, t) ||
         extractErrorMessage(error, t('lensAdmin.messages.loadFailed'))
@@ -2137,6 +2207,36 @@ async function testDatasourceConnection() {
       testingDatasourceConnection.value = false
     }
   }
+}
+
+function githubDatasourceAccessError(error) {
+  if (form.value.plugin_key !== 'github') return ''
+  const payload = error.response?.data
+  const data = payload?.data || payload || {}
+  const codes = {
+    GITHUB_NOT_FOUND: 'notFound',
+    GITHUB_ACCESS_DENIED: 'accessDenied',
+    GITHUB_RATE_LIMITED: 'rateLimited',
+    GITHUB_REQUEST_FAILED: 'requestFailed',
+    'repository is outside connection scope': 'outsideScope'
+  }
+  const failures = Array.isArray(data.resources)
+    ? data.resources.filter((item) => !item.accessible)
+    : []
+  if (failures.length) {
+    return failures
+      .map(
+        (item) =>
+          `${item.repository}: ${t(`lensAdmin.datasourceWizard.githubErrors.${codes[item.error] || 'requestFailed'}`)}`
+      )
+      .join('\n')
+  }
+  const code = codes[data.detail]
+  if (code) return t(`lensAdmin.datasourceWizard.githubErrors.${code}`)
+  if (String(data.detail || '').startsWith('repository ')) {
+    return t('lensAdmin.datasourceWizard.githubErrors.invalidRepository')
+  }
+  return ''
 }
 
 function feishuDatasourceAccessError(error) {
@@ -2179,7 +2279,10 @@ async function loadPluginResourceOptions({ resource, selectedValues }) {
     }
     datasourceConnectionResult.value = {
       ...(datasourceConnectionResult.value || {}),
-      status: 'success',
+      status:
+        form.value.plugin_key === 'github'
+          ? datasourceConnectionResult.value?.status || 'unchecked'
+          : 'success',
       details: {
         ...(datasourceConnectionResult.value?.details || {}),
         resources: {

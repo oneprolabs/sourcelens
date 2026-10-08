@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "fileStatus": {
+      "candidate": "Candidate",
+      "published": "Published",
+      "superseded": "Superseded"
+    },
     "trajectoryDiagnostics": "Run diagnostics · {n} spans",
     "trajectoryMeteredTokens": "Metered tokens",
     "trajectoryObservedTokens": "Recorded model tokens",
@@ -1489,7 +1494,7 @@
         "connectionFields": {
           "secret_value": {
             "title": "Personal access token",
-            "description": "A write-only token with read access to the approved repositories."
+            "description": "Optional. Leave empty for anonymous public access, or provide a token for authorized repositories."
           },
           "repositories": {
             "title": "Allowed repositories",
@@ -1662,9 +1667,9 @@
       "feishuSelfRegisterExpired": "The registration request expired. Start again to scan a new QR code.",
       "feishuSelfRegisterFailed": "Feishu app registration failed.",
       "githubGuideTitle": "GitHub connection setup",
-      "githubGuideSummary": "Create a least-privilege token and authorize only the repositories you need.",
+      "githubGuideSummary": "Public repositories work without a token. Private repositories require a GitHub.com personal access token with read access.",
       "githubGuideCreateTitle": "Create a fine-grained personal access token",
-      "githubGuideCreateHint": "GitHub recommends fine-grained personal access tokens. SourceLens currently supports GitHub.com personal access tokens only, not OAuth or GitHub Enterprise.",
+      "githubGuideCreateHint": "Public repositories work without a token. Private repositories require a GitHub.com personal access token with read access.",
       "githubGuideRepositoryTitle": "Limit repository access",
       "githubGuideRepositoryHint": "Choose Only select repositories under Repository access, then select only repositories used for synchronization or Assistant queries.",
       "githubGuidePermissionTitle": "Grant read-only repository permissions",
@@ -1770,7 +1775,11 @@
       "searchPlaceholder": "Search by name, plugin, or endpoint",
       "allPlugins": "All plugins",
       "allStatuses": "All statuses",
-      "secret": "Secret"
+      "secret": "Secret",
+      "anonymous": "Anonymous access (public repositories)",
+      "allowAllPublicRepositories": "Allow all public repositories",
+      "allowAllPublicRepositoriesHint": "Enter public repository addresses when creating a datasource.",
+      "repositoryAddress": "Repository address"
     },
     "credentials": {
       "secretConfigured": "Secret configured",
@@ -2137,9 +2146,9 @@
       "editTitle": "Edit Data Source",
       "progressLabel": "Setup progress",
       "step1Title": "Source",
-      "step1Desc": "Set the data source name and type.",
+      "step1Desc": "Choose the data source type.",
       "step2Title": "Connection and resources",
-      "step2Desc": "Choose a connection and the repositories or resources to sync.",
+      "step2Desc": "Name the data source, select a connection, and choose repositories or resources to sync.",
       "step3Title": "Sync and processing policy",
       "step3Desc": "Configure the sync policy and document content processing.",
       "summarySource": "Data source",
@@ -2302,7 +2311,18 @@
       "feishuDeleteMissingTitle": "Delete missing local files",
       "feishuDeleteMissingHint": "When a Feishu item no longer exists remotely, delete the matching local file. Keep disabled to avoid accidental deletion.",
       "requiredField": "Required field",
-      "duplicateResourceUrl": "Feishu resource addresses must be unique."
+      "duplicateResourceUrl": "Feishu resource addresses must be unique.",
+      "checkRepositoryAccess": "Check availability",
+      "repositoriesAccessible": "Repositories are accessible. You can continue.",
+      "publicRepository": "Public",
+      "githubErrors": {
+        "notFound": "Repository or ref not found, or this connection cannot access it.",
+        "accessDenied": "This connection does not have access.",
+        "rateLimited": "GitHub rate limit reached. Try later or configure a token.",
+        "requestFailed": "Cannot connect to GitHub. Check the network and try again.",
+        "invalidRepository": "Enter a valid GitHub repository address.",
+        "outsideScope": "This repository is outside the connection scope."
+      }
     },
     "detail": {
       "runtimeLocation": "Runtime location",

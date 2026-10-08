@@ -5,6 +5,8 @@ import { createInFlightRequestCache } from './inFlight'
 import { collectPaginatedResults } from './pagination'
 
 const assistantListRequests = createInFlightRequestCache()
+// Allow the server's validation deadline and its final in-flight request to finish.
+const DATASOURCE_ACCESS_TIMEOUT = 60000
 
 function unwrapResponse(response) {
   return response?.data?.data ?? response?.data ?? null
@@ -440,12 +442,16 @@ export async function listDataSourceSyncStatuses(uuids) {
 }
 
 export async function createDataSource(payload) {
-  const response = await api.post('/lens/admin/datasources/', payload)
+  const response = await api.post('/lens/admin/datasources/', payload, {
+    timeout: DATASOURCE_ACCESS_TIMEOUT
+  })
   return unwrapResponse(response)
 }
 
 export async function updateDataSource(uuid, payload) {
-  const response = await api.patch(`/lens/admin/datasources/${uuid}/`, payload)
+  const response = await api.patch(`/lens/admin/datasources/${uuid}/`, payload, {
+    timeout: DATASOURCE_ACCESS_TIMEOUT
+  })
   return unwrapResponse(response)
 }
 
@@ -538,7 +544,10 @@ export async function validateConnectionDatasource(uuid, payload) {
   const response = await api.post(
     `/lens/admin/connections/${uuid}/validate-datasource/`,
     payload,
-    { headers: { 'Cache-Control': 'no-store' } }
+    {
+      headers: { 'Cache-Control': 'no-store' },
+      timeout: DATASOURCE_ACCESS_TIMEOUT
+    }
   )
   return unwrapResponse(response)
 }

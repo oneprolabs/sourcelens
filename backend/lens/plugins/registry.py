@@ -128,6 +128,19 @@ def plugin_requires_secret(plugin):
     )
 
 
+def connection_secret_is_available(connection):
+    """Allow absent optional secrets, but never ignore an invalid stored secret."""
+
+    version = connection.secret_version
+    if version is None:
+        return not plugin_requires_secret(installed_plugin(connection.plugin_key))
+    return bool(
+        version.status == "active"
+        and version.material.status == "active"
+        and version.encrypted_value
+    )
+
+
 def discover_plugins():
     """Return validated Plugin packages from controlled roots."""
 
@@ -964,6 +977,10 @@ def _validate_form_schema(value, label):
             raise PluginRegistryError(
                 f"plugin {label} field resource is invalid"
             )
+        if "allow_custom" in field:
+            if field_format != "provider-resource" or not isinstance(field["allow_custom"], bool):
+                raise PluginRegistryError(f"plugin {label} field allow-custom flag is invalid")
+            safe_field["allow_custom"] = field["allow_custom"]
         allow_all = field.get("allow_all")
         if allow_all is not None:
             if (

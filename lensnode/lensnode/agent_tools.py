@@ -805,7 +805,8 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
         """Deliver a file you produced to the user for download.
 
         Write the finished artifact first (e.g. with write_file), then
-        call this with its path. Only files passed here reach the user;
+        call this with its path. The file is staged until the final answer
+        is selected. Only files passed here reach the user;
         the private scratch directory is discarded when the run ends, so
         it is the source for delivery, not a delivery target itself. Relative
         paths resolve inside scratch. Absolute paths are virtual filesystem
@@ -888,29 +889,35 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                         "run_uuid": command.get("run_uuid") or "",
                         "filename": filename,
                         "content_type": content_type,
+                        "staged": "true",
                     },
                     files={"file": (filename, data, content_type)},
                 )
                 response.raise_for_status()
+                output_uuid = response.json().get("uuid")
+                if not output_uuid:
+                    raise ValueError("Deliverable upload response did not include its UUID.")
         except Exception as exc:
             emit(
                 "tool.save_deliverable.failed",
                 {"path": path, "error": str(exc)},
             )
             return _json({"ok": False, "error": "DELIVERY_FAILED", "message": str(exc)})
+        command.setdefault("_deliverables", {})[str(resolved.relative_to(root))] = str(output_uuid)
         emit(
             "tool.save_deliverable.done",
             {
                 "filename": filename,
                 "byte_size": len(data),
+                "status": "candidate",
                 "summary": f"{filename} ({len(data)} bytes)",
             },
         )
         emit(
-            "workflow.artifact.created",
+            "workflow.artifact.staged",
             {
-                "event_type": "artifact.created",
-                "visibility": "user",
+                "event_type": "artifact.staged",
+                "visibility": "internal",
                 "payload": {
                     "filename": filename,
                     "byte_size": len(data),
@@ -923,7 +930,7 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                 "ok": True,
                 "filename": filename,
                 "byte_size": len(data),
-                "message": (f"Delivered '{filename}' to the user for download."),
+                "message": (f"Staged '{filename}' for publication with the final answer."),
             }
         )
 
