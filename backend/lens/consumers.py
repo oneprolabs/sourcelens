@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from .lensnode_auth import hash_lensnode_token
@@ -531,16 +532,21 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             Run.Status.FAILED,
         ]:
             status = Run.Status.FAILED
-        run = await database_sync_to_async(finish_lensnode_run)(
-            run_uuid,
-            status,
-            error=content.get("error") or "",
-            outcome=content.get("outcome") or "",
-            termination_detail=content.get("termination_detail") or {},
-            final_content=content.get("final_content"),
-            citations=content.get("citations"),
-            planned_evidence=content.get("planned_evidence"),
-        )
+        try:
+            run = await database_sync_to_async(finish_lensnode_run)(
+                run_uuid,
+                status,
+                error=content.get("error") or "",
+                outcome=content.get("outcome") or "",
+                termination_detail=content.get("termination_detail") or {},
+                final_content=content.get("final_content"),
+                citations=content.get("citations"),
+                planned_evidence=content.get("planned_evidence"),
+                deliverable_uuids=content.get("deliverable_uuids"),
+            )
+        except ValidationError:
+            await self._send_bad_frame("Invalid deliverable manifest")
+            return
         if run is None:
             # A redelivered terminal frame for an already-reaped Run: ack it
             # so the LensNode stops retrying.

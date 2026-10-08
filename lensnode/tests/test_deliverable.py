@@ -2,9 +2,12 @@ import hashlib
 import json
 import ssl
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
+from langchain_core.messages import AIMessage
 
+from lensnode import agent_runtime
 from lensnode.agent_tools import (
     _build_append_file_tool,
     _build_save_deliverable_tool,
@@ -76,7 +79,7 @@ def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
         captured["url"] = str(request.url)
         captured["auth"] = request.headers.get("authorization")
         captured["body"] = request.read()
-        return httpx.Response(201, json={"ok": True})
+        return httpx.Response(201, json={"ok": True, "uuid": "output-1"})
 
     _install_transport(monkeypatch, handler, client_options)
     events = []
@@ -100,13 +103,121 @@ def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
     assert any(name == "tool.save_deliverable.done" for name, _ in events)
 
 
+def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypatch, tmp_path):
+    report = tmp_path / "report.html"
+    report.write_text("draft", encoding="utf-8")
+    uploads = []
+
+    def handler(request):
+        uploads.append(request.read())
+        return httpx.Response(201, json={"uuid": f"output-{len(uploads)}"})
+
+    _install_transport(monkeypatch, handler)
+    command = {"run_uuid": "run-123"}
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+
+    assert json.loads(tool.invoke({"path": "./report.html"}))["ok"] is True
+    report.write_text("corrected", encoding="utf-8")
+    assert json.loads(tool.invoke({"path": "report.html"}))["ok"] is True
+
+    assert command["_deliverables"] == {"report.html": "output-2"}
+    assert b"draft" in uploads[0]
+    assert b"corrected" in uploads[1]
+    assert all(b'name="staged"\r\n\r\ntrue\r\n' in body for body in uploads)
+
+
+def test_save_deliverable_preserves_distinct_files_in_the_current_batch(monkeypatch, tmp_path):
+    (tmp_path / "report.md").write_text("report", encoding="utf-8")
+    (tmp_path / "appendix.md").write_text("appendix", encoding="utf-8")
+    uploads = []
+
+    def handler(request):
+        uploads.append(request.read())
+        return httpx.Response(201, json={"uuid": f"output-{len(uploads)}"})
+
+    _install_transport(monkeypatch, handler)
+    command = {"run_uuid": "run-123"}
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+
+    assert json.loads(tool.invoke({"path": "report.md"}))["ok"] is True
+    assert json.loads(tool.invoke({"path": "appendix.md"}))["ok"] is True
+
+    assert command["_deliverables"] == {"report.md": "output-1", "appendix.md": "output-2"}
+
+
+def test_save_deliverable_requires_a_publication_uuid(monkeypatch, tmp_path):
+    """A successful HTTP upload alone must not claim final delivery success."""
+
+    (tmp_path / "report.md").write_text("report", encoding="utf-8")
+    _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"ok": True}))
+    command = {"run_uuid": "run-123"}
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+
+    payload = json.loads(tool.invoke({"path": "report.md"}))
+
+    assert payload["ok"] is False
+    assert payload["error"] == "DELIVERY_FAILED"
+    assert not command.get("_deliverables")
+
+
+def test_evidence_recheck_discards_draft_batch_and_persists_the_replacement(monkeypatch, tmp_path):
+    (tmp_path / "draft.md").write_text("unsupported draft", encoding="utf-8")
+    (tmp_path / "final.md").write_text("supported replacement", encoding="utf-8")
+    uploads = []
+
+    def handler(request):
+        uploads.append(request.read())
+        return httpx.Response(201, json={"uuid": f"output-{len(uploads)}"})
+
+    class _Policy:
+        """Return a controllable complete-evidence grounding verdict."""
+
+        verdict = "unsupported"
+
+        def has_evidence_gates(self):
+            return True
+
+        def post_run_checks(self, question, answer, evidence=None):
+            return {"answer_supported": self.verdict, "evidence_completeness": "complete"}
+
+    _install_transport(monkeypatch, handler)
+    manifest = {}
+    command = {"run_uuid": "run-123", "_deliverables": manifest}
+    runtime_evidence = {"_deliverables": manifest}
+    checkpoints = []
+    policy = _Policy()
+    state = SimpleNamespace(
+        command=command,
+        runtime_evidence=runtime_evidence,
+        question="Explain the incident.",
+        decision_policy=policy,
+        persist_execution_state=lambda: checkpoints.append(dict(runtime_evidence["_deliverables"])),
+    )
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+    middleware = agent_runtime._build_evidence_middleware(state)
+    assert json.loads(tool.invoke({"path": "draft.md"}))["ok"] is True
+
+    recheck = middleware.after_model({"messages": [AIMessage(content="Unsupported draft.")]}, None)
+
+    assert recheck["jump_to"] == "model"
+    assert command["_deliverables"] is runtime_evidence["_deliverables"]
+    assert manifest == {}
+    assert checkpoints == [{}]
+
+    assert json.loads(tool.invoke({"path": "final.md"}))["ok"] is True
+    policy.verdict = "supported"
+    assert middleware.after_model({"messages": [AIMessage(content="Supported final answer.")]}, None) is None
+    assert manifest == {"final.md": "output-2"}
+    assert runtime_evidence["_deliverables"] == {"final.md": "output-2"}
+
+
 def test_save_deliverable_ignores_runtime_instance_id(monkeypatch, tmp_path):
     (tmp_path / "report.html").write_text("ok", encoding="utf-8")
     captured = {}
 
     def handler(request):
         captured["body"] = request.read()
-        return httpx.Response(201, json={"ok": True})
+        return httpx.Response(201, json={"ok": True, "uuid": "output-1"})
 
     _install_transport(monkeypatch, handler)
     tool = _build_save_deliverable_tool(
@@ -153,7 +264,7 @@ def test_save_deliverable_rejects_host_tmp_output(
 
     def handler(request):
         captured["body"] = request.read()
-        return httpx.Response(201, json={"ok": True})
+        return httpx.Response(201, json={"ok": True, "uuid": "output-1"})
 
     _install_transport(monkeypatch, handler)
     tool = _build_save_deliverable_tool(
@@ -183,7 +294,7 @@ def test_save_deliverable_resolves_absolute_virtual_scratch_path(
 
     def handler(request):
         captured["body"] = request.read()
-        return httpx.Response(201, json={"ok": True})
+        return httpx.Response(201, json={"ok": True, "uuid": "output-1"})
 
     _install_transport(monkeypatch, handler)
     tool = _build_save_deliverable_tool(

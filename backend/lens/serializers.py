@@ -4055,6 +4055,7 @@ class RunOutputFileSerializer(serializers.ModelSerializer):
     """Read serializer for a delivered run output file."""
 
     url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = RunOutputFile
@@ -4062,6 +4063,7 @@ class RunOutputFileSerializer(serializers.ModelSerializer):
             "uuid",
             "url",
             "filename",
+            "status",
             "content_type",
             "byte_size",
             "created_at",
@@ -4072,6 +4074,16 @@ class RunOutputFileSerializer(serializers.ModelSerializer):
         """Return the authenticated download path for the file bytes."""
 
         return reverse("lens-output-file", kwargs={"uuid": obj.uuid})
+
+    def get_status(self, obj):
+        """Derive publication state from the existing message link and Run."""
+
+        if obj.message_id is not None:
+            return "published"
+        run_status = self.context.get("run_status") or obj.run.status
+        if run_status in {Run.Status.DONE, Run.Status.FAILED, Run.Status.CANCELLED}:
+            return "superseded"
+        return "candidate"
 
 
 class MessageSerializer(serializers.ModelSerializer):

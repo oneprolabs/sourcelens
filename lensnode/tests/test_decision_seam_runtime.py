@@ -335,7 +335,7 @@ def _post_run_state(policy, resume_state=None):
         resume_state=resume_state,
         decision_policy=policy,
         question="Why did it fail?",
-        runtime_evidence=None,
+        runtime_evidence={"retrieved_evidence": [{"tool": "search", "content": "The deploy failed."}]},
         checkpoint_ready=False,
         run_uuid=RUN_UUID,
         config=SimpleNamespace(workspace_path="/tmp"),

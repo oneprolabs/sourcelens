@@ -68,7 +68,7 @@ from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
 )
-from .evidence_gate import EvidenceGateMiddleware
+from .evidence_gate import EvidenceGateMiddleware, _verdicts_supported
 from .execution import (
     EmptyAgentResponseError,
     _emit_new_model_calls,
@@ -216,12 +216,25 @@ def _build_evidence_middleware(state):
     question = str(
         getattr(state, "question", None) or command.get("question") or ""
     )
+    runtime_evidence = getattr(state, "runtime_evidence", None)
+    review_state = runtime_evidence.setdefault("_answer_review", {}) if isinstance(runtime_evidence, dict) else {}
+
+    def discard_rejected_deliverables():
+        """Start a new final-answer batch without publishing the rejected draft."""
+
+        command.get("_deliverables", {}).clear()
+        persist = getattr(state, "persist_execution_state", None)
+        if persist is not None:
+            persist()
+
     return EvidenceGateMiddleware(
         policy,
         question,
         evidence=getattr(state, "runtime_evidence", None),
         emit_event=getattr(state, "emit_agent_event", None),
         review_scope=getattr(state, "evidence_review_scope", None),
+        on_recheck=discard_rejected_deliverables,
+        review_state=review_state,
     )
 
 
@@ -774,6 +787,12 @@ class LensDeepAgentRuntime:
         )
 
         def emit_agent_event(event, detail=None):
+            if event == "deepagents.summarization.compacted":
+                state.runtime_evidence["evidence_completeness"] = "incomplete"
+            if event in {"tool.save_deliverable.done", "deepagents.evidence.verified"} and hasattr(
+                state, "persist_execution_state"
+            ):
+                state.persist_execution_state()
             if trajectory is not None and event.startswith("tool."):
                 detail = trajectory.tool_event_detail(detail)
             detail = runtime_mode.decorate_event(detail)
@@ -957,6 +976,7 @@ class LensDeepAgentRuntime:
         state.runtime_evidence = dict(
             state.resume_state.runtime_evidence if state.resume_state else {}
         )
+        state.command["_deliverables"] = state.runtime_evidence.setdefault("_deliverables", {})
         state.capability_middleware = None
         state.checkpoint_ready = state.resume_state is not None
         state.initial_checkpoint_seeded = False
@@ -1826,11 +1846,21 @@ class LensDeepAgentRuntime:
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
+        if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
+            outcome = "partial"
+            termination_detail = _evidence_termination_detail("artifact")
         if post_run_gates:
             termination_detail = {
                 **termination_detail,
                 "decision_gates": post_run_gates,
             }
+            if (
+                outcome == "completed"
+                and post_run_gates.get("evidence_completeness") != "incomplete"
+                and not _verdicts_supported(post_run_gates)
+            ):
+                outcome = "partial"
+                termination_detail.update(reason="evidence_insufficient", error_type="verification")
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",

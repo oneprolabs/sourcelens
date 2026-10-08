@@ -14,6 +14,7 @@ from ..plugin_package_loader import (
     load_runtime_contract,
 )
 from ..plugin_tools import _execute_plugin_tool
+from .evidence_material import bound_review_state
 
 GATE_SOURCE = "decision_gate"
 GATE_PHASE = "P3"
@@ -475,7 +476,7 @@ def _gate_arguments(gate, question, history, tools, max_state_chars):
         else DEFAULT_MAX_STATE_CHARS
     )
     state = _state_text(question, history, max_state_chars)
-    if not state:
+    if not state or len(state) > limit:
         return None
     if gate == "evidence_requirement":
         names = _tool_names(tools)
@@ -520,7 +521,9 @@ def _state_text(question, history, max_state_chars):
         lines.append("")
         lines.append("Recent conversation:")
         lines.extend(turns[-DEFAULT_HISTORY_TURNS:])
-    return "\n".join(lines).strip()[:limit]
+    text = "\n".join(lines).strip()
+    bounded = bound_review_state(text, limit)
+    return bounded if bounded is not None else text[:limit]
 
 
 def _tool_names(tools):
