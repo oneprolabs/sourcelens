@@ -27,9 +27,11 @@ GET /api/lens/admin/runs/{run_uuid}/trajectory/
 ```
 
 - `stream_cursor` 是持久化顺序 `(created_at, uuid)` 的不透明编码。
-- `stream_sequence` 是检查点之前已持久化的全局事件数，仅用于展示序号。
+- `stream_sequence` 是检查点之前已持久化的全局事件数，仅用于接收检查点与分页。
 - `revision` 是当前事件水位、Run/子 Run 状态及执行状态的摘要。
-- 页面展示的 `sequence` 不是续传游标，不能用于判断是否遗漏事件。
+- 事件 `sequence` / `event_sequence` 保留运行时产生的 Run 内序号，步骤编号使用它；不同 Run 可以重复。
+- `ingest_sequence` 是接收顺序，`after_sequence` 分页与 SSE 顶层 `sequence` 继续使用接收顺序。
+- `timestamp` / `event_timestamp` 是发生时间；`created_at` 是落库时间。展示序号不是续传游标。
 
 ## SSE 连接
 
@@ -100,3 +102,22 @@ final sync 失败时应继续退避重试，直到成功或用户离开当前追
 - 消息丢失不依赖内存广播修复，cursor 始终从数据库补洞。
 - 未来可用 Channels/Redis 通知唤醒数据库检查，但通知只能作为优化，不能替代
   cursor 查询与重连重同步。
+
+## 运行结果、调用闭合与诊断
+
+- Run 结束事件独立携带 `lifecycle`（completed / failed / cancelled）、`outcome`
+  （completed / partial / blocked / awaiting_user_input）、`health`（healthy / degraded / failed）。
+  执行结束不等于业务成功；降级和已恢复的错误仍保留在调用树内。
+- 插件调用拥有独立的 `call_id`，并显式关联所属工具或 Gate；并发上下文通过 ContextVar
+  和线程提交时的 copy_context 传递。内部进度不能关闭外层调用。
+- Gate 超时立即产生插件 interrupted 事件；Run 结束、超时、取消均闭合已注册的子调用。
+  这代表观察范围结束，并不表示 Python 工作线程已经被强制停止。
+- 调用关闭后的返回标记 `late_event`，Run 结束后的记录标记 `after_run_finished`；保留
+  实际内容，但不能覆盖原来的结束状态或延长 Run 耗时，也不能重新推送 running 业务状态。
+- 诊断包含 missing_start、missing_end、missing_parent、parent_cycle、orphan_event、
+  unbound_lifecycle、parent_context_mismatch。分页/筛选期间不推断缺失记录，避免误报。
+- 折叠时 Token 按独立调用累计，耗时按子树时间窗口计算（并发不相加）；Run 根节点使用
+  自身执行边界。展开时隐藏层级累计值，显示具体步骤值。
+- `observed_model_tokens` 仅表示轨迹中已记录的模型用量；`metered_tokens` 表示已有
+  LLMUsage 计量记录。两者不相加，也不宣称覆盖插件内部未提供用量的请求。
+  调用可携带 `usage_source`（agent_model / gate_model / plugin_model）。

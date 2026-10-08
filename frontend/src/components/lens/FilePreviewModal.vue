@@ -19,6 +19,8 @@ const { t } = useI18n()
 const kind = ref('')
 const objectUrl = ref('')
 const textContent = ref('')
+const showSource = ref(false)
+const htmlPreviewDocument = ref('')
 const docxHost = ref(null)
 const workbook = ref(null)
 const sheetNames = ref([])
@@ -101,6 +103,8 @@ function cleanup() {
   }
   objectUrl.value = ''
   textContent.value = ''
+  showSource.value = false
+  htmlPreviewDocument.value = ''
   pptxBuffer = null
   workbook.value = null
   sheetNames.value = []
@@ -180,6 +184,12 @@ async function load(file) {
         return
       }
       textContent.value = text
+    } else if (kind.value === 'html') {
+      textContent.value = await blob.text()
+      if (seq !== loadSeq) {
+        return
+      }
+      htmlPreviewDocument.value = buildHtmlPreviewDocument(textContent.value)
     } else {
       const url = URL.createObjectURL(blob)
       if (seq !== loadSeq) {
@@ -198,6 +208,23 @@ async function load(file) {
       loading.value = false
     }
   }
+}
+
+function buildHtmlPreviewDocument(source) {
+  const parser = new DOMParser()
+  const document = parser.parseFromString(source, 'text/html')
+  document.querySelectorAll('script, base, meta[http-equiv="refresh"]').forEach(
+    (element) => element.remove()
+  )
+  document.querySelectorAll('a[href], area[href]').forEach((element) => {
+    element.removeAttribute('href')
+  })
+  const policy =
+    "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline' data:; " +
+    "font-src data:; form-action 'none'; base-uri 'none'; navigate-to 'none'"
+  const policyTag = `<meta http-equiv="Content-Security-Policy" content="${policy}">`
+  document.head.insertAdjacentHTML('afterbegin', policyTag)
+  return `<!doctype html>${document.documentElement.outerHTML}`
 }
 
 function close() {
@@ -340,6 +367,20 @@ onUnmounted(() => {
           </span>
           <div class="preview-tools">
             <button
+              v-if="kind === 'html'"
+              type="button"
+              class="preview-tool"
+              :title="
+                showSource ? t('lens.chat.preview') : t('lens.chat.viewSource')
+              "
+              :aria-label="
+                showSource ? t('lens.chat.preview') : t('lens.chat.viewSource')
+              "
+              @click="showSource = !showSource"
+            >
+              <span aria-hidden="true">&lt;/&gt;</span>
+            </button>
+            <button
               type="button"
               class="preview-tool"
               :title="
@@ -381,6 +422,9 @@ onUnmounted(() => {
         </header>
 
         <div class="preview-body">
+          <div v-if="kind === 'html' && !showSource" class="preview-security-note">
+            {{ t('lens.chat.htmlPreviewRestricted') }}
+          </div>
           <div v-if="kind === 'pptx'" ref="pptxHost" class="preview-pptx"></div>
           <div v-if="kind === 'docx'" ref="docxHost" class="preview-docx"></div>
 
@@ -405,9 +449,14 @@ onUnmounted(() => {
             class="preview-frame"
           ></iframe>
 
+          <pre
+            v-else-if="kind === 'html' && showSource"
+            class="preview-source"
+          >{{ textContent }}</pre>
+
           <iframe
             v-else-if="kind === 'html'"
-            :src="objectUrl"
+            :srcdoc="htmlPreviewDocument"
             :title="file.filename"
             class="preview-frame"
             sandbox=""
@@ -528,6 +577,13 @@ onUnmounted(() => {
   color: var(--sl-text-muted);
   text-align: center;
 }
+.preview-security-note {
+  padding: 8px 16px;
+  color: var(--sl-text-muted);
+  background: var(--sl-bg-surface);
+  border-bottom: 1px solid var(--sl-border-default);
+  font-size: 12px;
+}
 .preview-image {
   display: block;
   max-width: 100%;
@@ -556,6 +612,19 @@ onUnmounted(() => {
   font-size: 13px;
   line-height: 1.6;
   color: var(--sl-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-source {
+  min-height: 100%;
+  padding: 20px 24px;
+  margin: 0;
+  overflow: auto;
+  color: var(--sl-text-primary);
+  background: var(--sl-bg-canvas);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }

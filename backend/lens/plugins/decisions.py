@@ -31,6 +31,7 @@ GATE_PHASES = {
     "evidence_requirement": "P3",
     "evidence_sufficient": "P3",
     "answer_supported": "P3",
+    "evidence_strength": "P3",
 }
 # Mirrors LensNode's ``PHASE_ORDER`` (``decision_gates.py``); guarded by
 # ``lensnode/tests/test_decision_gate_phases.py``.  A gate is active once the

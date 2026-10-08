@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: When a knowledge Q&A run is stopped by the convergence guard, the answer is now a synthesized response built from the gathered evidence instead of the last raw tool result.
+zh-CN: 知识问答运行若被收敛护栏停止，现在会基于已收集证据综合生成回答，而不再把最后一条工具原始结果当作答案返回。

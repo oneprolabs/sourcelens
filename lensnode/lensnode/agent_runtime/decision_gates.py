@@ -2,8 +2,10 @@
 
 import json
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextvars import copy_context
 from types import SimpleNamespace
 
 from ..decision_contract import validate_decision_result
@@ -12,12 +14,15 @@ from ..plugin_package_loader import (
     load_runtime_contract,
 )
 from ..plugin_tools import _execute_plugin_tool
+from .evidence_material import bound_review_state
 
 GATE_SOURCE = "decision_gate"
 GATE_PHASE = "P3"
 PHASE_ORDER = {"P1": 1, "P3": 3}
 GATE_TIMEOUT_S = 3.0
-GATE_RUN_BUDGET = 8
+# Three post-run gates may be evaluated during the initial answer and one
+# verification retry. The final verdict reuses the middleware result.
+GATE_RUN_BUDGET = 16
 DEFAULT_HISTORY_TURNS = 4
 DEFAULT_MAX_STATE_CHARS = 4000
 
@@ -58,8 +63,10 @@ GATE_REGISTRY = {
             "retrieved or provided?"
         ),
         "criteria_true": (
-            "Every factual claim in the answer is backed by retrieved tool "
-            "output, a provided document, or the user's own input."
+            "Every positive factual claim is backed by retrieved or provided "
+            "evidence. A clearly scoped statement that the available evidence "
+            "does not establish actual execution is also sufficient if the "
+            "answer does not assert that execution occurred."
         ),
         "criteria_false": (
             "The answer asserts facts that were not retrieved and are not "
@@ -76,10 +83,59 @@ GATE_REGISTRY = {
         ),
         "criteria": {
             "supported": (
-                "The answer follows from retrieved or provided evidence."
+                "The answer follows from retrieved or provided evidence, or "
+                "accurately limits a conclusion to what those materials show."
             ),
             "unsupported": (
                 "The answer goes beyond or contradicts the evidence."
+            ),
+        },
+    },
+    "evidence_strength": {
+        "kind": "choice",
+        "fallback": "fixed",
+        "phase": "P3",
+        "pass_option": "unknown",
+        "instructions": (
+            "What is the weakest evidence level of any material factual "
+            "claim in the answer? Choose the weakest applicable level. "
+            "Judge the answer's actual claims, including explicit limits, "
+            "rather than treating a cited plan or example as a claim of execution."
+        ),
+        "criteria": {
+            "direct": (
+                "The material factual claims are directly stated by the "
+                "retrieved or provided evidence."
+            ),
+            "derived": (
+                "The material factual claims are reasonable conclusions "
+                "from multiple retrieved or provided facts."
+            ),
+            "qualified_weak": (
+                "The answer explicitly says the available material shows only "
+                "compatibility, adaptation, examples, or plans, or cannot confirm "
+                "actual execution. It makes no unqualified material claim of "
+                "actual operation, validation, or completion."
+            ),
+            "adapted_only": (
+                "The answer claims actual execution or validation, but the "
+                "evidence only shows compatibility, adaptation, or support."
+            ),
+            "example_only": (
+                "The answer claims a real deployment or observed outcome, but "
+                "the evidence is only an example, sample, or template."
+            ),
+            "planned": (
+                "The answer claims completed work, but the evidence describes "
+                "only a plan, roadmap, intention, or future work."
+            ),
+            "unsupported": (
+                "The material factual claim has no retrieved or provided "
+                "evidence."
+            ),
+            "contradicted": (
+                "The material factual claim conflicts with the retrieved or "
+                "provided evidence."
             ),
         },
     },
@@ -134,9 +190,11 @@ def run_decision_tool(
     host HTTP policy, same bounded timeout.
     """
 
+    trace_call_id = f"plugin:{uuid.uuid4().hex}"
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         future = executor.submit(
+            copy_context().run,
             _execute_plugin_tool,
             command,
             config,
@@ -153,9 +211,21 @@ def run_decision_tool(
             http_origins=contract.http_origins,
             http_post_paths=contract.http_post_paths,
             source=source,
+            trace_call_id=trace_call_id,
         )
         return future.result(timeout=timeout), ""
     except FuturesTimeoutError:
+        if emit is not None:
+            emit(
+                "tool.plugin.interrupted",
+                {
+                    "call_id": trace_call_id,
+                    "parent_call_id": call_id if source == GATE_SOURCE else None,
+                    "plugin": plugin_key,
+                    "tool": tool_key,
+                    "reason": "timeout",
+                },
+            )
         return None, "timeout"
     except Exception:
         return None, "error"
@@ -406,7 +476,7 @@ def _gate_arguments(gate, question, history, tools, max_state_chars):
         else DEFAULT_MAX_STATE_CHARS
     )
     state = _state_text(question, history, max_state_chars)
-    if not state:
+    if not state or len(state) > limit:
         return None
     if gate == "evidence_requirement":
         names = _tool_names(tools)
@@ -451,7 +521,9 @@ def _state_text(question, history, max_state_chars):
         lines.append("")
         lines.append("Recent conversation:")
         lines.extend(turns[-DEFAULT_HISTORY_TURNS:])
-    return "\n".join(lines).strip()[:limit]
+    text = "\n".join(lines).strip()
+    bounded = bound_review_state(text, limit)
+    return bounded if bounded is not None else text[:limit]
 
 
 def _tool_names(tools):

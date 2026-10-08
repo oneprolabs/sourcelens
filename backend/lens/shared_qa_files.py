@@ -63,7 +63,7 @@ def _copy_available_sources(share, strict):
     inputs = []
     if run.input_message_id:
         inputs = run.input_message.attachments.all()
-    outputs = run.output_files.all()
+    outputs = run.output_files.filter(message__isnull=False)
     existing_sources = set(
         share.files.values_list("kind", "source_uuid")
     )

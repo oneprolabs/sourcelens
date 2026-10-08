@@ -10,7 +10,7 @@ from lens.models import DataSource, ExecutionSnapshot
 
 from .audit import create_invocation_audit
 from .providers import DatasourceProviderError, get_datasource_provider
-from .registry import PluginRegistryError, installed_plugin
+from .registry import PluginRegistryError, connection_secret_is_available, installed_plugin
 
 SENSITIVE_CONFIG_KEYS = frozenset(
     {
@@ -70,13 +70,7 @@ def create_datasource_sync_snapshot(datasource, *, lensnode=None):
         raise PluginRegistryError("datasource connection is required")
     if connection.status != connection.Status.ACTIVE:
         raise PluginRegistryError("datasource connection is disabled")
-    secret_version = connection.secret_version
-    if (
-        secret_version is None
-        or secret_version.status != "active"
-        or secret_version.material.status != "active"
-        or not secret_version.encrypted_value
-    ):
+    if not connection_secret_is_available(connection):
         raise PluginRegistryError(
             "datasource connection secret is unavailable"
         )

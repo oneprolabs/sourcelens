@@ -246,6 +246,12 @@ def test_unknown_choice_gate_falls_back_to_the_fixed_verdict():
     assert runner.default_verdict("evidence_sufficient") is True
 
 
+def test_evidence_strength_uses_unknown_as_the_unavailable_verdict():
+    runner = _runner(_command("evidence_strength"))
+
+    assert runner.default_verdict("evidence_strength") == "unknown"
+
+
 def test_bound_gate_without_a_tool_is_unknown():
     events = []
     command = _command()
@@ -315,7 +321,10 @@ def test_timeout_falls_back(monkeypatch):
     runner = _runner(_command(), events)
 
     assert runner.evaluate("search_needed", question="Deploy failed") is None
-    assert events[1][1]["fallback_reason"] == "timeout"
+    interrupted = next(payload for name, payload in events if name == "tool.plugin.interrupted")
+    assert interrupted["reason"] == "timeout"
+    done = next(payload for name, payload in events if name == "deepagents.decision.gate.done")
+    assert done["fallback_reason"] == "timeout"
 
 
 def test_run_budget_falls_back_without_calling_out(monkeypatch):
@@ -467,14 +476,14 @@ def test_select_route_corrects_evidence_requirement(monkeypatch):
     assert route["route"] == "direct_execute"
 
 
-def _choice_payload(probabilities):
+def _choice_payload(probabilities, choice="supported"):
     return json.dumps(
         {
             "ok": True,
             "answers": {
                 "decision": {
                     "type": "choice",
-                    "choice": "supported",
+                    "choice": choice,
                     "probabilities": probabilities,
                     "confidence": 0.9,
                 }
@@ -504,6 +513,11 @@ def _post_run_command():
                         "tool_key": "typesafe_choice",
                         "kind": "choice",
                         "max_state_chars": 4000,
+                    },
+                    "evidence_strength": {
+                        "tool_key": "typesafe_choice",
+                        "kind": "choice",
+                        "max_state_chars": 6000,
                     },
                 },
             }
@@ -560,11 +574,45 @@ def test_post_run_checks_report_sufficiency_and_support(monkeypatch):
         ["evidence_sufficient", "answer_supported"],
     )
 
-    verdicts = policy.post_run_checks("question", "answer")
+    verdicts = policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    )
 
     assert verdicts == {
         "evidence_sufficient": True,
         "answer_supported": "supported",
+    }
+
+
+def test_post_run_checks_report_evidence_strength(monkeypatch):
+    events = []
+
+    def fake_execute(*args, **kwargs):
+        if args[6] == "typesafe_choice":
+            return _choice_payload(
+                {
+                    "direct": 0.1,
+                    "derived": 0.1,
+                    "adapted_only": 0.7,
+                    "example_only": 0.02,
+                    "planned": 0.02,
+                    "unsupported": 0.03,
+                    "contradicted": 0.03,
+                },
+                choice="adapted_only",
+            )
+        return _noul_payload(0.9)
+
+    monkeypatch.setattr(decision_gates, "_execute_plugin_tool", fake_execute)
+    policy = _post_run_policy(
+        _runner(_post_run_command(), events),
+        ["evidence_strength"],
+    )
+
+    assert policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    ) == {
+        "evidence_strength": "adapted_only",
     }
 
 
@@ -582,7 +630,9 @@ def test_post_run_checks_use_fixed_defaults_on_fallback(monkeypatch):
         ["evidence_sufficient", "answer_supported"],
     )
 
-    assert policy.post_run_checks("question", "answer") == {
+    assert policy.post_run_checks(
+        "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
+    ) == {
         "evidence_sufficient": True,
         "answer_supported": "supported",
     }
@@ -597,7 +647,7 @@ def test_post_run_state_includes_the_answer_and_evidence():
 
     assert "Why did it fail?" in state
     assert "Because of the deploy." in state
-    assert "Runtime evidence:" in state
+    assert json.loads(state)["runtime_evidence"]["record_validation"]["valid"] is True
 
 
 def test_gate_not_declared_by_the_manifest_falls_back():

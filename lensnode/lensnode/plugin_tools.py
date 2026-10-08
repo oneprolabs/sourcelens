@@ -3,6 +3,7 @@
 import json
 import threading
 import time
+import uuid
 
 import httpx
 
@@ -146,10 +147,13 @@ def _execute_plugin_tool(
     result_cache=None,
     result_cache_lock=None,
     source="model_tool",
+    trace_call_id=None,
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
     call_id = str(getattr(runtime, "tool_call_id", "") or "")
+    trace_call_id = trace_call_id or f"plugin:{uuid.uuid4().hex}"
+    trace_parent = call_id if source in {"model_tool", "decision_gate"} else None
     cache_key = _plugin_result_cache_key(
         plugin_key,
         plugin_version,
@@ -164,7 +168,7 @@ def _execute_plugin_tool(
             _emit(
                 emit_event,
                 "tool.plugin.cache_hit",
-                {"plugin": plugin_key, "tool": tool_key},
+                {"plugin": plugin_key, "tool": tool_key, "parent_call_id": call_id},
             )
             return cached
     started = time.monotonic()
@@ -175,6 +179,9 @@ def _execute_plugin_tool(
             "plugin": plugin_key,
             "tool": tool_key,
             "invocation_id": call_id,
+            "call_id": trace_call_id,
+            "parent_call_id": trace_parent,
+            "usage_source": "gate_model" if source in {"decision_gate", "decision_rank"} else None,
         },
     )
     material = None
@@ -252,6 +259,8 @@ def _execute_plugin_tool(
             endpoint,
             connection_config,
         )
+        if isinstance(result, dict) and result.get("ok") is False:
+            error = str(result.get("error") or "PLUGIN_EXECUTION_FAILED")
     except PluginRuntimeError as exc:
         error = str(exc)
         result = {"ok": False, "error": error}
@@ -271,6 +280,9 @@ def _execute_plugin_tool(
                 "plugin": plugin_key,
                 "tool": tool_key,
                 "invocation_id": call_id,
+                "call_id": trace_call_id,
+                "parent_call_id": trace_parent,
+                "usage_source": "gate_model" if source in {"decision_gate", "decision_rank"} else None,
                 "ok": not error,
                 "error": error,
                 "duration_ms": int((time.monotonic() - started) * 1000),

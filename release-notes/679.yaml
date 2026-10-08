@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Knowledge Q&A batches search keywords with "|", keeps each search result within a bounded size, skips repeated identical queries, and verifies answers against the evidence it retrieved, so long investigations converge instead of looping until they fail.
+zh-CN: 知识问答支持用 "|" 批量检索关键词、限制单次搜索结果大小、跳过重复的相同查询，并基于已检索到的证据校验答案，使长任务收敛而不再空转直至失败。

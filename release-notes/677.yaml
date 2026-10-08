@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  GitLab activity summaries can now cover every project a Connection can see
+  by passing the "*" sentinel, listing the most recently active projects first
+  and reporting when the list is truncated.
+zh-CN: >-
+  GitLab 活动汇总现在可通过传入 "*" 哨兵值覆盖连接可见的全部项目，按最近活跃
+  优先列出，并在列表被截断时给出提示。

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -67,6 +68,7 @@ from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
 )
+from .evidence_gate import EvidenceGateMiddleware, _verdicts_supported
 from .execution import (
     EmptyAgentResponseError,
     _emit_new_model_calls,
@@ -158,9 +160,11 @@ def _decision_attempt(state):
     """Return the attempt number used to scope Decision call ids."""
 
     resume_state = getattr(state, "resume_state", None)
-    if resume_state is None:
-        return 1
-    return max(int(getattr(resume_state, "current_attempt", 1) or 1), 1)
+    return max(
+        int(getattr(state, "command", {}).get("trace_attempt") or 1),
+        int(getattr(resume_state, "current_attempt", 1) or 1),
+        1,
+    )
 
 
 def _post_run_decision_gates(state, answer):
@@ -176,11 +180,19 @@ def _post_run_decision_gates(state, answer):
     policy = getattr(state, "decision_policy", None)
     if policy is None:
         return {}
-    verdicts = policy.post_run_checks(
-        state.question,
-        answer,
-        getattr(state, "runtime_evidence", None),
+    runtime_evidence = getattr(state, "runtime_evidence", None)
+    evidence_middleware = getattr(state, "evidence_middleware", None)
+    verdicts = (
+        evidence_middleware.cached_verdicts(answer, runtime_evidence)
+        if evidence_middleware is not None
+        else None
     )
+    if verdicts is None:
+        verdicts = policy.post_run_checks(
+            state.question,
+            answer,
+            runtime_evidence,
+        )
     if verdicts and getattr(state, "checkpoint_ready", False):
         try:
             save_decision_gates(
@@ -191,6 +203,39 @@ def _post_run_decision_gates(state, answer):
         except Exception:
             LOGGER.exception("Failed to persist decision gate verdicts")
     return verdicts
+
+
+def _build_evidence_middleware(state):
+    """Build the answer-grounding Decision gate, or None when unbound."""
+
+    policy = getattr(state, "decision_policy", None)
+    checker = getattr(policy, "has_evidence_gates", None)
+    if checker is None or not checker():
+        return None
+    command = getattr(state, "command", None) or {}
+    question = str(
+        getattr(state, "question", None) or command.get("question") or ""
+    )
+    runtime_evidence = getattr(state, "runtime_evidence", None)
+    review_state = runtime_evidence.setdefault("_answer_review", {}) if isinstance(runtime_evidence, dict) else {}
+
+    def discard_rejected_deliverables():
+        """Start a new final-answer batch without publishing the rejected draft."""
+
+        command.get("_deliverables", {}).clear()
+        persist = getattr(state, "persist_execution_state", None)
+        if persist is not None:
+            persist()
+
+    return EvidenceGateMiddleware(
+        policy,
+        question,
+        evidence=getattr(state, "runtime_evidence", None),
+        emit_event=getattr(state, "emit_agent_event", None),
+        review_scope=getattr(state, "evidence_review_scope", None),
+        on_recheck=discard_rejected_deliverables,
+        review_state=review_state,
+    )
 
 
 def _high_confidence_report_route(command):
@@ -478,6 +523,7 @@ class LensDeepAgentRuntime:
             self._build_agent(state)
             return self._execute_agent(state)
         finally:
+            state.exit_span(getattr(state, "run_span", None))
             if cancel_event is None or not cancel_event.is_set():
                 cleanup_runtime_resources(state.resources)
                 for resources in getattr(state, "subagent_resources", []):
@@ -689,6 +735,8 @@ class LensDeepAgentRuntime:
                     "open_call_ids": list(resume_state.open_call_ids),
                     "open_span_ids": list(resume_state.open_span_ids),
                     "parent_call_map": resume_state.parent_call_map,
+                    "call_categories": resume_state.call_categories,
+                    "call_names": resume_state.call_names,
                 }
             )
             trajectory.record(
@@ -739,6 +787,14 @@ class LensDeepAgentRuntime:
         )
 
         def emit_agent_event(event, detail=None):
+            if event == "deepagents.summarization.compacted":
+                state.runtime_evidence["evidence_completeness"] = "incomplete"
+            if event in {"tool.save_deliverable.done", "deepagents.evidence.verified"} and hasattr(
+                state, "persist_execution_state"
+            ):
+                state.persist_execution_state()
+            if trajectory is not None and event.startswith("tool."):
+                detail = trajectory.tool_event_detail(detail)
             detail = runtime_mode.decorate_event(detail)
             message = task_log(event, details=_detail_lines(detail))
             LOGGER.info(message)
@@ -772,6 +828,43 @@ class LensDeepAgentRuntime:
         state.emit_agent_event = emit_agent_event
         state.emit_user_event = emit_user_event
         state.emit_trace_observation = emit_trace_observation
+        state.span_counter = 0
+        state.run_span = f"run:{run_uuid}" if run_uuid else None
+
+        def new_span(prefix):
+            state.span_counter += 1
+            return f"{prefix}:{_decision_attempt(state)}:{state.span_counter}"
+
+        def enter_span(span_id):
+            if trajectory is not None and span_id:
+                trajectory.push_span(span_id)
+
+        def exit_span(span_id):
+            if trajectory is not None and span_id:
+                trajectory.pop_span(span_id)
+
+        state.new_span = new_span
+        state.enter_span = enter_span
+        state.exit_span = exit_span
+
+        @contextlib.contextmanager
+        def evidence_review_scope():
+            span_id = new_span("evidence")
+            emit_agent_event(
+                "deepagents.evidence.review.start",
+                {"call_id": span_id},
+            )
+            enter_span(span_id)
+            try:
+                yield span_id
+            finally:
+                emit_agent_event(
+                    "deepagents.evidence.review.done",
+                    {"call_id": span_id},
+                )
+                exit_span(span_id)
+
+        state.evidence_review_scope = evidence_review_scope
         emit_agent_event(
             "deepagents.runtime.start",
             {
@@ -779,8 +872,11 @@ class LensDeepAgentRuntime:
                 "question_chars": len(question),
                 "target_dirs": len(command.get("target_dirs") or []),
                 "history_turns": len(command.get("history") or []),
+                "call_id": state.run_span,
             },
         )
+        if trajectory is not None and state.run_span:
+            trajectory.push_span(state.run_span)
         _apply_offload_thresholds(self.config)
         emit_agent_event(
             "deepagents.offload.configured",
@@ -792,35 +888,62 @@ class LensDeepAgentRuntime:
         if runtime_mode.general_chat:
             emit_user_event("phase.changed", {"phase": "analyzing"})
         resources_started_at = time.monotonic()
+        stage_span = new_span("stage")
         emit_agent_event(
             "deepagents.runtime.stage.start",
-            {"stage": "resources"},
+            {"stage": "resources", "call_id": stage_span},
         )
-        state.resources = prepare_runtime_resources(
-            self.config,
-            command,
-            emit_event=emit_agent_event,
-            cancel_event=cancel_event,
-            on_activity=on_activity,
-        )
+        enter_span(stage_span)
+        try:
+            state.resources = prepare_runtime_resources(
+                self.config,
+                command,
+                emit_event=emit_agent_event,
+                cancel_event=cancel_event,
+                on_activity=on_activity,
+            )
+        except BaseException as exc:
+            emit_agent_event(
+                "deepagents.runtime.stage.failed",
+                {
+                    "stage": "resources",
+                    "call_id": stage_span,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            exit_span(stage_span)
+            raise
         state.subagent_resources = []
         emit_agent_event(
             "deepagents.runtime.stage.done",
             {
                 "stage": "resources",
+                "call_id": stage_span,
                 "duration_ms": int(
                     (time.monotonic() - resources_started_at) * 1000
                 ),
             },
         )
+        exit_span(stage_span)
         model_tools_started_at = time.monotonic()
+        stage_span = new_span("stage")
         emit_agent_event(
             "deepagents.runtime.stage.start",
-            {"stage": "model_tools"},
+            {"stage": "model_tools", "call_id": stage_span},
         )
+        enter_span(stage_span)
         try:
             self._prepare_model_and_tools(state)
-        except BaseException:
+        except BaseException as exc:
+            state.emit_agent_event(
+                "deepagents.runtime.stage.failed",
+                {
+                    "stage": "model_tools",
+                    "call_id": stage_span,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            state.exit_span(stage_span)
             if cancel_event is None or not cancel_event.is_set():
                 cleanup_runtime_resources(state.resources)
             raise
@@ -828,11 +951,13 @@ class LensDeepAgentRuntime:
             "deepagents.runtime.stage.done",
             {
                 "stage": "model_tools",
+                "call_id": stage_span,
                 "duration_ms": int(
                     (time.monotonic() - model_tools_started_at) * 1000
                 ),
             },
         )
+        exit_span(stage_span)
         return state
 
     def _prepare_model_and_tools(self, state):
@@ -851,6 +976,7 @@ class LensDeepAgentRuntime:
         state.runtime_evidence = dict(
             state.resume_state.runtime_evidence if state.resume_state else {}
         )
+        state.command["_deliverables"] = state.runtime_evidence.setdefault("_deliverables", {})
         state.capability_middleware = None
         state.checkpoint_ready = state.resume_state is not None
         state.initial_checkpoint_seeded = False
@@ -1135,10 +1261,12 @@ class LensDeepAgentRuntime:
             return None
 
         routing_started_at = time.monotonic()
+        stage_span = state.new_span("stage")
         state.emit_agent_event(
             "deepagents.runtime.stage.start",
-            {"stage": "routing"},
+            {"stage": "routing", "call_id": stage_span},
         )
+        state.enter_span(stage_span)
         route_was_resumed = bool(
             state.resume_state is not None
             and state.resume_state.route_decision.get("route")
@@ -1179,11 +1307,13 @@ class LensDeepAgentRuntime:
             "deepagents.runtime.stage.done",
             {
                 "stage": "routing",
+                "call_id": stage_span,
                 "duration_ms": int(
                     (time.monotonic() - routing_started_at) * 1000
                 ),
             },
         )
+        state.exit_span(stage_span)
         state.command = {
             **state.command,
             "runtime_route": state.route_decision["route"],
@@ -1417,6 +1547,7 @@ class LensDeepAgentRuntime:
             emit_observation=state.emit_trace_observation,
             trajectory=state.trajectory,
         )
+        state.evidence_middleware = _build_evidence_middleware(state)
         middleware = _agent_middleware(
             state.command,
             state.summarizer,
@@ -1424,6 +1555,7 @@ class LensDeepAgentRuntime:
             capability_middleware=state.capability_middleware,
             mcp_middleware=state.mcp_middleware,
             trace_middleware=state.trace_middleware,
+            evidence_middleware=state.evidence_middleware,
             runtime_middleware=state.runtime_middleware,
             allow_task_tool=use_subagents,
         )
@@ -1438,6 +1570,7 @@ class LensDeepAgentRuntime:
                 },
             )
 
+        state.agent_span = state.new_span("agent")
         state.emit_agent_event(
             "deepagents.agent.create",
             {
@@ -1448,6 +1581,8 @@ class LensDeepAgentRuntime:
                 "mcp_deferred": state.mcp_middleware is not None,
                 "task_tool_enabled": use_subagents,
                 "mcp_config_path": str(state.resources.mcp_config_path),
+                "call_id": state.agent_span,
+                "parent_call_id": state.run_span,
             },
         )
         state.checkpoint_thread = thread_config(state.run_uuid)
@@ -1478,7 +1613,18 @@ class LensDeepAgentRuntime:
                 except Exception:
                     state.kwargs.pop("checkpointer", None)
                     LOGGER.exception("Failed to enable agent run checkpoints")
-        state.agent = create_deep_agent(**state.kwargs)
+        try:
+            state.agent = create_deep_agent(**state.kwargs)
+        except BaseException as exc:
+            state.emit_agent_event(
+                "deepagents.agent.create.failed",
+                {"call_id": state.agent_span, "error_type": type(exc).__name__},
+            )
+            raise
+        state.emit_agent_event(
+            "deepagents.agent.create.done",
+            {"call_id": state.agent_span},
+        )
         state.max_turns = _resolve_agent_turn_limit(state.command)
 
     def _build_configured_subagents(self, state):
@@ -1571,10 +1717,12 @@ class LensDeepAgentRuntime:
                     "tool_budget_max_calls": state.tool_call_budget,
                 }
             )
+        loop_span = state.new_span("agent-loop")
         state.emit_agent_event(
             "deepagents.agent.invoke",
-            invoke_detail,
+            {**invoke_detail, "call_id": loop_span},
         )
+        state.enter_span(loop_span)
         messages = state.initial_messages
         turn_baseline_ai = None
         event_baseline_ai = None
@@ -1595,74 +1743,92 @@ class LensDeepAgentRuntime:
                     "history_ai_turns": turn_baseline_ai,
                 },
             )
-        (
-            answer,
-            truncated,
-            termination_reason,
-        ) = _run_agent_with_turn_limit(
-            state.agent,
-            messages,
-            state.max_turns,
-            model=state.model,
-            thread=state.checkpoint_thread,
-            turn_baseline_ai=turn_baseline_ai,
-            event_baseline_ai=event_baseline_ai,
-            resume_from_checkpoint=state.resume_from_graph_checkpoint,
-            emit_event=state.emit_agent_event,
-            answer_language=_command_answer_language(state.command),
-            cancel_event=state.cancel_event,
-            wrapup_event=(
-                state.wrapup_event
-                if state.runtime_mode.execution_gates
-                else None
-            ),
-            token_budget_wrapup_event=state.token_budget_wrapup_event,
-            on_checkpoint_state=(
-                state.persist_execution_state
-                if state.checkpoint_ready
-                else None
-            ),
-            input_checkpoint_seeded=state.initial_checkpoint_seeded,
-            stream_recovery_attempts=(
-                int(
+        try:
+            (
+                answer,
+                truncated,
+                termination_reason,
+            ) = _run_agent_with_turn_limit(
+                state.agent,
+                messages,
+                state.max_turns,
+                model=state.model,
+                thread=state.checkpoint_thread,
+                turn_baseline_ai=turn_baseline_ai,
+                event_baseline_ai=event_baseline_ai,
+                resume_from_checkpoint=state.resume_from_graph_checkpoint,
+                emit_event=state.emit_agent_event,
+                answer_language=_command_answer_language(state.command),
+                cancel_event=state.cancel_event,
+                wrapup_event=(
+                    state.wrapup_event
+                    if state.runtime_mode.execution_gates
+                    else None
+                ),
+                token_budget_wrapup_event=state.token_budget_wrapup_event,
+                on_checkpoint_state=(
+                    state.persist_execution_state
+                    if state.checkpoint_ready
+                    else None
+                ),
+                input_checkpoint_seeded=state.initial_checkpoint_seeded,
+                stream_recovery_attempts=(
+                    int(
+                        getattr(
+                            self.config,
+                            "stream_recovery_attempts",
+                            1,
+                        )
+                    )
+                    if state.checkpoint_ready
+                    else 0
+                ),
+                stream_recovery_backoff_s=float(
+                    getattr(self.config, "stream_recovery_backoff_s", 1.0)
+                ),
+                stream_recovery_backoff_max_s=float(
                     getattr(
                         self.config,
-                        "stream_recovery_attempts",
-                        1,
+                        "stream_recovery_backoff_max_s",
+                        8.0,
                     )
-                )
-                if state.checkpoint_ready
-                else 0
-            ),
-            stream_recovery_backoff_s=float(
-                getattr(self.config, "stream_recovery_backoff_s", 1.0)
-            ),
-            stream_recovery_backoff_max_s=float(
-                getattr(
-                    self.config,
-                    "stream_recovery_backoff_max_s",
-                    8.0,
-                )
-            ),
-            on_stream_recovery=(
-                (lambda: state.emit_output("", reset=True))
-                if state.emit_output is not None
-                else None
-            ),
-            subagent_display_names=getattr(
-                state,
-                "subagent_display_names",
-                None,
-            ),
-        )
+                ),
+                on_stream_recovery=(
+                    (lambda: state.emit_output("", reset=True))
+                    if state.emit_output is not None
+                    else None
+                ),
+                subagent_display_names=getattr(
+                    state,
+                    "subagent_display_names",
+                    None,
+                ),
+            )
+        except BaseException as exc:
+            state.emit_agent_event(
+                "deepagents.agent.invoke.failed",
+                {"call_id": loop_span, "error_type": type(exc).__name__},
+            )
+            state.exit_span(loop_span)
+            raise
         if truncated:
             detail = {}
             if state.max_turns and state.max_turns > 0:
                 detail["max_agent_turns"] = state.max_turns
             state.emit_agent_event("deepagents.agent.truncated", detail)
         state.emit_agent_event(
+            "deepagents.agent.invoke.done",
+            {
+                "call_id": loop_span,
+                "truncated": truncated,
+                "termination_reason": termination_reason,
+            },
+        )
+        state.exit_span(loop_span)
+        state.emit_agent_event(
             "deepagents.runtime.done",
             {
+                "call_id": state.run_span,
                 "actual_duration": elapsed_since(state.started_at),
                 "answer_chars": len(answer),
                 "stop_reason": state.model.stop_reason,
@@ -1680,11 +1846,21 @@ class LensDeepAgentRuntime:
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
+        if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
+            outcome = "partial"
+            termination_detail = _evidence_termination_detail("artifact")
         if post_run_gates:
             termination_detail = {
                 **termination_detail,
                 "decision_gates": post_run_gates,
             }
+            if (
+                outcome == "completed"
+                and post_run_gates.get("evidence_completeness") != "incomplete"
+                and not _verdicts_supported(post_run_gates)
+            ):
+                outcome = "partial"
+                termination_detail.update(reason="evidence_insufficient", error_type="verification")
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",

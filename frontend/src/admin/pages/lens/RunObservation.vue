@@ -502,10 +502,24 @@
       >
         <div
           v-if="detailVisible"
+          ref="detailPanelRef"
           class="fixed inset-y-0 right-0 z-50 flex w-full max-w-6xl flex-col bg-white shadow-xl"
+          :class="{ 'run-detail-resizing': detailResizing }"
+          :style="detailPanelStyle"
           role="dialog"
           aria-modal="true"
         >
+          <div
+            class="run-detail-resize-handle"
+            role="separator"
+            aria-label="Resize detail panel"
+            aria-orientation="vertical"
+            tabindex="0"
+            @pointerdown="startDetailResize"
+            @pointermove="resizeDetail"
+            @lostpointercapture="finishDetailResize"
+            @keydown="resizeDetailWithKeyboard"
+          />
           <div
             class="flex flex-wrap items-center gap-3 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 flex-shrink-0"
           >
@@ -1400,6 +1414,7 @@
                   :run-uuid="selectedUuid"
                   :assistant-name="detail.assistant_name"
                   :run-status="detail.status"
+                  :workspace-root="detail.lensnode_workspace_path || ''"
                   :active="
                     activeDetailTab === 'execution' &&
                     activeExecutionView === 'trace'
@@ -1587,6 +1602,16 @@
                           >
                             {{ file.filename }}
                           </p>
+                          <span
+                            class="text-xs text-gray-500"
+                            data-testid="output-file-status"
+                          >
+                            {{
+                              t(
+                                `lensRuns.fileStatus.${file.status || 'published'}`
+                              )
+                            }}
+                          </span>
                           <dl
                             class="mt-2 grid gap-x-4 gap-y-1 text-xs text-gray-500 sm:grid-cols-3"
                           >
@@ -1755,7 +1780,85 @@ const actionLoading = ref(false)
 const questionTextRef = ref(null)
 const questionCanExpand = ref(false)
 const questionExpanded = ref(false)
+const detailPanelRef = ref(null)
+const detailWidth = ref(null)
+const detailResizing = ref(false)
 let detailRefreshTimer = null
+let detailResizeStartX = 0
+let detailResizeStartWidth = 0
+
+const DETAIL_MIN_WIDTH = 480
+const DETAIL_WIDTH_STORAGE_KEY = 'lensRunDetailWidth'
+
+const detailPanelStyle = computed(() => {
+  if (detailWidth.value === null) return undefined
+  return { width: `${detailWidth.value}px`, maxWidth: '96vw' }
+})
+
+function detailMaxWidth() {
+  return Math.round(window.innerWidth * 0.96)
+}
+
+function clampDetailWidth(width) {
+  return Math.min(Math.max(width, DETAIL_MIN_WIDTH), detailMaxWidth())
+}
+
+function persistDetailWidth() {
+  if (detailWidth.value === null) return
+  try {
+    window.localStorage.setItem(
+      DETAIL_WIDTH_STORAGE_KEY,
+      String(Math.round(detailWidth.value))
+    )
+  } catch {
+    // Persisting the width is a convenience; ignore storage failures.
+  }
+}
+
+function startDetailResize(event) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  const panel = detailPanelRef.value
+  detailResizeStartX = event.clientX
+  detailResizeStartWidth = panel?.getBoundingClientRect().width || 0
+  detailResizing.value = true
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+function resizeDetail(event) {
+  if (!detailResizing.value) return
+  const delta = detailResizeStartX - event.clientX
+  detailWidth.value = clampDetailWidth(detailResizeStartWidth + delta)
+}
+
+function finishDetailResize() {
+  if (!detailResizing.value) return
+  detailResizing.value = false
+  persistDetailWidth()
+}
+
+function resizeDetailWithKeyboard(event) {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  const current =
+    detailWidth.value ||
+    detailPanelRef.value?.getBoundingClientRect().width ||
+    0
+  const delta = event.key === 'ArrowLeft' ? 32 : -32
+  detailWidth.value = clampDetailWidth(current + delta)
+  persistDetailWidth()
+}
+
+function restoreDetailWidth() {
+  try {
+    const stored = Number(window.localStorage.getItem(DETAIL_WIDTH_STORAGE_KEY))
+    if (Number.isFinite(stored) && stored > 0) {
+      detailWidth.value = clampDetailWidth(stored)
+    }
+  } catch {
+    // Ignore storage failures and fall back to the default width.
+  }
+}
 
 const ACTIVE_RUN_STATUSES = new Set(['queued', 'running', 'streaming'])
 
@@ -2236,6 +2339,7 @@ function scheduleDetailRefresh() {
 }
 
 onMounted(() => {
+  restoreDetailWidth()
   filters.value.user_id = String(route.query.user_id || '')
   filters.value.group_id = String(route.query.group_id || '')
   filters.value.username = String(route.query.username || '')
@@ -2284,6 +2388,34 @@ onBeforeUnmount(() => clearTimeout(detailRefreshTimer))
 }
 .run-detail-id {
   @apply ml-2 break-all font-mono text-xs font-normal text-gray-500;
+}
+.run-detail-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 20;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.run-detail-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  content: '';
+}
+.run-detail-resize-handle:hover::after,
+.run-detail-resize-handle:focus-visible::after,
+.run-detail-resizing .run-detail-resize-handle::after {
+  background: #6366f1;
+}
+.run-detail-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 .overview-section {
   @apply rounded-lg border border-gray-200 bg-gray-50/70 p-3;

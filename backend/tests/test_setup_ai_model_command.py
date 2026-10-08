@@ -8,7 +8,11 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from agentcore_metering.adapters.django.models import LLMConfig
-from core.management.commands.setup_ai_model import Command, SetupAborted
+from core.management.commands.setup_ai_model import (
+    BackToProvider,
+    Command,
+    SetupAborted,
+)
 
 
 class FakeTerminalInput:
@@ -89,6 +93,15 @@ def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
     )
     monkeypatch.setattr(
         Command,
+        "_select_provider",
+        lambda self: {
+            "id": "openai",
+            "label": "OpenAI",
+            "models": [{"id": "gpt-6-sol", "label": "GPT-6 Sol"}],
+        },
+    )
+    monkeypatch.setattr(
+        Command,
         "_secret_input",
         lambda self, prompt: secret,
     )
@@ -136,6 +149,99 @@ def test_option_menu_uses_arrow_keys(monkeypatch):
     assert "> Anthropic" in output.getvalue()
 
 
+def test_option_menu_scrolls_long_model_lists(monkeypatch):
+    """Long provider catalogs remain navigable within a small terminal."""
+
+    keys = iter(["down"] * 7 + ["enter"])
+    monkeypatch.setattr(Command, "_read_key", lambda self: next(keys))
+    monkeypatch.setattr(
+        "core.management.commands.setup_ai_model.shutil.get_terminal_size",
+        lambda fallback: type("TerminalSize", (), {"lines": 10})(),
+    )
+    options = [f"Model {index}" for index in range(20)]
+    output = StringIO()
+    command = Command(stdout=output)
+
+    selected = command._select_option("Models from AGIOne", options)
+
+    assert selected == 7
+    assert "Model 7" in output.getvalue()
+
+
+def test_model_menu_excludes_image_and_embedding_models(monkeypatch):
+    """The setup wizard only offers models suitable for chat assistants."""
+
+    captured = {}
+    monkeypatch.setattr(
+        Command,
+        "_select_option",
+        lambda self, title, options, selected=0: captured.update(
+            title=title, options=options
+        )
+        or 0,
+    )
+    command = Command(stdout=StringIO())
+
+    model = command._select_model(
+        {
+            "label": "AGIOne",
+            "models": [
+                {
+                    "id": "chat-model",
+                    "label": "Chat model",
+                    "mode": "chat",
+                    "capabilities": ["text-to-text"],
+                },
+                {
+                    "id": "image-model",
+                    "label": "Image model",
+                    "mode": "image_generation",
+                    "capabilities": ["text-to-image"],
+                },
+                {
+                    "id": "embedding-model",
+                    "label": "Embedding model",
+                    "mode": "embedding",
+                    "capabilities": ["embedding"],
+                },
+            ],
+        },
+        {"default_model": None},
+    )
+
+    assert model == "chat-model"
+    assert captured["options"] == ["Chat model", "Custom model"]
+
+
+def test_model_menu_is_sorted_by_display_name(monkeypatch):
+    """Models are offered in display-name order, not catalog order."""
+
+    captured = {}
+    monkeypatch.setattr(
+        Command,
+        "_select_option",
+        lambda self, title, options, selected=0: captured.update(
+            title=title, options=options
+        )
+        or 0,
+    )
+    command = Command(stdout=StringIO())
+
+    command._select_model(
+        {
+            "label": "AGIOne",
+            "models": [
+                {"id": "z", "label": "Zeta", "mode": "chat", "capabilities": []},
+                {"id": "b", "label": "beta", "mode": "chat", "capabilities": []},
+                {"id": "a", "label": "Alpha", "mode": "chat", "capabilities": []},
+            ],
+        },
+        {"default_model": None},
+    )
+
+    assert captured["options"] == ["Alpha", "beta", "Zeta", "Custom model"]
+
+
 def test_option_menu_escape_aborts_setup(monkeypatch):
     """Esc leaves the option menu instead of selecting a value."""
 
@@ -144,6 +250,20 @@ def test_option_menu_escape_aborts_setup(monkeypatch):
 
     with pytest.raises(SetupAborted):
         command._select_option("Providers", ["OpenAI", "Anthropic"])
+
+
+def test_escape_during_model_setup_returns_to_provider_menu(monkeypatch):
+    """Esc during provider configuration starts provider selection again."""
+
+    monkeypatch.setattr(
+        Command,
+        "_select_model",
+        lambda self, provider, schema: (_ for _ in ()).throw(SetupAborted),
+    )
+    command = Command(stdout=StringIO())
+
+    with pytest.raises(BackToProvider):
+        command._collect_config({"id": "openai"})
 
 
 def test_confirm_accepts_y_n_and_defaults_to_yes(monkeypatch):

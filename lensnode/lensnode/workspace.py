@@ -54,6 +54,17 @@ DEFAULT_FILE_LIST_LIMIT = 100
 GLOB_SCAN_LIMIT = 1000
 BINARY_SNIFF_BYTES = 4096
 
+# A search result is loaded straight into the model context, so its total size
+# is capped: an unbounded window (say 50 matches x 2 context lines x 2000
+# chars) is tens of thousands of tokens and forces constant summarization.
+# The budget below bounds one content result; matches past it are dropped and
+# the result is marked truncated so the model refines its query instead of
+# re-reading a wall of text. Query keywords may be batched with "|" (OR).
+SEARCH_OR_SEPARATOR = re.compile(r"[|｜]+")
+MAX_QUERY_GROUPS = 20
+DEFAULT_SEARCH_PAYLOAD_CHARS = 12000
+MATCH_RECORD_OVERHEAD_CHARS = 64
+
 _DEPRECATED_KEYS_LOGGED = set()
 
 
@@ -116,6 +127,7 @@ def search_workspace(
         root = Path(item.get("path", ""))
         if root.exists() and root.is_dir():
             dirs.append((root, target_scope(item)))
+    allowed = _path_gate(dirs, policy)
 
     if output_mode == "files":
         files = []
@@ -128,7 +140,7 @@ def search_workspace(
             )
             if len(files) >= max_results:
                 break
-        files = _visible_paths(files, dirs, policy)
+        files = _visible_paths(files, dirs, policy, allowed=allowed)
         return {"mode": "files", "files": files[:max_results]}
 
     if output_mode == "count":
@@ -142,7 +154,7 @@ def search_workspace(
             )
             if len(counts) >= max_results:
                 break
-        counts = _visible_counts(counts, dirs, policy)
+        counts = _visible_counts(counts, dirs, policy, allowed=allowed)
         counts.sort(key=lambda item: (-item["count"], item["path"]))
         return {"mode": "count", "counts": counts[:max_results]}
 
@@ -164,21 +176,39 @@ def search_workspace(
             break
 
     if matches:
-        matches = [
-            match
-            for match in matches
-            if _path_allowed_in_dirs(match["path"], dirs, policy)
-        ]
+        matches = [match for match in matches if allowed(match["path"])]
+        visible = {}
         for match in matches:
-            match["path"] = str(citation_path(match["path"]))
+            match["path"] = _visible_value(match["path"], visible)
         matches = _rank_matches(matches, terms)
         matches = _apply_rerank(matches, rerank)
         if matches:
-            return {
+            budget = int(
+                _option(
+                    {},
+                    policy,
+                    "search_payload_chars",
+                    DEFAULT_SEARCH_PAYLOAD_CHARS,
+                )
+            )
+            bounded, truncated = _bound_matches(
+                matches[:max_results],
+                budget,
+            )
+            result = {
                 "mode": "content",
-                "matches": matches[:max_results],
+                "matches": bounded,
                 "files": [],
             }
+            if truncated:
+                result["truncated"] = True
+                result["note"] = (
+                    "Only the highest-ranked matches are shown to keep the "
+                    "result small. Refine the query (batch more specific "
+                    "keywords with '|', add a glob, or narrow the terms) "
+                    "instead of re-running a broad one."
+                )
+            return result
 
     files = []
     for root, scope in dirs:
@@ -201,7 +231,7 @@ def search_workspace(
     return {
         "mode": "content",
         "matches": [],
-        "files": _visible_paths(files, dirs, policy),
+        "files": _visible_paths(files, dirs, policy, allowed=allowed),
         "note": note,
     }
 
@@ -455,28 +485,65 @@ def _path_allowed_in_dirs(path_value, dirs, policy):
     return False
 
 
-def _visible_paths(paths, dirs, policy):
+def _path_gate(dirs, policy):
+    """Return a per-call memoized allowlist predicate.
+
+    ``_path_allowed_in_dirs`` re-resolves the same file once per matched
+    line and once per selected root, so a broad search over a large
+    datasource repeats the same filesystem work thousands of times. The
+    verdict depends only on the path for a fixed ``dirs``/``policy``, so a
+    per-call cache collapses those repeats without changing the result.
+    """
+
+    cache = {}
+
+    def allowed(path_value):
+        key = str(path_value)
+        if key not in cache:
+            cache[key] = _path_allowed_in_dirs(path_value, dirs, policy)
+        return cache[key]
+
+    return allowed
+
+
+def _visible_value(path_value, cache):
+    """Return the user-facing path for one result, memoized per call."""
+
+    key = str(path_value)
+    if key not in cache:
+        cache[key] = str(citation_path(path_value))
+    return cache[key]
+
+
+def _visible_paths(paths, dirs, policy, allowed=None):
     """Return unique allowed paths with conversion artifacts normalized."""
 
+    check = allowed or _path_gate(dirs, policy)
+    cache = {}
     visible = []
+    seen = set()
     for path in paths:
-        if not _path_allowed_in_dirs(path, dirs, policy):
+        if not check(path):
             continue
-        value = str(citation_path(path))
-        if value not in visible:
-            visible.append(value)
+        value = _visible_value(path, cache)
+        if value in seen:
+            continue
+        seen.add(value)
+        visible.append(value)
     return visible
 
 
-def _visible_counts(counts, dirs, policy):
+def _visible_counts(counts, dirs, policy, allowed=None):
     """Merge match counts under their user-facing source paths."""
 
+    check = allowed or _path_gate(dirs, policy)
+    cache = {}
     visible = {}
     for item in counts:
         path = item["path"]
-        if not _path_allowed_in_dirs(path, dirs, policy):
+        if not check(path):
             continue
-        value = str(citation_path(path))
+        value = _visible_value(path, cache)
         visible[value] = visible.get(value, 0) + int(item["count"])
     return [
         {"path": path, "count": count}
@@ -484,17 +551,35 @@ def _visible_counts(counts, dirs, policy):
     ]
 
 
+def _query_groups(query):
+    """Split a query into OR-separated keyword groups.
+
+    `query` is a batch of alternatives joined by "|" (ASCII or full-width
+    "｜"). Whitespace inside a group is not a separator — the group is a
+    phrase that is still tokenized into terms below. A query with no "|" is
+    one single group, preserving the historical keyword behavior.
+    """
+
+    text = str(query or "")
+    groups = [chunk.strip() for chunk in SEARCH_OR_SEPARATOR.split(text)]
+    groups = [group for group in groups if group]
+    if not groups:
+        return [text]
+    return groups[:MAX_QUERY_GROUPS]
+
+
 def _query_terms(query):
-    """Extract lightweight search terms from a user question."""
+    """Extract lightweight search terms from a query (OR across groups)."""
 
     terms = []
-    for term in re.findall(r"[\w一-鿿]+", query.lower()):
-        if len(term) < 2:
-            continue
-        terms.append(term)
-        if _contains_cjk(term):
-            terms.extend(_ngrams(term, 2))
-            terms.extend(_ngrams(term, 3))
+    for group in _query_groups(query):
+        for term in re.findall(r"[\w一-鿿]+", group.lower()):
+            if len(term) < 2:
+                continue
+            terms.append(term)
+            if _contains_cjk(term):
+                terms.extend(_ngrams(term, 2))
+                terms.extend(_ngrams(term, 3))
     seen = set()
     unique_terms = []
     for term in terms:
@@ -748,6 +833,38 @@ def _rank_matches(matches, terms):
         return (-len(coverage[path]), -count[path], path, match["line"])
 
     return sorted(matches, key=sort_key)
+
+
+def _match_cost(match):
+    """Return the rough serialized size of one match record in chars."""
+
+    cost = len(str(match.get("text") or "")) + MATCH_RECORD_OVERHEAD_CHARS
+    for key in ("before", "after"):
+        for item in match.get(key) or []:
+            cost += len(str(item.get("text") or "")) + 8
+    return cost
+
+
+def _bound_matches(matches, budget):
+    """Trim a ranked match list to a total serialized-size budget.
+
+    Matches are kept in rank order until the next record would exceed the
+    budget, so the most relevant evidence survives and the result stays a
+    bounded, predictable size for the model context. Returns the kept
+    matches and whether any were dropped.
+    """
+
+    if budget <= 0:
+        return list(matches), False
+    bounded = []
+    used = 0
+    for match in matches:
+        cost = _match_cost(match)
+        if bounded and used + cost > budget:
+            return bounded, True
+        bounded.append(match)
+        used += cost
+    return bounded, len(bounded) < len(matches)
 
 
 def _parse_rg_json(stdout, context_lines, max_line_chars):

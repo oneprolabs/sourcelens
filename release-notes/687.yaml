@@ -1,0 +1,8 @@
+type: feature
+audience: user
+en: >-
+  Delivered generated files as downloadable conversation artifacts with
+  format-aware previews; HTML files use sandboxed previews and an explicit
+  source view.
+zh-CN: >-
+  将生成的文件作为可下载的对话产物交付，并按格式提供预览；HTML 文件支持隔离预览和显式查看源代码。

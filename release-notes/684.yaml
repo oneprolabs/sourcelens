@@ -1,0 +1,10 @@
+type: improvement
+audience: user
+en: >-
+  Answers now distinguish directly documented facts from derived conclusions,
+  compatibility or adaptation notes, examples, and plans. An answer that presents
+  a plan, example, or adaptation as actual operation is verified once more
+  before it is accepted.
+zh-CN: >-
+  回答现在会区分直接记载的事实、推导结论、兼容性或适配说明、示例与计划。若把
+  计划、示例或适配当作实际运行来表述，答案会被复核一次后再接受。

@@ -109,11 +109,14 @@ class LensNodeExecutionQueue:
         self._admit_exclusive_waiters()
 
     def _admit_standard_waiters(self):
-        """Fill free standard slots without an exclusive-work barrier."""
+        """Fill free standard slots while respecting the exclusive barrier."""
 
-        if self.exclusive_barrier and any(
-            request.execution_class == ExecutionClass.EXCLUSIVE
-            for request in self._waiting
+        if self.exclusive_barrier and (
+            self._active_exclusive > 0
+            or any(
+                request.execution_class == ExecutionClass.EXCLUSIVE
+                for request in self._waiting
+            )
         ):
             return
 
@@ -154,7 +157,13 @@ class LensNodeExecutionQueue:
         self._waiting = waiting
 
     def _admit_delegated_waiters(self):
-        """Admit delegated work independently of the parent Run slot."""
+        """Admit delegated work unless an exclusive operation is active."""
+
+        # A queued exclusive operation must still allow an active parent Run
+        # to obtain a delegated slot, otherwise the parent could wait for its
+        # child while the exclusive operation waits for the parent to finish.
+        if self.exclusive_barrier and self._active_exclusive > 0:
+            return
 
         waiting = collections.deque()
         while self._waiting:

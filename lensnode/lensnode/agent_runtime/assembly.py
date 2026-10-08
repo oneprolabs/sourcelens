@@ -15,6 +15,7 @@ def _agent_middleware(
     capability_middleware=None,
     mcp_middleware=None,
     trace_middleware=None,
+    evidence_middleware=None,
     runtime_middleware=(),
     allow_task_tool=False,
 ):
@@ -36,6 +37,8 @@ def _agent_middleware(
         )
         if capability_middleware is not None:
             middleware.append(capability_middleware)
+    if evidence_middleware is not None:
+        middleware.append(evidence_middleware)
     if trace_middleware is not None:
         middleware.append(trace_middleware)
     if mcp_middleware is not None:

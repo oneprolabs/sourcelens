@@ -586,6 +586,10 @@ class DataSourceViewSet(BaseAdminViewSet):
     def _validate_plugin_datasource_access(serializer):
         """Reject Plugin datasource writes with unreadable resources."""
 
+        if serializer.instance is not None and serializer.validated_data.get(
+            "status", serializer.instance.status
+        ) == DataSource.Status.DISABLED:
+            return
         connection = serializer.validated_data.get(
             "connection",
             getattr(serializer.instance, "connection", None),

@@ -93,6 +93,25 @@ def test_create_plugin_tool_snapshot_rejects_malformed_control_response():
     assert str(exc_info.value) == "PLUGIN_TOOL_SNAPSHOT_INVALID_RESPONSE"
 
 
+@pytest.mark.parametrize("authentication,allowed", [("anonymous", True), ("token", False), (None, False)])
+def test_empty_material_requires_explicit_anonymous_authorization(authentication, allowed):
+    """Missing or corrupt credentials cannot silently become anonymous access."""
+
+    class Client:
+        def post(self, _url, **_kwargs):
+            return httpx.Response(200, json={
+                "plugin_key": "github", "endpoint": "https://github.com",
+                "value": "", "authentication": authentication,
+            })
+
+    if allowed:
+        result = retrieve_plugin_material(Client(), "http://gateway", "node-token", "lease-1")
+        assert result["authentication"] == "anonymous"
+    else:
+        with pytest.raises(PluginRuntimeError, match="PLUGIN_MATERIAL_INVALID_RESPONSE"):
+            retrieve_plugin_material(Client(), "http://gateway", "node-token", "lease-1")
+
+
 def test_acquire_plugin_lease_returns_opaque_metadata():
     request = httpx.Request(
         "POST",

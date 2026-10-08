@@ -913,3 +913,109 @@ def test_agent_search_tool_without_ranker_keeps_order(tmp_path):
     assert [item["path"] for item in payload["matches"]] == [
         item["path"] for item in baseline["matches"]
     ]
+
+
+def test_pipe_batches_or_keywords(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("only alpha here\n", encoding="utf-8")
+    (root / "b.txt").write_text("only beta here\n", encoding="utf-8")
+    (root / "c.txt").write_text("unrelated content\n", encoding="utf-8")
+
+    result = search_workspace([{"path": str(root)}], "alpha|beta")
+
+    paths = {item["path"] for item in result["matches"]}
+    assert paths == {str(root / "a.txt"), str(root / "b.txt")}
+
+
+def test_fullwidth_pipe_batches_or_keywords(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("only alpha here\n", encoding="utf-8")
+    (root / "b.txt").write_text("only beta here\n", encoding="utf-8")
+
+    result = search_workspace([{"path": str(root)}], "alpha｜beta")
+
+    paths = {item["path"] for item in result["matches"]}
+    assert paths == {str(root / "a.txt"), str(root / "b.txt")}
+
+
+def test_search_payload_is_bounded_by_budget(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    for index in range(20):
+        (root / f"f{index:02d}.txt").write_text(
+            f"alpha payload line {index}\n", encoding="utf-8"
+        )
+
+    unbounded = search_workspace([{"path": str(root)}], "alpha")
+    assert len(unbounded["matches"]) == 20
+    assert "truncated" not in unbounded
+
+    bounded = search_workspace(
+        [{"path": str(root)}],
+        "alpha",
+        policy={"search_payload_chars": 300},
+    )
+    assert bounded["truncated"] is True
+    assert 0 < len(bounded["matches"]) < 20
+    assert bounded["note"]
+
+
+def test_repeated_identical_search_short_circuits(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha one\n", encoding="utf-8")
+
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {"target_dirs": [{"path": str(root)}], "settings": {}}
+        )
+    }
+    first = json.loads(
+        tools["search_workspace"].invoke({"query": "alpha"})
+    )
+    assert first["matches"]
+
+    second = json.loads(
+        tools["search_workspace"].invoke({"query": "alpha"})
+    )
+    assert second.get("cached") is True
+    assert "matches" not in second
+    assert second["paths"] == [str(root / "a.txt")]
+
+
+def test_search_reuses_one_allowlist_check_per_path(tmp_path, monkeypatch):
+    """A broad search gates each distinct file once, not once per match.
+
+    ``_path_allowed_in_dirs`` resolves symlinks and stats the path, so
+    calling it for every matched line makes a large-datasource search
+    dominate its own runtime. The per-call memo must collapse the repeated
+    checks for one file down to a single decision.
+    """
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "many.txt").write_text(
+        "\n".join(f"alpha line {index}" for index in range(200)) + "\n",
+        encoding="utf-8",
+    )
+    (root / "other.txt").write_text("alpha too\n", encoding="utf-8")
+
+    checked = []
+    original = workspace_module._path_allowed_in_dirs
+
+    def _counting(path_value, dirs, policy):
+        checked.append(str(path_value))
+        return original(path_value, dirs, policy)
+
+    monkeypatch.setattr(
+        workspace_module, "_path_allowed_in_dirs", _counting
+    )
+
+    result = search_workspace([{"path": str(root)}], "alpha")
+
+    assert result["matches"]
+    assert len(checked) == len(set(checked))
+    assert len(set(checked)) == 2

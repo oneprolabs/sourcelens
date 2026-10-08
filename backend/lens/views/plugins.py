@@ -36,6 +36,7 @@ from lens.plugins.registry import (
     PluginNotFoundError,
     discover_plugins,
     installed_plugin,
+    plugin_requires_secret,
 )
 from lens.plugins.tool_snapshots import (
     ACTIVE_RUN_STATUSES,
@@ -127,6 +128,8 @@ def _active_connection_secret(connection):
             status=status.HTTP_409_CONFLICT,
         )
     version = connection.secret_version
+    if version is None and not plugin_requires_secret(installed_plugin(connection.plugin_key)):
+        return ""
     if version is None or version.status != "active":
         return Response(
             {"detail": "SECRET_VERSION_DISABLED"},
@@ -817,7 +820,10 @@ class PluginCredentialMaterialView(
         ):
             return Response({"detail": "SECRET_MATERIAL_DISABLED"}, status=409)
         value = secret_version.get_value() if secret_version else ""
-        if not value:
+        anonymous = secret_version is None and not plugin_requires_secret(
+            installed_plugin(lease.snapshot.plugin_key)
+        )
+        if not value and not anonymous:
             return Response({"detail": "SECRET_UNAVAILABLE"}, status=409)
         PluginInvocation.objects.filter(
             snapshot=lease.snapshot,
@@ -832,6 +838,7 @@ class PluginCredentialMaterialView(
                 "plugin_key": lease.snapshot.plugin_key,
                 "endpoint": lease.snapshot.resolved_config.get("endpoint", ""),
                 "value": value,
+                "authentication": "anonymous" if anonymous else "token",
             },
             status=status.HTTP_200_OK,
         )

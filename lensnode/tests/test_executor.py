@@ -133,6 +133,28 @@ def test_executor_emits_streamed_output_delta():
     }
 
 
+def test_executor_terminal_frame_contains_only_the_current_deliverable_batch():
+    """Publication uses the runtime manifest rather than every uploaded draft."""
+
+    class DeliverableAgent(FakeAgent):
+        async def answer(self, command, **kwargs):
+            command["_deliverables"] = {"report.html": "final-report", "appendix.md": "final-appendix"}
+            return await super().answer(command, **kwargs)
+
+    executor = LensNodeExecutor.__new__(LensNodeExecutor)
+    executor.agent = DeliverableAgent()
+    events = []
+    asyncio.run(
+        executor.execute(
+            {"run_uuid": "00000000-0000-0000-0000-000000000022", "task": "knowledge_qa", "target_dirs": []},
+            events.append,
+        )
+    )
+
+    terminal = next(event for event in events if event["type"] == "run_done")
+    assert terminal["deliverable_uuids"] == ["final-report", "final-appendix"]
+
+
 def test_executor_repeats_long_final_output_in_terminal_frame():
     final_answer = "完整报告" * 2500
 

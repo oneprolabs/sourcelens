@@ -412,7 +412,9 @@ def _admin_run_row(run):
     else:
         tool_call_count = (
             run.trace_events.filter(
-                Q(event_type__startswith="tool.") | Q(event_type__startswith="subtool.")
+                Q(event_type__startswith="tool.")
+                | Q(event_type__startswith="subtool.")
+                | Q(event_type="step.event", payload__name="tool.plugin.start")
             )
             .exclude(call_id="")
             .values("call_id")
@@ -450,6 +452,7 @@ def _admin_run_row(run):
         ),
         "lensnode_name": run.lensnode.name if run.lensnode else None,
         "lensnode_uuid": str(run.lensnode.uuid) if run.lensnode else None,
+        "lensnode_workspace_path": (run.lensnode.workspace_path if run.lensnode else ""),
         "model_ref": model_refs.get("agent") or None,
         "event_count": counts["event_count"],
         "tool_call_count": tool_call_count,
@@ -920,7 +923,7 @@ def _admin_run_detail(run):
             if str(attachment.get("uuid")) in direct_attachment_uuids
             else "inherited"
         )
-    output_files = RunOutputFileSerializer(run.output_files.all(), many=True).data
+    output_files = RunOutputFileSerializer(run.output_files.all(), many=True, context={"run_status": run.status}).data
     row.update(
         {
             "question": (run.input_message.content if run.input_message else "") or "",
@@ -1054,6 +1057,10 @@ class AdminRunListView(APIView):
                 filter=(
                     Q(trace_events__event_type__startswith="tool.")
                     | Q(trace_events__event_type__startswith="subtool.")
+                    | Q(
+                        trace_events__event_type="step.event",
+                        trace_events__payload__name="tool.plugin.start",
+                    )
                 )
                 & ~Q(trace_events__call_id=""),
                 distinct=True,
@@ -1359,9 +1366,10 @@ def _trace_event_response(
     return {
         "uuid": str(event.uuid),
         "event_id": str(event.event_id),
-        "sequence": (
-            display_sequence if display_sequence is not None else event.sequence
-        ),
+        "sequence": event.sequence,
+        "event_sequence": event.sequence,
+        "ingest_sequence": display_sequence,
+        "event_timestamp": event.timestamp.isoformat(),
         "attempt": event.attempt,
         "event_type": event.event_type,
         "timestamp": event.timestamp.isoformat(),
@@ -1538,14 +1546,20 @@ def _run_trace_summary(
         tool_calls=Count(
             "call_id",
             filter=(
-                Q(event_type__startswith="tool.") | Q(event_type__startswith="subtool.")
+                Q(event_type__startswith="tool.")
+                | Q(event_type__startswith="subtool.")
+                | Q(event_type="step.event", payload__name="tool.plugin.start")
             )
             & ~Q(call_id=""),
             distinct=True,
         ),
         error_count=Count(
             "uuid",
-            filter=Q(event_type__endswith=".failed"),
+            filter=(
+                Q(event_type__endswith=".failed")
+                | Q(payload__ok=False)
+                | Q(event_type="step.event", payload__name__endswith=".failed")
+            ),
         ),
     )
     metered = list(
@@ -1562,6 +1576,9 @@ def _run_trace_summary(
             "model_calls": len(metered),
             "tool_calls": 0,
             "total_tokens": sum(item.total_tokens or 0 for item in metered),
+            "observed_model_tokens": 0,
+            "metered_tokens": sum(item.total_tokens or 0 for item in metered) if metered else None,
+            "usage_scope": "metered" if metered else "observed_models",
             "subagent_model_calls": sum(
                 bool((item.metadata or {}).get("is_subagent"))
                 or str((item.metadata or {}).get("run_uuid") or "")
@@ -1591,22 +1608,33 @@ def _run_trace_summary(
             total_tokens += max(int(value or 0), 0)
         except (TypeError, ValueError):
             pass
+    observed_tokens = total_tokens
     if metered:
         total_tokens = sum(item.total_tokens or 0 for item in metered)
         aggregate["model_calls"] = len(metered)
     first_timestamp = aggregate["first_timestamp"]
     last_timestamp = aggregate["last_timestamp"]
+    run_boundaries = events.filter(run=run).aggregate(
+        started=Min("timestamp", filter=Q(event_type="run.started")),
+        finished=Max(
+            "timestamp",
+            filter=Q(event_type__in=["run.completed", "run.failed", "run.cancelled"]),
+        ),
+    )
     summary = {
         "event_count": aggregate["event_count"],
         "first_timestamp": first_timestamp.isoformat(),
         "last_timestamp": last_timestamp.isoformat(),
-        "duration_ms": max(
-            int((last_timestamp - first_timestamp).total_seconds() * 1000),
-            0,
+        "duration_ms": _duration_ms(
+            run_boundaries["started"] or first_timestamp,
+            run_boundaries["finished"] or last_timestamp,
         ),
         "model_calls": aggregate["model_calls"],
         "tool_calls": aggregate["tool_calls"],
         "total_tokens": total_tokens,
+        "observed_model_tokens": observed_tokens,
+        "metered_tokens": sum(item.total_tokens or 0 for item in metered) if metered else None,
+        "usage_scope": "metered" if metered else "observed_models",
         "subagent_model_calls": sum(
             bool((item.metadata or {}).get("is_subagent"))
             or str((item.metadata or {}).get("run_uuid") or "")

@@ -838,11 +838,15 @@
 
                 <div class="message-card" :class="message.role">
                   <div
-                    v-if="message.role === 'assistant' && message.content"
+                    v-if="
+                      message.role === 'assistant' &&
+                      (messageContentForDisplay(message) ||
+                        hasHtmlDeliverable(message))
+                    "
                     class="message-markdown"
                   >
                     <MarkdownRenderer
-                      :content="message.content"
+                      :content="messageContentForDisplay(message)"
                       :references="messageReferences(message)"
                       @reference-click="openInlineCitation(message, $event)"
                     />
@@ -4538,6 +4542,26 @@ const previewFile = ref(null)
 
 function openPreview(file) {
   previewFile.value = file
+}
+
+function messageContentForDisplay(message) {
+  const content = message?.content || ''
+  if (!hasHtmlDeliverable(message)) {
+    return content
+  }
+  return content.replace(/```(?:html?|HTML?)\s*[\s\S]*?```/g, '').trim()
+}
+
+function hasHtmlDeliverable(message) {
+  return (message?.output_files || []).some((file) => {
+    const extension = extensionOf(file.filename)
+    const contentType = (file.content_type || '').toLowerCase()
+    return (
+      extension === 'html' ||
+      extension === 'htm' ||
+      contentType === 'text/html'
+    )
+  })
 }
 
 function closePreview() {

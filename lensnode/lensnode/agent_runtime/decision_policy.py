@@ -3,6 +3,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 from langchain.tools import tool
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ from ..plugin_package_loader import (
     load_runtime_contract,
 )
 from .decision_gates import DecisionRunner, gate_bindings, run_decision_tool
+from .evidence_material import review_material
 from .routing import (
     _enforce_route_evidence_invariants,
     _message_needs_retrieval,
@@ -59,6 +61,11 @@ class ControlDecisionPolicy:
         """Return advisory post-run gate verdicts; never blocking."""
 
         return {}
+
+    def has_evidence_gates(self):
+        """Return whether any answer-grounding gate is bound."""
+
+        return False
 
 
 class ModelDecisionPolicy(ControlDecisionPolicy):
@@ -136,8 +143,20 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         unbound gate adds no traffic and no events.
         """
 
+        if not self.has_evidence_gates():
+            return {}
         verdicts = {}
-        state_text = _post_run_state(question, answer, evidence)
+        limits = [
+            config["max_state_chars"]
+            if type(config.get("max_state_chars")) is int and config["max_state_chars"] > 0
+            else 4000
+            for key, config in self.gates.items()
+            if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
+        ]
+        state_text = _post_run_state(question, answer, evidence, limit=min(limits, default=4000))
+        completeness = json.loads(state_text)["evidence_completeness"]
+        if completeness == "incomplete":
+            return {"evidence_completeness": "incomplete", "answer_supported": "inconclusive"}
         if "evidence_sufficient" in self.gates:
             threshold = (self.gates.get("evidence_sufficient") or {}).get(
                 "threshold"
@@ -161,7 +180,28 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 option
                 or self.runner.default_verdict("answer_supported")
             )
+        if "evidence_strength" in self.gates:
+            option = self.runner.evaluate_choice(
+                "evidence_strength",
+                question=state_text,
+            )
+            verdicts["evidence_strength"] = (
+                option
+                or self.runner.default_verdict("evidence_strength")
+            )
         return verdicts
+
+    def has_evidence_gates(self):
+        """Return whether an answer-grounding gate is bound."""
+
+        return bool(
+            {
+                "evidence_sufficient",
+                "answer_supported",
+                "evidence_strength",
+            }
+            & set(self.gates)
+        )
 
 
 def build_decision_policy(
@@ -196,28 +236,10 @@ def build_decision_policy(
     return GateDecisionPolicy(policy, runner, gates)
 
 
-def _post_run_state(question, answer, evidence=None):
+def _post_run_state(question, answer, evidence=None, limit=4000):
     """Build the bounded post-run gate state from question, answer, evidence."""
 
-    parts = [
-        str(question or "").strip(),
-        "",
-        f"Answer:\n{str(answer or '').strip()}",
-    ]
-    if isinstance(evidence, dict) and evidence:
-        parts.extend(
-            [
-                "",
-                "Runtime evidence:",
-                json.dumps(
-                    evidence,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                )[:2000],
-            ]
-        )
-    return "\n".join(parts).strip()
+    return review_material(question, answer, evidence, limit=limit)
 
 
 def _propose_evidence(route, value, config):
@@ -399,6 +421,7 @@ class DecisionRanker:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
+                    copy_context().run,
                     self._score,
                     decision,
                     binding,

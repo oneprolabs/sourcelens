@@ -1,0 +1,11 @@
+type: improvement
+audience: user
+en: >-
+  Knowledge Q&A answers now lead with the direct conclusion and only the key
+  supporting points and caveats. Search logs, evidence inventories, reading
+  checklists, and generic follow-up suggestions are kept out of the final answer;
+  when evidence is insufficient, the limitation is stated briefly instead.
+zh-CN: >-
+  知识问答现在先给出直接结论，再只保留关键依据和必要边界。搜索日志、证据清单、
+  待读文档清单和泛化的后续阅读建议不再出现在最终回答中；证据不足时以一句简短说明
+  替代。

@@ -1,0 +1,9 @@
+type: fix
+audience: admin
+en: >-
+  Updated the metering integration to use the official GPT-6 model identifiers,
+  including GPT-6 Luna, and the current provider catalogs. GPT-6 tool calls now
+  use the reasoning mode required by OpenAI's Chat Completions protocol.
+zh-CN: >-
+  更新 metering 集成，使用官方 GPT-6 模型标识（包括 GPT-6 Luna）和当前各厂商
+  模型目录。GPT-6 工具调用现在会使用 OpenAI Chat Completions 协议要求的推理模式。

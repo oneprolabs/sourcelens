@@ -582,7 +582,12 @@ class GitLabToolProvider:
             raise ToolProviderError("tool arguments must be an object")
         if tool_key == "gitlab_activity_summary":
             projects = _tool_projects(arguments.get("projects"))
-            if allowed is not None and any(
+            if GITLAB_ALL_PROJECTS in projects:
+                if allowed is not None:
+                    raise ToolProviderError(
+                        "project is outside connection scope"
+                    )
+            elif allowed is not None and any(
                 project.casefold() not in allowed for project in projects
             ):
                 raise ToolProviderError("project is outside connection scope")
@@ -699,10 +704,16 @@ def _activity_max_results(value):
 
 
 def _tool_projects(value):
-    """Return unique canonical GitLab projects."""
+    """Return unique canonical GitLab projects, allowing the all sentinel."""
 
     if not isinstance(value, list) or not value or len(value) > 50:
         raise ToolProviderError("projects must contain 1 through 50 items")
+    if GITLAB_ALL_PROJECTS in value:
+        if len(value) != 1:
+            raise ToolProviderError(
+                "projects cannot mix all projects with explicit values"
+            )
+        return [GITLAB_ALL_PROJECTS]
     try:
         projects = [_project_name(item) for item in value]
     except DatasourceProviderError as exc:
