@@ -24,7 +24,7 @@
 
 ![SourceLens overview](docs/images/sourcelens_en.png)
 
-Instead of vector embeddings or keyword indexes, SourceLens uses AI coding agents running in a sandbox to directly read, navigate, and reason over the file system. This means the retrieval understands code structure, cross-file relationships, and semantic intent — not just surface-level text matching.
+SourceLens uses AI coding agents running in a sandbox to directly read, navigate, and reason over the file system, without requiring embeddings, a vector database, or pre-indexing. Retrieval can combine code structure, cross-file relationships, and semantic intent, beyond surface-level text matching. Datasources that need ranked text passages can optionally use CocoIndex incremental processing and a local full-text index. This feature is disabled by default and requires an explicit indexing step; the agent still reads original files to verify evidence.
 
 ## Background
 

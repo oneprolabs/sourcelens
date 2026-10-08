@@ -3,6 +3,7 @@
 import asyncio
 import fcntl
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -232,8 +233,107 @@ def test_cocoindex_component_error_blocks_publication(indexed_source, monkeypatc
     asyncio.run(scenario())
 
 
-def test_query_filesystem_work_is_bounded_by_hits(indexed_source, monkeypatch):
-    """Unrelated catalog files must not cause live filesystem authorization."""
+@pytest.mark.parametrize("change", ["added", "new_match", "preserved_mtime", "sidecar"])
+def test_stale_index_falls_back_and_includes_new_matches(indexed_source, monkeypatch, change):
+    """An old matching chunk must not hide newly matching source content."""
+
+    from types import SimpleNamespace
+
+    from lensnode.agent_tools import build_agent_tools
+    from lensnode.text_index.metadata import retrieval_metadata
+
+    async def scenario():
+        settings, root, identity, manifest = indexed_source
+        if change == "sidecar":
+            import hashlib
+
+            source = root / "manual.pdf"
+            source.write_bytes(b"PDF fixture")
+            sidecar = root / "manual.pdf.sourcelens"
+            sidecar.mkdir()
+            (sidecar / "content.md").write_text("Unrelated converted content")
+            (sidecar / "meta.json").write_text(json.dumps({
+                "source": {"sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+                "conversion": {"status": "success"},
+            }))
+            manifest["items"].append({"source_id": "manual", "local_path": "manual.pdf"})
+        else:
+            (root / "new.md").write_text("Unrelated source content")
+            if change in {"new_match", "preserved_mtime"}:
+                manifest["items"].append({"source_id": "new", "local_path": "new.md"})
+        (root / "manifest.json").write_text(json.dumps(manifest))
+        await build_index(settings, root, identity)
+        if change == "sidecar":
+            (sidecar / "content.md").write_text("Recovery latest converted answer")
+        else:
+            source = root / "new.md"
+            previous = source.stat()
+            text = "Recovery latest detailed answer"
+            if change == "preserved_mtime":
+                text = "Recovery latest answer".ljust(previous.st_size)
+            source.write_text(text)
+            if change == "preserved_mtime":
+                os.utime(source, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            if change == "added":
+                manifest["items"].append({"source_id": "new", "local_path": "new.md"})
+                (root / "manifest.json").write_text(json.dumps(manifest))
+        assert retrieval_metadata(root, identity)["index"]["status"] == "stale"
+        monkeypatch.setenv("LENSNODE_WORKSPACE_PATH", str(settings.workspace_path))
+        tools = {
+            tool.name: tool for tool in build_agent_tools(
+                {"target_dirs": [{"path": str(root), "name": "docs"}]},
+                config=SimpleNamespace(text_index_enabled=True),
+            )
+        }
+        result = json.loads(tools["search_indexed_workspace"].invoke({"query": "Recovery"}))
+        assert result.get("index_fallback") == "TEXT_INDEX_STALE"
+        assert "latest" in str(result["matches"])
+        await build_index(settings, root, identity)
+        updated = json.loads(tools["search_indexed_workspace"].invoke({"query": "Recovery"}))
+        assert updated["mode"] == "indexed"
+        assert "latest" in str(updated["matches"])
+
+    asyncio.run(scenario())
+
+
+def test_legacy_index_falls_back_until_incremental_rebuild(indexed_source, monkeypatch):
+    """Indexes without freshness records remain readable by literal fallback."""
+
+    import sqlite3
+    from types import SimpleNamespace
+
+    from lensnode.agent_tools import build_agent_tools
+
+    async def scenario():
+        settings, root, identity, _ = indexed_source
+        await build_index(settings, root, identity)
+        connection = sqlite3.connect(index_directory(root, identity) / "index.sqlite3")
+        try:
+            with connection:
+                connection.execute("DROP TABLE source_revisions")
+        finally:
+            connection.close()
+        monkeypatch.setenv("LENSNODE_WORKSPACE_PATH", str(settings.workspace_path))
+        tools = {
+            tool.name: tool for tool in build_agent_tools(
+                {"target_dirs": [{"path": str(root), "name": "docs"}]},
+                config=SimpleNamespace(text_index_enabled=True),
+            )
+        }
+        result = json.loads(tools["search_indexed_workspace"].invoke({"query": "Recovery"}))
+        assert result["index_fallback"] == "TEXT_INDEX_UNAVAILABLE"
+        assert result["matches"]
+        rebuilt = await build_index(settings, root, identity)
+        assert rebuilt["changed_files"] == 0
+        assert json.loads(tools["search_indexed_workspace"].invoke({"query": "Recovery"}))["mode"] == "indexed"
+
+    asyncio.run(scenario())
+
+
+def test_query_content_reads_are_bounded_by_hits(indexed_source, monkeypatch):
+    """Freshness checks may stat the corpus but must not read unrelated text."""
+
+    from lensnode.text_index import documents
 
     async def scenario():
         settings, root, identity, manifest = indexed_source
@@ -244,17 +344,17 @@ def test_query_filesystem_work_is_bounded_by_hits(indexed_source, monkeypatch):
         (root / "manifest.json").write_text(json.dumps(manifest))
         await build_index(settings, root, identity)
         calls = []
-        original_stat = Path.stat
+        original_read = documents.bounded_bytes
 
-        def counting_stat(path, *args, **kwargs):
+        def counting_read(path, *args, **kwargs):
             calls.append(path)
-            return original_stat(path, *args, **kwargs)
+            return original_read(path, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "stat", counting_stat)
+        monkeypatch.setattr(documents, "bounded_bytes", counting_read)
         result = await search(settings, [{"path": str(root)}], {}, "recovery")
         assert len(result["matches"]) == 2
         assert not any(path.name.startswith("unrelated-") for path in calls)
-        assert len(calls) < 160
+        assert len([path for path in calls if path.suffix == ".md"]) == 2
 
     asyncio.run(scenario())
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ..workspace import is_path_allowed, target_scope
 from .config import MAX_RESULTS, IndexUnavailable, index_directory
-from .documents import authorized_scopes, read_document, safe_file
+from .documents import authorized_scopes, read_document, safe_file, source_revisions
 from .store import search_index
 
 
@@ -39,7 +39,10 @@ async def search(settings, target_dirs, policy, query, limit=8):
                     permissions[relative] = False
             return permissions[relative]
 
-        rows = search_index(index_path, allowed, query, settings.profile, limit, path_allowed=path_allowed)
+        revisions = source_revisions(root, allowed.values(), skip_unavailable=True)
+        rows = search_index(
+            index_path, allowed, query, settings.profile, limit, path_allowed=path_allowed, revisions=revisions,
+        )
         for position, row in enumerate(rows, start=1):
             relative = row["path"]
             cache_key = (str(root), relative)

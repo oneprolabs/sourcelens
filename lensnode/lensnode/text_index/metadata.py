@@ -4,8 +4,8 @@ import sqlite3
 from pathlib import Path
 
 from .config import IndexUnavailable, TextIndexSettings, index_directory
-from .documents import collect_documents, generation_for
-from .store import connect_readonly
+from .documents import collect_documents, generation_for, read_manifest, source_revisions
+from .store import connect_readonly, validate_source_revisions
 
 
 def retrieval_metadata(root, datasource_uuid):
@@ -39,6 +39,11 @@ def retrieval_metadata(root, datasource_uuid):
         connection = connect_readonly(path)
         try:
             metadata = connection.execute("SELECT generation, profile FROM metadata").fetchone()
+            try:
+                validate_source_revisions(connection, source_revisions(root, read_manifest(root, datasource_uuid)[1]))
+            except IndexUnavailable:
+                result["index"]["status"] = "stale"
+                return result
         finally:
             connection.close()
         if metadata is None or metadata["generation"] != generation or metadata["profile"] != settings.profile:

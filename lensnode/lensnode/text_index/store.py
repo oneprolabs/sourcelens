@@ -52,7 +52,7 @@ def connect_readonly(path):
     return connection
 
 
-def publish(index_dir, staging_dir, documents, generation, profile):
+def publish(index_dir, staging_dir, documents, generation, profile, revisions):
     """Update a private copy and atomically expose the complete FTS generation."""
 
     published = index_dir / "index.sqlite3"
@@ -73,6 +73,14 @@ def publish(index_dir, staging_dir, documents, generation, profile):
             connection.executescript(SCHEMA)
         previous = dict(connection.execute("SELECT path, fingerprint FROM documents"))
         with connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS source_revisions (path TEXT PRIMARY KEY, revision TEXT NOT NULL)"
+            )
+            connection.execute("DELETE FROM source_revisions")
+            connection.executemany(
+                "INSERT INTO source_revisions VALUES (?, ?)",
+                [(doc.path, revisions[doc.path]) for doc in documents],
+            )
             retained = {doc.path for doc in documents}
             for path in previous.keys() - retained:
                 _delete_document(connection, path)
@@ -126,7 +134,15 @@ def _delete_document(connection, path):
     connection.execute("DELETE FROM documents WHERE path = ?", (path,))
 
 
-def search_index(path, allowed_paths, query, profile, limit, *, path_allowed=None):
+def validate_source_revisions(connection, revisions):
+    """Reject missing or changed selected documents before trusting FTS matches."""
+
+    stored = dict(connection.execute("SELECT path, revision FROM source_revisions"))
+    if any(stored.get(path) != revision for path, revision in revisions.items()):
+        raise IndexUnavailable("TEXT_INDEX_STALE")
+
+
+def search_index(path, allowed_paths, query, profile, limit, *, path_allowed=None, revisions=None):
     """Apply the trusted file allowlist before exposing matching chunk text."""
 
     tokens = [token[:128] for token in terms(query)[:20]]
@@ -138,6 +154,8 @@ def search_index(path, allowed_paths, query, profile, limit, *, path_allowed=Non
         meta = connection.execute("SELECT generation, profile FROM metadata").fetchone()
         if meta is None or meta["profile"] != profile:
             raise IndexUnavailable("TEXT_INDEX_PROFILE_STALE")
+        if revisions is not None:
+            validate_source_revisions(connection, revisions)
         placeholders = ",".join("?" for _ in allowed_paths)
         candidates = connection.execute(
             "SELECT chunks.id, chunks.path, bm25(chunks_fts) AS rank FROM chunks_fts "

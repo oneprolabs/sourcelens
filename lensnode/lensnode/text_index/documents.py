@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from uuid import UUID
@@ -204,6 +205,46 @@ def generation_for(documents, profile):
     return digest(
         [profile, [[doc.source_id, doc.path, doc.source_hash, doc.text_hash, doc.converted] for doc in documents]]
     )
+
+
+def source_revisions(root, items, *, skip_unavailable=False):
+    """Fingerprint catalog identities and file versions without reading document text.
+
+    Include conversion artifacts so a newly matching passage invalidates an
+    old index even when the unchanged binary source still has the same hash.
+    """
+
+    revisions = {}
+    for item in items:
+        if item.get("status") == "deleted":
+            continue
+        relative = manifest_local_path(item)
+        try:
+            source = safe_file(root, relative)
+            converted = source.suffix.lower() in CONVERTED_EXTENSIONS
+            if not converted and source.suffix.lower() not in TEXT_EXTENSIONS:
+                continue
+            paths = [source]
+            if converted:
+                sidecar = sidecar_path(source)
+                if sidecar.is_symlink():
+                    raise IndexUnavailable("TEXT_INDEX_SOURCE_PATH_INVALID")
+                paths.extend([sidecar / "meta.json", sidecar / "content.md"])
+            versions = []
+            for path in paths:
+                version = path.stat(follow_symlinks=False)
+                if not stat.S_ISREG(version.st_mode):
+                    raise IndexUnavailable("TEXT_INDEX_SOURCE_UNAVAILABLE")
+                versions.append([version.st_size, version.st_mtime_ns, version.st_ctime_ns])
+            revision = digest([str(manifest_source_id(item)), versions])
+            if relative in revisions and revisions[relative] != revision:
+                raise IndexUnavailable("TEXT_INDEX_DUPLICATE_PATH")
+            revisions[relative] = revision
+        except (IndexUnavailable, OSError) as exc:
+            if skip_unavailable or str(exc) in {"TEXT_INDEX_SOURCE_PATH_EXCLUDED", "TEXT_INDEX_NESTED_DATASOURCE"}:
+                continue
+            raise
+    return revisions
 
 
 def authorized_scopes(settings, target_dirs, policy):

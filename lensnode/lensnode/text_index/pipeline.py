@@ -10,7 +10,7 @@ from cocoindex.connectors import localfs
 from cocoindex.ops.text import RecursiveSplitter, detect_code_language
 
 from .config import IndexUnavailable, digest, index_directory
-from .documents import Document, collect_documents, generation_for
+from .documents import Document, collect_documents, generation_for, read_manifest, source_revisions
 from .store import publish
 
 
@@ -78,6 +78,7 @@ async def build_index(settings, root, datasource_uuid, *, full_reprocess=False):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise IndexUnavailable("TEXT_INDEX_BUSY") from None
+        revisions = source_revisions(root, read_manifest(root, datasource_uuid)[1])
         documents = collect_documents(root, datasource_uuid)
         generation = generation_for(documents, settings.profile)
         errors = []
@@ -107,7 +108,9 @@ async def build_index(settings, root, datasource_uuid, *, full_reprocess=False):
             raise IndexUnavailable("TEXT_INDEX_INCOMPLETE")
         if generation_for(collect_documents(root, datasource_uuid), settings.profile) != generation:
             raise IndexUnavailable("TEXT_INDEX_SOURCE_CHANGED")
-        counts = publish(index_dir, state_dir / "prepared", documents, generation, settings.profile)
+        if source_revisions(root, read_manifest(root, datasource_uuid)[1]) != revisions:
+            raise IndexUnavailable("TEXT_INDEX_SOURCE_CHANGED")
+        counts = publish(index_dir, state_dir / "prepared", documents, generation, settings.profile, revisions)
         return {
             "status": "ready",
             "generation": generation,
