@@ -201,13 +201,18 @@ class DevManagerTests(unittest.TestCase):
         )
         target = dict(name="other", path=str(self.other.resolve()), containers=[])
         after = dict(stack, path=target["path"])
-        return stack, target, after, dict(services=services)
+        return (
+            stack,
+            target,
+            after,
+            dict(services=services, networks=dict(backend_network=dict(name="manual-dev_backend_network"))),
+        )
 
     def test_switch_recreates_only_applications_and_selects_target_source(self):
         """Single-stack switching uses the config home, no build, and no infrastructure up."""
         stack, target, after, config = self.switch_fixture()
         with patch.object(self.manager, "discover", side_effect=[[stack, target], [after]]), patch.object(
-            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", ""]
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "network", "", ""]
         ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop"), patch(
             "scripts.devctl.display_environments"
         ):
@@ -236,7 +241,7 @@ class DevManagerTests(unittest.TestCase):
         """Up and switch use the same project, shared configuration and application services."""
         stack, target, after, config = self.switch_fixture()
         with patch.object(self.manager, "discover", side_effect=[[stack, target], [after]]), patch.object(
-            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", ""]
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "network", "", ""]
         ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop") as stop, patch(
             "scripts.devctl.display_environments"
         ):
@@ -264,13 +269,13 @@ class DevManagerTests(unittest.TestCase):
         stack, target, after, config = self.switch_fixture()
         after["project"] = "sourcelens-dev"
         with patch.object(self.manager, "discover", side_effect=[[target], [after]]), patch.object(
-            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", "", ""]
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", "network", "", ""]
         ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop"), patch(
             "scripts.devctl.display_environments"
         ):
             self.manager.up(str(self.other))
         commands = [c.args[0] for c in run.call_args_list]
-        self.assertEqual(commands[-3][-2:], ["postgresql", "redis"])
+        self.assertEqual(commands[-4][-2:], ["postgresql", "redis"])
         self.assertEqual(self.manager.read_state()["environments"], {})
         self.assertEqual(self.manager.read_state()["allocations"], {})
 
@@ -352,6 +357,28 @@ class DevManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "retained volume"):
                 self.manager.up(str(self.other))
         stop.assert_not_called()
+
+    def test_application_recreation_reuses_external_network_and_named_volumes(self):
+        """A template hash change must never make Compose recreate in-use shared resources."""
+        stack, target, after, config = self.switch_fixture()
+        config["volumes"] = {v: dict(name="manual-dev_" + v) for v in ("redis-data", "npm-cache")}
+        with patch.object(self.manager, "discover", side_effect=[[stack, target], [after]]), patch.object(
+            self.manager,
+            "run",
+            side_effect=[json.dumps(config), "image", "image", "image", "network", "volume", "volume", "", ""],
+        ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop"), patch(
+            "scripts.devctl.display_environments"
+        ):
+            self.manager.up(str(self.other))
+        for call in run.call_args_list[-2:]:
+            env = call.kwargs["env"]
+            self.assertEqual(env["DEV_NETWORK_EXTERNAL"], "true")
+            self.assertEqual(env["DEV_NETWORK_NAME"], "manual-dev_backend_network")
+            self.assertEqual(env["DEV_SHARED_VOLUMES_EXTERNAL"], "true")
+            self.assertEqual(env["DEV_NPM_CACHE_EXTERNAL"], "true")
+            self.assertEqual(env["DEV_NPM_CACHE_VOLUME_NAME"], "manual-dev_npm-cache")
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertFalse(any("rm" in c or "create" in c for c in commands))
 
     def test_switch_requires_an_existing_single_stack(self):
         """Switch never creates a second stack when none is present."""

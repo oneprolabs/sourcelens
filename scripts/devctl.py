@@ -509,6 +509,26 @@ class DevManager:
         self.retire_parallel(records)
         if len(infra) != 2 or any(c["State"]["Status"] != "running" for c in infra):
             self.run([*command, "up", "-d", "--no-deps", "--wait", "postgresql", "redis"], env=env)
+        network_name = rendered["networks"]["backend_network"]["name"]
+        self.run(["docker", "network", "inspect", network_name], capture=True)
+        env.update(DEV_NETWORK_NAME=network_name, DEV_NETWORK_EXTERNAL="true")
+        for volume, key in (
+            ("postgres-data", "DEV_POSTGRES_VOLUME_NAME"),
+            ("redis-data", "DEV_REDIS_VOLUME_NAME"),
+            ("node-modules", "DEV_NODE_MODULES_VOLUME_NAME"),
+            ("npm-cache", "DEV_NPM_CACHE_VOLUME_NAME"),
+        ):
+            name = rendered.get("volumes", {}).get(volume, {}).get("name")
+            if not name:
+                continue
+            try:
+                self.run(["docker", "volume", "inspect", name], capture=True)
+            except subprocess.CalledProcessError:
+                if volume in ("postgres-data", "redis-data"):
+                    raise ValueError(f"Missing shared data volume: {name}") from None
+                self.run(["docker", "volume", "create", name], capture=True)
+            env[key] = name
+        env.update(DEV_SHARED_VOLUMES_EXTERNAL="true", DEV_NODE_MODULES_EXTERNAL="true", DEV_NPM_CACHE_EXTERNAL="true")
         state = self.read_state()
         state["single"] = dict(
             project=stack["project"],
