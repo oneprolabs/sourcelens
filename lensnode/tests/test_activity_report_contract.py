@@ -33,3 +33,10 @@ def test_code_summary_does_not_trigger_activity_report_routing():
             "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
         }
     )
+
+
+@pytest.mark.parametrize("question", ["生成这个故障的根因报告", "Report a bug in this class", "分析测试报告"])
+def test_unrelated_reports_do_not_trigger_activity_report_routing(question):
+    assert not _is_activity_report(
+        {"question": question, "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}]}
+    )

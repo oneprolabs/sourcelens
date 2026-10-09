@@ -24,6 +24,13 @@ from ..agent_tools import (
     build_agent_tools,
     build_general_chat_tools,
 )
+from ..activity_reports import (
+    ActivityLedger,
+    ActivityReportMiddleware,
+    activity_ledger_root,
+    build_activity_report_tool,
+    finalize_activity_report,
+)
 from ..checkpoint import (
     checkpoint_enabled,
     get_checkpoint_saver,
@@ -176,7 +183,7 @@ def _post_run_decision_gates(state, answer):
     """
 
     resume_state = getattr(state, "resume_state", None)
-    if resume_state is not None and resume_state.decision_gates:
+    if resume_state is not None and resume_state.decision_gates and getattr(state, "activity_ledger", None) is None:
         return dict(resume_state.decision_gates)
     policy = getattr(state, "decision_policy", None)
     if policy is None:
@@ -1169,14 +1176,30 @@ class LensDeepAgentRuntime:
                 source_recorder=state.consulted_sources,
                 evidence_reranker=state.decision_ranker,
             )
+        state.activity_ledger = None
+        if state.runtime_mode.general_chat and _is_activity_report(state.command):
+            state.activity_ledger = ActivityLedger(activity_ledger_root(self.config.workspace_path, state.run_uuid))
         state.plugin_tools = build_plugin_tools(
             state.command,
             self.config,
             self.http_client,
             emit_event=state.emit_agent_event,
             plugin_http_pool=self.plugin_http_pool,
+            activity_ledger=state.activity_ledger,
         )
         state.tools.extend(state.plugin_tools)
+        if state.activity_ledger is not None:
+            state.tools.append(
+                build_activity_report_tool(
+                    state.activity_ledger,
+                    _activity_report_batch_tools(state.command),
+                    state.command,
+                    state.resources,
+                    self.config,
+                    state.emit_agent_event,
+                    _command_answer_language(state.command),
+                )
+            )
         state.decision_policy = build_decision_policy(
             state.command,
             self.config,
@@ -1217,6 +1240,22 @@ class LensDeepAgentRuntime:
             for contribution in runtime_contributions
             for item in contribution.middleware
         )
+        if state.activity_ledger is not None:
+            state.runtime_middleware += (
+                ActivityReportMiddleware(
+                    state.activity_ledger,
+                    _activity_report_batch_tools(state.command),
+                    lambda: finalize_activity_report(
+                        state.activity_ledger,
+                        _activity_report_batch_tools(state.command),
+                        state.command,
+                        state.resources,
+                        self.config,
+                        state.emit_agent_event,
+                        _command_answer_language(state.command),
+                    ),
+                ),
+            )
         state.subagent_middleware = tuple(
             item
             for contribution in runtime_contributions
@@ -1844,6 +1883,27 @@ class LensDeepAgentRuntime:
             },
         )
         state.exit_span(loop_span)
+        activity_report = None
+        if getattr(state, "activity_ledger", None) is not None:
+            activity_report = finalize_activity_report(
+                state.activity_ledger,
+                _activity_report_batch_tools(state.command),
+                state.command,
+                state.resources,
+                self.config,
+                state.emit_agent_event,
+                _command_answer_language(state.command),
+            )
+            answer = activity_report["answer"]
+            state.runtime_evidence["activity_report"] = {
+                "records": activity_report["records"],
+                "limitations": activity_report["limitations"],
+            }
+            state.runtime_evidence["evidence_completeness"] = (
+                "complete" if activity_report["complete"] else "incomplete"
+            )
+            if state.emit_output is not None:
+                state.emit_output(answer, reset=True)
         state.emit_agent_event(
             "deepagents.runtime.done",
             {
@@ -1865,6 +1925,9 @@ class LensDeepAgentRuntime:
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
+        if activity_report is not None and not activity_report["complete"] and outcome == "completed":
+            outcome = "partial"
+            termination_detail = {"reason": "evidence_insufficient", "error_type": "verification"}
         if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
             outcome = "partial"
             termination_detail = _evidence_termination_detail("artifact")

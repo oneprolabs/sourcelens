@@ -590,15 +590,17 @@ def _report_execution_guidance(command):
             "- If a source reports errors or possibly_truncated, disclose "
             "that coverage limitation briefly instead of paginating or "
             "retrying per resource.",
-            "- Preserve the retrieved source results in a reusable evidence ledger "
-            "in the run workspace. Normalize records by person and event; keep "
+            "- The runtime persists retrieved source results in a private evidence ledger. "
+            "Normalize records by verified source identity and event; keep "
             "source IDs, timestamps, and coverage limits. Distinguish current "
             "status from transitions within the requested time window, and "
-            "deduplicate cross-source or backport records without inventing identities.",
+            "deduplicate exact commit SHAs without inventing identities or equating backports.",
             "- Reuse that ledger for corrections instead of retrieving the same "
             "sources again. Prefer a deterministic template rendered from normalized "
             "data instead of regenerating the entire HTML in each model response.",
-            "- Generate and deliver the requested final artifact, then stop.",
+            "- Call render_activity_report after the batch sources are retrieved. "
+            "It deterministically renders and stages the report from the saved evidence. "
+            "Use its returned grounded answer, then stop. Do not generate HTML yourself.",
         )
     )
     return "\n".join(lines)
@@ -626,11 +628,16 @@ def _is_activity_report(command):
 
     question = str(command.get("question") or "").casefold()
     report_terms = ("report", "报告", "日报", "周报", "月报", "工作内容", "工作情况", "工作汇总")
+    activity_context = any(term in question for term in ("工作", "活动", "工程", "work", "activity"))
+    dated_report = any(
+        term in question for term in ("日报", "周报", "月报", "daily report", "weekly report", "monthly report")
+    )
     work_summary = any(term in question for term in ("总结", "summarize", "summary")) and any(
         term in question for term in ("工作", "活动", "work", "activity")
     )
     return bool(
-        (any(term in question for term in report_terms) or work_summary) and _activity_report_batch_tools(command)
+        (dated_report or work_summary or (activity_context and any(term in question for term in report_terms)))
+        and _activity_report_batch_tools(command)
     )
 
 

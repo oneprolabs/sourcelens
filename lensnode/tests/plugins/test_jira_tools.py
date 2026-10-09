@@ -378,3 +378,24 @@ def test_jira_activity_summary_rechecks_frozen_project_scope():
 
     assert result == {"ok": False, "error": "PLUGIN_SCOPE_MISMATCH"}
     assert client.provider_requests == []
+
+
+def test_activity_evidence_is_reused_after_tools_are_rebuilt(tmp_path):
+    from lensnode.activity_reports import ActivityLedger
+
+    ledger = ActivityLedger(tmp_path / "private")
+    client = JiraRuntimeClient()
+    first = build_plugin_tools(_command("jira_activity_summary"), _config(), client, activity_ledger=ledger)[0]
+    arguments = {
+        "projects": ["SL"],
+        "since": "2026-09-01T00:00:00Z",
+        "until": "2026-09-01T23:59:59Z",
+        "max_results": 2,
+        "runtime": SimpleNamespace(tool_call_id="activity-1"),
+    }
+    original = json.loads(first.func(**arguments))
+    requests = len(client.provider_requests)
+    restored = ActivityLedger(tmp_path / "private")
+    second = build_plugin_tools(_command("jira_activity_summary"), _config(), client, activity_ledger=restored)[0]
+    assert json.loads(second.func(**arguments)) == original
+    assert len(client.provider_requests) == requests

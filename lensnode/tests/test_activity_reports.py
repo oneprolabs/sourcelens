@@ -218,12 +218,109 @@ def test_graph_finishes_from_all_saved_sources_without_a_second_model_turn(tmp_p
     assert "当前查询的活动快照" in result["messages"][-1].content
 
 
+def test_terminal_runtime_replaces_model_draft_and_marks_incomplete_sources_partial(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from lensnode.agent_runtime import runtime as runtime_module
+
+    ledger = ActivityLedger(tmp_path / "private")
+    evidence = _result()
+    evidence["possibly_truncated"] = True
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
+    report = ledger.report({"jira_activity_summary"}, "zh")
+    command = {
+        "question": "总结 10/8，每个人的工作内容",
+        "task": "general_chat",
+        "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
+        "_deliverables": {"old-draft.html": "old"},
+    }
+
+    def finalize(*args):
+        command["_deliverables"].clear()
+        command["_deliverables"].update({"activity-report.html": "verified", "activity-evidence.json": "evidence"})
+        return report
+
+    monkeypatch.setattr(runtime_module, "finalize_activity_report", finalize)
+    monkeypatch.setattr(
+        runtime_module, "_run_agent_with_turn_limit", lambda *args, **kwargs: ("Unverified model draft", False, "")
+    )
+    outputs = []
+    state = SimpleNamespace(
+        command=command,
+        question=command["question"],
+        max_turns=0,
+        activity_ledger=ledger,
+        runtime_mode=SimpleNamespace(execution_gates=False, general_chat=False),
+        initial_messages=[],
+        resume_state=None,
+        agent=None,
+        checkpoint_thread=None,
+        resume_from_graph_checkpoint=False,
+        checkpoint_ready=False,
+        initial_checkpoint_seeded=False,
+        token_budget_wrapup_event=None,
+        cancel_event=None,
+        config=SimpleNamespace(),
+        model=SimpleNamespace(stop_reason=None, token_usage={}),
+        resources=SimpleNamespace(root=tmp_path),
+        started_at=datetime.now(timezone.utc),
+        run_span="run",
+        new_span=lambda *args: "span",
+        enter_span=lambda *args: None,
+        exit_span=lambda *args: None,
+        emit_agent_event=lambda *args: None,
+        emit_output=lambda text, **kwargs: outputs.append((text, kwargs)),
+        runtime_evidence={},
+        evidence_requirement="artifact",
+        required_capabilities=[],
+        capability_middleware=None,
+        decision_policy=None,
+        consulted_sources=SimpleNamespace(citations=lambda *args: []),
+    )
+    result = runtime_module.LensDeepAgentRuntime(SimpleNamespace())._execute_agent(state)
+    assert result["outcome"] == "partial"
+    assert result["termination_detail"]["error_type"] == "verification"
+    assert "Unverified model draft" not in result["answer"]
+    assert result["answer"] == report["answer"]
+    assert outputs[-1][1]["reset"] is True
+    assert "old-draft.html" not in command["_deliverables"]
+
+
 def test_invalid_source_links_are_not_rendered_as_active_links(tmp_path):
     ledger = ActivityLedger(tmp_path / "private")
     result = _result()
     result["items"][0]["url"] = "https://[invalid"
     ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
     assert '<a href="https://' not in ledger.report({"jira_activity_summary"})["html"]
+
+
+def test_resumed_report_does_not_reuse_the_rejected_model_drafts_verdict(tmp_path):
+    from lensnode.agent_runtime.runtime import _post_run_decision_gates
+
+    calls = []
+    state = SimpleNamespace(
+        activity_ledger=ActivityLedger(tmp_path / "private"),
+        resume_state=SimpleNamespace(decision_gates={"answer_supported": "unsupported"}),
+        decision_policy=SimpleNamespace(
+            post_run_checks=lambda *args: calls.append(args) or {"answer_supported": "supported"}
+        ),
+        question="q",
+        runtime_evidence={},
+        checkpoint_ready=False,
+    )
+    assert _post_run_decision_gates(state, "New deterministic report")["answer_supported"] == "supported"
+    assert len(calls) == 1
+
+
+def test_private_source_evidence_is_removed_with_terminal_checkpoint_cleanup(tmp_path, monkeypatch):
+    from lensnode.activity_reports import activity_ledger_root
+    from lensnode.checkpoint import cleanup_run_checkpoint
+
+    ledger = ActivityLedger(activity_ledger_root(tmp_path, "run-report"))
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, _result())
+    monkeypatch.setenv("LENSNODE_CHECKPOINT_ENABLED", "false")
+    cleanup_run_checkpoint("run-report", tmp_path)
+    assert not ledger.root.exists()
 
 
 def test_closed_mr_date_is_not_reported_as_an_update_or_merge(tmp_path):
