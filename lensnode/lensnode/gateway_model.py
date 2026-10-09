@@ -886,6 +886,7 @@ class LensGatewayChatModel(BaseChatModel):
                 )
                 _raise_for_gateway_status(response)
                 data = response.json()
+            message = _message_from_gateway(data.get("message") or {})
         except Exception as exc:
             self._finish_model_observation(
                 observation_id,
@@ -893,7 +894,6 @@ class LensGatewayChatModel(BaseChatModel):
                 exc,
             )
             raise
-        message = _message_from_gateway(data.get("message") or {})
         message.response_metadata["usage"] = data.get("usage") or {}
         latency_ms = int((time.monotonic() - start) * 1000)
         message.response_metadata["latency_ms"] = latency_ms

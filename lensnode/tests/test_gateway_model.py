@@ -63,6 +63,7 @@ def test_dsml_text_without_structured_calls_is_rejected_before_publication(monke
     content = '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_file">\n</｜｜DSML｜｜ calls>'
     outputs = []
     frames = []
+    observations = []
     if streaming:
         chunks = [content[:2], content[2:12], content[12:]]
         body = "".join(
@@ -78,6 +79,8 @@ def test_dsml_text_without_structured_calls_is_rejected_before_publication(monke
         ai_gateway_url="http://gateway/ai/",
         token="token",
         emit_output=outputs.append if streaming else None,
+        emit_observation=observations.append,
+        trace_context={"root_observation_id": "root"},
         trajectory=RunTrajectory("run-protocol", frames.append),
     )
 
@@ -88,6 +91,8 @@ def test_dsml_text_without_structured_calls_is_rejected_before_publication(monke
     assert outputs == []
     events = [frame["events"][0] for frame in frames]
     assert any(event["event_type"] == "model.failed" for event in events)
+    assert observations[-1]["action"] == "end"
+    assert observations[-1]["status"] == "failed"
 
 
 def test_dsml_discussion_is_not_treated_as_a_tool_request():
