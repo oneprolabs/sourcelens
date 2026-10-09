@@ -9,7 +9,7 @@
 # keeps the original mounts. Build contexts stay here; rebuild dependencies here
 # when the target worktree requires different packages.
 # devctl also uses this file, selecting infrastructure or applications explicitly.
-# DEV_* overrides isolate managed stacks; unset values retain the standalone defaults.
+# DEV_* overrides preserve existing stack settings; unset values retain the standalone defaults.
 name: sourcelens-dev
 
 services:
@@ -342,7 +342,7 @@ services:
 
 networks:
   backend_network:
-    # devctl attaches the shared servers to each external application network.
+    # Keep the existing development network when devctl recreates application services.
     name: ${DEV_NETWORK_NAME:-${COMPOSE_PROJECT_NAME}_backend_network}
     external: ${DEV_NETWORK_EXTERNAL:-false}
 
