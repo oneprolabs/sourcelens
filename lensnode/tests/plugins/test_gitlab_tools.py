@@ -3,12 +3,37 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
-from lensnode.plugin_tools import build_plugin_tools
 from lensnode.plugin_package_loader import load_runtime_contract
+from lensnode.plugin_runtime import PluginRuntimeError
+from lensnode.plugin_tools import build_plugin_tools
 
 
 GITLAB_RUNTIME = load_runtime_contract("gitlab", "1.0.0")
+
+
+def test_anonymous_gitlab_sync_does_not_inject_credentials():
+    """Public GitLab projects clone anonymously under the frozen scope."""
+
+    snapshot = {
+        "datasource_uuid": "public",
+        "resolved_config": {
+            "endpoint": "https://gitlab.example",
+            "connection_scope": {"projects": ["*"]},
+            "datasource_config": {"projects": ["group/sub/project"], "branch": "main"},
+            "target_path": "/workspace/public",
+        },
+    }
+    material = {"plugin_key": "gitlab", "endpoint": "https://gitlab.example", "value": "",
+                "authentication": "anonymous"}
+    command = GITLAB_RUNTIME.build_datasource_command(snapshot, material, "manual")
+    assert command["config"]["auth_scheme"] == "none"
+    assert "access_token" not in command["config"]
+    assert command["config"]["allow_submodules"] is False
+    assert command["config"]["repositories"][0]["repo_url"] == "https://gitlab.example/group/sub/project.git"
+    with pytest.raises(PluginRuntimeError, match="PLUGIN_MATERIAL_MISMATCH"):
+        GITLAB_RUNTIME.build_datasource_command(snapshot, {**material, "authentication": "token"}, "manual")
 
 
 def test_builds_multi_project_datasource_command():

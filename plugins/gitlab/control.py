@@ -1,6 +1,7 @@
 """GitLab implementation of the generic datasource Provider contract."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -50,6 +51,7 @@ class GitLabDatasourceProvider(DatasourceProvider):
     """Validate read-only GitLab project datasource selections."""
 
     key = "gitlab"
+    requires_datasource_access_validation = True
 
     def validate_datasource_source_type(self, source_type):
         """Bind the GitLab Provider to the existing Git datasource runtime."""
@@ -122,10 +124,15 @@ class GitLabDatasourceProvider(DatasourceProvider):
                 lambda: _gitlab_json(
                     gitlab_client,
                     base_url,
-                    "/api/v4/user",
+                    "/api/v4/user" if token else "/api/v4/projects",
                     token,
+                    params=None if token else {"per_page": 1, "simple": "true"},
                 )
             )
+        if not token:
+            if not isinstance(payload, list):
+                raise DatasourceProviderError("GITLAB_RESPONSE_INVALID")
+            return {"authentication": "anonymous"}
         if not isinstance(payload, dict):
             raise DatasourceProviderError("GITLAB_RESPONSE_INVALID")
         username = payload.get("username")
@@ -243,6 +250,8 @@ class GitLabDatasourceProvider(DatasourceProvider):
         base_url = self.validate_connection(endpoint, connection_config)
         token = _secret_value(secret)
         page = _connection_resource_page(cursor)
+        if not token:
+            return {"resources": {"projects": {"items": []}}, "next_cursor": ""}
         limit = _connection_resource_limit(limit)
         query = _connection_resource_query(query)
         params = {
@@ -351,6 +360,61 @@ class GitLabDatasourceProvider(DatasourceProvider):
         if directory:
             normalized["directory"] = directory
         return normalized
+
+    def validate_datasource_access(
+        self,
+        secret,
+        datasource_config,
+        endpoint="",
+        connection_config=None,
+        client=None,
+        request_context=None,
+    ):
+        """Require visible project metadata and a readable repository ref."""
+
+        base_url = self.validate_connection(endpoint, connection_config)
+        token = _secret_value(secret)
+        projects = datasource_config.get("projects") or [datasource_config.get("project")]
+        context = request_context or PluginRequestContext(timeout_seconds=GITLAB_TIMEOUT_SECONDS, deadline_seconds=30)
+        with _GitLabClient(client) as gitlab_client:
+
+            def validate_project(project):
+                """Validate one project within the shared request budget."""
+
+                item = {"url": f"{base_url}/{project}", "repository": project, "accessible": False}
+                path = f"/api/v4/projects/{quote(_project_name(project), safe='')}"
+                try:
+                    payload = context.run(lambda: _gitlab_json(gitlab_client, base_url, path, token))
+                    if not isinstance(payload, dict) or not payload.get("path_with_namespace"):
+                        raise DatasourceProviderError("GITLAB_RESPONSE_INVALID")
+                    if not token and payload.get("visibility") != "public":
+                        raise DatasourceProviderError("GITLAB_ACCESS_DENIED")
+                    branch = datasource_config.get("branch") or payload.get("default_branch")
+                    if not isinstance(branch, str) or not branch:
+                        raise DatasourceProviderError("GITLAB_DEFAULT_BRANCH_UNAVAILABLE")
+                    commits = context.run(
+                        lambda: _gitlab_json(
+                            gitlab_client,
+                            base_url,
+                            f"{path}/repository/commits",
+                            token,
+                            params={"ref_name": branch, "per_page": 1},
+                        )
+                    )
+                    if not isinstance(commits, list) or not commits:
+                        raise DatasourceProviderError("GITLAB_RESPONSE_INVALID")
+                    item.update(
+                        accessible=True,
+                        private=payload.get("visibility") != "public",
+                        default_branch=payload.get("default_branch") or "",
+                    )
+                except DatasourceProviderError as exc:
+                    item["error"] = str(exc)
+                return item
+
+            with ThreadPoolExecutor(max_workers=min(context.max_concurrency, len(projects))) as executor:
+                resources = list(executor.map(validate_project, projects))
+        return {"valid": all(item["accessible"] for item in resources), "resources": resources}
 
 
 def _allowed_projects(connection_scope):
@@ -502,9 +566,9 @@ class _GitLabClient:
 
 
 def _secret_value(value):
-    """Return a non-empty secret without persisting or returning it."""
+    """Return an optional token without persisting or returning it."""
 
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str):
         raise DatasourceProviderError("GITLAB_SECRET_UNAVAILABLE")
     return value
 
@@ -519,7 +583,7 @@ def _gitlab_json(client, endpoint, path, token, params=None):
             params=params,
             headers={
                 "Accept": "application/json",
-                "PRIVATE-TOKEN": token,
+                **({"PRIVATE-TOKEN": token} if token else {}),
                 "User-Agent": "SourceLens-Control-Plane",
             },
             follow_redirects=False,

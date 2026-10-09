@@ -1,0 +1,11 @@
+type: feature
+audience: admin
+en: >-
+  Public GitHub and GitLab repositories can now be added without configuring a
+  user-managed connection first. The datasource wizard validates anonymous
+  access and keeps private repositories on credentialed connections. Credentialed
+  repository lists support loading additional pages without losing access checks.
+zh-CN: >-
+  现在无需提前配置用户连接即可添加公开 GitHub 和 GitLab 仓库。数据源向导会校验
+  匿名访问权限，私有仓库仍使用带凭证的连接。带凭证的仓库列表支持加载更多，
+  并保留独立的访问权限校验。

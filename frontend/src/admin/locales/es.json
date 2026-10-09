@@ -1517,7 +1517,7 @@
       },
       "gitlab": {
         "displayName": "GitLab",
-        "description": "Conecta proyectos autorizados de GitLab.com o autogestionados con un token de acceso personal; las fuentes sincronizan archivos y los asistentes consultan código, commits, merge requests e issues mediante herramientas de solo lectura.",
+        "description": "Accede de forma anónima a proyectos públicos de GitLab.com o de instancias propias, o utiliza un token personal para proyectos privados y sincroniza archivos con herramientas de consulta de solo lectura.",
         "connectionFields": {
           "endpoint": {
             "title": "Endpoint de GitLab",
@@ -1525,7 +1525,7 @@
           },
           "secret_value": {
             "title": "Token de acceso personal",
-            "description": "Token de solo escritura con acceso read_api y read_repository a los proyectos autorizados."
+            "description": "Opcional para proyectos públicos. Token de solo escritura con permisos read_api y read_repository para proyectos privados autorizados."
           },
           "projects": {
             "title": "Proyectos permitidos",
@@ -2148,7 +2148,7 @@
       "step1Title": "Origen",
       "step1Desc": "Selecciona el tipo de fuente de datos.",
       "step2Title": "Conexión y recursos",
-      "step2Desc": "Asigna un nombre, selecciona una conexión y elige los repositorios o recursos que se sincronizarán.",
+      "step2Desc": "Introduce un nombre y la dirección del recurso; selecciona una conexión de autenticación si la necesitas.",
       "step3Title": "Sincronización y política de procesamiento",
       "step3Desc": "Configure la política de sincronización y el procesamiento del contenido de los documentos.",
       "summarySource": "Fuente de datos",
@@ -2314,6 +2314,7 @@
       "duplicateResourceUrl": "Las direcciones de recursos de Feishu deben ser únicas.",
       "checkRepositoryAccess": "Comprobar disponibilidad",
       "repositoriesAccessible": "Los repositorios son accesibles. Puedes continuar.",
+      "publicAccess": "Acceso público (sin credenciales)",
       "publicRepository": "Público",
       "githubErrors": {
         "notFound": "Repositorio o referencia no encontrado, o esta conexión no tiene acceso.",

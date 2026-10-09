@@ -283,7 +283,7 @@ nginx 流量路径上。升级时先起空闲色、健康门控、原子切换 n
 不断连），观察一段时间后再退役旧色；回滚就是切回另一色。
 
 > 完整的**可复用规范**（架构、逐项适配清单、正确性必须项清单、验证协议，供其他
-> 项目移植）见 [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)。
+> 项目移植）见 [`docs/operations/blue-green-deployment.md`](docs/operations/blue-green-deployment.md)。
 > 本节是 sourcelens 的速查；改动部署脚本/nginx 前先过一遍那份的「正确性清单」。
 
 ### 命令
