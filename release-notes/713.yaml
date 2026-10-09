@@ -1,0 +1,4 @@
+type: feature
+audience: admin
+en: "Replace assistant models in bulk with a searchable multi-select dropdown and select-all, direct replacement, and atomic conflict checks."
+zh-CN: "助手支持下拉搜索、多选及全选后批量替换模型，提供直接替换与整批配置冲突检查。"

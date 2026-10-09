@@ -1521,6 +1521,32 @@
     }
   },
   "lensAdmin": {
+    "modelReplacement": {
+      "affectedAssistants": "Asistentes afectados",
+      "modelSettings": "Configuración del modelo",
+      "done": "Listo",
+      "title": "Reemplazar modelos en lote",
+      "field": "Uso del modelo",
+      "source": "Modelo actual",
+      "target": "Modelo de destino",
+      "allModels": "Todos los modelos actuales",
+      "unsetModel": "Sin modelo asignado",
+      "noModels": "No hay modelos de destino disponibles. Configure y active un modelo.",
+      "affected": "Se cambiará el modelo de {count} asistentes",
+      "limit": "Reemplace hasta 1000 asistentes a la vez. Reduzca los filtros.",
+      "success": "Modelos reemplazados para {count} asistentes",
+      "conflict": "Los modelos cambiaron. Revise la lista actualizada e inténtelo de nuevo.",
+      "selectPage": "Seleccionar asistentes de esta página",
+      "selectAssistant": "Seleccionar asistente {name}",
+      "assistants": "Seleccionar asistentes",
+      "searchAssistants": "Buscar por nombre o identificador",
+      "selectAllAssistants": "Seleccionar todos ({count})",
+      "selectAllResults": "Seleccionar resultados ({count})",
+      "clearSelection": "Borrar selección",
+      "selectedCount": "{count} asistentes seleccionados",
+      "noAssistants": "No hay asistentes coincidentes",
+      "replace": "Reemplazar modelos ({count})"
+    },
     "datasourceSelection": {
       "title": "Acceso a datos",
       "selected": "Fuentes seleccionadas",
