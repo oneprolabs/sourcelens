@@ -1,12 +1,58 @@
 """Tests for complete LensNode trajectory event production."""
 
+import asyncio
 import threading
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import ToolMessage
 
 from lensnode.agent_runtime.tracing import TraceObservationMiddleware
 from lensnode.trajectory import RunTrajectory
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "tool_name,content,artifact",
+    [
+        ("analyze_structured_output", '{"ok":false,"error":"OPERATION_INPUT_INVALID"}', None),
+        ("execute", "Command failed", {"exit_code": 1}),
+    ],
+)
+def test_semantic_tool_errors_are_failed_spans_even_when_transport_succeeds(asynchronous, tool_name, content, artifact):
+    """Successful tool dispatch cannot conceal a failed operation."""
+
+    frames = []
+    trajectory = RunTrajectory("run-tool-error", frames.append)
+    middleware = TraceObservationMiddleware(None, None, trajectory)
+    request = SimpleNamespace(tool=SimpleNamespace(name=tool_name), tool_call={"id": "call-error", "args": {}})
+    result = ToolMessage(content=content, artifact=artifact, status="success", tool_call_id="call-error")
+
+    async def handler(request):
+        return result
+
+    if asynchronous:
+        returned = asyncio.run(middleware.awrap_tool_call(request, handler))
+    else:
+        returned = middleware.wrap_tool_call(request, lambda request: result)
+
+    events = [frame["events"][0] for frame in frames]
+    assert events[-1]["event_type"] == "tool.failed"
+    assert events[-1]["payload"]["result"]["status"] == "error"
+    assert returned.status == "error"
+    assert trajectory.health == "degraded"
+
+
+@pytest.mark.parametrize("content", ['{"ok":true,"error":"describes past failure"}', '{"ok":false}'])
+def test_successful_tool_data_with_an_error_field_is_not_a_failure(content):
+    """Do not classify user data or mentions of errors by string matching."""
+
+    frames = []
+    middleware = TraceObservationMiddleware(None, None, RunTrajectory("run-data", frames.append))
+    request = SimpleNamespace(tool=SimpleNamespace(name="read_file"), tool_call={"id": "read", "args": {}})
+    result = ToolMessage(content=content, tool_call_id="read")
+    assert middleware.wrap_tool_call(request, lambda request: result).status == "success"
+    assert frames[-1]["events"][0]["event_type"] == "tool.completed"
 
 
 def test_call_state_transition_is_atomic_with_started_event():
