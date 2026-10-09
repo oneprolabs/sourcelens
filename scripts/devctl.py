@@ -105,30 +105,85 @@ class DevManager:
         env.update(
             DEV_ROOT=str(self.root),
             DEV_CONFIG=str(self.config),
-            DEV_INFRA_PROJECT=self.prefix + "-infra",
-            DEV_INFRA_NETWORK=self.prefix + "-infra",
+            DEV_OVERRIDE_CONFIG=str(self.config),
+            DEV_NETWORK_NAME=self.prefix + "-infra",
+            DEV_NETWORK_EXTERNAL="false",
+            DEV_DATA_DIR=str(self.state_dir / "infra-data"),
+            DEV_POSTGRES_DATA="postgres-data",
+            DEV_POSTGRES_VOLUME_NAME=self.prefix + "-infra_postgres-data",
+            DEV_REDIS_VOLUME_NAME=self.prefix + "-infra_redis-data",
+            DEV_SHARED_VOLUMES_EXTERNAL="false",
+            DEV_POSTGRES_BIND="127.0.0.1:",
+            DEV_REDIS_IMAGE="redis:7-alpine",
+            DEV_REDIS_DATABASES="256",
+            DEV_REDIS_APPENDONLY="yes",
         )
+        project = record["project"] if record else self.prefix + "-infra"
+        for service, key in (
+            ("backend-api", "API"),
+            ("backend-worker", "WORKER"),
+            ("backend-scheduler", "SCHEDULER"),
+            ("postgresql", "POSTGRES"),
+            ("redis", "REDIS"),
+            ("flower", "FLOWER"),
+            ("lensnode", "LENSNODE"),
+            ("frontend", "FRONTEND"),
+            ("nginx", "NGINX"),
+        ):
+            env[f"DEV_{key}_CONTAINER"] = f"{project}-{service}-1"
         if record:
             broker, cache, channel = record["redis_dbs"]
+            overrides = {
+                "DB_ENGINE": "postgresql",
+                "POSTGRES_HOST": "postgresql",
+                "POSTGRES_PORT": "5432",
+                "POSTGRES_DB": record["database"],
+                "CELERY_BROKER_URL": f"redis://redis:6379/{broker}",
+                "REDIS_URL": f"redis://redis:6379/{broker}",
+                "CACHE_BACKEND": "redis",
+                "CACHE_REDIS_URL": f"redis://redis:6379/{cache}",
+                "CHANNEL_LAYER_REDIS_URL": f"redis://redis:6379/{channel}",
+                "CELERY_TASK_DEFAULT_QUEUE": "backend",
+                "CELERY_TASK_QUEUES": "backend,lens",
+                "CELERY_REQUIRED_QUEUES": "backend,lens",
+                "CELERY_CONCURRENCY": "2",
+                "DJANGO_DEBUG": "true",
+                "CSRF_TRUSTED_ORIGINS": f"http://localhost:{record['port']},http://127.0.0.1:{record['port']}",
+                "SITE_DOMAIN": f"localhost:{record['port']}",
+            }
+            override_file = self.state_dir / (record["project"] + ".env")
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.state_dir, delete=False) as handle:
+                handle.write("".join(f"{key}={value}\n" for key, value in overrides.items()))
+                temporary = Path(handle.name)
+            temporary.replace(override_file)
             env.update(
                 WORKTREE_DIR=record["path"],
-                DEV_APP_PROJECT=record["project"],
-                DEV_APP_NETWORK=record["project"] + "-net",
-                DEV_HTTP_PORT=str(record["port"]),
-                DEV_DB_NAME=record["database"],
                 DEV_DATA_DIR=record["data_dir"],
                 DEV_BACKEND_IMAGE=record["backend_image"],
                 DEV_LENSNODE_IMAGE=record["lensnode_image"],
-                DEV_REDIS_BROKER_DB=str(broker),
-                DEV_REDIS_CACHE_DB=str(cache),
-                DEV_REDIS_CHANNEL_DB=str(channel),
+                DEV_OVERRIDE_CONFIG=str(override_file),
+                DEV_NETWORK_NAME=record["project"] + "-net",
+                DEV_NETWORK_EXTERNAL="true",
+                DEV_SHARED_VOLUMES_EXTERNAL="true",
+                DEV_STATICFILES_DIR=str(Path(record["data_dir"]) / "staticfiles"),
+                DEV_BUILD_CONTEXT=record["path"],
+                DEV_BACKEND_ENTRYPOINT="/worktree-entrypoint.sh",
+                DEV_FRONTEND_DIR=str(Path(record["path"]) / "frontend"),
+                DEV_FRONTEND_IMAGE="node:22-alpine",
+                DEV_NODE_MODULES="node-modules",
+                DEV_FRONTEND_COMMAND="npm ci --cache /npm-cache --no-audit --no-fund && exec npm run dev -- --host 0.0.0.0",
+                DEV_HTTP_BIND=f"127.0.0.1:{record['port']}",
+                DEV_FLOWER_BIND="127.0.0.1:",
+                DEV_NGINX_HEALTH_COMMAND="curl -f http://127.0.0.1/health",
+                LENSNODE_NAME=record["project"],
+                LENSNODE_TOKEN="dev-" + record["project"],
+                LENSNODE_MAX_CONCURRENT_RUNS="2",
             )
         return env
 
     def compose_command(self, record, args):
         """Build an explicit project/config invocation independent of the caller's directory."""
         project = record["project"] if record else self.prefix + "-infra"
-        filename = "docker-compose.worktree.yml" if record else "docker-compose.infra.yml"
         return [
             "docker",
             "compose",
@@ -139,7 +194,7 @@ class DevManager:
             "--env-file",
             str(self.config),
             "-f",
-            str(self.root / filename),
+            str(self.root / "docker-compose.dev.yml"),
             *args,
         ]
 
@@ -230,7 +285,7 @@ class DevManager:
 
     def infra_up(self):
         """Start only the dedicated shared services, waiting for health."""
-        self.compose(None, ["up", "-d", "--wait", "--wait-timeout", "180"])
+        self.compose(None, ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "postgresql", "redis"])
 
     def network(self, record, remove=False):
         """Attach shared servers to a private app network, avoiding shared service-name collisions."""
@@ -274,7 +329,8 @@ class DevManager:
         for directory in (
             "staticfiles",
             "logs/api",
-            "logs/celery",
+            "logs/worker",
+            "logs/scheduler",
             "logs/nginx",
             "storage/media",
             "workspace",
@@ -289,7 +345,9 @@ class DevManager:
             if build:
                 self.compose(record, ["build", "backend-api", "lensnode"])
             self.network(record)
-            self.compose(record, ["up", "-d", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "600"])
+            startup = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "600"]
+            self.compose(record, [*startup, "backend-api", "frontend"])
+            self.compose(record, [*startup, "backend-worker", "backend-scheduler", "lensnode", "flower", "nginx"])
         except subprocess.CalledProcessError:
             self.update(record, status="failed")
             with contextlib.suppress(subprocess.CalledProcessError):

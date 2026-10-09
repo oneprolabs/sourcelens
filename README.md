@@ -227,13 +227,6 @@ Code is bind-mounted, so reload behavior differs per service:
 
 New migrations are the one case that needs an API restart.
 
-For parallel Git worktrees, `./devctl up NAME /path/to/worktree` starts an
-isolated application stack on shared PostgreSQL/Redis servers, with its own
-database, Redis namespace and HTTP port. Use `./devctl test NAME` to print and
-verify the container's actual source before testing. The existing stack also
-supports `WORKTREE_DIR` and `./scripts/test-dev.sh`. See
-[worktree development](docs/worktree-development.md) for setup and lifecycle commands.
-
 ## 📄 License
 
 [Apache License 2.0](LICENSE)

@@ -117,11 +117,50 @@ class DevManagerTests(unittest.TestCase):
     def test_environment_overrides_shared_config_and_shell_values(self):
         """Inherited production endpoints/project names cannot override generated identities."""
         record = self.register("branch-a")
-        with patch.dict(os.environ, {"DEV_HTTP_PORT": "80", "COMPOSE_PROJECT_NAME": "sourcelens"}):
+        with patch.dict(os.environ, {"DEV_HTTP_BIND": "80", "COMPOSE_PROJECT_NAME": "sourcelens"}):
             env = self.manager.compose_env(record)
-        self.assertEqual(env["DEV_HTTP_PORT"], str(record["port"]))
+        self.assertEqual(env["DEV_HTTP_BIND"], f"127.0.0.1:{record['port']}")
         self.assertNotIn("COMPOSE_PROJECT_NAME", env)
         self.assertEqual(env["DEV_CONFIG"], str(self.config.resolve()))
+
+    def test_every_mode_uses_existing_compose_and_selects_only_its_services(self):
+        """Shared infrastructure and apps must reuse the dev file without launching each other."""
+        record = self.register("branch-a")
+        for item in (None, record):
+            argv = self.manager.compose_command(item, ["ps"])
+            self.assertEqual(argv[argv.index("-f") + 1], str(self.root.resolve() / "docker-compose.dev.yml"))
+        with patch.object(self.manager, "compose") as compose:
+            self.manager.infra_up()
+        self.assertEqual(compose.call_args.args[1][-2:], ["postgresql", "redis"])
+
+    def test_runtime_overrides_are_private_and_do_not_copy_credentials(self):
+        """The generated config only isolates endpoints; credentials remain in the shared config."""
+        record = self.register("branch-a")
+        env = self.manager.compose_env(record)
+        path = Path(env["DEV_OVERRIDE_CONFIG"])
+        content = path.read_text()
+        self.assertIn(f"POSTGRES_DB={record['database']}\n", content)
+        self.assertIn(f"CELERY_BROKER_URL=redis://redis:6379/{record['redis_dbs'][0]}\n", content)
+        self.assertNotIn("POSTGRES_PASSWORD", content)
+        self.assertNotIn("complex", content)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_application_startup_never_starts_database_services(self):
+        """Keep API/frontend health gating while reusing only the shared servers."""
+        record = self.register("branch-a")
+        with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
+            self.manager, "compose", return_value="1"
+        ) as compose:
+            self.manager.up(record, build=False)
+        commands = [call.args[1] for call in compose.call_args_list if call.args[0] == record]
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0][-2:], ["backend-api", "frontend"])
+        self.assertEqual(commands[1][-5:], ["backend-worker", "backend-scheduler", "lensnode", "flower", "nginx"])
+        for command in commands:
+            self.assertIn("--no-deps", command)
+            self.assertIn("--wait", command)
+            self.assertNotIn("postgresql", command)
+            self.assertNotIn("redis", command)
 
     def test_registry_has_one_configuration_home(self):
         """A tool copied into a different worktree cannot silently change shared credentials."""

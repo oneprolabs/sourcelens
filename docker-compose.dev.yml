@@ -8,16 +8,21 @@
 # this Compose directory. Recreate containers when switching worktrees: restart
 # keeps the original mounts. Build contexts stay here; rebuild dependencies here
 # when the target worktree requires different packages.
+# devctl also uses this file, selecting infrastructure or applications explicitly.
+# DEV_* overrides isolate managed stacks; unset values retain the standalone defaults.
 name: sourcelens-dev
 
 services:
   backend-api:
-    image: sourcelens-api:latest
-    container_name: sourcelens-api-dev
+    image: ${DEV_BACKEND_IMAGE:-sourcelens-api:latest}
+    entrypoint: ["${DEV_BACKEND_ENTRYPOINT:-/entrypoint.sh}"]
+    container_name: ${DEV_API_CONTAINER:-sourcelens-api-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: &dev-env
+      - ${DEV_CONFIG:-./.env.dev}
+      # Managed overrides contain only local endpoints/identities, never credentials.
+      - ${DEV_OVERRIDE_CONFIG:-${DEV_CONFIG:-./.env.dev}}
     environment:
       LENS_PLUGIN_ROOTS: /opt/plugins
       LENSNODE_NAME: ${LENSNODE_NAME:-local-dev-lensnode}
@@ -27,7 +32,7 @@ services:
       TURNSTILE_ENABLED: "false"
       TURNSTILE_SECRET_KEY: ""
     build:
-      context: .
+      context: ${DEV_BUILD_CONTEXT:-.}
       dockerfile: Dockerfile
       target: backend
       args:
@@ -37,16 +42,17 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
     volumes:
       # Share runtime data across worktrees; switching branches must not replace stored data.
-      - ./data.dev/django/staticfiles:/opt/backend/core/staticfiles
-      - ./data.dev/logs/api:/var/log/gunicorn
+      - ${DEV_STATICFILES_DIR:-./data.dev/django/staticfiles}:/opt/backend/core/staticfiles
+      - ${DEV_DATA_DIR:-./data.dev}/logs/api:/var/log/gunicorn
+      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
       # Certificates stay with shared configuration, independent of the selected branch.
-      - ./docker/nginx/certs:/opt/certs
-      - ./data.dev/storage:/opt/storage
-      - ./data.dev/workspace:/workspace
-      - ./data.dev/document-attachments:/opt/document-attachments
-      - ./data.dev/deliverables:/opt/deliverables
+      - ${DEV_ROOT:-.}/docker/nginx/certs:/opt/certs
+      - ${DEV_DATA_DIR:-./data.dev}/storage:/opt/storage
+      - ${DEV_DATA_DIR:-./data.dev}/workspace:/workspace
+      - ${DEV_DATA_DIR:-./data.dev}/document-attachments:/opt/document-attachments
+      - ${DEV_DATA_DIR:-./data.dev}/deliverables:/opt/deliverables
     networks:
       - backend_network
     depends_on:
@@ -63,12 +69,12 @@ services:
       start_period: 120s
 
   backend-worker:
-    image: sourcelens-api:latest
-    container_name: sourcelens-worker-dev
+    image: ${DEV_BACKEND_IMAGE:-sourcelens-api:latest}
+    entrypoint: ["${DEV_BACKEND_ENTRYPOINT:-/entrypoint.sh}"]
+    container_name: ${DEV_WORKER_CONTAINER:-sourcelens-worker-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     environment:
       LENS_PLUGIN_ROOTS: /opt/plugins
       WORKSPACE_ROOT: /opt/backend
@@ -80,11 +86,12 @@ services:
       TURNSTILE_SECRET_KEY: ""
     volumes:
       # Share runtime data across worktrees; switching branches must not replace stored data.
-      - ./data.dev/logs/worker:/var/log/celery
-      - ./data.dev/storage:/opt/storage
-      - ./data.dev/workspace:/workspace
-      - ./data.dev/document-attachments:/opt/document-attachments
-      - ./data.dev/deliverables:/opt/deliverables
+      - ${DEV_DATA_DIR:-./data.dev}/logs/worker:/var/log/celery
+      - ${DEV_DATA_DIR:-./data.dev}/storage:/opt/storage
+      - ${DEV_DATA_DIR:-./data.dev}/workspace:/workspace
+      - ${DEV_DATA_DIR:-./data.dev}/document-attachments:/opt/document-attachments
+      - ${DEV_DATA_DIR:-./data.dev}/deliverables:/opt/deliverables
+      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
       - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
@@ -100,12 +107,12 @@ services:
     command: celery
 
   backend-scheduler:
-    image: sourcelens-api:latest
-    container_name: sourcelens-scheduler-dev
+    image: ${DEV_BACKEND_IMAGE:-sourcelens-api:latest}
+    entrypoint: ["${DEV_BACKEND_ENTRYPOINT:-/entrypoint.sh}"]
+    container_name: ${DEV_SCHEDULER_CONTAINER:-sourcelens-scheduler-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     environment:
       LENS_PLUGIN_ROOTS: /opt/plugins
       # Development login must not depend on the external Turnstile service.
@@ -113,7 +120,8 @@ services:
       TURNSTILE_SECRET_KEY: ""
     volumes:
       # Share runtime data across worktrees; switching branches must not replace stored data.
-      - ./data.dev/logs/scheduler:/var/log/celery
+      - ${DEV_DATA_DIR:-./data.dev}/logs/scheduler:/var/log/celery
+      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
     networks:
@@ -129,25 +137,24 @@ services:
 
   postgresql:
     image: postgres:17
-    container_name: sourcelens-postgres-dev
+    container_name: ${DEV_POSTGRES_CONTAINER:-sourcelens-postgres-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
       # Allow password authentication from any host (safe in Docker network)
       POSTGRES_HOST_AUTH_METHOD: md5
     volumes:
       # Database setup stays shared; branch migrations still affect this single database.
-      - ./docker/postgresql/initdb.d:/docker-entrypoint-initdb.d:ro
-      - ./docker/postgresql/etc/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ${DEV_ROOT:-.}/docker/postgresql/initdb.d:/docker-entrypoint-initdb.d:ro
+      - ${DEV_ROOT:-.}/docker/postgresql/etc/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       # Keep the same database when switching source; older branches may lack applied migrations.
-      - ./data.dev/postgresql/data:/var/lib/postgresql/data
-      - ./data.dev/logs/postgresql:/var/log/postgresql
+      - ${DEV_POSTGRES_DATA:-./data.dev/postgresql/data}:/var/lib/postgresql/data
+      - ${DEV_DATA_DIR:-./data.dev}/logs/postgresql:/var/log/postgresql
     entrypoint: ["bash", "-c", "mkdir -p /var/log/postgresql && chown -R postgres:postgres /var/log/postgresql && chmod -R 755 /var/log/postgresql && exec docker-entrypoint.sh \"$$@\""]
     ports:
-      - "5432:5432"
+      - "${DEV_POSTGRES_BIND:-5432}:5432"
     command:
       - "postgres"
       - "-c"
@@ -162,10 +169,12 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:alpine
-    container_name: sourcelens-redis-dev
+    image: ${DEV_REDIS_IMAGE:-redis:alpine}
+    container_name: ${DEV_REDIS_CONTAINER:-sourcelens-redis-dev}
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--save", "", "--appendonly", "${DEV_REDIS_APPENDONLY:-no}", "--databases", "${DEV_REDIS_DATABASES:-16}", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     networks:
       - backend_network
     healthcheck:
@@ -176,37 +185,40 @@ services:
       start_period: 10s
 
   flower:
-    image: sourcelens-api:latest
-    container_name: sourcelens-flower-dev
+    image: ${DEV_BACKEND_IMAGE:-sourcelens-api:latest}
+    entrypoint: ["${DEV_BACKEND_ENTRYPOINT:-/entrypoint.sh}"]
+    container_name: ${DEV_FLOWER_CONTAINER:-sourcelens-flower-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     ports:
-      - "${FLOWER_HOST_PORT:-5555}:5555"
+      - "${DEV_FLOWER_BIND:-${FLOWER_HOST_PORT:-5555}}:5555"
     depends_on:
       backend-api:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+      - ${WORKTREE_DIR:-.}/backend:/opt/backend
+      - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
     command: flower
     networks:
       - backend_network
 
   lensnode:
     build:
-      context: .
+      context: ${DEV_BUILD_CONTEXT:-.}
       dockerfile: lensnode/Dockerfile
       args:
         APT_MIRROR_URL: ${APT_MIRROR_URL:-https://mirrors.tuna.tsinghua.edu.cn/debian}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
-    image: sourcelens-lensnode:latest
-    container_name: sourcelens-lensnode-dev
+    image: ${DEV_LENSNODE_IMAGE:-sourcelens-lensnode:latest}
+    container_name: ${DEV_LENSNODE_CONTAINER:-sourcelens-lensnode-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     environment:
       LENSNODE_NAME: ${LENSNODE_NAME:-local-dev-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-dev-lensnode-token}
@@ -246,9 +258,9 @@ services:
       PYTHONPATH: /opt/lensnode
     volumes:
       # Share runtime data across worktrees; switching branches must not replace stored data.
-      - ./data.dev/workspace:/workspace
-      - ./data.dev/runtime:/runtime
-      - ./data.dev/storage/media:/opt/storage/media:ro
+      - ${DEV_DATA_DIR:-./data.dev}/workspace:/workspace
+      - ${DEV_DATA_DIR:-./data.dev}/runtime:/runtime
+      - ${DEV_DATA_DIR:-./data.dev}/storage/media:/opt/storage/media:ro
       - ${WORKTREE_DIR:-.}/lensnode/lensnode:/opt/lensnode/lensnode:ro
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
     networks:
@@ -259,52 +271,61 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ${DEV_FRONTEND_DIR:-./frontend}
       dockerfile: Dockerfile.dev
-    image: sourcelens-ui:latest
-    container_name: sourcelens-ui-dev
+    image: ${DEV_FRONTEND_IMAGE:-sourcelens-ui:latest}
+    working_dir: /app
+    command: [sh, -c, "${DEV_FRONTEND_COMMAND:-exec npm run dev -- --host 0.0.0.0}"]
+    container_name: ${DEV_FRONTEND_CONTAINER:-sourcelens-ui-dev}
     pull_policy: missing
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     environment:
       # Keep the development login flow aligned with the backend bypass.
       VITE_TURNSTILE_SITE_KEY: ""
+      API_PROXY_TARGET: http://backend-api:8000
     volumes:
       - ${WORKTREE_DIR:-.}/frontend/src:/app/src:ro
       - ${WORKTREE_DIR:-.}/frontend/public:/app/public:ro
       - ${WORKTREE_DIR:-.}/frontend/design:/app/design:ro
       - ${WORKTREE_DIR:-.}/frontend/index.html:/app/index.html:ro
       # Keep dev-server configuration and dependency manifests with the installed dependencies.
-      - ./frontend/vite.config.js:/app/vite.config.js:ro
-      - ./frontend/tailwind.config.js:/app/tailwind.config.js:ro
-      - ./frontend/postcss.config.js:/app/postcss.config.js:ro
-      - ./frontend/package.json:/app/package.json:ro
-      - ./frontend/package-lock.json:/app/package-lock.json:ro
+      - ${DEV_FRONTEND_DIR:-./frontend}/vite.config.js:/app/vite.config.js:ro
+      - ${DEV_FRONTEND_DIR:-./frontend}/tailwind.config.js:/app/tailwind.config.js:ro
+      - ${DEV_FRONTEND_DIR:-./frontend}/postcss.config.js:/app/postcss.config.js:ro
+      - ${DEV_FRONTEND_DIR:-./frontend}/package.json:/app/package.json:ro
+      - ${DEV_FRONTEND_DIR:-./frontend}/package-lock.json:/app/package-lock.json:ro
       # Other worktrees may have no dependencies; an empty mount would break the dev server.
-      - ./frontend/node_modules:/app/node_modules
+      - ${DEV_NODE_MODULES:-./frontend/node_modules}:/app/node_modules
+      - npm-cache:/npm-cache
     networks:
       - backend_network
     depends_on:
       backend-api:
         condition: service_healthy
 
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:3000/]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
   nginx:
     image: nginx:latest
-    container_name: sourcelens-nginx-dev
+    container_name: ${DEV_NGINX_CONTAINER:-sourcelens-nginx-dev}
     restart: unless-stopped
     # Keep one shared configuration home; switching branches must not switch credentials.
-    env_file:
-      - ./.env.dev
+    env_file: *dev-env
     volumes:
       # Routing config stays shared so a source switch does not change the stack entry point.
-      - ./docker/nginx/default.dev.conf:/etc/nginx/conf.d/default.conf
-      - ./data.dev/django/staticfiles:/staticfiles:ro
-      - ./data.dev/logs/nginx:/var/log/nginx
-      - ./data.dev/storage:/opt/storage:ro
+      - ${DEV_ROOT:-.}/docker/nginx/default.dev.conf:/etc/nginx/conf.d/default.conf
+      - ${DEV_STATICFILES_DIR:-./data.dev/django/staticfiles}:/staticfiles:ro
+      - ${DEV_DATA_DIR:-./data.dev}/logs/nginx:/var/log/nginx
+      - ${DEV_DATA_DIR:-./data.dev}/storage:/opt/storage:ro
     ports:
-      - "${DJANGO_HOST_PORT:-8000}:80"
+      - "${DEV_HTTP_BIND:-${DJANGO_HOST_PORT:-8000}}:80"
     networks:
       - backend_network
     depends_on:
@@ -313,7 +334,7 @@ services:
       frontend:
         condition: service_started
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: [CMD-SHELL, "${DEV_NGINX_HEALTH_COMMAND:-nginx -t}"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -321,4 +342,16 @@ services:
 
 networks:
   backend_network:
-    driver: bridge
+    # devctl attaches the shared servers to each external application network.
+    name: ${DEV_NETWORK_NAME:-${COMPOSE_PROJECT_NAME}_backend_network}
+    external: ${DEV_NETWORK_EXTERNAL:-false}
+
+volumes:
+  postgres-data:
+    name: ${DEV_POSTGRES_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_postgres-data}
+    external: ${DEV_SHARED_VOLUMES_EXTERNAL:-false}
+  redis-data:
+    name: ${DEV_REDIS_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_redis-data}
+    external: ${DEV_SHARED_VOLUMES_EXTERNAL:-false}
+  node-modules:
+  npm-cache:

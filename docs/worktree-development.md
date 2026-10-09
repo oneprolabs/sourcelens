@@ -3,6 +3,8 @@
 SourceLens supports two local workflows. Use `WORKTREE_DIR` to retarget the
 existing single dev stack, or `devctl` to run several worktrees at once.
 Both test entry points report the actual source mount before running tests.
+Both workflows use the existing `docker-compose.dev.yml`; no additional
+Compose files or duplicate service definitions are needed.
 
 ## Retarget the existing stack
 
@@ -34,10 +36,17 @@ leave the schema ahead of that code.
 
 ## Run multiple worktrees with devctl
 
-Keep the manager (`devctl`, its Python module, Compose files and routing
+Keep the manager (`devctl`, its Python module, `docker-compose.dev.yml` and routing
 configuration) in one persistent checkout. This directory owns the shared
 `.env.dev`. Python 3, Git, Docker and Compose V2 are required (macOS/Linux).
 The Python helper uses only the standard library.
+
+`devctl` selects services from `docker-compose.dev.yml` explicitly. Its
+infrastructure project starts only `postgresql` and `redis`; application
+projects start API/frontend first and wait for health, then start the other
+application services. `--no-deps` prevents Compose from creating a second
+database or Redis server inside an application project. Standalone defaults
+still support `docker compose -f docker-compose.dev.yml up -d` directly.
 
 ```bash
 cp env.sample .env.dev
@@ -117,6 +126,12 @@ for live state; `list` summarizes recorded state and the current branch. An
 allocated port is checked against both the registry and local listeners;
 another process can still claim it before Docker binds it, in which case
 startup fails and prints logs.
+
+Alongside the JSON registry, the manager writes private, generated `.env`
+files containing only environment-specific database names, Redis endpoints
+and local runtime settings. These override the shared configuration without
+copying credentials or requiring that it be shell-compatible. Database URL
+credentials are read and encoded inside the container by the entrypoint.
 
 `devctl test` reads the running API container's actual mount and refuses to
 run if it differs from the registered worktree. Running a named environment
