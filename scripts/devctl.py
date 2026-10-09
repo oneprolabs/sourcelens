@@ -56,6 +56,62 @@ def branch(path):
             return "unavailable"
 
 
+def print_table(headers, rows):
+    """Align plain-text columns without terminal escapes or extra dependencies."""
+    widths = [max(len(str(row[i])) for row in [headers, *rows]) for i in range(len(headers))]
+    for row in [headers, ["-" * width for width in widths], *rows]:
+        print("  ".join(str(value).ljust(width) for value, width in zip(row, widths)).rstrip())
+
+
+def display_environments(records, detailed=False):
+    """Show a worktree overview or service details, keeping complete paths available."""
+    try:
+        current = str(Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve())
+    except subprocess.CalledProcessError:
+        current = None
+    running = sum(r["status"] == "running" for r in records)
+    print(f"Worktrees: {len(records)}  |  Running: {running}  |  * current worktree")
+    if not records:
+        print("No local worktrees found.")
+        return
+    print()
+    rows = []
+    for index, record in enumerate(records, 1):
+        containers = record["containers"]
+        active = sum(c["State"]["Status"] == "running" for c in containers)
+        marker = "*" if record["path"] == current else " "
+        url = f"http://localhost:{record['port']}" if record.get("port", "-") != "-" else "-"
+        rows.append([f"{index}{marker}", record["status"], f"{active}/{len(containers)}", url, record["name"]])
+    print_table(["#", "STATE", "SERVICES", "URL", "WORKTREE"], rows)
+    for index, record in enumerate(records, 1):
+        print(f"\n[{index}] {record['name']}")
+        print(f"    Branch:  {branch(record['path'])}")
+        print(f"    Path:    {record['path']}")
+        if not detailed:
+            continue
+        print(f"    Project: {record.get('project', '-')}")
+        if not record["containers"]:
+            print("    No application containers.")
+            continue
+        services = []
+        for container in sorted(
+            record["containers"], key=lambda c: c["Config"]["Labels"]["com.docker.compose.service"]
+        ):
+            state = container["State"]
+            service = container["Config"]["Labels"]["com.docker.compose.service"]
+            health = state.get("Health", {}).get("Status", "-")
+            ports = sorted(
+                {
+                f"{'[' + p['HostIp'] + ']' if ':' in p['HostIp'] else p['HostIp']}:{p['HostPort']} -> {port}"
+                    for port, values in (container.get("NetworkSettings", {}).get("Ports") or {}).items()
+                    for p in (values or [])
+                }
+            )
+            services.append([service, state["Status"], health, ", ".join(ports) or "-"])
+        print()
+        print_table(["SERVICE", "STATE", "HEALTH", "PUBLISHED PORTS"], services)
+
+
 class DevManager:
     """Manage application projects while retaining shared infrastructure and data."""
 
@@ -574,16 +630,7 @@ def main():
         root, config = manager_paths(Path(__file__).resolve().parents[1])
         manager = DevManager(root, state, config)
         if args.action in ("list", "status"):
-            for record in manager.discover():
-                print(
-                    f"{record['name']}  :{record.get('port', '-')}  {record['status']}  "
-                    f"branch={branch(record['path'])}  project={record.get('project', '-')}  {record['path']}",
-                    flush=True,
-                )
-                if args.action == "status":
-                    for container in record["containers"]:
-                        health = container["State"].get("Health", {}).get("Status", "-")
-                        print(f"  {container['Name'].lstrip('/')}  {container['State']['Status']}  health={health}")
+            display_environments(manager.discover(), detailed=args.action == "status")
             return
         if args.action == "logs":
             record = manager.get(args.name)
