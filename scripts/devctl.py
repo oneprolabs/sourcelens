@@ -83,10 +83,12 @@ def display_environments(records, detailed=False, verbose=False):
         url = f"http://localhost:{record['port']}" if record.get("port", "-") != "-" else "-"
         rows.append([f"{index}{marker}", record["status"], f"{active}/{len(containers)}", url, record["name"]])
     print_table(["#", "STATE", "SERVICES", "URL", "WORKTREE"], rows)
+    if not detailed and not verbose:
+        return
     for index, record in enumerate(records, 1):
         print(f"\n[{index}] {record['name']}")
-        print(f"    Branch:  {branch(record['path'])}")
         if verbose:
+            print(f"    Branch:  {branch(record['path'])}")
             print(f"    Path:    {record['path']}")
         if not detailed:
             continue
