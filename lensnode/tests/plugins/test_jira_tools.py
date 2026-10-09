@@ -351,10 +351,8 @@ def test_jira_activity_summary_uses_python_http_for_all_projects():
         for url, params in client.provider_requests
         if url.endswith("/search/jql")
     ]
-    assert search_requests[0]["jql"].endswith(
-        'updated >= "2026-09-01 08:00" '
-        'AND updated < "2026-09-02 08:00" ORDER BY updated DESC'
-    )
+    assert ('updated >= "2026-09-01 08:00" ' 'AND updated < "2026-09-02 08:00"') in search_requests[0]["jql"]
+    assert 'resolved >= "2026-09-01 08:00"' in search_requests[0]["jql"]
     assert result["items"][0]["key"] == "SL-488"
     assert len(result["items"][0]["description"]) == 2000
     assert result["possibly_truncated"] is True

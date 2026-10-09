@@ -25,10 +25,11 @@ BODY_MAX_CHARS = 12_000
 GET_MAX_ATTEMPTS = 3
 GET_RETRY_DELAY_SECONDS = 0.25
 ACTIVITY_DEFAULT_PER_PAGE = 50
+ACTIVITY_MAX_PAGES = 10
 ACTIVITY_RESOURCE_MAX = {
-    "commits": 50,
-    "pull_requests": 10,
-    "issues": 10,
+    "commits": 500,
+    "pull_requests": 500,
+    "issues": 500,
 }
 TOOL_KEYS = frozenset(
     {
@@ -338,10 +339,7 @@ def _activity_summary(client, arguments, secret):
         "ok": True,
         "since": since,
         "until": until,
-        "limits": {
-            resource: min(per_page, maximum)
-            for resource, maximum in ACTIVITY_RESOURCE_MAX.items()
-        },
+        "limits": {resource: maximum for resource, maximum in ACTIVITY_RESOURCE_MAX.items()},
         "repositories": [results[repository] for repository in repositories],
     }
 
@@ -383,27 +381,45 @@ def _activity_resource(
         )
         path = f"/repos/{repository_path}/pulls"
         projector = _activity_pull_request_summary
-    raw_payload = _items(_json_get(client, path, secret, params))
-    possibly_truncated = _activity_possibly_truncated(
-        raw_payload,
-        resource,
-        since,
-        page_size,
-    )
-    return (
-        [
-            projector(item)
-            for item in raw_payload
-            if _timestamp_in_window(
-                _nested(item, "commit", "author", "date")
-                if resource == "commits"
-                else item.get("updated_at"),
+    items = []
+    seen = set()
+    result_limit = ACTIVITY_RESOURCE_MAX[resource]
+    for page in range(1, ACTIVITY_MAX_PAGES + 1):
+        params["page"] = page
+        try:
+            raw_payload = _items(_json_get(client, path, secret, params))
+        except (PluginRuntimeError, httpx.HTTPError):
+            if page == 1:
+                raise
+            return items[:result_limit], True
+        new_count = 0
+        for item in raw_payload:
+            identity = item.get("sha") if resource == "commits" else item.get("number")
+            if identity in seen:
+                continue
+            seen.add(identity)
+            new_count += 1
+            in_window = _timestamp_in_window(
+                (
+                    (_nested(item, "commit", "committer", "date") or _nested(item, "commit", "author", "date"))
+                    if resource == "commits"
+                    else item.get("updated_at")
+                ),
                 since,
                 until,
             )
-        ],
-        possibly_truncated,
-    )
+            if resource == "pull_requests":
+                in_window = in_window or any(
+                    _timestamp_in_window(item.get(field), since, until)
+                    for field in ("created_at", "merged_at", "closed_at")
+                )
+            if in_window:
+                items.append(projector(item))
+        if not _activity_possibly_truncated(raw_payload, resource, since, page_size):
+            return items[:result_limit], len(items) > result_limit
+        if len(items) >= result_limit or not new_count:
+            return items[:result_limit], True
+    return items[:result_limit], True
 
 
 def _activity_issues(
@@ -416,41 +432,66 @@ def _activity_issues(
 ):
     """Search only issues so pull requests cannot consume the result limit."""
 
-    query = (
-        f"repo:{repository} is:issue "
-        f"updated:{since}..{until}"
-    )
-    payload = _json_get(
-        client,
-        "/search/issues",
-        secret,
-        {
-            "q": query,
-            "sort": "updated",
-            "direction": "desc",
-            "page": 1,
-            "per_page": page_size,
-        },
-        max_bytes=SEARCH_MAX_BYTES,
-    )
-    if (
-        not isinstance(payload, dict)
-        or isinstance(payload.get("total_count"), bool)
-        or not isinstance(payload.get("total_count"), int)
-        or not isinstance(payload.get("incomplete_results"), bool)
-    ):
-        raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
-    raw_items = _items(payload.get("items"))
-    items = [
-        _activity_issue_summary(item)
-        for item in raw_items
-        if _timestamp_in_window(item.get("updated_at"), since, until)
-    ]
-    possibly_truncated = (
-        payload["incomplete_results"]
-        or payload["total_count"] > len(raw_items)
-    )
-    return items[:page_size], possibly_truncated
+    items = []
+    seen = set()
+    incomplete = False
+    result_limit = ACTIVITY_RESOURCE_MAX["issues"]
+    for field in ("updated", "created", "closed"):
+        query_seen = set()
+        query = f"repo:{repository} is:issue {field}:{since}..{until}"
+        for page in range(1, ACTIVITY_MAX_PAGES + 1):
+            try:
+                payload = _json_get(
+                    client,
+                    "/search/issues",
+                    secret,
+                    {"q": query, "sort": "updated", "direction": "desc", "page": page, "per_page": page_size},
+                    max_bytes=SEARCH_MAX_BYTES,
+                )
+            except (PluginRuntimeError, httpx.HTTPError):
+                if field == "updated" and page == 1:
+                    raise
+                return items[:result_limit], True
+            if (
+                not isinstance(payload, dict)
+                or type(payload.get("total_count")) is not int
+                or payload["total_count"] < 0
+                or not isinstance(payload.get("incomplete_results"), bool)
+            ):
+                if field != "updated" or page > 1:
+                    return items[:result_limit], True
+                raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
+            try:
+                raw_items = _items(payload.get("items"))
+            except PluginRuntimeError:
+                if field == "updated" and page == 1:
+                    raise
+                return items[:result_limit], True
+            incomplete = incomplete or payload["incomplete_results"]
+            new_count = 0
+            for item in raw_items:
+                identity = item.get("number")
+                if identity not in query_seen:
+                    query_seen.add(identity)
+                    new_count += 1
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                if any(
+                    _timestamp_in_window(item.get(stamp), since, until)
+                    for stamp in ("updated_at", "created_at", "closed_at")
+                ):
+                    items.append(_activity_issue_summary(item))
+            if len(query_seen) >= payload["total_count"]:
+                break
+            if len(items) >= result_limit or not new_count:
+                incomplete = True
+                break
+        else:
+            incomplete = True
+        if len(items) >= result_limit:
+            return items[:result_limit], True
+    return items, incomplete
 
 
 def _activity_possibly_truncated(payload, resource, since, per_page):
@@ -474,6 +515,10 @@ def _activity_commit_summary(payload):
 
     item = _commit_summary(payload)
     item["message"] = _string(item["message"], 300)
+    item["committed_at"] = _string(
+        _nested(payload, "commit", "committer", "date") or _nested(payload, "commit", "author", "date"),
+        64,
+    )
     return item
 
 
