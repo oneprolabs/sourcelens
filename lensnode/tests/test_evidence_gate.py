@@ -134,6 +134,33 @@ def test_convergence_stops_after_final_answer():
         assert middleware.before_model(_tool_state(), None) is None
 
 
+def test_recheck_keeps_the_convergence_budget_active():
+    """A rejected draft must not disable the guard for its correction loop."""
+
+    policy = _Policy({"answer_supported": "unsupported"})
+    middleware = EvidenceGateMiddleware(policy, "q", interval=2, max_convergence_nudges=2)
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None)["messages"]
+    assert middleware.after_model(_answer_state(), None)["jump_to"] == "model"
+
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None)["messages"]
+    assert middleware.before_model({}, None) == {"jump_to": "end"}
+
+
+def test_convergence_budget_survives_checkpoint_resume():
+    """Resuming the correction stage does not grant a fresh search budget."""
+
+    review_state = {}
+    policy = _Policy({"answer_supported": "unsupported"})
+    first = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
+    assert first.before_model({}, None)["messages"]
+    assert first.after_model(_answer_state(), None)["jump_to"] == "model"
+
+    resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
+    assert resumed.before_model({}, None) == {"jump_to": "end"}
+
+
 def test_convergence_brake_can_be_disabled():
     policy = _Policy()
     middleware = EvidenceGateMiddleware(
