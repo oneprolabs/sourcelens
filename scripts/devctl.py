@@ -78,9 +78,13 @@ def display_environments(records, detailed=False, verbose=False):
         current = str(Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve())
     except subprocess.CalledProcessError:
         current = None
+    records = [dict(r, name=r.get("display_name", r["name"])) for r in records]
+    current_name = next(
+        (r["name"] for r in records if r["path"] == current), Path(current).name if current else "(outside repository)"
+    )
     if detailed and not verbose:
         print("Development status")
-        print(f"  Current worktree  {Path(current).name if current else '(outside repository)'}")
+        print(f"  Current worktree  {current_name}")
         environments = [r for r in records if r["containers"]]
         if not environments:
             print("\n  No development service containers found.")
@@ -384,6 +388,9 @@ class DevManager:
                 found.append(
                     dict({**tree, **saved}, status="stopped", containers=[], external="redis_dbs" not in saved)
                 )
+        primary = worktrees[0]["path"] if worktrees else None
+        for record in found:
+            record["display_name"] = "main" if record["path"] == primary else record["name"]
         return found
 
     def resolve(self, target, records):
@@ -392,7 +399,9 @@ class DevManager:
         matches = [
             r
             for r in records
-            if target in (r.get("name"), Path(r["path"]).name, branch(r["path"]), r.get("project")) or path == r["path"]
+            if target
+            in (r.get("name"), r.get("display_name"), Path(r["path"]).name, branch(r["path"]), r.get("project"))
+            or path == r["path"]
         ]
         if len(matches) != 1:
             raise ValueError(
