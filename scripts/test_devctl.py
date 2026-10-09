@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -9,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.devctl import DevManager
+from scripts.devctl import DevManager, manager_paths
 
 
 class DevManagerTests(unittest.TestCase):
@@ -53,6 +54,75 @@ class DevManagerTests(unittest.TestCase):
         """Apply the same registry lock used by the CLI."""
         with self.manager.lock():
             return self.manager.register(name, path or self.root, port)
+
+    def test_linked_worktree_reuses_primary_checkout_configuration(self):
+        """A worktree without .env.dev still resolves the main checkout's manager/config."""
+        self.assertFalse((self.other / ".env.dev").exists())
+        root, config = manager_paths(self.other, {})
+        self.assertEqual(root, self.root.resolve())
+        self.assertEqual(config, self.config.resolve())
+        self.assertTrue(config.is_file())
+
+    def test_linked_worktree_configuration_does_not_override_main(self):
+        """Adding branch-local configuration must not silently switch shared credentials."""
+        (self.other / ".env.dev").write_text("POSTGRES_DB=wrong_branch\n")
+        root, config = manager_paths(self.other, {})
+        self.assertEqual(root, self.root.resolve())
+        self.assertEqual(config, self.config.resolve())
+
+    def test_manager_resolution_is_independent_of_caller_directory(self):
+        """The tool location identifies its repository even when invoked from outside it."""
+        with patch("scripts.devctl.Path.cwd", return_value=Path(self.temp.name)):
+            self.assertEqual(manager_paths(self.other, {}), (self.root.resolve(), self.config.resolve()))
+
+    def test_explicit_manager_and_configuration_overrides_are_preserved(self):
+        """Custom manager/config locations remain available as an explicit opt-in."""
+        root, config = manager_paths(self.other, {"DEVCTL_ROOT": str(self.other)})
+        self.assertEqual(root, self.other.resolve())
+        self.assertEqual(config, (self.other / ".env.dev").resolve())
+        root, config = manager_paths(self.other, {"DEVCTL_CONFIG": str(self.config)})
+        self.assertEqual(root, self.root.resolve())
+        self.assertEqual(config, self.config.resolve())
+
+    def test_linked_worktree_cli_lists_and_queries_main_without_root_override(self):
+        """Invoke the copied tool from a worktree that has no configuration file."""
+        scripts = self.other / "scripts"
+        scripts.mkdir()
+        shutil.copyfile(Path(__file__), scripts / "test_devctl.py")
+        shutil.copyfile(Path(__file__).with_name("devctl.py"), scripts / "devctl.py")
+        source_root = Path(__file__).resolve().parents[1]
+        shutil.copyfile(source_root / "devctl", self.other / "devctl")
+        self.register("branch-a")
+        env = dict(os.environ)
+        env.pop("DEVCTL_ROOT", None)
+        env.pop("DEVCTL_CONFIG", None)
+        env["DEVCTL_STATE"] = str(Path(self.temp.name) / "state")
+        result = subprocess.run(
+            [os.sys.executable, str(self.other / "devctl"), "list"],
+            cwd=self.other,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertIn("branch-a", result.stdout)
+        fake_bin = Path(self.temp.name) / "bin"
+        fake_bin.mkdir()
+        docker = fake_bin / "docker"
+        docker.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+        docker.chmod(0o755)
+        env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+        result = subprocess.run(
+            [os.sys.executable, str(self.other / "devctl"), "status"],
+            cwd=self.other,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertIn(str(self.config.resolve()), result.stdout)
+        self.assertIn(str(self.root.resolve() / "docker-compose.dev.yml"), result.stdout)
+        self.assertNotIn(str(self.other / ".env.dev"), result.stdout)
 
     def test_parallel_environments_have_disjoint_resources(self):
         """Database, broker/cache/Channels, port, images, and runtime files are isolated."""

@@ -37,8 +37,11 @@ leave the schema ahead of that code.
 ## Run multiple worktrees with devctl
 
 Keep the manager (`devctl`, its Python module, `docker-compose.dev.yml` and routing
-configuration) in one persistent checkout. This directory owns the shared
-`.env.dev`. Python 3, Git, Docker and Compose V2 are required (macOS/Linux).
+configuration) in the primary Git checkout. This directory owns the shared
+`.env.dev`. `devctl` automatically finds that checkout from Git's worktree list,
+even when invoked from a linked worktree. "Primary" means the original checkout,
+not whichever worktree currently has the `main` branch checked out. Python 3,
+Git, Docker and Compose V2 are required (macOS/Linux).
 The Python helper uses only the standard library.
 
 `devctl` selects services from `docker-compose.dev.yml` explicitly. Its
@@ -51,6 +54,7 @@ still support `docker compose -f docker-compose.dev.yml up -d` directly.
 ```bash
 cp env.sample .env.dev
 # Configure local development credentials and optional AI model settings.
+# Create this file only in the primary checkout; linked worktrees do not need it.
 
 # Each up registers the worktree, allocates an unused loopback HTTP port,
 # starts the shared infrastructure, creates its database, builds private
@@ -80,13 +84,26 @@ is deliberately no infrastructure `down`, database deletion or volume deletion
 command. The legacy `sourcelens-dev` stack and production projects are separate
 from these managed projects and remain untouched.
 
-Use the same manager from another working directory:
+From a linked worktree, use its `devctl` entry point after this tooling is present
+there, or invoke the primary checkout's entry point. Both automatically use the
+primary checkout's configuration; there is no need to copy `.env.dev` or set
+`DEVCTL_ROOT` each time:
+
+```bash
+cd /absolute/path/to/worktree-c
+./devctl up feature-c
+./devctl list
+./devctl test feature-c
+```
+
+For an explicitly chosen manager directory, override the automatic discovery:
 
 ```bash
 DEVCTL_ROOT=/absolute/path/to/manager-checkout \
   /absolute/path/to/manager-checkout/devctl up feature-c /absolute/path/to/worktree-c
 ```
 
+`DEVCTL_ROOT` optionally replaces the primary checkout as the manager directory.
 `DEVCTL_CONFIG` optionally selects a shared config file outside the manager
 checkout. `DEVCTL_STATE` selects the state parent (default:
 `${XDG_STATE_HOME:-~/.local/state}/sourcelens-dev`). A repository hash derived

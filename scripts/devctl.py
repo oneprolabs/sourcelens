@@ -30,6 +30,21 @@ def common_dir(path):
     return (Path(path) / git(path, "rev-parse", "--git-common-dir")).resolve()
 
 
+def manager_paths(tool_root, environment=None):
+    """Keep the manager and shared config in Git's primary checkout when switching worktrees."""
+    environment = os.environ if environment is None else environment
+    if environment.get("DEVCTL_ROOT"):
+        root = Path(environment["DEVCTL_ROOT"]).expanduser().resolve()
+    else:
+        # Git lists the primary checkout first, regardless of its current branch.
+        fields = git(tool_root, "worktree", "list", "--porcelain", "-z").split("\0")
+        if "bare" in fields[: fields.index("")]:
+            raise ValueError("Bare repository has no primary checkout; set DEVCTL_ROOT to a manager worktree")
+        root = Path(fields[0].removeprefix("worktree ")).resolve()
+    config = Path(environment.get("DEVCTL_CONFIG", root / ".env.dev")).expanduser().resolve()
+    return root, config
+
+
 def branch(path):
     """Describe the current branch or detached revision, including deleted worktrees."""
     try:
@@ -429,8 +444,6 @@ def main():
     test.add_argument("name")
     test.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    root = Path(os.environ.get("DEVCTL_ROOT", Path(__file__).resolve().parents[1])).resolve()
-    config = Path(os.environ.get("DEVCTL_CONFIG", root / ".env.dev"))
     state = Path(
         os.environ.get(
             "DEVCTL_STATE", Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "sourcelens-dev"
@@ -438,6 +451,7 @@ def main():
     )
     os.umask(0o077)
     try:
+        root, config = manager_paths(Path(__file__).resolve().parents[1])
         manager = DevManager(root, state, config)
         if args.action == "list":
             for record in manager.read_state()["environments"].values():
@@ -448,7 +462,7 @@ def main():
                 )
             return
         if not config.is_file():
-            raise ValueError(f"Missing shared config: {config}; copy env.sample to .env.dev in DEVCTL_ROOT")
+            raise ValueError(f"Missing shared config: {config}; create the shared config in manager checkout {root}")
         if args.action == "logs":
             manager.compose(manager.get(args.name), ["logs", "-f", "--tail", "200"])
             return
