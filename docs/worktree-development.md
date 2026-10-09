@@ -102,8 +102,11 @@ creates a private database and network, uses private backend/LensNode images,
 and waits for API/frontend before starting remaining services. All services reuse
 `docker-compose.dev.yml`; `--no-deps` prevents duplicate infrastructure.
 `infra-up` starts only the shared services. `up` does not build by default; use
-`--build` for first-time builds or dependency changes. Missing images produce an
-actionable error. The old `--no-build` flag remains accepted for compatibility.
+`--build` for dependency changes or when no local development images exist.
+New worktrees reuse local `sourcelens-api:latest` and `sourcelens-lensnode:latest`
+under private tags; existing private tags take precedence. Tagging reuses image
+layers without building or downloading. If neither image exists, startup reports
+an actionable error. The old `--no-build` flag remains accepted for compatibility.
 
 For a discovered stack launched directly with Compose, `up` restarts its existing
 application containers and retains its original configuration, ports and shared

@@ -643,14 +643,31 @@ class DevManager:
         if remove:
             self.run(["docker", "network", "rm", name])
 
+    def reuse_images(self, record):
+        """Reuse local development images under private tags without building or downloading."""
+        for key, shared in (
+            ("backend_image", "sourcelens-api:latest"),
+            ("lensnode_image", "sourcelens-lensnode:latest"),
+        ):
+            image = record[key]
+            try:
+                self.run(["docker", "image", "inspect", image], capture=True)
+                continue
+            except subprocess.CalledProcessError:
+                pass
+            try:
+                self.run(["docker", "image", "inspect", shared], capture=True)
+            except subprocess.CalledProcessError:
+                raise ValueError(
+                    f"No local image {image} or {shared}; run devctl up {record['path']} --build first"
+                ) from None
+            self.run(["docker", "tag", shared, image])
+            print(f"Reusing {shared} as {image}", flush=True)
+
     def up(self, record, build=False):
         """Create the environment's database and start its complete stack with health gates."""
         if not build:
-            for image in (record["backend_image"], record["lensnode_image"]):
-                try:
-                    self.run(["docker", "image", "inspect", image], capture=True)
-                except subprocess.CalledProcessError:
-                    raise ValueError(f"Missing image {image}; run devctl up {record['path']} --build first") from None
+            self.reuse_images(record)
         self.infra_up()
         database = record["database"]
         sql = f"SELECT 1 FROM pg_database WHERE datname='{database}'"

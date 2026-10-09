@@ -386,6 +386,27 @@ class DevManagerTests(unittest.TestCase):
             self.assertNotIn("postgresql", command)
             self.assertNotIn("redis", command)
 
+    def test_new_worktree_reuses_shared_local_images_without_building(self):
+        """A missing private tag is created from the shared image without copying layers."""
+        record = self.prepare("branch-a")
+        missing = subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
+        with patch.object(
+            self.manager, "run", side_effect=[missing, "shared-backend", "", missing, "shared-lensnode", ""]
+        ) as run:
+            self.manager.reuse_images(record)
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertIn(["docker", "tag", "sourcelens-api:latest", record["backend_image"]], commands)
+        self.assertIn(["docker", "tag", "sourcelens-lensnode:latest", record["lensnode_image"]], commands)
+        self.assertFalse(any("build" in c or "pull" in c for c in commands))
+
+    def test_existing_private_images_are_not_overwritten(self):
+        """An explicitly built worktree image takes precedence over the shared image."""
+        record = self.prepare("branch-a")
+        with patch.object(self.manager, "run", return_value="existing-image") as run:
+            self.manager.reuse_images(record)
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(all(c.args[0][:3] == ["docker", "image", "inspect"] for c in run.call_args_list))
+
     def test_explicit_build_builds_images_before_startup(self):
         """Only the explicit build option invokes Docker Compose build."""
         record = self.prepare("branch-a")
