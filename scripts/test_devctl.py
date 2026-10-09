@@ -335,10 +335,27 @@ class DevManagerTests(unittest.TestCase):
         record = self.prepare("branch-a")
         for item in (None, record):
             argv = self.manager.compose_command(item, ["ps"])
-            self.assertEqual(argv[argv.index("-f") + 1], str(self.root.resolve() / "docker-compose.dev.yml"))
+            self.assertEqual(argv[argv.index("-f") + 1], str(self.manager.tool_root / "docker-compose.dev.yml"))
         with patch.object(self.manager, "compose") as compose:
             self.manager.infra_up()
         self.assertEqual(compose.call_args.args[1][-2:], ["postgresql", "redis"])
+
+    def test_linked_tool_uses_its_template_with_primary_configuration(self):
+        """An older primary Compose file must not reintroduce fixed container names."""
+        (self.root / "docker-compose.dev.yml").write_text(
+            "services:\n  redis:\n    container_name: sourcelens-redis-dev\n"
+        )
+        record = self.prepare("branch-a", self.other)
+        for selected in (None, record):
+            argv = self.manager.compose_command(selected, ["config", "--format", "json"])
+            env = self.manager.compose_env(selected)
+            config = json.loads(subprocess.check_output(argv, env=env, text=True, stderr=subprocess.DEVNULL))
+            project = selected["project"] if selected else self.manager.prefix + "-infra"
+            self.assertEqual(config["services"]["redis"]["container_name"], project + "-redis-1")
+            self.assertEqual(env["DEV_CONFIG"], str(self.config.resolve()))
+            self.assertEqual(
+                env["DEV_WORKTREE_ENTRYPOINT"], str(self.manager.tool_root / "docker/worktree-entrypoint.sh")
+            )
 
     def test_runtime_overrides_are_private_and_do_not_copy_credentials(self):
         """The generated config only isolates endpoints; credentials remain in the shared config."""

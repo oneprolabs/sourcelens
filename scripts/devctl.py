@@ -158,6 +158,7 @@ class DevManager:
     def __init__(self, root, state_home, config):
         """Scope Docker resources and registry locks to the repository's Git common directory."""
         self.root = Path(root).resolve()
+        self.tool_root = Path(__file__).resolve().parents[1]
         self.config = Path(config).resolve()
         self.repository = common_dir(self.root)
         scope = hashlib.sha256(str(self.repository).encode()).hexdigest()[:12]
@@ -215,6 +216,7 @@ class DevManager:
             env.pop(key, None)
         env.update(
             DEV_ROOT=str(self.root),
+            DEV_WORKTREE_ENTRYPOINT=str(self.tool_root / "docker/worktree-entrypoint.sh"),
             DEV_CONFIG=str(self.config),
             DEV_OVERRIDE_CONFIG=str(self.config),
             DEV_NETWORK_NAME=self.prefix + "-infra",
@@ -305,7 +307,7 @@ class DevManager:
             "--env-file",
             str(self.config),
             "-f",
-            str(self.root / "docker-compose.dev.yml"),
+            str(self.tool_root / "docker-compose.dev.yml"),
             *args,
         ]
 

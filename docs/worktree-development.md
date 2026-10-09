@@ -88,8 +88,10 @@ The previous `up NAME PATH` syntax remains supported as a display alias. A name
 change does not create a new data identity: identities derive from the canonical
 worktree path. Existing saved identities are reused to preserve their data.
 
-The primary Git checkout owns `docker-compose.dev.yml`, routing files and
-`.env.dev`. Linked worktrees automatically use it without copying configuration.
+The primary Git checkout owns routing files and `.env.dev`. Linked worktrees
+automatically use it without copying configuration. The Compose template and
+worktree entrypoint come from the checkout containing the invoked `devctl`, so
+an older primary checkout cannot restore fixed names or ignore isolation settings.
 Primary means the original checkout, regardless of its checked-out branch.
 `DEVCTL_ROOT` and `DEVCTL_CONFIG` remain explicit manager/config overrides.
 Python 3, Git, Docker and Compose V2 are required on macOS/Linux.
