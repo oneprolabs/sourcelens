@@ -20,7 +20,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field, PrivateAttr
 
 from .tls import create_ssl_context
-from .agent_runtime.limits import SharedTokenBudget
+from .token_budget import SharedTokenBudget
 
 LOGGER = logging.getLogger("lensnode")
 

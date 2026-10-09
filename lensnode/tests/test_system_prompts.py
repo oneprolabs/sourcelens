@@ -48,3 +48,20 @@ def test_mcp_failure_is_visible_in_both_chat_modes():
         assert "do not claim an empty result" in prompt
         assert "Ordinary conversation can continue normally" in prompt
         assert "Follow pagination" in prompt
+
+
+def test_record_fields_and_counts_are_preserved_in_both_chat_modes():
+    for task in ("general_chat", "knowledge_qa"):
+        prompt = _system_prompt(
+            {"prompt": "Answer from available evidence."},
+            {"task": task},
+        )
+
+        assert "Copy record identifiers and customer names verbatim" in prompt
+        assert "Do not shorten" in prompt
+        assert "parenthetical text" in prompt
+        assert "other requested text fields" in prompt
+        assert "Business record fields" in prompt
+        assert "do not redact them as runtime identifiers" in prompt
+        assert "Record counts are integers" in prompt
+        assert "never label a monetary amount as a record count" in prompt
