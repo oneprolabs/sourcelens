@@ -45,26 +45,6 @@ def test_skill_package_download_uses_configured_tls_context(monkeypatch):
     assert captured["verify"].verify_mode == ssl.CERT_NONE
 
 
-def test_legacy_oauth_values_are_not_added_to_runtime_config(tmp_path):
-    token = "obsolete-user-token"
-    mcp = {
-        "mcp_uuid": "11111111-1111-1111-1111-111111111111",
-        "content_hash": "sha256:abc",
-        "mcp_name": "identity-mcp",
-        "transport": "url",
-        "endpoint": "https://mcp.example/tools",
-        "config": {},
-        "oauth_enabled": True,
-        "oauth_access_token": token,
-    }
-
-    runtime_config = _materialize_mcp(tmp_path, mcp)
-
-    assert "oauth_enabled" not in runtime_config
-    assert "oauth_access_token" not in runtime_config
-    assert token not in (tmp_path / "identity-mcp" / "mcp.json").read_text()
-
-
 def test_bearer_token_is_only_in_ephemeral_runtime_config(tmp_path):
     token = "service-account-token"
     mcp = {

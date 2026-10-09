@@ -3,7 +3,6 @@ from urllib.parse import unquote, urlparse
 
 from rest_framework import serializers
 
-
 ENVIRONMENT_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 ENVIRONMENT_REFERENCE_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 SECRET_ENVIRONMENT_NAME_RE = re.compile(
@@ -17,7 +16,7 @@ def secret_environment_names(variable_set):
     """Return keys that must never be revealed as plaintext."""
 
     values = variable_set.get_values()
-    secret_names = {
+    secret_names = set(variable_set.secret_keys) | {
         name for name in values if SECRET_ENVIRONMENT_NAME_RE.search(name)
     }
     declarations = []
@@ -27,6 +26,14 @@ def secret_environment_names(variable_set):
         definition = binding.skill.definition
         if isinstance(definition, dict):
             declarations.extend(definition.get("environment") or [])
+    public_names = {
+        item["name"]
+        for item in declarations
+        if isinstance(item, dict)
+        and item.get("secret") is False
+        and item.get("name")
+    }
+    secret_names.update(set(values) - public_names)
     secret_names.update(
         item["name"]
         for item in declarations

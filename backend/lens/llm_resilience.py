@@ -134,13 +134,15 @@ def _tracked_attempts(*, on_retry=None, **kwargs):
                 "model_uuid": selected,
                 "state": attempt_state,
             }
-            if "reasoning_effort" not in inspect.signature(
+            parameters = inspect.signature(
                 LLMTracker.call_and_track
-            ).parameters:
+            ).parameters
+            if "reasoning_effort" not in parameters and not any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            ):
                 tracker_kwargs.pop("reasoning_effort", None)
-            result = LLMTracker.call_and_track(
-                **tracker_kwargs
-            )
+            result = LLMTracker.call_and_track(**tracker_kwargs)
             if not kwargs.get("stream"):
                 return result
             try:

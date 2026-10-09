@@ -394,32 +394,6 @@ class LensApiTests(TestCase):
         self.assertEqual(self.mcp.config, config)
         self.assertNotIn("secret-value", str(response.data))
 
-    def test_mcp_api_no_longer_exposes_or_accepts_oauth_configuration(self):
-        detail_url = f"/api/lens/admin/mcp-servers/{self.mcp.uuid}/"
-        response = self.client.get(detail_url)
-
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("oauth_enabled", response.data)
-        self.assertNotIn("oauth_issuer", response.data)
-
-        response = self.client.patch(
-            detail_url,
-            {
-                "oauth_enabled": True,
-                "oauth_issuer": "https://auth.example.com",
-                "oauth_resource": "https://orders.example.com/mcp",
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200, response.data)
-        self.mcp.refresh_from_db()
-        self.assertFalse(self.mcp.oauth_enabled)
-
-    def test_mcp_user_oauth_routes_are_removed(self):
-        response = self.client.get("/api/lens/mcp-oauth/servers/")
-
-        self.assertEqual(response.status_code, 404)
-
     def test_mcp_api_preserves_non_secret_token_settings(self):
         self.mcp.config = {
             "github_token": "secret",
@@ -3385,6 +3359,107 @@ class LensApiTests(TestCase):
         self.assertEqual(
             runtime[0]["environment"],
             {"JIRA_API_TOKEN": "secret-token"},
+        )
+
+    def test_environment_secrets_stay_masked_after_binding_changes(self):
+        self.mcp.environment = [
+            {"name": "SERVICE_CREDENTIAL", "secret": True},
+        ]
+        self.mcp.save(update_fields=["environment"])
+        variable_set = EnvironmentVariableSet.objects.create(
+            name="Persistent MCP credential"
+        )
+        variable_set.set_values({"SERVICE_CREDENTIAL": "private-token-value"})
+        variable_set.save(update_fields=["encrypted_values"])
+        binding = AssistantMCP.objects.create(
+            assistant=self.assistant,
+            mcp=self.mcp,
+            environment_variable_set=variable_set,
+        )
+        url = "/api/lens/admin/environment-variable-sets/" f"{variable_set.uuid}/"
+        self.mcp.environment = [
+            {"name": "SERVICE_CREDENTIAL", "secret": False},
+        ]
+        self.mcp.save(update_fields=["environment"])
+        for stage in ("declaration changed", "unbound"):
+            with self.subTest(stage=stage):
+                if stage == "unbound":
+                    binding.delete()
+                response = self.client.post(f"{url}reveal/")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.data["values"],
+                    [
+                        {
+                            "key": "SERVICE_CREDENTIAL",
+                            "value": "********",
+                            "secret": True,
+                        }
+                    ],
+                )
+        updated = self.client.patch(
+            url,
+            {
+                "values": [{"key": "SERVICE_CREDENTIAL", "value": "********"}],
+                "secret_keys": [],
+            },
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        variable_set.refresh_from_db()
+        self.assertEqual(
+            variable_set.get_values(),
+            {"SERVICE_CREDENTIAL": "private-token-value"},
+        )
+
+    def test_skill_secret_marks_survive_unbinding(self):
+        skill = Skill.objects.create(
+            name="Protected Skill",
+            package_name="protected-skill",
+            definition={"environment": [{"name": "ACCESS_VALUE", "secret": True}]},
+        )
+        variable_set = EnvironmentVariableSet.objects.create(
+            name="Skill credentials"
+        )
+        variable_set.set_values({"ACCESS_VALUE": "private-value"})
+        variable_set.save(update_fields=["encrypted_values"])
+        binding = AssistantSkill.objects.create(
+            assistant=self.assistant,
+            skill=skill,
+            environment_variable_set=variable_set,
+        )
+        skill.definition = {
+            "environment": [{"name": "ACCESS_VALUE", "secret": False}]
+        }
+        skill.save(update_fields=["definition"])
+        binding.delete()
+        response = self.client.post(
+            f"/api/lens/admin/environment-variable-sets/{variable_set.uuid}/reveal/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["values"],
+            [{"key": "ACCESS_VALUE", "value": "********", "secret": True}],
+        )
+
+    def test_unbound_environment_values_are_not_revealed(self):
+        response = self.client.post(
+            "/api/lens/admin/environment-variable-sets/",
+            {
+                "name": "Unbound credential",
+                "values": [{"key": "AUTH_VALUE", "value": "private-value"}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        variable_set_uuid = response.data["uuid"]
+        response = self.client.post(
+            f"/api/lens/admin/environment-variable-sets/{variable_set_uuid}/reveal/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["values"],
+            [{"key": "AUTH_VALUE", "value": "********", "secret": True}],
         )
 
     def test_environment_secret_values_are_masked_and_preserved_on_update(self):

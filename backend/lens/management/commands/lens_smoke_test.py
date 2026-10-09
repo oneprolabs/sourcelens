@@ -23,8 +23,6 @@ EXPECTED_MODELS = {
     "ExecutionSnapshot",
     "GlobalSetting",
     "MCPServer",
-    "MCPUserOAuthGrant",
-    "MCPUserOAuthState",
     "Message",
     "MessageAttachment",
     "LensNode",

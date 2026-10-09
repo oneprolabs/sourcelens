@@ -3182,7 +3182,6 @@ def dispatch_run_to_lensnode(
     last_trace_attempt = int(trace_cursor["last_attempt"] or 0)
     decision_gates = build_decision_gates(execution.loaded_plugins)
     decision_analyses = build_decision_analyses(execution.loaded_plugins)
-    loaded_mcps = resolve_loaded_mcp_environment(execution.loaded_mcps)
     _publish_lensnode_message(
         channel_layer,
         run.lensnode.uuid,
@@ -3233,7 +3232,7 @@ def dispatch_run_to_lensnode(
                 "loaded_skills": resolve_loaded_skill_environment(
                     execution.loaded_skills
                 ),
-                "loaded_mcps": loaded_mcps,
+                "loaded_mcps": resolve_loaded_mcp_environment(execution.loaded_mcps),
                 "loaded_plugins": execution.loaded_plugins,
                 "decision_gates": decision_gates,
                 "decision_analyses": decision_analyses,

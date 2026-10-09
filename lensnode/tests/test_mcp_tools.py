@@ -135,7 +135,7 @@ def test_load_mcp_tools_isolates_servers_and_disables_stdio(monkeypatch):
     )
 
 
-def test_legacy_oauth_fields_do_not_override_bearer_config(monkeypatch):
+def test_url_mcp_preserves_bearer_authorization_header(monkeypatch):
     package = ModuleType("langchain_mcp_adapters")
     client_module = ModuleType("langchain_mcp_adapters.client")
     captured = {}
@@ -166,8 +166,6 @@ def test_legacy_oauth_fields_do_not_override_bearer_config(monkeypatch):
         "transport": "url",
         "endpoint": "https://mcp.example.com/api",
         "config": {"headers": {"Authorization": "Bearer robot-token"}},
-        "oauth_enabled": True,
-        "oauth_access_token": "obsolete-user-token",
         "load_config": {},
     }
 
@@ -213,7 +211,6 @@ def test_bearer_tokens_are_isolated_between_mcp_instances(monkeypatch):
             "config": {
                 "headers": {"Authorization": "Bearer first-token"}
             },
-            "oauth_enabled": False,
             "load_config": {},
         },
         {
@@ -223,7 +220,6 @@ def test_bearer_tokens_are_isolated_between_mcp_instances(monkeypatch):
             "config": {
                 "headers": {"Authorization": "Bearer second-token"}
             },
-            "oauth_enabled": False,
             "load_config": {},
         },
     ]

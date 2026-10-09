@@ -1648,9 +1648,11 @@ class AssistantSerializer(serializers.ModelSerializer):
         requested_name = binding.get("environment_variable_set_name") or ""
         base_name = requested_name or f"{assistant.name} · {resource.name}"
         description = variable_set.description if variable_set else ""
+        secret_keys = variable_set.secret_keys if variable_set else []
         variable_set = EnvironmentVariableSet(
             name=self._next_environment_variable_set_name(base_name),
             description=description,
+            secret_keys=secret_keys,
             enabled=True,
         )
         variable_set.set_values(merged_values)
@@ -3546,9 +3548,13 @@ class EnvironmentVariableSetSerializer(serializers.ModelSerializer):
             existing = instance.get_values()
             secret_names = secret_environment_names(instance)
             values = {
-                key: existing[key]
-                if value == "********" and key in secret_names and key in existing
-                else value
+                key: (
+                    existing[key]
+                    if value == "********"
+                    and key in secret_names
+                    and key in existing
+                    else value
+                )
                 for key, value in values.items()
             }
             instance.set_values(values)

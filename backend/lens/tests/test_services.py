@@ -45,6 +45,7 @@ from lens.models import (
     AssistantMCP,
     AssistantSkill,
     DataSource,
+    EnvironmentVariableSet,
     GlobalSetting,
     LensNode,
     MCPServer,
@@ -225,24 +226,28 @@ class LensServiceTests(TransactionTestCase):
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
-    def test_legacy_mcp_oauth_settings_do_not_override_bearer_config(
+    def test_dispatch_resolves_bearer_credentials_only_for_runtime(
         self, _get_channel_layer, mock_async_to_sync
     ):
-        from lens.models import MCPUserOAuthGrant
-
         mcp = MCPServer.objects.create(
             name="Bearer API",
             transport=MCPServer.Transport.URL,
             endpoint="https://mcp.example.com/api",
-            config={"headers": {"Authorization": "Bearer robot-token"}},
-            oauth_enabled=True,
-            oauth_issuer="https://auth.example.com",
-            oauth_resource="https://mcp.example.com/api",
+            config={"headers": {"Authorization": "Bearer ${SERVICE_TOKEN}"}},
+            environment=[
+                {"name": "SERVICE_TOKEN", "secret": True, "required": True}
+            ],
         )
-        AssistantMCP.objects.create(assistant=self.assistant, mcp=mcp)
-        grant = MCPUserOAuthGrant(user=self.user, mcp=mcp)
-        grant.set_tokens("obsolete-user-token")
-        grant.save()
+        variable_set = EnvironmentVariableSet.objects.create(
+            name="Dispatch credentials"
+        )
+        variable_set.set_values({"SERVICE_TOKEN": "robot-token"})
+        variable_set.save(update_fields=["encrypted_values"])
+        AssistantMCP.objects.create(
+            assistant=self.assistant,
+            mcp=mcp,
+            environment_variable_set=variable_set,
+        )
 
         run = create_execution_run(
             session=self.session, question="List orders", enqueue=False
@@ -255,9 +260,7 @@ class LensServiceTests(TransactionTestCase):
             loaded_mcp["config"]["headers"]["Authorization"],
             "Bearer robot-token",
         )
-        self.assertNotIn("oauth_enabled", loaded_mcp)
-        self.assertNotIn("oauth_access_token", loaded_mcp)
-        self.assertNotIn("obsolete-user-token", str(payload))
+        self.assertNotIn("robot-token", str(run.execution.loaded_mcps))
 
     @patch(
         "lens.services.async_to_sync",

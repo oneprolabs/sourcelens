@@ -17,18 +17,61 @@ User = get_user_model()
 
 
 class LLMResilienceTests(TestCase):
-    def test_ignores_reasoning_effort_when_tracker_does_not_support_it(self):
-        with patch(
-            "agentcore_metering.adapters.django.LLMTracker.call_and_track",
-            return_value=("answer", {}),
-        ) as tracked_call:
-            result = call_and_track_with_fallback(
-                messages=[{"role": "user", "content": "hello"}],
-                reasoning_effort="medium",
-            )
+    def test_reasoning_effort_compatibility_for_old_and_new_trackers(self):
+        calls = []
 
-        self.assertEqual(result, ("answer", {}))
-        self.assertNotIn("reasoning_effort", tracked_call.call_args.kwargs)
+        def response(stream):
+            if stream:
+
+                def chunks():
+                    yield "content", "answer"
+                    return {"total_tokens": 1}
+
+                return chunks()
+            return "answer", {"total_tokens": 1}
+
+        def legacy(messages, model_uuid=None, state=None, stream=False):
+            calls.append({"model_uuid": model_uuid})
+            return response(stream)
+
+        def modern(
+            messages,
+            model_uuid=None,
+            state=None,
+            stream=False,
+            reasoning_effort=None,
+        ):
+            calls.append({"reasoning_effort": reasoning_effort})
+            return response(stream)
+
+        def forwarding(messages, **kwargs):
+            calls.append(kwargs)
+            return response(kwargs.get("stream", False))
+
+        for tracker in (legacy, modern, forwarding):
+            for stream in (False, True):
+                with self.subTest(tracker=tracker.__name__, stream=stream):
+                    with patch(
+                        "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+                        new=tracker,
+                    ):
+                        result = call_and_track_with_fallback(
+                            messages=[{"role": "user", "content": "hello"}],
+                            model_uuid="primary",
+                            state={},
+                            stream=stream,
+                            reasoning_effort="medium",
+                        )
+                        if stream:
+                            self.assertEqual(list(result), [("content", "answer")])
+                        else:
+                            self.assertEqual(
+                                result, ("answer", {"total_tokens": 1})
+                            )
+                    if tracker is legacy:
+                        self.assertNotIn("reasoning_effort", calls[-1])
+                    else:
+                        self.assertEqual(calls[-1]["reasoning_effort"], "medium")
 
     def test_stream_fallback_happens_before_first_chunk(self):
         class ProviderBusyError(Exception):

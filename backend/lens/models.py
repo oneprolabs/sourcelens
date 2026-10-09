@@ -6,7 +6,7 @@ import uuid
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 
 
@@ -474,7 +474,13 @@ class Skill(TimestampedUUIDModel):
         """Refresh routing descriptions after changing a shared Skill."""
 
         result = super().save(*args, **kwargs)
-        for binding in self.assistantskill_set.select_related("assistant"):
+        for binding in self.assistantskill_set.select_related(
+            "assistant", "environment_variable_set"
+        ):
+            if binding.environment_variable_set:
+                binding.environment_variable_set.remember_secret_keys(
+                    (self.definition or {}).get("environment") or []
+                )
             _refresh_assistant_routing_description(binding.assistant)
         return result
 
@@ -485,6 +491,7 @@ class EnvironmentVariableSet(TimestampedUUIDModel):
     name = models.CharField(max_length=160, unique=True)
     description = models.TextField(blank=True, default="")
     encrypted_values = models.TextField(blank=True, default="")
+    secret_keys = models.JSONField(default=list, db_default=[], blank=True)
     enabled = models.BooleanField(default=True)
 
     class Meta:
@@ -497,6 +504,24 @@ class EnvironmentVariableSet(TimestampedUUIDModel):
         self.encrypted_values = (
             _datasource_fernet().encrypt(payload).decode("utf-8")
         )
+
+    def remember_secret_keys(self, declarations):
+        """Keep secret declarations protected after bindings change."""
+
+        names = {
+            item["name"]
+            for item in declarations or []
+            if isinstance(item, dict) and item.get("secret") and item.get("name")
+        }
+        if not names:
+            return
+        with transaction.atomic():
+            stored = type(self).objects.select_for_update().get(pk=self.pk)
+            self.secret_keys = sorted(set(stored.secret_keys) | names)
+            if self.secret_keys != stored.secret_keys:
+                type(self).objects.filter(pk=self.pk).update(
+                    secret_keys=self.secret_keys
+                )
 
     def get_values(self):
         """Return decrypted environment-variable values."""
@@ -537,13 +562,6 @@ class MCPServer(TimestampedUUIDModel):
     endpoint = models.CharField(max_length=500, blank=True, default="")
     config = models.JSONField(default=dict, blank=True)
     environment = models.JSONField(default=list, blank=True)
-    oauth_enabled = models.BooleanField(default=False)
-    oauth_issuer = models.URLField(max_length=500, blank=True, default="")
-    oauth_resource = models.CharField(max_length=500, blank=True, default="")
-    oauth_scopes = models.CharField(max_length=500, blank=True, default="")
-    oauth_client_id = models.CharField(max_length=255, blank=True, default="")
-    oauth_client_secret_encrypted = models.TextField(blank=True, default="")
-    oauth_client_redirect_uri = models.CharField(max_length=1000, blank=True, default="")
     connection = models.ForeignKey(
         "Connection",
         null=True,
@@ -561,91 +579,19 @@ class MCPServer(TimestampedUUIDModel):
     def __str__(self):
         return self.name
 
-    def set_oauth_client_secret(self, value):
-        """Encrypt the OAuth client secret before storing it."""
-
-        self.oauth_client_secret_encrypted = (
-            _datasource_fernet().encrypt(value.encode()).decode() if value else ""
-        )
-
-    def get_oauth_client_secret(self):
-        """Return the decrypted OAuth client secret for token exchange."""
-
-        if not self.oauth_client_secret_encrypted:
-            return ""
-        try:
-            return _datasource_fernet().decrypt(
-                self.oauth_client_secret_encrypted.encode()
-            ).decode()
-        except InvalidToken:
-            return ""
-
     def save(self, *args, **kwargs):
         """Refresh routing descriptions after changing a shared MCP."""
 
         result = super().save(*args, **kwargs)
-        for binding in self.assistantmcp_set.select_related("assistant"):
+        for binding in self.assistantmcp_set.select_related(
+            "assistant", "environment_variable_set"
+        ):
+            if binding.environment_variable_set:
+                binding.environment_variable_set.remember_secret_keys(
+                    self.environment
+                )
             _refresh_assistant_routing_description(binding.assistant)
         return result
-
-
-class MCPUserOAuthGrant(models.Model):
-    """Encrypted per-user OAuth tokens for one MCP server."""
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    mcp = models.ForeignKey(MCPServer, on_delete=models.CASCADE)
-    access_token_encrypted = models.TextField()
-    refresh_token_encrypted = models.TextField(blank=True, default="")
-    expires_at = models.DateTimeField(null=True, blank=True)
-    scope = models.CharField(max_length=1000, blank=True, default="")
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["user", "mcp"], name="lens_mcp_user_oauth_unique"
-            )
-        ]
-
-    def set_tokens(self, access_token, refresh_token=""):
-        """Encrypt issued OAuth tokens before storing them."""
-
-        encrypt = _datasource_fernet().encrypt
-        self.access_token_encrypted = encrypt(access_token.encode()).decode()
-        if refresh_token:
-            self.refresh_token_encrypted = encrypt(refresh_token.encode()).decode()
-
-    def get_access_token(self):
-        """Return the decrypted access token."""
-
-        return _decrypt_mcp_oauth_value(self.access_token_encrypted)
-
-    def get_refresh_token(self):
-        """Return the decrypted refresh token."""
-
-        return _decrypt_mcp_oauth_value(self.refresh_token_encrypted)
-
-
-class MCPUserOAuthState(models.Model):
-    """One-time PKCE state for a user's MCP OAuth redirect."""
-
-    state_hash = models.CharField(max_length=64, unique=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    mcp = models.ForeignKey(MCPServer, on_delete=models.CASCADE)
-    verifier_encrypted = models.TextField()
-    redirect_uri = models.CharField(max_length=1000, blank=True, default="")
-    expires_at = models.DateTimeField()
-
-
-def _decrypt_mcp_oauth_value(value):
-    """Decrypt one OAuth token, returning empty for unreadable values."""
-
-    if not value:
-        return ""
-    try:
-        return _datasource_fernet().decrypt(value.encode()).decode()
-    except InvalidToken:
-        return ""
 
 
 class DataSource(TimestampedUUIDModel):
@@ -1210,6 +1156,10 @@ class AssistantSkill(models.Model):
         """Refresh the owning Assistant after changing its Skill binding."""
 
         result = super().save(*args, **kwargs)
+        if self.environment_variable_set:
+            self.environment_variable_set.remember_secret_keys(
+                (self.skill.definition or {}).get("environment") or []
+            )
         _refresh_assistant_routing_description(self.assistant)
         return result
 
@@ -1248,6 +1198,10 @@ class AssistantMCP(models.Model):
         """Refresh the owning Assistant after changing its MCP binding."""
 
         result = super().save(*args, **kwargs)
+        if self.environment_variable_set:
+            self.environment_variable_set.remember_secret_keys(
+                self.mcp.environment
+            )
         _refresh_assistant_routing_description(self.assistant)
         return result
 
