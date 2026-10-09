@@ -45,6 +45,7 @@ LENGTH_FINISH_REASONS = {
     "max_tokens_reached",
 }
 INVALID_TOOL_ARGUMENT_PREVIEW_CHARS = 1024
+TOOL_PROTOCOL_PREFIX = re.compile(r"^\s*<[｜|]{2}DSML[｜|]{2}\s+(?:calls|invoke)\b")
 TOKEN_BUDGET_WARNING = (
     "[TOKEN BUDGET WARNING] This run is approaching its token budget. "
     "Stop expanding the investigation, avoid new tool calls unless strictly "
@@ -85,6 +86,15 @@ class GatewayStreamError(RuntimeError):
     def __init__(self, code, message):
         self.code = code or "MODEL_STREAM_ERROR"
         super().__init__(message or self.code)
+
+
+class GatewayProtocolError(RuntimeError):
+    """Reject a tool request returned as text instead of structured calls."""
+
+    code = "MODEL_TOOL_PROTOCOL_ERROR"
+
+    def __init__(self):
+        super().__init__("The model returned an unparsed tool request. Retry with a compatible tool-calling model.")
 
 
 class RunCancelledError(RuntimeError):
@@ -954,6 +964,9 @@ class LensGatewayChatModel(BaseChatModel):
         """Consume a gateway stream and publish only a final answer turn."""
 
         content_parts = []
+        published_parts = 0
+        output_prefix_checked = False
+        protocol_text = False
         tool_calls = []
         usage = {}
         finish_reason = None
@@ -1027,7 +1040,15 @@ class LensGatewayChatModel(BaseChatModel):
                                         and self.emit_output is not None
                                         and not silent
                                     ):
-                                        self.emit_output(text)
+                                        if not output_prefix_checked:
+                                            prefix = "".join(content_parts).lstrip()
+                                            if prefix and not (prefix.startswith("<") and ">" not in prefix):
+                                                output_prefix_checked = True
+                                                protocol_text = bool(TOOL_PROTOCOL_PREFIX.match(prefix))
+                                        if output_prefix_checked and not protocol_text:
+                                            for part in content_parts[published_parts:]:
+                                                self.emit_output(part)
+                                            published_parts = len(content_parts)
                                 elif text and kind == "reasoning":
                                     reasoning_parts.append(text)
                                     if reasoning_cb is not None:
@@ -1074,6 +1095,20 @@ class LensGatewayChatModel(BaseChatModel):
 
         content = "".join(content_parts)
 
+        gateway_message = {
+            "content": content,
+            "finish_reason": finish_reason,
+            "tool_calls": [
+                {
+                    "id": tc.get("id"),
+                    "type": "function",
+                    "function": tc.get("function") or {},
+                }
+                for tc in tool_calls
+            ],
+        }
+        message = _message_from_gateway(gateway_message)
+
         # A turn that issues tool calls contains intermediate reasoning, not
         # the final answer. Buffer the turn until its terminal event reveals
         # whether tools were requested, then publish only answer turns. This
@@ -1088,20 +1123,9 @@ class LensGatewayChatModel(BaseChatModel):
             and not suppress_output
         ):
             self.emit_output(content)
-
-        gateway_message = {
-            "content": content,
-            "finish_reason": finish_reason,
-            "tool_calls": [
-                {
-                    "id": tc.get("id"),
-                    "type": "function",
-                    "function": tc.get("function") or {},
-                }
-                for tc in tool_calls
-            ],
-        }
-        message = _message_from_gateway(gateway_message)
+        elif publish_tokens and self.emit_output is not None and not silent and not tool_calls:
+            for part in content_parts[published_parts:]:
+                self.emit_output(part)
         message.response_metadata["usage"] = usage
         message.response_metadata["latency_ms"] = int(
             (time.monotonic() - start) * 1000
@@ -1732,6 +1756,10 @@ def _message_from_gateway(payload):
         response_metadata["reasoning_content"] = str(reasoning_content)
 
     content = payload.get("content") or ""
+    if isinstance(content, str) and TOOL_PROTOCOL_PREFIX.match(content):
+        if not tool_calls:
+            raise GatewayProtocolError()
+        content = ""
     if normalized_reason in SAFETY_FINISH_REASONS:
         suppressed = len(tool_calls)
         invalid_calls.extend(
