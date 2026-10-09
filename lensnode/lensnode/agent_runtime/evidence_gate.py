@@ -17,7 +17,10 @@ DEFAULT_MAX_CONVERGENCE_NUDGES = 2
 _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
     "fully supported by the evidence you retrieved. Do not answer from "
-    "memory. Search again for the specific missing facts — batch "
+    "memory. Reuse retrieved source results and any saved evidence ledger "
+    "first; correct unsupported claims using that evidence. Do not repeat "
+    "the same batch activity requests or treat truncated results as complete. "
+    "If specific missing facts can be retrieved with available tools, batch "
     'alternative keywords with "|" in ONE search_workspace call (for '
     'example "昇腾|Ascend|910B") and read the most relevant matched files '
     "— then give a final answer that every claim traces to retrieved "
@@ -25,7 +28,7 @@ _RECHECK_GUIDANCE = (
     "conclusions, compatibility or adaptation, examples, plans, and "
     "actual execution. Do not describe adaptation, examples, or plans as "
     "actual operation or validation. If the workspace genuinely lacks the "
-    "information, state that limitation briefly. Return the answer itself, "
+    "information or source coverage is limited, state that limitation briefly. Return the answer itself, "
     "not a search log, evidence inventory, list of files to read, or a "
     "promise to investigate later. Keep the existing answer structure and "
     "focus on the user's question."
@@ -129,7 +132,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "evidence_completeness": (
                     "incomplete"
                     if (isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete")
-                    or any(item.get("truncated") for item in message_evidence)
+                    or any(item.get("truncated") or item.get("incomplete") for item in message_evidence)
                     else "complete"
                 ),
             }
@@ -299,6 +302,34 @@ def _message_text(message):
     return str(content or "")
 
 
+def _source_coverage_incomplete(content):
+    """Recognize explicit coverage limits in activity summary contracts."""
+
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    sources = [payload]
+    for key in ("projects", "repositories"):
+        items = payload.get(key)
+        if isinstance(items, list):
+            sources.extend(item for item in items if isinstance(item, dict))
+    for source in sources:
+        truncated = source.get("possibly_truncated")
+        if (
+            source.get("ok") is False
+            or source.get("projects_truncated") is True
+            or source.get("truncated") is True
+            or truncated is True
+            or (isinstance(truncated, dict) and any(value is True for value in truncated.values()))
+            or bool(source.get("errors"))
+        ):
+            return True
+    return False
+
+
 def _tool_evidence(state):
     """Return a bounded view of retrieved tool output for post-run review."""
 
@@ -332,6 +363,8 @@ def _tool_evidence(state):
             {
                 "tool": name,
                 "content": content[:1200],
+                "incomplete": getattr(message, "status", None) == "error"
+                or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
                 "truncated": (
                     len(content) > 1200
                     or content.startswith("Tool result too large,")

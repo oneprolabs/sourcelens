@@ -551,8 +551,6 @@ def _general_chat_system_prompt(
 def _report_execution_guidance(command):
     """Return a compact execution contract for batch activity reports."""
 
-    if command.get("runtime_route") != "plan_execute":
-        return ""
     batch_tools = _activity_report_batch_tools(command)
     if not batch_tools or not _is_activity_report(command):
         return ""
@@ -592,6 +590,14 @@ def _report_execution_guidance(command):
             "- If a source reports errors or possibly_truncated, disclose "
             "that coverage limitation briefly instead of paginating or "
             "retrying per resource.",
+            "- Preserve the retrieved source results in a reusable evidence ledger "
+            "in the run workspace. Normalize records by person and event; keep "
+            "source IDs, timestamps, and coverage limits. Distinguish current "
+            "status from transitions within the requested time window, and "
+            "deduplicate cross-source or backport records without inventing identities.",
+            "- Reuse that ledger for corrections instead of retrieving the same "
+            "sources again. Prefer a deterministic template rendered from normalized "
+            "data instead of regenerating the entire HTML in each model response.",
             "- Generate and deliver the requested final artifact, then stop.",
         )
     )
@@ -620,9 +626,11 @@ def _is_activity_report(command):
 
     question = str(command.get("question") or "").casefold()
     report_terms = ("report", "报告", "日报", "周报", "月报", "工作内容", "工作情况", "工作汇总")
+    work_summary = any(term in question for term in ("总结", "summarize", "summary")) and any(
+        term in question for term in ("工作", "活动", "work", "activity")
+    )
     return bool(
-        any(term in question for term in report_terms)
-        and _activity_report_batch_tools(command)
+        (any(term in question for term in report_terms) or work_summary) and _activity_report_batch_tools(command)
     )
 
 

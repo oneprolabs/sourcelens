@@ -199,6 +199,51 @@ def test_bounded_review_input_remains_valid_json_and_keeps_all_providers():
         assert f"{provider}: INC-42" in arguments["state"]
 
 
+@pytest.mark.parametrize(
+    "payload,incomplete",
+    [
+        ({"ok": True, "possibly_truncated": True}, True),
+        ({"ok": True, "projects_truncated": True}, True),
+        ({"ok": True, "repositories": [{"errors": {"commits": "REQUEST_FAILED"}}]}, True),
+        ({"ok": True, "projects": [{"possibly_truncated": {"commits": True}}]}, True),
+        ({"ok": True, "projects": [{"possibly_truncated": {"commits": False}}]}, False),
+        ({"ok": False, "error": "REQUEST_FAILED"}, True),
+    ],
+)
+def test_source_contract_limits_reach_answer_review_even_for_short_results(payload, incomplete):
+    """API result limits and partial failures cannot imply complete coverage."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Summarize activity.")
+    middleware.after_model(
+        {
+            "messages": [
+                ToolMessage(name="gitlab_activity_summary", tool_call_id="source", content=json.dumps(payload)),
+                AIMessage(content="Activity report."),
+            ]
+        },
+        None,
+    )
+    assert policy.materials[0]["evidence_completeness"] == ("incomplete" if incomplete else "complete")
+
+
+def test_reading_a_document_with_error_fields_does_not_change_coverage():
+    """Literal source contents are not tool metadata."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Explain this JSON.")
+    middleware.after_model(
+        {
+            "messages": [
+                ToolMessage(name="read_file", tool_call_id="source", content='{"errors":{"example":"test"}}'),
+                AIMessage(content="An example error document."),
+            ]
+        },
+        None,
+    )
+    assert policy.materials[0]["evidence_completeness"] == "complete"
+
+
 def test_truncated_tool_evidence_is_explicitly_incomplete():
     policy = _ReviewPolicy()
     middleware = EvidenceGateMiddleware(policy, "What caused the incident?")
