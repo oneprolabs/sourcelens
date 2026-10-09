@@ -82,7 +82,7 @@ from .plugins.decisions import (
     validate_decision_analyses,
     validate_decision_gates,
 )
-from .plugins.public_connections import persist_public_connection, public_datasource_connection
+from .plugins.public_connections import is_anonymous_connection, persist_public_connection, public_datasource_connection
 from .plugins.registry import (
     PluginRegistryError,
     connection_secret_is_available,
@@ -2171,7 +2171,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def get_connection_is_public(self, datasource):
         """Return whether authentication is managed anonymously by the system."""
 
-        return bool(datasource.connection_id and datasource.connection.system_key)
+        return bool(datasource.connection_id and is_anonymous_connection(datasource.connection))
 
     def get_deployments(self, obj):
         """Serialize every runtime copy of the datasource."""
@@ -2287,7 +2287,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
             getattr(self.instance, "plugin_key", ""),
         )
         public_endpoint = attrs.pop("public_endpoint", "")
-        if plugin_key in {"github", "gitlab"} and (connection is None or connection.system_key):
+        if plugin_key in {"github", "gitlab"} and (connection is None or is_anonymous_connection(connection)):
             try:
                 connection, datasource_config = public_datasource_connection(
                     plugin_key,
@@ -2664,7 +2664,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
         """Save anonymous infrastructure only after resource validation succeeds."""
 
         connection = validated_data.get("connection")
-        if connection is not None and connection.system_key:
+        if connection is not None and connection._state.adding:
             validated_data["connection"] = persist_public_connection(connection)
 
     @staticmethod

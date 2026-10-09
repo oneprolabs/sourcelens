@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from lens.lensnode_auth import issue_lensnode_token
 from lens.models import Connection, DataSource, LensNode
+from lens.plugins.public_connections import public_datasource_connection
 from lens.plugins.snapshots import create_datasource_sync_snapshot
 
 
@@ -18,6 +19,31 @@ class PublicDatasourceTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.client.force_authenticate(get_user_model().objects.create_user(username="public", is_staff=True))
+
+    def test_existing_anonymous_uuid_is_reused_without_extra_identity_fields(self):
+        anonymous, _ = public_datasource_connection("github", {"repositories": ["owner/repo"]})
+        existing = Connection.objects.create(
+            uuid=anonymous.uuid,
+            name=anonymous.name,
+            plugin_key=anonymous.plugin_key,
+            endpoint=anonymous.endpoint,
+            allowed_scope=anonymous.allowed_scope,
+        )
+        with httpx.Client(transport=httpx.MockTransport(self.response)) as client, patch(
+            "lens.plugins.datasource_access.plugin_http_pool.bind", return_value=client
+        ), patch("lens.views.datasources.DataSourceViewSet._enqueue_datasource_sync"):
+            created = self.client.post("/api/lens/admin/datasources/", self.payload("github"), format="json")
+            self.assertEqual(created.status_code, 201, created.data)
+            for repositories in (["owner/repo", "owner/other"], ["owner/other"]):
+                edited = self.client.patch(
+                    f'/api/lens/admin/datasources/{created.data["uuid"]}/',
+                    {"datasource_config": {"repositories": repositories}},
+                    format="json",
+                )
+                self.assertEqual(edited.status_code, 200, edited.data)
+                self.assertEqual(edited.data["connection"], str(existing.uuid))
+                self.assertEqual(edited.data["datasource_config"]["repositories"], repositories)
+        self.assertEqual(Connection.objects.count(), 1)
 
     def response(self, request):
         """Serve public metadata and readable refs without authentication."""

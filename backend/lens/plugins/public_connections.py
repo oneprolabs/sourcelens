@@ -4,9 +4,29 @@ import hashlib
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
+from django.db.models import Q
+
 from lens.models import Connection
 
 from .providers import DatasourceProviderError, get_datasource_provider
+
+
+ANONYMOUS_CONNECTION_FILTER = Q(secret_version__isnull=True, config={}) & (
+    Q(plugin_key="github", allowed_scope={"repositories": ["*"]})
+    | Q(plugin_key="gitlab", allowed_scope={"projects": ["*"]})
+)
+
+
+def is_anonymous_connection(connection):
+    """Read anonymous repository access from the existing connection policy."""
+
+    scope_key = {"github": "repositories", "gitlab": "projects"}.get(connection.plugin_key)
+    return bool(
+        scope_key
+        and connection.secret_version_id is None
+        and not connection.config
+        and connection.allowed_scope == {scope_key: ["*"]}
+    )
 
 
 def public_datasource_connection(plugin_key, datasource_config, endpoint=""):
@@ -44,14 +64,13 @@ def public_datasource_connection(plugin_key, datasource_config, endpoint=""):
     scope_key = "repositories" if plugin_key == "github" else "projects"
     scope = {scope_key: ["*"]}
     normalized = provider.validate_datasource_config(scope, config)
-    system_key = f"public:{plugin_key}:{hashlib.sha256(endpoint.encode()).hexdigest()[:48]}"
+    identity = f"public:{plugin_key}:{hashlib.sha256(endpoint.encode()).hexdigest()[:48]}"
     connection = Connection(
-        uuid=uuid5(NAMESPACE_URL, system_key),
+        uuid=uuid5(NAMESPACE_URL, identity),
         name=f"Public {plugin_key.title()}",
         plugin_key=plugin_key,
         endpoint=endpoint,
         allowed_scope=scope,
-        system_key=system_key,
     )
     return connection, normalized
 
@@ -60,9 +79,8 @@ def persist_public_connection(connection):
     """Reuse one immutable anonymous connection per provider and origin."""
 
     stored, _ = Connection.objects.get_or_create(
-        system_key=connection.system_key,
+        uuid=connection.uuid,
         defaults={
-            "uuid": connection.uuid,
             "name": connection.name,
             "plugin_key": connection.plugin_key,
             "endpoint": connection.endpoint,

@@ -32,7 +32,7 @@ from lens.plugins.decisions import (
     GATE_PHASES,
     gate_is_active,
 )
-from lens.plugins.public_connections import public_datasource_connection
+from lens.plugins.public_connections import ANONYMOUS_CONNECTION_FILTER, public_datasource_connection
 from lens.plugins.registry import (
     PluginNotFoundError,
     discover_plugins,
@@ -429,7 +429,7 @@ class ConnectionViewSet(BaseAdminViewSet):
     """Admin CRUD for reusable Plugin connections."""
 
     queryset = (
-        Connection.objects.filter(system_key__isnull=True)
+        Connection.objects.exclude(ANONYMOUS_CONNECTION_FILTER)
         .select_related("secret_version")
         .annotate(
             assistant_usage_count=Count(
