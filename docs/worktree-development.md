@@ -75,13 +75,14 @@ There is no registration or unregistration step.
 ```bash
 ./devctl list
 ./devctl status
-./devctl up                         # Start the current worktree.
+./devctl up                         # Start with existing images; do not build.
+./devctl up --build                 # Build backend/LensNode images explicitly.
 ./devctl up /absolute/path/to/worktree --port 18082
 ./devctl logs /absolute/path/to/worktree
 ./devctl test /absolute/path/to/worktree -- python manage.py test lens.tests.test_api --noinput
 ./devctl down /absolute/path/to/worktree
 ./devctl clean /absolute/path/to/worktree
-./devctl up /absolute/path/to/worktree --no-build
+./devctl up /absolute/path/to/worktree
 ```
 
 The previous `up NAME PATH` syntax remains supported as a display alias. A name
@@ -97,10 +98,12 @@ Primary means the original checkout, regardless of its checked-out branch.
 Python 3, Git, Docker and Compose V2 are required on macOS/Linux.
 
 For a new stack, `up` allocates a loopback port, starts shared PostgreSQL/Redis,
-creates a private database and network, builds private backend/LensNode images,
+creates a private database and network, uses private backend/LensNode images,
 and waits for API/frontend before starting remaining services. All services reuse
 `docker-compose.dev.yml`; `--no-deps` prevents duplicate infrastructure.
-`infra-up` starts only the shared services. `--no-build` reuses existing image tags.
+`infra-up` starts only the shared services. `up` does not build by default; use
+`--build` for first-time builds or dependency changes. Missing images produce an
+actionable error. The old `--no-build` flag remains accepted for compatibility.
 
 For a discovered stack launched directly with Compose, `up` restarts its existing
 application containers and retains its original configuration, ports and shared
@@ -137,7 +140,7 @@ A file lock serializes allocation and lifecycle changes. Writes are atomic and
 private. Credentials stay in the main configuration; generated private env files
 contain only per-environment endpoints and settings. Test results contain their
 actual source path, exit code and log path. API/Vite reload source edits; isolated
-workers/scheduler/LensNode can be recreated with `up --no-build`.
+workers/scheduler/LensNode can be recreated with `up`.
 
 ## Verification
 

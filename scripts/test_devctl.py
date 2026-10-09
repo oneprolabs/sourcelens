@@ -374,8 +374,8 @@ class DevManagerTests(unittest.TestCase):
         record = self.prepare("branch-a")
         with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
             self.manager, "compose", return_value="1"
-        ) as compose:
-            self.manager.up(record, build=False)
+        ) as compose, patch.object(self.manager, "run"):
+            self.manager.up(record)
         commands = [call.args[1] for call in compose.call_args_list if call.args[0] == record]
         self.assertEqual(len(commands), 2)
         self.assertEqual(commands[0][-2:], ["backend-api", "frontend"])
@@ -385,6 +385,26 @@ class DevManagerTests(unittest.TestCase):
             self.assertIn("--wait", command)
             self.assertNotIn("postgresql", command)
             self.assertNotIn("redis", command)
+
+    def test_explicit_build_builds_images_before_startup(self):
+        """Only the explicit build option invokes Docker Compose build."""
+        record = self.prepare("branch-a")
+        with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
+            self.manager, "compose", return_value="1"
+        ) as compose:
+            self.manager.up(record, build=True)
+        commands = [c.args[1] for c in compose.call_args_list if c.args[0] == record]
+        self.assertEqual(commands[0], ["build", "backend-api", "lensnode"])
+
+    def test_missing_image_reports_explicit_build_without_starting_infrastructure(self):
+        """Default startup must not build implicitly or create resources when images are absent."""
+        record = self.prepare("branch-a")
+        with patch.object(
+            self.manager, "run", side_effect=subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
+        ), patch.object(self.manager, "infra_up") as infra:
+            with self.assertRaisesRegex(ValueError, "--build first"):
+                self.manager.up(record)
+        infra.assert_not_called()
 
     def test_registry_has_one_configuration_home(self):
         """A tool copied into a different worktree cannot silently change shared credentials."""

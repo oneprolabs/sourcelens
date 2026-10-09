@@ -643,8 +643,14 @@ class DevManager:
         if remove:
             self.run(["docker", "network", "rm", name])
 
-    def up(self, record, build=True):
+    def up(self, record, build=False):
         """Create the environment's database and start its complete stack with health gates."""
+        if not build:
+            for image in (record["backend_image"], record["lensnode_image"]):
+                try:
+                    self.run(["docker", "image", "inspect", image], capture=True)
+                except subprocess.CalledProcessError:
+                    raise ValueError(f"Missing image {image}; run devctl up {record['path']} --build first") from None
         self.infra_up()
         database = record["database"]
         sql = f"SELECT 1 FROM pg_database WHERE datname='{database}'"
@@ -774,7 +780,9 @@ def main():
     up.add_argument("name", nargs="?", default=".")
     up.add_argument("path", nargs="?", default=".")
     up.add_argument("--port", type=int)
-    up.add_argument("--no-build", action="store_true", help="reuse this environment's existing images")
+    build_options = up.add_mutually_exclusive_group()
+    build_options.add_argument("--build", action="store_true", help="build backend and LensNode images before startup")
+    build_options.add_argument("--no-build", action="store_true", help=argparse.SUPPRESS)
     commands.add_parser("switch", help="retarget the existing single dev stack").add_argument(
         "path", nargs="?", default="."
     )
@@ -831,6 +839,8 @@ def main():
                         selected = manager.resolve(".", records)
                         name = args.name
                 if selected.get("external") and selected.get("containers"):
+                    if args.build:
+                        raise ValueError("Build a directly launched stack with its original Docker Compose command")
                     if args.port is not None:
                         raise ValueError("Existing Compose stack keeps its published ports")
                     manager.run(["docker", "restart", *manager.application_containers(selected)])
@@ -838,7 +848,7 @@ def main():
                     if not config.is_file():
                         raise ValueError(f"Missing shared config: {config}")
                     name = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")[:40] or "worktree"
-                    manager.up(manager.prepare(name, selected["path"], args.port), build=not args.no_build)
+                    manager.up(manager.prepare(name, selected["path"], args.port), build=args.build)
             elif args.action == "down":
                 record = manager.get(args.name)
                 manager.stop(record)
