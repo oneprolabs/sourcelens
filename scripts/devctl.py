@@ -1,4 +1,4 @@
-"""Repository-scoped worktree registry and Docker Compose lifecycle management."""
+"""Repository-scoped worktree discovery and Docker Compose lifecycle management."""
 
 import argparse
 import contextlib
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def now():
-    """Return a registry timestamp in UTC."""
+    """Return a metadata timestamp in UTC."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -66,7 +66,7 @@ class DevManager:
         self.repository = common_dir(self.root)
         scope = hashlib.sha256(str(self.repository).encode()).hexdigest()[:12]
         state_home = Path(state_home).expanduser().resolve()
-        # Separate registries must not allocate overlapping namespaces on the same servers.
+        # Separate state roots must not allocate overlapping namespaces on the same servers.
         docker_scope = hashlib.sha256(f"{self.repository}:{state_home}".encode()).hexdigest()[:12]
         self.prefix = "sourcelens-wt-" + docker_scope
         self.state_dir = state_home / scope
@@ -90,7 +90,7 @@ class DevManager:
             yield
 
     def read_state(self):
-        """Read an atomic registry snapshot; retired allocations remain reserved."""
+        """Read an atomic metadata snapshot; retired allocations remain reserved."""
         if not self.registry.exists():
             return {
                 "manager": {"root": str(self.root), "config": str(self.config)},
@@ -100,7 +100,7 @@ class DevManager:
         return json.loads(self.registry.read_text())
 
     def save(self, state):
-        """Replace the registry atomically with private permissions; callers hold the lock."""
+        """Replace allocation metadata atomically with private permissions; callers hold the lock."""
         with tempfile.NamedTemporaryFile(mode="w", dir=self.state_dir, delete=False) as handle:
             json.dump(state, handle, indent=2)
             handle.write("\n")
@@ -217,7 +217,99 @@ class DevManager:
         """Operate only the selected application or the explicitly requested infrastructure."""
         return self.run(self.compose_command(record, args), capture=capture, env=self.compose_env(record))
 
-    def register(self, name, path, port=None):
+    def worktrees(self):
+        """Read Git's worktree inventory, including detached checkouts."""
+        records = []
+        for block in git(self.root, "worktree", "list", "--porcelain", "-z").split("\0\0"):
+            fields = block.split("\0")
+            if fields[0].startswith("worktree ") and "bare" not in fields:
+                path = str(Path(fields[0][9:]).resolve())
+                records.append(dict(path=path, name=Path(path).name, branch=branch(path)))
+        return records
+
+    def discover(self):
+        """Join Git worktrees with actual dev Compose mounts; state is only launch metadata."""
+        worktrees = self.worktrees()
+        paths = {item["path"] for item in worktrees}
+        ids = self.run(["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project"], capture=True).split()
+        containers = json.loads(self.run(["docker", "inspect", *ids], capture=True)) if ids else []
+        projects = {}
+        for container in containers:
+            labels = container.get("Config", {}).get("Labels") or {}
+            files = labels.get("com.docker.compose.project.config_files", "").split(",")
+            if not any(Path(file).name == "docker-compose.dev.yml" for file in files):
+                continue
+            project = labels.get("com.docker.compose.project")
+            projects.setdefault(project, []).append(container)
+        metadata = list(self.read_state()["environments"].values())
+        found = []
+        for project, members in projects.items():
+            apis = [c for c in members if c["Config"]["Labels"].get("com.docker.compose.service") == "backend-api"]
+            for api in apis:
+                source = next(
+                    (
+                        m["Source"]
+                        for m in api.get("Mounts", [])
+                        if m["Destination"] == "/opt/backend" and m["Type"] == "bind"
+                    ),
+                    None,
+                )
+                path = str(Path(source).resolve().parent) if source else None
+                if path not in paths:
+                    continue
+                saved = next((r for r in metadata if r["project"] == project and r["path"] == path), {})
+                ports = [
+                    p["HostPort"]
+                    for c in members
+                    for values in (c.get("NetworkSettings", {}).get("Ports") or {}).values()
+                    for p in (values or [])
+                    if c["Config"]["Labels"].get("com.docker.compose.service") == "nginx"
+                ]
+                found.append(
+                    dict(
+                        saved,
+                        name=saved.get("name", Path(path).name),
+                        path=path,
+                        project=project,
+                        port=int(ports[0]) if ports else saved.get("port", "-"),
+                        status=api["State"]["Status"],
+                        containers=members,
+                        container=api["Id"],
+                        external="redis_dbs" not in saved,
+                    )
+                )
+        for tree in worktrees:
+            if not any(r["path"] == tree["path"] for r in found):
+                saved = next((r for r in metadata if r["path"] == tree["path"]), {})
+                found.append(
+                    dict({**tree, **saved}, status="stopped", containers=[], external="redis_dbs" not in saved)
+                )
+        return found
+
+    def resolve(self, target, records):
+        """Select by worktree path, directory name, branch, project or saved display alias."""
+        path = str(Path(target).expanduser().resolve())
+        matches = [
+            r
+            for r in records
+            if target in (r.get("name"), Path(r["path"]).name, branch(r["path"]), r.get("project")) or path == r["path"]
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Worktree target is {'ambiguous' if matches else 'unknown'}: {target}; use an absolute path/project"
+            )
+        return matches[0]
+
+    def application_containers(self, record):
+        """Exclude shared database/Redis even when discovered inside a legacy single stack."""
+        return [
+            c["Id"]
+            for c in record.get("containers", [])
+            if c["Config"]["Labels"].get("com.docker.compose.service")
+            in ("backend-api", "backend-worker", "backend-scheduler", "frontend", "lensnode", "flower", "nginx")
+        ]
+
+    def prepare(self, name, path, port=None):
         """Reserve an identity, loopback port, database and three Redis DBs under the lock."""
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", name):
             raise ValueError("Names must be lowercase letters/digits/hyphens, at most 40 characters")
@@ -228,20 +320,23 @@ class DevManager:
             if not (path / directory).is_dir():
                 raise ValueError(f"Missing SourceLens source directory: {path / directory}")
         state = self.read_state()
-        existing = state["environments"].get(name)
+        existing = next(
+            (r for r in state["environments"].values() if r["path"] == str(path) and "redis_dbs" in r), None
+        )
+        alias = state["environments"].get(name)
+        if alias and alias["path"] != str(path):
+            raise ValueError(f"{name} already points to {alias['path']}; use another display name")
         if existing:
-            if existing["path"] != str(path):
-                raise ValueError(f"{name} already points to {existing['path']}; clean it first")
             if port is not None and existing["port"] != port:
-                raise ValueError(f"{name} already uses port {existing['port']}; clean it first")
+                raise ValueError(f"{name} already uses port {existing['port']}; reuse its allocated port")
             return existing
         if port is not None and not 1024 <= port <= 65535:
             raise ValueError("Host port must be between 1024 and 65535")
-        registered = {item["port"] for item in state["environments"].values()}
+        allocated = {item["port"] for item in state["environments"].values() if "redis_dbs" in item}
         for candidate in ([port] if port is not None else range(18081, 19081)):
-            if candidate in registered:
+            if candidate in allocated:
                 if port is not None:
-                    raise ValueError(f"Port {port} is already registered")
+                    raise ValueError(f"Port {port} is already allocated")
                 continue
             with socket.socket() as listener:
                 try:
@@ -253,7 +348,7 @@ class DevManager:
             break
         else:
             raise ValueError("No free port in 18081..19080")
-        identity = hashlib.sha256(f"{name}:{path}".encode()).hexdigest()[:12]
+        identity = hashlib.sha256(str(path).encode()).hexdigest()[:12]
         allocations = state["allocations"]
         if identity not in allocations:
             used = {slot for slots in allocations.values() for slot in slots}
@@ -278,24 +373,26 @@ class DevManager:
             created_at=now(),
             last_used_at=now(),
             branch=branch(path),
-            status="registered",
+            status="stopped",
         )
         state["environments"][name] = record
         self.save(state)
         return record
 
     def get(self, name):
-        """Find a registered environment without requiring its worktree to still exist."""
-        record = self.read_state()["environments"].get(name)
-        if record is None:
-            raise ValueError(f"Unknown environment: {name}")
-        return record
+        """Resolve live worktrees without requiring prior devctl startup."""
+        records = self.discover()
+        paths = {r["path"] for r in records}
+        retired = [r for r in self.read_state()["environments"].values() if r["path"] not in paths and "redis_dbs" in r]
+        return self.resolve(name, records + retired)
 
     def update(self, record, **changes):
         """Persist lifecycle/test results without exposing credentials."""
         record.update(changes, last_used_at=now(), branch=branch(record["path"]))
         state = self.read_state()
-        state["environments"][record["name"]] = record
+        state["environments"][record["name"]] = {
+            k: v for k, v in record.items() if k not in ("containers", "container", "external")
+        }
         self.save(state)
 
     def infra_up(self):
@@ -372,18 +469,30 @@ class DevManager:
         print(f"Started {record['name']}: http://127.0.0.1:{record['port']}", flush=True)
 
     def clean(self, name):
-        """Remove app containers/registration while retaining DBs, files, volumes and Redis allocations."""
+        """Remove application containers while retaining worktrees, metadata and all data."""
         record = self.get(name)
-        self.compose(record, ["down", "--remove-orphans"])
-        self.network(record, remove=True)
-        state = self.read_state()
-        del state["environments"][name]
-        self.save(state)
-        print(f"Removed {name}; retained database {record['database']} and data at {record['data_dir']}")
+        self.stop(record, remove=True)
+        print(f"Cleaned {name}; retained data and launch/test metadata")
+
+    def stop(self, record, remove=False):
+        """Stop application services without touching the shared infrastructure."""
+        if record.get("external"):
+            ids = self.application_containers(record)
+            if ids:
+                self.run(["docker", "stop", *ids])
+                if remove:
+                    self.run(["docker", "rm", *ids])
+        else:
+            self.compose(record, ["down", "--remove-orphans"] if remove else ["down"])
+            if remove:
+                self.network(record, remove=True)
+            self.update(record, status="stopped")
 
     def test(self, record, command):
         """Verify actual mounted source before executing a suite, saving output and exit status."""
-        container = self.compose(record, ["ps", "-q", "backend-api"], capture=True)
+        container = record.get("container") or (
+            self.compose(record, ["ps", "-q", "backend-api"], capture=True) if not record.get("external") else None
+        )
         if not container:
             raise ValueError("Environment API is not running; use devctl up first")
         details = json.loads(self.run(["docker", "inspect", container], capture=True))[0]
@@ -399,7 +508,7 @@ class DevManager:
             raise ValueError("API container has no /opt/backend bind mount; tests were not run")
         print(f"Source under test: {source}  (branch: {branch(source)})", flush=True)
         if Path(source).resolve() != (Path(record["path"]) / "backend").resolve():
-            raise ValueError("Actual mounted source differs from registered worktree; tests were not run")
+            raise ValueError("Actual mounted source differs from selected worktree; tests were not run")
         try:
             current = Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve()
             if current != Path(record["path"]):
@@ -412,11 +521,22 @@ class DevManager:
             mode="w", prefix=record["project"] + "-", suffix=".log", dir=logs, delete=False
         ) as log:
             log.write(f"Source under test: {source}  (branch: {branch(source)})\n")
-            args = self.compose_command(
-                record, ["exec", "-T", "-w", "/opt/backend", "backend-api", "sh", "/worktree-entrypoint.sh", *command]
-            )
+            if record.get("external"):
+                wrapper = (
+                    ["sh", "/worktree-entrypoint.sh"]
+                    if any(m["Destination"] == "/worktree-entrypoint.sh" for m in details["Mounts"])
+                    else []
+                )
+                args = ["docker", "exec", "-w", "/opt/backend", container, *wrapper, *command]
+                env = None
+            else:
+                args = self.compose_command(
+                    record,
+                    ["exec", "-T", "-w", "/opt/backend", "backend-api", "sh", "/worktree-entrypoint.sh", *command],
+                )
+                env = self.compose_env(record)
             with subprocess.Popen(
-                args, env=self.compose_env(record), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                args, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
             ) as process:
                 for line in process.stdout:
                     sys.stdout.write(line)
@@ -431,8 +551,8 @@ def main():
     """Dispatch the local development CLI; no command destroys shared infrastructure."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
-    up = commands.add_parser("up", help="register and start a worktree")
-    up.add_argument("name")
+    up = commands.add_parser("up", help="start a Git worktree (defaults to the current checkout)")
+    up.add_argument("name", nargs="?", default=".")
     up.add_argument("path", nargs="?", default=".")
     up.add_argument("--port", type=int)
     up.add_argument("--no-build", action="store_true", help="reuse this environment's existing images")
@@ -453,34 +573,58 @@ def main():
     try:
         root, config = manager_paths(Path(__file__).resolve().parents[1])
         manager = DevManager(root, state, config)
-        if args.action == "list":
-            for record in manager.read_state()["environments"].values():
-                last_test = record.get("last_test", {}).get("exit_code", "-")
+        if args.action in ("list", "status"):
+            for record in manager.discover():
                 print(
-                    f"{record['name']}  :{record['port']}  {record['status']}  "
-                    f"branch={branch(record['path'])}  test={last_test}  {record['path']}"
+                    f"{record['name']}  :{record.get('port', '-')}  {record['status']}  "
+                    f"branch={branch(record['path'])}  project={record.get('project', '-')}  {record['path']}",
+                    flush=True,
                 )
+                if args.action == "status":
+                    for container in record["containers"]:
+                        health = container["State"].get("Health", {}).get("Status", "-")
+                        print(f"  {container['Name'].lstrip('/')}  {container['State']['Status']}  health={health}")
             return
-        if not config.is_file():
-            raise ValueError(f"Missing shared config: {config}; create the shared config in manager checkout {root}")
         if args.action == "logs":
-            manager.compose(manager.get(args.name), ["logs", "-f", "--tail", "200"])
-            return
-        if args.action == "status":
-            manager.compose(None, ["ps"])
-            for record in manager.read_state()["environments"].values():
-                print(f"=== {record['name']} ({record['path']}) ===", flush=True)
-                manager.compose(record, ["ps"])
+            record = manager.get(args.name)
+            ids = manager.application_containers(record)
+            if not ids:
+                raise ValueError("No application containers for this worktree")
+            for container in ids:
+                manager.run(["docker", "logs", "--tail", "50", container])
+            manager.run(["docker", "logs", "-f", "--tail", "0", record["container"]])
             return
         with manager.lock():
             if args.action == "infra-up":
+                if not config.is_file():
+                    raise ValueError(f"Missing shared config: {config}")
                 manager.infra_up()
             elif args.action == "up":
-                manager.up(manager.register(args.name, args.path, args.port), build=not args.no_build)
+                records = manager.discover()
+                if args.path != ".":
+                    selected = manager.resolve(args.path, records)
+                    name = args.name
+                else:
+                    try:
+                        selected = manager.resolve(args.name, records)
+                        name = selected["name"]
+                    except ValueError as exc:
+                        if Path(args.name).exists() or "ambiguous" in str(exc):
+                            raise
+                        selected = manager.resolve(".", records)
+                        name = args.name
+                if selected.get("external") and selected.get("containers"):
+                    if args.port is not None:
+                        raise ValueError("Existing Compose stack keeps its published ports")
+                    manager.run(["docker", "restart", *manager.application_containers(selected)])
+                else:
+                    if not config.is_file():
+                        raise ValueError(f"Missing shared config: {config}")
+                    name = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")[:40] or "worktree"
+                    manager.up(manager.prepare(name, selected["path"], args.port), build=not args.no_build)
             elif args.action == "down":
                 record = manager.get(args.name)
-                manager.compose(record, ["down"])
-                manager.update(record, status="stopped")
+                manager.stop(record)
             elif args.action == "clean":
                 manager.clean(args.name)
             elif args.action == "test":

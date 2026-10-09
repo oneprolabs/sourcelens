@@ -34,144 +34,84 @@ Rebuild/install there when dependencies change. All worktrees in this mode
 share one database: switching back to code without an applied migration can
 leave the schema ahead of that code.
 
-## Run multiple worktrees with devctl
+## Worktree discovery and lifecycle with devctl
 
-Keep the manager (`devctl`, its Python module, `docker-compose.dev.yml` and routing
-configuration) in the primary Git checkout. This directory owns the shared
-`.env.dev`. `devctl` automatically finds that checkout from Git's worktree list,
-even when invoked from a linked worktree. "Primary" means the original checkout,
-not whichever worktree currently has the `main` branch checked out. Python 3,
-Git, Docker and Compose V2 are required (macOS/Linux).
-The Python helper uses only the standard library.
+`devctl list` scans `git worktree list` and inspects Docker Compose containers.
+Every local worktree is visible before startup. A running or stopped development
+stack is associated with its API container's actual `/opt/backend` bind mount,
+including stacks launched directly with `docker compose up` and retargeted with
+`WORKTREE_DIR`. Production Compose files and unrelated repositories are excluded.
+`status` also displays individual container states and health checks. Docker must
+be available for these live inspections; failures are reported explicitly.
 
-`devctl` selects services from `docker-compose.dev.yml` explicitly. Its
-infrastructure project starts only `postgresql` and `redis`; application
-projects start API/frontend first and wait for health, then start the other
-application services. `--no-deps` prevents Compose from creating a second
-database or Redis server inside an application project. Standalone defaults
-still support `docker compose -f docker-compose.dev.yml up -d` directly.
+Targets can be a worktree path, directory name, branch, Compose project, or an
+existing display alias. Use an absolute path or project when a target is ambiguous.
+There is no registration or unregistration step.
 
 ```bash
-cp env.sample .env.dev
-# Configure local development credentials and optional AI model settings.
-# Create this file only in the primary checkout; linked worktrees do not need it.
-
-# Each up registers the worktree, allocates an unused loopback HTTP port,
-# starts the shared infrastructure, creates its database, builds private
-# backend/LensNode images, and waits for application health.
-./devctl up feature-a /absolute/path/to/worktree-a
-./devctl up feature-b /absolute/path/to/worktree-b --port 18082
-
 ./devctl list
 ./devctl status
-./devctl logs feature-a
-
-./devctl test feature-a
-./devctl test feature-a -- python manage.py test lens.tests.test_api --noinput
-
-# Stop application containers, keeping the registration and all data.
-./devctl down feature-a
-
-# Resume; --no-build reuses this environment's existing private image tags.
-./devctl up feature-a /absolute/path/to/worktree-a --no-build
-
-# Remove application containers, private network and registration. Data stays.
-./devctl clean feature-a
+./devctl up                         # Start the current worktree.
+./devctl up /absolute/path/to/worktree --port 18082
+./devctl logs /absolute/path/to/worktree
+./devctl test /absolute/path/to/worktree -- python manage.py test lens.tests.test_api --noinput
+./devctl down /absolute/path/to/worktree
+./devctl clean /absolute/path/to/worktree
+./devctl up /absolute/path/to/worktree --no-build
 ```
 
-`infra-up` starts the shared servers without registering an application. There
-is deliberately no infrastructure `down`, database deletion or volume deletion
-command. The legacy `sourcelens-dev` stack and production projects are separate
-from these managed projects and remain untouched.
+The previous `up NAME PATH` syntax remains supported as a display alias. A name
+change does not create a new data identity: identities derive from the canonical
+worktree path. Existing saved identities are reused to preserve their data.
 
-From a linked worktree, use its `devctl` entry point after this tooling is present
-there, or invoke the primary checkout's entry point. Both automatically use the
-primary checkout's configuration; there is no need to copy `.env.dev` or set
-`DEVCTL_ROOT` each time:
+The primary Git checkout owns `docker-compose.dev.yml`, routing files and
+`.env.dev`. Linked worktrees automatically use it without copying configuration.
+Primary means the original checkout, regardless of its checked-out branch.
+`DEVCTL_ROOT` and `DEVCTL_CONFIG` remain explicit manager/config overrides.
+Python 3, Git, Docker and Compose V2 are required on macOS/Linux.
 
-```bash
-cd /absolute/path/to/worktree-c
-./devctl up feature-c
-./devctl list
-./devctl test feature-c
-```
+For a new stack, `up` allocates a loopback port, starts shared PostgreSQL/Redis,
+creates a private database and network, builds private backend/LensNode images,
+and waits for API/frontend before starting remaining services. All services reuse
+`docker-compose.dev.yml`; `--no-deps` prevents duplicate infrastructure.
+`infra-up` starts only the shared services. `--no-build` reuses existing image tags.
 
-For an explicitly chosen manager directory, override the automatic discovery:
+For a discovered stack launched directly with Compose, `up` restarts its existing
+application containers and retains its original configuration, ports and shared
+data. Rebuild such a stack through its original Compose invocation when changing
+dependencies. `logs` prints recent application logs and follows the API log.
+`test` uses the discovered API container directly, verifies its source mount,
+and streams/saves the result. It does not require a devctl-created environment.
+The default command is `python manage.py test --noinput`.
 
-```bash
-DEVCTL_ROOT=/absolute/path/to/manager-checkout \
-  /absolute/path/to/manager-checkout/devctl up feature-c /absolute/path/to/worktree-c
-```
+`down` stops application containers; `clean` removes them and, for isolated stacks,
+the private network. Both retain databases, Redis data, files, dependency volumes
+and launch/test metadata. Git worktrees remain visible after either operation.
+Even in a legacy project containing database services, only application containers
+are stopped/removed. Neither command executes `down -v` or deletes a Git worktree.
 
-`DEVCTL_ROOT` optionally replaces the primary checkout as the manager directory.
-`DEVCTL_CONFIG` optionally selects a shared config file outside the manager
-checkout. `DEVCTL_STATE` selects the state parent (default:
-`${XDG_STATE_HOME:-~/.local/state}/sourcelens-dev`). A repository hash derived
-from Git's common directory separates repositories within that parent.
-Docker projects also include the state parent in their identity, so an
-independent acceptance registry does not reuse daily development resources. Once
-registered, the configuration home cannot silently change. Do not move/delete
-the manager or discard its registry while environments still exist.
+## Isolation and retained metadata
 
-## Isolation and lifecycle guarantees
+New isolated stacks share PostgreSQL/Redis processes but use separate databases,
+three Redis logical DBs for broker/cache/Channels, private application networks,
+image tags, runtime directories and frontend dependency volumes. HTTP ports bind
+only to loopback, automatically allocated from 18081–19080 or explicitly chosen.
+Retained Redis allocations are not reused by different worktree identities.
+Directly launched legacy stacks retain their original data isolation behavior.
 
-| Resource | Scope |
-|---|---|
-| PostgreSQL/Redis processes | One infrastructure project per repository |
-| Business and Django test databases | One database per environment; Django derives its own test DB |
-| Redis broker, cache and Channels | Three distinct logical Redis DBs per environment |
-| Application containers and image tags | One Compose project per environment; no pinned container names |
-| Application DNS | Private network per environment; only the shared servers also join it |
-| HTTP port | Loopback only; allocated from 18081–19080, or explicitly selected |
-| Uploads, workspaces, logs, checkpoints, static files | Environment directory outside the repository |
-| Frontend dependencies and npm download cache | Environment-specific named volumes |
-| Credentials and routing configuration | Manager directory; no secrets copied to the registry |
+The state parent is `DEVCTL_STATE` or
+`${XDG_STATE_HOME:-~/.local/state}/sourcelens-dev`, scoped by Git's common directory.
+Docker resource identities also include the state parent, so temporary acceptance
+environments do not collide with daily development. The existing `registry.json`
+file is retained for compatibility, but serves only as launch allocation and test
+metadata: it does not decide which worktrees exist or whether containers run.
+Do not discard allocation metadata while retaining shared Redis/database data.
 
-Redis DB isolation covers hard-coded task queues, raw Redis clients, cache
-clears and Channels keys without changing application code or relying only on
-key prefixes. A maximum of 85 identities can reserve namespaces. Cleanup keeps
-Redis allocations reserved, so a new identity cannot accidentally consume
-another environment's retained messages. Re-registering the same name/path
-resumes the same database, namespace, runtime files and dependency volumes.
-Changing names creates a new identity, even for the same worktree.
-
-A repository-level file lock serializes lifecycle mutations, port allocation
-and registry writes between agents. JSON writes are atomic and private. The
-registry records source path, creation/last-use time, last observed branch,
-lifecycle status and latest test exit code/log path. `status` queries Docker
-for live state; `list` summarizes recorded state and the current branch. An
-allocated port is checked against both the registry and local listeners;
-another process can still claim it before Docker binds it, in which case
-startup fails and prints logs.
-
-Alongside the JSON registry, the manager writes private, generated `.env`
-files containing only environment-specific database names, Redis endpoints
-and local runtime settings. These override the shared configuration without
-copying credentials or requiring that it be shell-compatible. Database URL
-credentials are read and encoded inside the container by the entrypoint.
-
-`devctl test` reads the running API container's actual mount and refuses to
-run if it differs from the registered worktree. Running a named environment
-from another checkout prints a notice. Output is streamed and saved to a
-private log; a failed suite returns its failure status. The default suite is
-Django's `manage.py test --noinput`; pass a different backend command after
-`--` when needed. Test tools must exist in the environment's image. Use distinct
-environment names for concurrent suites; operations on one repository are
-serialized while a lifecycle command or suite holds the registry lock.
-
-API and Vite reload edited source. Restart workers/scheduler/LensNode by
-running `devctl up NAME PATH --no-build`, which recreates that environment's
-containers. For Python dependency or image changes, omit `--no-build` to
-rebuild from the selected worktree. Vite installs dependencies from that
-worktree's lockfile on startup into its own volume. Each API startup applies
-migrations only to its environment's database.
-
-`down` and `clean` never call `down -v`, flush Redis, drop a database or remove
-runtime files. Cleanup still works after an application worktree is deleted,
-provided the manager/config remain available. Retained databases, namespace
-allocations, data directories and dependency volumes require separate manual
-maintenance after all owners have been identified. Do not run `down -v` on
-the shared infrastructure as part of normal worktree cleanup.
+A file lock serializes allocation and lifecycle changes. Writes are atomic and
+private. Credentials stay in the main configuration; generated private env files
+contain only per-environment endpoints and settings. Test results contain their
+actual source path, exit code and log path. API/Vite reload source edits; isolated
+workers/scheduler/LensNode can be recreated with `up --no-build`.
 
 ## Verification
 
@@ -180,9 +120,6 @@ python3 -m unittest scripts.test_devctl
 bash scripts/test_test_dev.sh
 ```
 
-These regressions cover resource/port isolation, two-process allocation,
-configuration ownership, cleanup retention, private network attachments,
-source mismatch rejection, detached branches, missing mounts, argument
-forwarding and suite failure propagation. For a runtime acceptance check,
-start two environments, check both `/health` URLs, run each test entry point,
-then stop/clean one and confirm the other remains healthy.
+Coverage includes Git-only discovery, direct Compose discovery, retargeted source
+mounts, production exclusion, path identity, concurrent allocation, data retention,
+private networking, source mismatch rejection and test failure propagation.

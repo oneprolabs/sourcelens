@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.devctl import DevManager, manager_paths
+from scripts.devctl import DevManager, main, manager_paths
 
 
 class DevManagerTests(unittest.TestCase):
@@ -50,10 +50,17 @@ class DevManagerTests(unittest.TestCase):
         self.config.write_text("POSTGRES_USER=postgres\nPOSTGRES_PASSWORD='complex $ password'\n")
         self.manager = DevManager(self.root, Path(self.temp.name) / "state", self.config)
 
-    def register(self, name, path=None, port=None):
+    def prepare(self, name, path=None, port=None):
         """Apply the same registry lock used by the CLI."""
         with self.manager.lock():
-            return self.manager.register(name, path or self.root, port)
+            return self.manager.prepare(name, path or self.root, port)
+
+    def test_worktrees_exist_without_launch_metadata(self):
+        """Git alone supplies the inventory before any environment has been started."""
+        with patch.object(self.manager, "run", return_value=""):
+            records = self.manager.discover()
+        self.assertEqual({r["path"] for r in records}, {str(self.root.resolve()), str(self.other.resolve())})
+        self.assertTrue(all(r["status"] == "stopped" for r in records))
 
     def test_linked_worktree_reuses_primary_checkout_configuration(self):
         """A worktree without .env.dev still resolves the main checkout's manager/config."""
@@ -92,11 +99,17 @@ class DevManagerTests(unittest.TestCase):
         shutil.copyfile(Path(__file__).with_name("devctl.py"), scripts / "devctl.py")
         source_root = Path(__file__).resolve().parents[1]
         shutil.copyfile(source_root / "devctl", self.other / "devctl")
-        self.register("branch-a")
+        self.prepare("branch-a")
         env = dict(os.environ)
         env.pop("DEVCTL_ROOT", None)
         env.pop("DEVCTL_CONFIG", None)
         env["DEVCTL_STATE"] = str(Path(self.temp.name) / "state")
+        fake_bin = Path(self.temp.name) / "bin"
+        fake_bin.mkdir()
+        docker = fake_bin / "docker"
+        docker.write_text("#!/bin/sh\nexit 0\n")
+        docker.chmod(0o755)
+        env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
         result = subprocess.run(
             [os.sys.executable, str(self.other / "devctl"), "list"],
             cwd=self.other,
@@ -105,29 +118,81 @@ class DevManagerTests(unittest.TestCase):
             capture_output=True,
             check=True,
         )
-        self.assertIn("branch-a", result.stdout)
-        fake_bin = Path(self.temp.name) / "bin"
-        fake_bin.mkdir()
-        docker = fake_bin / "docker"
-        docker.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
-        docker.chmod(0o755)
-        env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
-        result = subprocess.run(
-            [os.sys.executable, str(self.other / "devctl"), "status"],
-            cwd=self.other,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=True,
+        self.assertIn(str(self.other.resolve()), result.stdout)
+
+    def compose_fixture(self, project="manual-dev", path=None, production=False):
+        """Build Docker inspection data with Compose labels and an actual source mount."""
+        return dict(
+            Id="api-id",
+            Name="/api",
+            Config=dict(
+                Labels={
+                    "com.docker.compose.project": project,
+                    "com.docker.compose.service": "backend-api",
+                    "com.docker.compose.project.config_files": str(
+                        self.root / ("docker-compose.yml" if production else "docker-compose.dev.yml")
+                    ),
+                }
+            ),
+            Mounts=[dict(Type="bind", Destination="/opt/backend", Source=str((path or self.other) / "backend"))],
+            State=dict(Status="running"),
+            NetworkSettings=dict(Ports={}),
         )
-        self.assertIn(str(self.config.resolve()), result.stdout)
-        self.assertIn(str(self.root.resolve() / "docker-compose.dev.yml"), result.stdout)
-        self.assertNotIn(str(self.other / ".env.dev"), result.stdout)
+
+    def test_manual_compose_is_discovered_by_actual_mount_not_launch_directory(self):
+        """Retargeted legacy stacks belong to their mounted worktree with no metadata."""
+        fixture = self.compose_fixture()
+        with patch.object(self.manager, "run", side_effect=["api-id", json.dumps([fixture])]):
+            records = self.manager.discover()
+        linked = self.manager.resolve(str(self.other), records)
+        self.assertEqual(linked["project"], "manual-dev")
+        self.assertTrue(linked["external"])
+        self.assertEqual(linked["status"], "running")
+        self.assertEqual(self.manager.resolve(str(self.root), records)["status"], "stopped")
+        self.assertFalse(self.manager.registry.exists())
+
+    def test_production_and_unrelated_mounts_are_excluded(self):
+        """Compose labels alone must not include production or another repository."""
+        fixtures = [self.compose_fixture(production=True), self.compose_fixture(path=Path("/unrelated"))]
+        with patch.object(self.manager, "run", side_effect=["api-id", json.dumps(fixtures)]):
+            records = self.manager.discover()
+        self.assertTrue(all(r["status"] == "stopped" for r in records))
+
+    def test_alias_change_reuses_worktree_data_identity(self):
+        """A worktree's identity does not change with its display name."""
+        first = self.prepare("first")
+        second = self.prepare("second")
+        self.assertEqual(first["project"], second["project"])
+        self.assertEqual(first["redis_dbs"], second["redis_dbs"])
+
+    def test_clean_keeps_worktree_discoverable(self):
+        """Container cleanup never removes a Git worktree from the inventory."""
+        record = self.prepare("branch-a")
+        with patch.object(self.manager, "get", return_value=record), patch.object(
+            self.manager, "compose"
+        ), patch.object(self.manager, "network"):
+            self.manager.clean("branch-a")
+        with patch.object(self.manager, "run", return_value=""):
+            records = self.manager.discover()
+        self.assertEqual(self.manager.resolve(str(self.root), records)["status"], "stopped")
+
+    def test_manual_cleanup_never_stops_shared_services(self):
+        """A legacy project includes infrastructure, but only app containers may be cleaned."""
+        api = self.compose_fixture()
+        database = self.compose_fixture()
+        database["Id"] = "database-id"
+        database["Config"]["Labels"]["com.docker.compose.service"] = "postgresql"
+        record = dict(external=True, containers=[api, database])
+        with patch.object(self.manager, "run") as run:
+            self.manager.stop(record, remove=True)
+        self.assertEqual(
+            [c.args[0] for c in run.call_args_list], [["docker", "stop", "api-id"], ["docker", "rm", "api-id"]]
+        )
 
     def test_parallel_environments_have_disjoint_resources(self):
         """Database, broker/cache/Channels, port, images, and runtime files are isolated."""
-        a = self.register("branch-a")
-        b = self.register("branch-b", self.other)
+        a = self.prepare("branch-a")
+        b = self.prepare("branch-b", self.other)
         for key in ("project", "port", "database", "data_dir", "backend_image", "lensnode_image"):
             self.assertNotEqual(a[key], b[key], key)
         self.assertTrue(set(a["redis_dbs"]).isdisjoint(b["redis_dbs"]))
@@ -135,58 +200,58 @@ class DevManagerTests(unittest.TestCase):
 
     def test_existing_registration_cannot_change_identity_or_port(self):
         """A name cannot silently retarget a different branch or endpoint."""
-        original = self.register("branch-a")
-        self.assertEqual(original["project"], self.register("branch-a")["project"])
+        original = self.prepare("branch-a")
+        self.assertEqual(original["project"], self.prepare("branch-a")["project"])
         with self.assertRaisesRegex(ValueError, "already points"):
-            self.register("branch-a", self.other)
+            self.prepare("branch-a", self.other)
         with self.assertRaisesRegex(ValueError, "already uses port"):
-            self.register("branch-a", port=original["port"] + 1)
+            self.prepare("branch-a", port=original["port"] + 1)
 
     def test_name_and_port_validation(self):
         """Reject project-name ambiguity, traversal, and invalid ports before Docker."""
         for name in ("../escape", "Feature-A", "a_b", "-flag", "x" * 41):
             with self.subTest(name=name), self.assertRaises(ValueError):
-                self.register(name)
+                self.prepare(name)
         for port in (80, 65536):
             with self.assertRaises(ValueError):
-                self.register("branch-a", port=port)
+                self.prepare("branch-a", port=port)
 
     def test_registered_and_live_ports_are_rejected(self):
         """Check both managed reservations and other processes' loopback listeners."""
-        record = self.register("branch-a")
-        with self.assertRaisesRegex(ValueError, "registered"):
-            self.register("branch-b", self.other, record["port"])
+        record = self.prepare("branch-a")
+        with self.assertRaisesRegex(ValueError, "allocated"):
+            self.prepare("branch-b", self.other, record["port"])
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             with self.assertRaisesRegex(ValueError, "in use"):
-                self.register("branch-b", self.other, listener.getsockname()[1])
+                self.prepare("branch-b", self.other, listener.getsockname()[1])
 
     def test_unrelated_repository_is_rejected(self):
         """Never attach unrelated code to this repository's shared infrastructure."""
         unrelated = Path(self.temp.name) / "unrelated"
         subprocess.run(["git", "init", "-q", str(unrelated)], check=True)
         with self.assertRaisesRegex(ValueError, "same repository"):
-            self.register("branch-a", unrelated)
+            self.prepare("branch-a", unrelated)
 
     def test_cleanup_preserves_data_and_infra_and_reserves_redis_slots(self):
         """Cleanup must not delete databases, volumes, or another environment's broker state."""
-        a = self.register("branch-a")
+        a = self.prepare("branch-a")
         Path(a["data_dir"]).mkdir(parents=True)
         calls = []
-        with self.manager.lock(), patch.object(
+        with self.manager.lock(), patch.object(self.manager, "get", return_value=a), patch.object(
             self.manager, "compose", side_effect=lambda *args, **kw: calls.append(args)
         ), patch.object(self.manager, "network") as network:
             self.manager.clean("branch-a")
         self.assertEqual(calls, [(a, ["down", "--remove-orphans"])])
         network.assert_called_once_with(a, remove=True)
         self.assertTrue(Path(a["data_dir"]).exists())
-        self.assertNotIn("branch-a", self.manager.read_state()["environments"])
-        b = self.register("branch-b", self.other)
+        self.assertEqual(self.manager.read_state()["environments"]["branch-a"]["status"], "stopped")
+        b = self.prepare("branch-b", self.other)
         self.assertTrue(set(a["redis_dbs"]).isdisjoint(b["redis_dbs"]))
 
     def test_environment_overrides_shared_config_and_shell_values(self):
         """Inherited production endpoints/project names cannot override generated identities."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         with patch.dict(os.environ, {"DEV_HTTP_BIND": "80", "COMPOSE_PROJECT_NAME": "sourcelens"}):
             env = self.manager.compose_env(record)
         self.assertEqual(env["DEV_HTTP_BIND"], f"127.0.0.1:{record['port']}")
@@ -195,7 +260,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_every_mode_uses_existing_compose_and_selects_only_its_services(self):
         """Shared infrastructure and apps must reuse the dev file without launching each other."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         for item in (None, record):
             argv = self.manager.compose_command(item, ["ps"])
             self.assertEqual(argv[argv.index("-f") + 1], str(self.root.resolve() / "docker-compose.dev.yml"))
@@ -205,7 +270,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_runtime_overrides_are_private_and_do_not_copy_credentials(self):
         """The generated config only isolates endpoints; credentials remain in the shared config."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         env = self.manager.compose_env(record)
         path = Path(env["DEV_OVERRIDE_CONFIG"])
         content = path.read_text()
@@ -217,7 +282,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_application_startup_never_starts_database_services(self):
         """Keep API/frontend health gating while reusing only the shared servers."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
             self.manager, "compose", return_value="1"
         ) as compose:
@@ -234,7 +299,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_registry_has_one_configuration_home(self):
         """A tool copied into a different worktree cannot silently change shared credentials."""
-        self.register("branch-a")
+        self.prepare("branch-a")
         with self.assertRaisesRegex(ValueError, "different configuration home"):
             DevManager(self.other, Path(self.temp.name) / "state", self.config)
 
@@ -248,7 +313,7 @@ class DevManagerTests(unittest.TestCase):
         script = (
             "from pathlib import Path; from scripts.devctl import DevManager; import sys; "
             "m=DevManager(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])); "
-            "\nwith m.lock(): m.register(sys.argv[4], Path(sys.argv[5]))"
+            "\nwith m.lock(): m.prepare(sys.argv[4], Path(sys.argv[5]))"
         )
         processes = [
             subprocess.Popen(
@@ -274,7 +339,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_network_attaches_only_shared_servers_to_environment_network(self):
         """API/frontend aliases remain on separate networks, while PostgreSQL/Redis are shared."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         name = record["project"] + "-net"
         details = [{"Labels": {"io.sourcelens.devctl.project": record["project"]}, "Containers": {}}]
         with patch.object(self.manager, "run", return_value=json.dumps(details)) as run, patch.object(
@@ -291,7 +356,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_foreign_network_cannot_be_modified(self):
         """Refuse an unrelated network even if its name happens to collide."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         with patch.object(self.manager, "run", return_value='[{"Labels": {}}]') as run:
             with self.assertRaisesRegex(ValueError, "not owned"):
                 self.manager.network(record, remove=True)
@@ -299,7 +364,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_test_refuses_wrong_actual_mount(self):
         """An incorrect container mount must never produce a green suite for the registered branch."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         inspected = [
             {"Mounts": [{"Type": "bind", "Destination": "/opt/backend", "Source": str(self.other / "backend")}]}
         ]
@@ -312,7 +377,7 @@ class DevManagerTests(unittest.TestCase):
 
     def test_suite_failure_is_saved_and_propagated(self):
         """Preserve a failing command's exit status and log instead of reporting success."""
-        record = self.register("branch-a")
+        record = self.prepare("branch-a")
         inspected = [
             {"Mounts": [{"Type": "bind", "Destination": "/opt/backend", "Source": str(self.root / "backend")}]}
         ]
