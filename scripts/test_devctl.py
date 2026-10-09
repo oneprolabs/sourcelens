@@ -111,7 +111,7 @@ class DevManagerTests(unittest.TestCase):
         docker.chmod(0o755)
         env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
         result = subprocess.run(
-            [os.sys.executable, str(self.other / "devctl"), "list"],
+            [os.sys.executable, str(self.other / "devctl"), "list", "--verbose"],
             cwd=self.other,
             env=env,
             text=True,

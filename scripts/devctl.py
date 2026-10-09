@@ -63,7 +63,7 @@ def print_table(headers, rows):
         print("  ".join(str(value).ljust(width) for value, width in zip(row, widths)).rstrip())
 
 
-def display_environments(records, detailed=False):
+def display_environments(records, detailed=False, verbose=False):
     """Show a worktree overview or service details, keeping complete paths available."""
     try:
         current = str(Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve())
@@ -86,7 +86,8 @@ def display_environments(records, detailed=False):
     for index, record in enumerate(records, 1):
         print(f"\n[{index}] {record['name']}")
         print(f"    Branch:  {branch(record['path'])}")
-        print(f"    Path:    {record['path']}")
+        if verbose:
+            print(f"    Path:    {record['path']}")
         if not detailed:
             continue
         print(f"    Project: {record.get('project', '-')}")
@@ -102,7 +103,7 @@ def display_environments(records, detailed=False):
             health = state.get("Health", {}).get("Status", "-")
             ports = sorted(
                 {
-                f"{'[' + p['HostIp'] + ']' if ':' in p['HostIp'] else p['HostIp']}:{p['HostPort']} -> {port}"
+                    f"{'[' + p['HostIp'] + ']' if ':' in p['HostIp'] else p['HostIp']}:{p['HostPort']} -> {port}"
                     for port, values in (container.get("NetworkSettings", {}).get("Ports") or {}).items()
                     for p in (values or [])
                 }
@@ -613,7 +614,9 @@ def main():
     up.add_argument("--port", type=int)
     up.add_argument("--no-build", action="store_true", help="reuse this environment's existing images")
     for action in ("infra-up", "list", "status"):
-        commands.add_parser(action)
+        command = commands.add_parser(action)
+        if action in ("list", "status"):
+            command.add_argument("-v", "--verbose", action="store_true", help="show full worktree paths")
     for action in ("logs", "down", "clean"):
         commands.add_parser(action).add_argument("name")
     test = commands.add_parser("test", help="inspect source and run a backend test command")
@@ -630,7 +633,7 @@ def main():
         root, config = manager_paths(Path(__file__).resolve().parents[1])
         manager = DevManager(root, state, config)
         if args.action in ("list", "status"):
-            display_environments(manager.discover(), detailed=args.action == "status")
+            display_environments(manager.discover(), detailed=args.action == "status", verbose=args.verbose)
             return
         if args.action == "logs":
             record = manager.get(args.name)
