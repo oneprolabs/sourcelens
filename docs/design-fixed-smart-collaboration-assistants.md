@@ -10,7 +10,7 @@ Smart Collaboration coordinator and a member set chosen by the administrator.
 The existing ad-hoc Smart Collaboration entry at `/lens/chat` remains
 available. It continues to let a user choose a participant range per Session.
 
-### Current state
+### Implemented state
 
 - A normal Assistant owns one execution capability and creates a direct
   Session.
@@ -19,7 +19,8 @@ available. It continues to let a user choose a participant range per Session.
   user-selected list in `Session.allowed_assistant_uuids`.
 - The runtime already snapshots the coordinator model, routing mode, allowed
   member UUIDs, and complete subagent definitions into each Run.
-- The admin Assistant wizard cannot persist a collaboration team.
+- The admin Assistant wizard persists the collaboration team through
+  `Assistant.collaboration_members`.
 
 ### User stories
 
@@ -345,11 +346,9 @@ not expected to change.
 - Backend tests, frontend tests, lint, build, diff checks, and ego-browser
   acceptance pass.
 
-## Review decisions requested
+## Implemented product decisions
 
-Before implementation, confirm these two product decisions:
-
-1. Keep the existing ad-hoc Smart Collaboration entry alongside Smart
+1. The existing ad-hoc Smart Collaboration entry remains alongside Smart
    Assistants.
 2. Membership edits affect only new Sessions; existing Sessions keep their
    original member snapshot.

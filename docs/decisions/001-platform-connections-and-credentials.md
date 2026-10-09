@@ -2,7 +2,12 @@
 
 ## Status
 
-Proposed
+Superseded (2026-10-09 documentation cleanup).
+
+This records the original 2026-07-20 proposal, not the current implementation.
+The implemented integration contract is documented in
+[Plugin Protocol V1](../plugin-protocol.md), with filesystem package ownership in
+[Plugin Package Contract](../spec-plugin-release-lifecycle.md).
 
 ## Date
 
@@ -18,10 +23,6 @@ configuration may also need external secrets.
 
 The platform needs a reusable connection boundary without putting plaintext
 secrets into DataSource, Skill, MCP, or persistent Run snapshots.
-
-The complete discussion, diagrams, security review, and unresolved questions
-are recorded in
-[Connection, authorization, and Skill integration](../connection-authorization-and-skill-integration.md).
 
 ## Proposed Decision
 

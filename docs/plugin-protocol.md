@@ -17,21 +17,19 @@ Datasource 同步或面向大模型的 Tool；声明的能力都必须由宿主�
   assets/
 ```
 
-`key` 使用小写字母开头的短标识，`version` 使用三段式 SemVer，且两层目录身份
-必须分别与 Manifest 的 `key` 和 `version` 一致。Plugin 项目可以独立维护源码、
-测试、文档和发布流程；宿主不从 Manifest 加载任意 Python 模块、Shell 命令或
-远程前端代码。
+`key` 使用小写字母开头的短标识，`version` 使用三段式 SemVer。包使用
+`plugins/<key>/` 平铺目录，目录名必须与 Manifest 的 `key` 一致；物理目录
+不体现版本。Plugin 项目可以独立维护源码、测试、文档和发布流程；宿主不从
+Manifest 加载任意 Python 模块、Shell 命令或远程前端代码。
 
-目录发现只登记安装事实，不决定生产版本。每个已安装版本由控制面维护独立的发布
-状态与部署角色：新发现版本默认为 `debugging` 且没有角色；管理员显式发布后才成为
-`published`，并可独立设为 `candidate` 或 `active`。首次引导现有安装时，每个 Plugin
-的最高已安装版本会初始化为 `published + active`，此后安装更高版本不会自动切换
-生产流量。
+Manifest 和已安装文件是包身份、schema、能力与业务版本的事实源。Registry
+直接发现文件系统包；未指定版本时选择最高已安装 SemVer，指定版本时精确匹配
+`plugin_key + plugin_version`。控制面不保存独立的发布状态、部署角色或包摘要。
 
-发布会冻结整个版本目录的 SHA-256 摘要。`published` 和 `retired` 版本的内容不可
-原地覆盖；摘要不一致时，Registry 必须拒绝正常加载并返回稳定冲突错误。需要修改
-内容时必须使用新的 SemVer 目录。退役只停止新绑定和部署角色分配，不删除目录；
-历史执行快照仍可按精确 `plugin_key + plugin_version` 解析该版本。
+`PluginRelease` 表及其生命周期 API 已移除。受信任包的文件修改在下一次 Registry
+读取时生效，入口内容哈希用于 Runtime 模块缓存失效，不是数据库冻结或发布审批
+机制。历史快照只有在相应精确版本仍安装时才能解析；版本号本身不保证旧内容保留。
+完整包布局与解析边界见 [Plugin Package Contract](spec-plugin-release-lifecycle.md)。
 
 ## 2. Manifest 身份与能力族
 
@@ -55,8 +53,8 @@ V1 的 `capability_family` 取值为 `plugin`。它表示 Tool 由受信任的�
 Runtime 执行，而不是 MCP Server。实际业务授权仍由 Tool 的 `capability` 字段和
 Connection 的资源范围共同决定，例如 `repository.read`。
 
-`version` 是必填的 SemVer 业务发布版本。它用于执行归因、评分与诊断聚合、候选
-验证、灰度、回滚；`protocol_version` 只表示宿主接口兼容性，不能替代业务版本。
+`version` 是必填的 SemVer 业务发布版本，用于执行归因与精确包解析；
+`protocol_version` 只表示宿主接口兼容性，不能替代业务版本。
 
 `mcp` 只表示名称为 `mcp__...` 的 MCP Server Tool；Skill、Plugin 和 MCP 是三个
 不同的能力族。为兼容旧模型输出，宿主在路由修复阶段允许将旧的
@@ -272,14 +270,14 @@ Provider 的并发、超时、deadline、取消、Retry-After 和部分失败处
 ## 9. 协议兼容
 
 - `protocol_version` 只代表宿主与 Plugin 的接口版本，不代表业务 capability 版本；
-- `plugin_version` 是 SemVer 业务发布版本，当前四个内置 Plugin 均为 `1.0.0`；
-- 安装布局为 `plugins/<key>/`，物理目录不体现版本；新发现
-  版本保持 `debugging`，不会因为 SemVer 更高而自动用于生产；
-- 正常 Connection、Datasource、Assistant 和新执行快照只解析
-  `published + active` 版本；候选验证显式解析 `published + candidate` 版本；
+- `plugin_version` 是 Manifest 中声明的 SemVer 业务版本；
+- 安装布局为 `plugins/<key>/`，物理目录不体现版本；
+- Connection、Datasource、Assistant 与执行快照使用同一文件系统 Registry，
+  不查询数据库发布状态或 `active` / `candidate` 部署角色；
+- 未指定版本时选择最高已安装 SemVer；历史快照按精确版本解析，缺失版本不能
+  静默替换为当前版本；
 - Manifest、Runtime、API 和执行快照必须保留 `plugin_version`；
-- 发布时冻结的包摘要用于保证同一版本内容不可变，不取代 `plugin_version`；
-- `retired` 版本不能再获得部署角色，但仍保留给记录了精确版本的历史快照；
+- 入口内容哈希用于模块缓存失效，不提供冻结发布内容的保证；
 - 不兼容的入口、Manifest 或安全语义必须提升 `protocol_version`；
 - 新增字段优先采用可选字段和默认值，不能删除既有字段或改变其含义；
 - 宿主、Control Runtime、LensNode Runtime 必须拒绝未协商的协议版本。
