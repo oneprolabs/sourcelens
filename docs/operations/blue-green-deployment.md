@@ -8,7 +8,7 @@ without re-discovering them.
 
 sourcelens is the reference implementation. Paths below in `code font` point at
 sourcelens files; the `<app>` / `<service>` placeholders are what you rename per
-project (see [Adaptation](#per-project-adaptation)).
+project (see [Adaptation](#4-per-project-adaptation)).
 
 ---
 
@@ -289,7 +289,7 @@ same dir):
    `docker/nginx/conf.d/default.conf`, `docker/nginx/upstream.conf.default`,
    `docker/nginx/default.standalone.conf`, and `scripts/{install,<app>ctl}.sh` +
    `scripts/lib/deploy-common.sh`.
-2. Apply the [Adaptation](#per-project-adaptation) renames.
+2. Apply the [Adaptation](#4-per-project-adaptation) renames.
 3. Add the version `LABEL` (fed by an `APP_VERSION` build arg) as the **last**
    Dockerfile layer, so a version bump doesn't bust the apt/pip/npm cache.
 4. Gitignore the runtime-state files; commit `upstream.conf.default` only.

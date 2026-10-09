@@ -443,7 +443,13 @@ def build_datasource_command(snapshot, material, trigger):
     resolved = snapshot.get("resolved_config")
     if not isinstance(resolved, dict): raise PluginRuntimeError("PLUGIN_CONFIG_INVALID")
     endpoint = _endpoint(resolved.get("endpoint"))
-    if not isinstance(material, dict) or material.get("plugin_key") != PLUGIN_KEY or str(material.get("endpoint") or "").rstrip("/") != endpoint or not material.get("value"):
+    if (
+        not isinstance(material, dict)
+        or material.get("plugin_key") != PLUGIN_KEY
+        or str(material.get("endpoint") or "").rstrip("/") != endpoint
+        or not isinstance(material.get("value"), str)
+        or (not material["value"] and material.get("authentication") != "anonymous")
+    ):
         raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
     datasource = resolved.get("datasource_config") or {}
     if not isinstance(datasource, dict):
@@ -468,11 +474,12 @@ def build_datasource_command(snapshot, material, trigger):
     config = {
         "branch": datasource.get("branch") or "",
         "directory": datasource.get("directory") or "",
-        "auth_scheme": "token",
-        "access_token": material["value"],
-        "allow_submodules": True,
+        "auth_scheme": "token" if material["value"] else "none",
+        "allow_submodules": bool(material["value"]),
         "gitlab_endpoint": endpoint,
     }
+    if material["value"]:
+        config["access_token"] = material["value"]
     config["repositories"] = [
         {
             "repo_url": f"{endpoint}/{project}.git",
@@ -584,7 +591,17 @@ def _text(arguments, name):
 
 
 def _get(client, url, token, params, max_bytes, truncate):
-    with client.stream("GET", url, params=params, follow_redirects=False, headers={"Accept": "application/json", "PRIVATE-TOKEN": token, "User-Agent": "SourceLens-LensNode"}) as response:
+    with client.stream(
+        "GET",
+        url,
+        params=params,
+        follow_redirects=False,
+        headers={
+            "Accept": "application/json",
+            **({"PRIVATE-TOKEN": token} if token else {}),
+            "User-Agent": "SourceLens-LensNode",
+        },
+    ) as response:
         if response.is_redirect: raise PluginRuntimeError("GITLAB_REDIRECT_REJECTED")
         if response.status_code >= 400: return response.status_code, b"", False
         body = b"".join(response.iter_bytes())
