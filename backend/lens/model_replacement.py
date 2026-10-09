@@ -78,10 +78,7 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
         if model_field == "multimodal_model_ref" and assistant.routing_mode == Assistant.RoutingMode.SMART:
             raise serializers.ValidationError({"assistant_models": "Smart assistants do not use a multimodal model."})
 
-    changed = sorted(
-        (assistant for assistant in assistants if getattr(assistant, model_field) != target.uuid),
-        key=lambda assistant: (assistant.name, str(assistant.uuid)),
-    )
+    changed = sorted(assistants, key=lambda assistant: (assistant.name, str(assistant.uuid)))
     result = {
         "count": len(changed),
         "assistants": [

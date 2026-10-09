@@ -123,7 +123,7 @@ class AssistantModelReplacementTests(TestCase):
         self.assertEqual(self.rows[0].agent_model_ref, self.old.uuid)
 
     def test_unset_model_and_noop_replacement(self):
-        """Replace default model references and skip rows already using the target."""
+        """Replace default references and include rows already using the target."""
 
         Assistant.objects.filter(pk=self.rows[0].pk).update(agent_model_ref=None, settings={"custom": "keep"})
         items = [{"uuid": str(self.rows[0].uuid), "model_ref": None}]
@@ -131,7 +131,7 @@ class AssistantModelReplacementTests(TestCase):
         self.rows[0].refresh_from_db()
         self.assertEqual(self.rows[0].settings["custom"], "keep")
         items[0]["model_ref"] = str(self.target.uuid)
-        self.assertEqual(self.post(assistant_models=items, preview=False).data["count"], 0)
+        self.assertEqual(self.post(assistant_models=items, preview=False).data["count"], 1)
 
     def test_smart_assistants_cannot_receive_multimodal_models(self):
         """Reject unused vision assignments on collaboration coordinators."""

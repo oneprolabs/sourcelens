@@ -1534,7 +1534,7 @@
       "noModels": "No hay modelos de destino disponibles. Configure y active un modelo.",
       "affected": "Se cambiará el modelo de {count} asistentes",
       "limit": "Reemplace hasta 1000 asistentes a la vez. Reduzca los filtros.",
-      "success": "Modelos reemplazados para {count} asistentes",
+      "success": "Modelos reemplazados correctamente",
       "conflict": "Los modelos cambiaron. Revise la lista actualizada e inténtelo de nuevo.",
       "selectPage": "Seleccionar asistentes de esta página",
       "selectAssistant": "Seleccionar asistente {name}",
@@ -1545,7 +1545,7 @@
       "clearSelection": "Borrar selección",
       "selectedCount": "{count} asistentes seleccionados",
       "noAssistants": "No hay asistentes coincidentes",
-      "replace": "Reemplazar modelos ({count})"
+      "replace": "Reemplazar modelos"
     },
     "datasourceSelection": {
       "title": "Acceso a datos",

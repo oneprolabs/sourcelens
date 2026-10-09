@@ -193,14 +193,7 @@
             </div>
           </Teleport>
         </div>
-        <p class="text-sm text-ink-600" aria-live="polite">
-          {{
-            t(`${prefix}.affected`, {
-              count: candidates.length
-            })
-          }}
-        </p>
-        <p v-if="candidates.length > 1000" class="text-sm text-danger-700">
+        <p v-if="scopeRows.length > 1000" class="text-sm text-danger-700">
           {{ t(`${prefix}.limit`) }}
         </p>
         <div class="overflow-hidden rounded-lg border border-line">
@@ -278,7 +271,7 @@
     </p>
     <template #footer>
       <BaseButton :loading="busy" :disabled="!canSubmit" @click="submit">
-        {{ t(`${prefix}.replace`, { count: candidates.length }) }}
+        {{ t(`${prefix}.replace`) }}
       </BaseButton>
       <BaseButton
         class="mr-3"
@@ -309,7 +302,6 @@ import { extractErrorMessage } from '@/utils/api'
 import { formatLLMConfigLabel, normalizeList } from './adminHelpers'
 import {
   eligibleReplacementModel,
-  replacementCandidates,
   replacementPickerPosition,
   selectableReplacementAssistants,
   toggleReplacementSelection
@@ -433,15 +425,12 @@ function toggleAllAssistants(checked) {
 const targetModels = computed(() =>
   models.value.filter((model) => eligibleReplacementModel(model, field.value))
 )
-const candidates = computed(() =>
-  replacementCandidates(scopeRows.value, field.value, '__all__', target.value)
-)
 const canSubmit = computed(
   () =>
     !loading.value &&
     !busy.value &&
-    candidates.value.length > 0 &&
-    candidates.value.length <= 1000 &&
+    scopeRows.value.length > 0 &&
+    scopeRows.value.length <= 1000 &&
     targetModels.value.some((model) => model.uuid === target.value)
 )
 
@@ -468,16 +457,16 @@ async function submit() {
   assistantPickerOpen.value = false
   error.value = ''
   try {
-    const result = await replaceAssistantModels({
+    await replaceAssistantModels({
       model_field: field.value,
       target_model_ref: target.value,
-      assistant_models: candidates.value.map((row) => ({
+      assistant_models: scopeRows.value.map((row) => ({
         uuid: row.uuid,
         model_ref: row[field.value] || null
       })),
       preview: false
     })
-    showSuccess(t(`${prefix}.success`, { count: result.count }))
+    showSuccess(t(`${prefix}.success`))
     emit('updated')
   } catch (err) {
     if (err.response?.status === 409) {

@@ -1534,7 +1534,7 @@
       "noModels": "No eligible target models. Configure and enable a model in model management.",
       "affected": "Models will change for {count} assistants",
       "limit": "Replace up to 1000 assistants at a time. Narrow the filters.",
-      "success": "Replaced models for {count} assistants",
+      "success": "Models replaced successfully",
       "conflict": "Assistant models changed. Review the refreshed list and try again.",
       "selectPage": "Select assistants on this page",
       "selectAssistant": "Select assistant {name}",
@@ -1545,7 +1545,7 @@
       "clearSelection": "Clear selection",
       "selectedCount": "{count} assistants selected",
       "noAssistants": "No matching assistants",
-      "replace": "Replace models ({count})"
+      "replace": "Replace models"
     },
     "datasourceSelection": {
       "title": "Data access",

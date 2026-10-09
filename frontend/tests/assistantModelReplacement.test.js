@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  replacementCandidates,
   eligibleReplacementModel,
   selectableReplacementAssistants,
   toggleReplacementSelection,
@@ -87,39 +86,12 @@ test('dropdown stays within the viewport and flips above when there is more room
   assert.equal(mobile.top + mobile.maxHeight, 492)
 })
 
-test('old-model filtering excludes archived assistants and existing target assignments', () => {
+test('assistant selection includes existing target assignments and default models', () => {
   assert.deepEqual(
-    replacementCandidates(assistants, 'agent_model_ref', 'old', 'new').map(
-      (r) => r.uuid
+    selectableReplacementAssistants(assistants, 'agent_model_ref').map(
+      (row) => row.uuid
     ),
-    ['a']
-  )
-  assert.deepEqual(
-    replacementCandidates(assistants, 'agent_model_ref', '__all__', 'old').map(
-      (r) => r.uuid
-    ),
-    ['b', 'c', 'e']
-  )
-})
-
-test('unset-model filtering supports default assignments and excludes Smart vision slots', () => {
-  assert.deepEqual(
-    replacementCandidates(
-      assistants,
-      'agent_model_ref',
-      '__unset__',
-      'new'
-    ).map((r) => r.uuid),
-    ['c', 'e']
-  )
-  assert.deepEqual(
-    replacementCandidates(
-      assistants,
-      'multimodal_model_ref',
-      '__all__',
-      'vision'
-    ).map((r) => r.uuid),
-    ['a', 'b', 'c']
+    ['a', 'b', 'c', 'e']
   )
 })
 

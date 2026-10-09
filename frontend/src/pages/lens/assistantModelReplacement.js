@@ -45,17 +45,6 @@ export function replacementPickerPosition(rect, viewport, menuHeight) {
   }
 }
 
-export function replacementCandidates(assistants, field, source, target) {
-  return selectableReplacementAssistants(assistants, field).filter((row) => {
-    const current = row[field] || null
-    return (
-      current !== target &&
-      (source === '__all__' ||
-        (source === '__unset__' ? !current : current === source))
-    )
-  })
-}
-
 export function eligibleReplacementModel(model, field) {
   if (
     model.is_active === false ||
