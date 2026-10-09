@@ -1,0 +1,181 @@
+# SourceLens-specific application stack; all names are scoped by devctl's project.
+name: ${DEV_APP_PROJECT:?Use devctl up}
+x-backend: &backend
+  image: ${DEV_BACKEND_IMAGE:?Use devctl}
+  restart: unless-stopped
+  entrypoint: [sh, /worktree-entrypoint.sh]
+  env_file:
+    # Shared configuration; environment below overrides all infrastructure destinations.
+    - ${DEV_CONFIG:?Use devctl}
+  environment:
+    DATABASE_URL: ""
+    DB_ENGINE: postgresql
+    POSTGRES_HOST: postgresql
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${DEV_DB_NAME:?Use devctl}
+    CELERY_BROKER_URL: redis://redis:6379/${DEV_REDIS_BROKER_DB:?Use devctl}
+    REDIS_URL: redis://redis:6379/${DEV_REDIS_BROKER_DB:?Use devctl}
+    CACHE_BACKEND: redis
+    CACHE_REDIS_URL: redis://redis:6379/${DEV_REDIS_CACHE_DB:?Use devctl}
+    CHANNEL_LAYER_REDIS_URL: redis://redis:6379/${DEV_REDIS_CHANNEL_DB:?Use devctl}
+    # Keep the application's hard-coded lens queue; logical DB isolation prevents cross-consumption.
+    CELERY_TASK_DEFAULT_QUEUE: backend
+    CELERY_TASK_QUEUES: backend,lens
+    CELERY_REQUIRED_QUEUES: backend,lens
+    CELERY_CONCURRENCY: "2"
+    DJANGO_DEBUG: "true"
+    CSRF_TRUSTED_ORIGINS: http://localhost:${DEV_HTTP_PORT},http://127.0.0.1:${DEV_HTTP_PORT}
+    SITE_DOMAIN: localhost:${DEV_HTTP_PORT}
+    LENS_PLUGIN_ROOTS: /opt/plugins
+    WORKSPACE_ROOT: /opt/backend
+    LENSNODE_NAME: ${DEV_APP_PROJECT}
+    LENSNODE_TOKEN: dev-${DEV_APP_PROJECT}
+    LENSNODE_WORKSPACE_PATH: /workspace
+    LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
+    TURNSTILE_ENABLED: "false"
+    TURNSTILE_SECRET_KEY: ""
+  volumes:
+    - ${DEV_ROOT}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+    - ${WORKTREE_DIR:?Use devctl}/backend:/opt/backend
+    - ${WORKTREE_DIR}/plugins:/opt/plugins:ro
+    # Runtime files are isolated too; uploads/checkpoints/logs must not cross environments.
+    - ${DEV_DATA_DIR}/staticfiles:/opt/backend/core/staticfiles
+    - ${DEV_DATA_DIR}/logs/api:/var/log/gunicorn
+    - ${DEV_DATA_DIR}/logs/celery:/var/log/celery
+    - ${DEV_DATA_DIR}/storage:/opt/storage
+    - ${DEV_DATA_DIR}/workspace:/workspace
+    - ${DEV_DATA_DIR}/document-attachments:/opt/document-attachments
+    - ${DEV_DATA_DIR}/deliverables:/opt/deliverables
+  networks:
+    - default
+services:
+  backend-api:
+    <<: *backend
+    build:
+      # Dependencies and image tags belong to this worktree, never to another app stack.
+      context: ${WORKTREE_DIR}
+      dockerfile: Dockerfile
+      target: backend
+      args:
+        DEV_MODE: "1"
+    command: development
+    healthcheck:
+      test: [CMD, curl, -f, http://127.0.0.1:8000/health]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+  backend-worker:
+    <<: *backend
+    command: celery
+    depends_on:
+      backend-api:
+        condition: service_healthy
+  backend-scheduler:
+    <<: *backend
+    command: celery-beat
+    depends_on:
+      backend-api:
+        condition: service_healthy
+  flower:
+    <<: *backend
+    command: flower
+    depends_on:
+      backend-api:
+        condition: service_healthy
+  lensnode:
+    image: ${DEV_LENSNODE_IMAGE:?Use devctl}
+    build:
+      context: ${WORKTREE_DIR}
+      dockerfile: lensnode/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${DEV_CONFIG}
+    environment:
+      LENSNODE_NAME: ${DEV_APP_PROJECT}
+      LENSNODE_TOKEN: dev-${DEV_APP_PROJECT}
+      LENSNODE_AGENT_VERSION: dev
+      LENSNODE_CONTROL_WS_URL: ws://backend-api:8000/ws/lens/lensnodes/
+      LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
+      LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_CHECKPOINT_DIR: /runtime/checkpoints
+      LENSNODE_EXECUTION_BACKEND: trusted_container
+      LENSNODE_MAX_CONCURRENT_RUNS: "2"
+      PYTHONPATH: /opt/lensnode
+    volumes:
+      - ${WORKTREE_DIR}/lensnode/lensnode:/opt/lensnode/lensnode:ro
+      - ${WORKTREE_DIR}/plugins:/opt/plugins:ro
+      - ${DEV_DATA_DIR}/workspace:/workspace
+      - ${DEV_DATA_DIR}/runtime:/runtime
+      - ${DEV_DATA_DIR}/storage/media:/opt/storage/media:ro
+    networks:
+      - default
+    depends_on:
+      backend-api:
+        condition: service_healthy
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    init: true
+    restart: unless-stopped
+    env_file:
+      - ${DEV_CONFIG}
+    environment:
+      VITE_TURNSTILE_SITE_KEY: ""
+      API_PROXY_TARGET: http://backend-api:8000
+    # Install from the selected branch's lockfile, with an environment-specific dependency volume.
+    command: [sh, -c, 'npm ci --cache /npm-cache --no-audit --no-fund && exec npm run dev -- --host 0.0.0.0']
+    volumes:
+      # Mount source/config separately: mounting /app read-only prevents Docker
+      # creating the nested dependency mount when the worktree has no node_modules.
+      - ${WORKTREE_DIR}/frontend/src:/app/src:ro
+      - ${WORKTREE_DIR}/frontend/public:/app/public:ro
+      - ${WORKTREE_DIR}/frontend/design:/app/design:ro
+      - ${WORKTREE_DIR}/frontend/index.html:/app/index.html:ro
+      - ${WORKTREE_DIR}/frontend/vite.config.js:/app/vite.config.js:ro
+      - ${WORKTREE_DIR}/frontend/tailwind.config.js:/app/tailwind.config.js:ro
+      - ${WORKTREE_DIR}/frontend/postcss.config.js:/app/postcss.config.js:ro
+      - ${WORKTREE_DIR}/frontend/package.json:/app/package.json:ro
+      - ${WORKTREE_DIR}/frontend/package-lock.json:/app/package-lock.json:ro
+      - node-modules:/app/node_modules
+      - npm-cache:/npm-cache
+    networks:
+      - default
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:3000/]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+  nginx:
+    image: nginx:latest
+    restart: unless-stopped
+    volumes:
+      # Routing belongs to the manager's directory, not the application branch.
+      - ${DEV_ROOT}/docker/nginx/default.dev.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${DEV_DATA_DIR}/staticfiles:/staticfiles:ro
+      - ${DEV_DATA_DIR}/storage:/opt/storage:ro
+      - ${DEV_DATA_DIR}/logs/nginx:/var/log/nginx
+    ports:
+      - 127.0.0.1:${DEV_HTTP_PORT}:80
+    networks:
+      - default
+    depends_on:
+      backend-api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -f, http://127.0.0.1/health]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+networks:
+  default:
+    # Only this environment's applications and the two shared servers join this
+    # network. A global app network would collide on backend-api/frontend aliases.
+    external: true
+    name: ${DEV_APP_NETWORK}
+volumes:
+  node-modules:
+  npm-cache:

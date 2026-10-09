@@ -1,0 +1,41 @@
+# Managed by devctl; application cleanup never tears down this project.
+name: ${DEV_INFRA_PROJECT:?Use devctl infra-up}
+services:
+  postgresql:
+    image: postgres:17
+    restart: unless-stopped
+    env_file:
+      # One configuration home for every worktree; credentials are not copied to the registry.
+      - ${DEV_CONFIG:?Use devctl}
+    environment:
+      POSTGRES_DB: postgres
+    volumes:
+      # Shared server, separate worktree databases; retain the volume on app cleanup.
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - infra
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Reserve three logical databases per environment: broker, cache, Channels.
+    command: [redis-server, --databases, "256", --appendonly, "yes", --maxmemory-policy, noeviction]
+    volumes:
+      - redis-data:/data
+    networks:
+      - infra
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+networks:
+  infra:
+    name: ${DEV_INFRA_NETWORK:?Use devctl}
+volumes:
+  postgres-data:
+  redis-data:
