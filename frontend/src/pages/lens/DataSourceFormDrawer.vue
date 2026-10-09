@@ -219,6 +219,28 @@
               "
               @update:model-value="updatePluginConfig"
             >
+              <template #field-actions="{ field }">
+                <BaseButton
+                  v-if="
+                    isRepositoryPlugin &&
+                    form.connection_uuid &&
+                    ['repositories', 'projects'].includes(field.key) &&
+                    connectionResult?.details?.next_cursor
+                  "
+                  size="sm"
+                  variant="secondary"
+                  :disabled="loadingMoreRepositories || testingConnection"
+                  @click="$emit('load-more-repositories')"
+                >
+                  {{
+                    t(
+                      loadingMoreRepositories
+                        ? 'common.loading'
+                        : 'common.loadMore'
+                    )
+                  }}
+                </BaseButton>
+              </template>
               <template #field-suffix="{ field, index }">
                 <span
                   v-if="
@@ -1600,6 +1622,7 @@ const props = defineProps({
   syncTimezone: { type: String, default: 'Asia/Shanghai' },
   pathResult: { type: Object, default: null },
   connectionResult: { type: Object, default: null },
+  loadingMoreRepositories: Boolean,
   loadingResourceOptions: { type: String, default: '' },
   checkingPath: Boolean,
   testingConnection: Boolean,
@@ -1623,6 +1646,7 @@ const emit = defineEmits([
   'refresh-credentials',
   'refresh-dirs',
   'request-resource-options',
+  'load-more-repositories',
   'update:syncIntervalSeconds',
   'update:syncPolicyMode',
   'update:syncCron',

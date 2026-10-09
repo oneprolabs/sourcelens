@@ -14,6 +14,10 @@ const functions = [
     source.indexOf('function validateFeishuResources()')
   ),
   source.slice(
+    source.indexOf('async function loadMorePluginRepositories('),
+    source.indexOf('async function testDatasourceConnection(')
+  ),
+  source.slice(
     source.indexOf('async function testDatasourceConnection('),
     source.indexOf('function githubDatasourceAccessError(')
   ),
@@ -41,6 +45,8 @@ function setup(overrides = {}) {
     datasourceConnectionBaseSignature: { value: '' },
     datasourceConnectionResult: { value: null },
     testingDatasourceConnection: { value: false },
+    loadingMorePluginRepositories: { value: false },
+    connections: { value: [] },
     loadingPluginResourceOptions: { value: '' },
     feishuValidation: { reset() {} },
     isPluginSourceType: () => true,
@@ -319,3 +325,160 @@ test('repository URLs become owner/name without altering unsafe input for backen
     assert.equal(normalizeGitHubRepositoryAddress(value), value)
   }
 })
+
+for (const pluginKey of ['github', 'gitlab']) {
+  const key = pluginKey === 'github' ? 'repositories' : 'projects'
+  test(`${pluginKey} discovers current repositories and preserves the next page through access checks`, async () => {
+    let discoveries = 0
+    const context = setup({
+      form: {
+        value: {
+          plugin_key: pluginKey,
+          source_type: `plugin:${pluginKey}`,
+          connection_uuid: 'authenticated'
+        }
+      },
+      datasourceConfig: { value: { [key]: [] } },
+      buildPluginDatasourceConfig: () => ({ [key]: ['owner/repo'] }),
+      getConnectionResources: async () => {
+        discoveries++
+        return {
+          resources: { [key]: { items: [{ value: 'owner/repo' }] } },
+          next_cursor: '2'
+        }
+      }
+    })
+    await context.testDatasourceConnection()
+    assert.equal(discoveries, 1)
+    assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
+    context.datasourceConfig.value[key] = ['owner/repo']
+    context.resetDatasourceConnectionResult()
+    await context.testDatasourceConnection()
+    assert.equal(discoveries, 1)
+    assert.equal(
+      context.datasourceConnectionResult.value.details.next_cursor,
+      '2'
+    )
+  })
+
+  test(`${pluginKey} loads further authenticated repositories without approving access`, async () => {
+    let request
+    const context = setup({
+      form: {
+        value: {
+          plugin_key: pluginKey,
+          source_type: `plugin:${pluginKey}`,
+          connection_uuid: 'authenticated'
+        }
+      },
+      connections: {
+        value: [{ uuid: 'authenticated', allowed_scope: { [key]: ['*'] } }]
+      },
+      datasourceConnectionResult: {
+        value: {
+          status: 'unchecked',
+          details: {
+            connection_uuid: 'authenticated',
+            next_cursor: '2',
+            resources: {
+              [key]: { items: [{ value: 'owner/repo' }] },
+              branches: { items: [{ value: 'main' }] }
+            }
+          }
+        }
+      },
+      getConnectionResourceCandidates: async (uuid, params) => {
+        request = { uuid, params }
+        return {
+          resources: {
+            [key]: {
+              items: [{ value: 'owner/repo' }, { value: 'owner/other' }]
+            }
+          },
+          next_cursor: ''
+        }
+      }
+    })
+    await context.loadMorePluginRepositories()
+    assert.equal(request.uuid, 'authenticated')
+    assert.equal(request.params.cursor, '2')
+    assert.equal(context.datasourceConnectionResult.value.status, 'unchecked')
+    assert.deepEqual(
+      Array.from(
+        context.datasourceConnectionResult.value.details.resources[key].items,
+        (item) => item.value
+      ),
+      ['owner/repo', 'owner/other']
+    )
+    assert.equal(
+      context.datasourceConnectionResult.value.details.resources.branches
+        .items[0].value,
+      'main'
+    )
+    assert.equal(
+      context.datasourceConnectionResult.value.details.next_cursor,
+      ''
+    )
+  })
+}
+
+test('repository pagination rejects stale responses after switching connections', async () => {
+  let finish
+  const context = setup({
+    connections: {
+      value: [
+        { uuid: 'public-connection', allowed_scope: { repositories: ['*'] } }
+      ]
+    },
+    datasourceConnectionResult: {
+      value: {
+        status: 'unchecked',
+        details: {
+          connection_uuid: 'public-connection',
+          next_cursor: '2',
+          resources: { repositories: { items: [] } }
+        }
+      }
+    },
+    getConnectionResourceCandidates: () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  })
+  const pending = context.loadMorePluginRepositories()
+  context.form.value.connection_uuid = 'another-connection'
+  context.resetDatasourceConnectionResult()
+  finish({
+    resources: { repositories: { items: [{ value: 'owner/old' }] } },
+    next_cursor: ''
+  })
+  await pending
+  assert.equal(
+    context.datasourceConnectionResult.value.details.resources.repositories,
+    undefined
+  )
+})
+
+for (const connectionUuid of ['', 'restricted']) {
+  test(`repository pagination does not enumerate public or restricted connections: ${connectionUuid || 'public'}`, async () => {
+    const context = setup({
+      form: {
+        value: { plugin_key: 'github', connection_uuid: connectionUuid }
+      },
+      connections: {
+        value: [
+          {
+            uuid: 'restricted',
+            allowed_scope: { repositories: ['owner/repo'] }
+          }
+        ]
+      },
+      datasourceConnectionResult: { value: { details: { next_cursor: '2' } } },
+      getConnectionResourceCandidates: () => {
+        throw new Error('Enumeration is forbidden')
+      }
+    })
+    await context.loadMorePluginRepositories()
+    assert.equal(context.loadingMorePluginRepositories.value, false)
+  })
+}

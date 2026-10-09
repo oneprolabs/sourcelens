@@ -369,6 +369,7 @@
         :path-result="datasourcePathResult"
         :connection-result="datasourceConnectionResult"
         :loading-resource-options="loadingPluginResourceOptions"
+        :loading-more-repositories="loadingMorePluginRepositories"
         :checking-path="checkingDatasourcePath"
         :testing-connection="testingDatasourceConnection"
         :refreshing-credentials="refreshingCredentials"
@@ -387,6 +388,7 @@
         @refresh-credentials="refreshCredentials"
         @refresh-dirs="refreshDirectories"
         @request-resource-options="loadPluginResourceOptions"
+        @load-more-repositories="loadMorePluginRepositories"
       />
       <input
         ref="uploadFileInput"
@@ -469,6 +471,7 @@ import {
   createDataSource,
   deleteDataSource,
   getConnectionResources,
+  getConnectionResourceCandidates,
   getPluginIcon,
   getPluginManifest,
   listCredentials,
@@ -570,6 +573,7 @@ const feishuValidation = createFeishuResourceValidation((result) => {
   datasourceConnectionResult.value = result
 })
 const loadingPluginResourceOptions = ref('')
+const loadingMorePluginRepositories = ref(false)
 let pluginResourceRequestId = 0
 const suppressDatasourceConnectionReset = ref(false)
 const datasourceConnectionBaseSignature = ref('')
@@ -2031,6 +2035,11 @@ function resetDatasourceConnectionResult() {
     datasourceConnectionResult.value = {
       status: 'unchecked',
       details: {
+        next_cursor:
+          datasourceConnectionResult.value?.details?.connection_uuid ===
+          form.value.connection_uuid
+            ? datasourceConnectionResult.value?.details?.next_cursor || ''
+            : '',
         resources:
           datasourceConnectionResult.value?.details?.connection_uuid ===
           form.value.connection_uuid
@@ -2108,6 +2117,58 @@ function validateFeishuResources() {
   )
 }
 
+async function loadMorePluginRepositories() {
+  const connectionUuid = form.value.connection_uuid
+  const key = form.value.plugin_key === 'github' ? 'repositories' : 'projects'
+  const connection = connections.value.find(
+    (item) => item.uuid === connectionUuid
+  )
+  const cursor = datasourceConnectionResult.value?.details?.next_cursor
+  if (
+    !['github', 'gitlab'].includes(form.value.plugin_key) ||
+    !connection?.allowed_scope?.[key]?.includes('*') ||
+    !cursor ||
+    loadingMorePluginRepositories.value ||
+    testingDatasourceConnection.value
+  )
+    return
+  const requestId = datasourceConnectionRequestId
+  loadingMorePluginRepositories.value = true
+  try {
+    const result = await getConnectionResourceCandidates(connectionUuid, {
+      cursor,
+      limit: 100
+    })
+    if (
+      requestId !== datasourceConnectionRequestId ||
+      connectionUuid !== form.value.connection_uuid
+    )
+      return
+    const current = datasourceConnectionResult.value
+    const resources = current?.details?.resources || {}
+    const items = new Map(
+      [
+        ...(resources[key]?.items || []),
+        ...(result.resources?.[key]?.items || [])
+      ].map((item) => [item.value, item])
+    )
+    datasourceConnectionResult.value = {
+      ...current,
+      details: {
+        ...current.details,
+        resources: { ...resources, [key]: { items: [...items.values()] } },
+        next_cursor: result.next_cursor || ''
+      }
+    }
+  } catch (error) {
+    if (requestId === datasourceConnectionRequestId) {
+      showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+    }
+  } finally {
+    loadingMorePluginRepositories.value = false
+  }
+}
+
 async function testDatasourceConnection({ automatic = false } = {}) {
   if (
     automatic &&
@@ -2131,6 +2192,7 @@ async function testDatasourceConnection({ automatic = false } = {}) {
   datasourceConnectionResult.value = {
     status: 'checking',
     details: {
+      next_cursor: datasourceConnectionResult.value?.details?.next_cursor || '',
       resources: previousResources,
       connection_uuid: form.value.connection_uuid
     }
@@ -2142,12 +2204,16 @@ async function testDatasourceConnection({ automatic = false } = {}) {
       (datasourceConfig.value.repositories?.length ||
         datasourceConfig.value.projects?.length)
     ) {
-      if (form.value.connection_uuid && !previousResources.repositories) {
+      const key =
+        form.value.plugin_key === 'github' ? 'repositories' : 'projects'
+      if (form.value.connection_uuid && !previousResources[key]) {
         // Enumeration must not block checking explicitly selected repositories.
         const discovered = await getConnectionResources(
           form.value.connection_uuid
         ).catch(() => null)
         if (requestId !== datasourceConnectionRequestId) return
+        datasourceConnectionResult.value.details.next_cursor =
+          discovered?.next_cursor || ''
         previousResources = {
           ...previousResources,
           ...(discovered?.resources || {})
@@ -2177,6 +2243,8 @@ async function testDatasourceConnection({ automatic = false } = {}) {
             ...previousResources,
             ...(datasourceConnectionResult.value?.details?.resources || {})
           },
+          next_cursor:
+            datasourceConnectionResult.value?.details?.next_cursor || '',
           validatedRepositories: result.resources || [],
           normalizedConfig: result.datasource_config,
           endpoint: result.endpoint,
