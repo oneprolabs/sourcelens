@@ -23,7 +23,7 @@ class DevManagerTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "main"
         self.root.mkdir()
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-        for directory in ("backend", "frontend", "plugins", "lensnode/lensnode"):
+        for directory in ("backend", "frontend/src", "plugins", "lensnode/lensnode"):
             (self.root / directory).mkdir(parents=True)
             (self.root / directory / "fixture").touch()
         subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
@@ -151,6 +151,15 @@ class DevManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.resolve(str(self.root), records)["status"], "stopped")
         self.assertFalse(self.manager.registry.exists())
 
+    def test_legacy_test_metadata_does_not_pin_a_stack_to_its_previous_source(self):
+        """After a source switch, test history must not duplicate the live project identity."""
+        self.manager.update(dict(name="other", path=str(self.other.resolve()), project="manual-dev", port=8000))
+        fixture = self.compose_fixture(path=self.root)
+        with patch.object(self.manager, "run", side_effect=["api-id", json.dumps([fixture])]):
+            records = self.manager.discover()
+        self.assertEqual(self.manager.resolve("manual-dev", records)["path"], str(self.root.resolve()))
+        self.assertNotIn("project", self.manager.resolve(str(self.other), records))
+
     def test_production_and_unrelated_mounts_are_excluded(self):
         """Compose labels alone must not include production or another repository."""
         fixtures = [self.compose_fixture(production=True), self.compose_fixture(path=Path("/unrelated"))]
@@ -188,6 +197,69 @@ class DevManagerTests(unittest.TestCase):
         self.assertEqual(
             [c.args[0] for c in run.call_args_list], [["docker", "stop", "api-id"], ["docker", "rm", "api-id"]]
         )
+
+    def switch_fixture(self):
+        """Supply a rendered single stack and running infrastructure for lifecycle checks."""
+        api = self.compose_fixture(path=self.root)
+        api["Config"]["Image"] = "backend:dev"
+        containers = [api]
+        services = {
+            "backend-api": dict(
+                container_name="api",
+                image="backend:dev",
+                volumes=[dict(type="bind", source=str(self.other.resolve() / "backend"), target="/opt/backend")],
+            )
+        }
+        for service in ("postgresql", "redis"):
+            container = self.compose_fixture(path=self.root)
+            container["Id"] = service
+            container["Name"] = "/" + service
+            container["Config"]["Labels"]["com.docker.compose.service"] = service
+            container["Config"]["Image"] = service + ":dev"
+            container["Mounts"] = []
+            containers.append(container)
+            services[service] = dict(container_name=service, image=service + ":dev")
+        stack = dict(
+            name="main", path=str(self.root.resolve()), project="manual-dev", external=True, containers=containers
+        )
+        target = dict(name="other", path=str(self.other.resolve()), containers=[])
+        after = dict(stack, path=target["path"])
+        return stack, target, after, dict(services=services)
+
+    def test_switch_recreates_only_applications_and_selects_target_source(self):
+        """Single-stack switching uses the config home, no build, and no infrastructure up."""
+        stack, target, after, config = self.switch_fixture()
+        with patch.object(
+            self.manager, "discover", side_effect=[[stack, target], [stack, target], [after]]
+        ), patch.object(self.manager, "run", side_effect=[json.dumps(config), "", ""]) as run, patch(
+            "scripts.devctl.display_environments"
+        ):
+            self.manager.switch(str(self.other))
+        calls = run.call_args_list
+        self.assertEqual(calls[0].kwargs["env"]["WORKTREE_DIR"], str(self.other.resolve()))
+        self.assertEqual(calls[0].args[0][calls[0].args[0].index("--project-directory") + 1], str(self.root.resolve()))
+        for call in calls[1:]:
+            self.assertIn("--no-deps", call.args[0])
+            self.assertIn("--no-build", call.args[0])
+            self.assertNotIn("postgresql", call.args[0])
+            self.assertNotIn("redis", call.args[0])
+
+    def test_switch_rejects_changed_ports_before_mutation(self):
+        """A source switch must not silently replace the stack's published ports."""
+        stack, target, after, config = self.switch_fixture()
+        config["services"]["backend-api"]["ports"] = [dict(target=8000, published=18000)]
+        with patch.object(self.manager, "discover", return_value=[stack, target]), patch.object(
+            self.manager, "run", return_value=json.dumps(config)
+        ) as run:
+            with self.assertRaisesRegex(ValueError, "changes ports"):
+                self.manager.switch(str(self.other))
+        self.assertEqual(run.call_count, 1)
+
+    def test_switch_requires_an_existing_single_stack(self):
+        """Switch never creates a second stack when none is present."""
+        with patch.object(self.manager, "run", return_value=""):
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                self.manager.switch(str(self.other))
 
     def test_parallel_environments_have_disjoint_resources(self):
         """Database, broker/cache/Channels, port, images, and runtime files are isolated."""

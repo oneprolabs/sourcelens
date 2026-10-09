@@ -44,7 +44,7 @@ services:
       # Share runtime data across worktrees; switching branches must not replace stored data.
       - ${DEV_STATICFILES_DIR:-./data.dev/django/staticfiles}:/opt/backend/core/staticfiles
       - ${DEV_DATA_DIR:-./data.dev}/logs/api:/var/log/gunicorn
-      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+      - ${DEV_WORKTREE_ENTRYPOINT:-${DEV_ROOT:-.}/docker/worktree-entrypoint.sh}:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
       # Certificates stay with shared configuration, independent of the selected branch.
@@ -91,7 +91,7 @@ services:
       - ${DEV_DATA_DIR:-./data.dev}/workspace:/workspace
       - ${DEV_DATA_DIR:-./data.dev}/document-attachments:/opt/document-attachments
       - ${DEV_DATA_DIR:-./data.dev}/deliverables:/opt/deliverables
-      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+      - ${DEV_WORKTREE_ENTRYPOINT:-${DEV_ROOT:-.}/docker/worktree-entrypoint.sh}:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
       - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
@@ -121,7 +121,7 @@ services:
     volumes:
       # Share runtime data across worktrees; switching branches must not replace stored data.
       - ${DEV_DATA_DIR:-./data.dev}/logs/scheduler:/var/log/celery
-      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+      - ${DEV_WORKTREE_ENTRYPOINT:-${DEV_ROOT:-.}/docker/worktree-entrypoint.sh}:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
     networks:
@@ -199,7 +199,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${DEV_ROOT:-.}/docker/worktree-entrypoint.sh:/worktree-entrypoint.sh:ro
+      - ${DEV_WORKTREE_ENTRYPOINT:-${DEV_ROOT:-.}/docker/worktree-entrypoint.sh}:/worktree-entrypoint.sh:ro
       - ${WORKTREE_DIR:-.}/backend:/opt/backend
       - ${WORKTREE_DIR:-.}/plugins:/opt/plugins:ro
     command: flower

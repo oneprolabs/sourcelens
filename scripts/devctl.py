@@ -30,6 +30,15 @@ def common_dir(path):
     return (Path(path) / git(path, "rev-parse", "--git-common-dir")).resolve()
 
 
+def host_path(path):
+    """Normalize Docker Desktop's VM mount prefix when its host path exists locally."""
+    if sys.platform == "darwin" and str(path).startswith("/host_mnt/"):
+        candidate = Path(str(path).removeprefix("/host_mnt"))
+        if candidate.exists():
+            return candidate.resolve()
+    return Path(path).resolve()
+
+
 def manager_paths(tool_root, environment=None):
     """Keep the manager and shared config in Git's primary checkout when switching worktrees."""
     environment = os.environ if environment is None else environment
@@ -341,7 +350,7 @@ class DevManager:
                     ),
                     None,
                 )
-                path = str(Path(source).resolve().parent) if source else None
+                path = str(host_path(source).parent) if source else None
                 if path not in paths:
                     continue
                 saved = next((r for r in metadata if r["project"] == project and r["path"] == path), {})
@@ -368,6 +377,8 @@ class DevManager:
         for tree in worktrees:
             if not any(r["path"] == tree["path"] for r in found):
                 saved = next((r for r in metadata if r["path"] == tree["path"]), {})
+                if "redis_dbs" not in saved:
+                    saved = {k: v for k, v in saved.items() if k not in ("project", "port")}
                 found.append(
                     dict({**tree, **saved}, status="stopped", containers=[], external="redis_dbs" not in saved)
                 )
@@ -486,6 +497,125 @@ class DevManager:
         """Start only the dedicated shared services, waiting for health."""
         self.compose(None, ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "postgresql", "redis"])
 
+    def switch(self, path):
+        """Retarget the existing single development stack without recreating its infrastructure."""
+        target = self.resolve(path, self.discover())
+        stacks = [r for r in self.discover() if r.get("external") and r.get("containers")]
+        if len(stacks) != 1:
+            raise ValueError(
+                "switch requires exactly one existing single Compose dev stack; start it with Compose first"
+            )
+        stack = stacks[0]
+        if not self.config.is_file():
+            raise ValueError(f"Missing shared config: {self.config}")
+        for directory in ("backend", "frontend/src", "plugins", "lensnode/lensnode"):
+            if not (Path(target["path"]) / directory).is_dir():
+                raise ValueError(f"Missing source directory: {directory}")
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("DEV_", "COMPOSE_"))}
+        env.update(
+            WORKTREE_DIR=target["path"],
+            DEV_ROOT=str(self.root),
+            DEV_CONFIG=str(self.config),
+            DEV_WORKTREE_ENTRYPOINT=str(Path(__file__).resolve().parents[1] / "docker/worktree-entrypoint.sh"),
+        )
+        for container in stack["containers"]:
+            service = container["Config"]["Labels"].get("com.docker.compose.service")
+            image_key = {
+                "backend-api": "DEV_BACKEND_IMAGE",
+                "lensnode": "DEV_LENSNODE_IMAGE",
+                "frontend": "DEV_FRONTEND_IMAGE",
+            }.get(service)
+            if image_key:
+                env[image_key] = container["Config"]["Image"]
+            key, port = {"nginx": ("DEV_HTTP_BIND", "80/tcp"), "flower": ("DEV_FLOWER_BIND", "5555/tcp")}.get(
+                service, (None, None)
+            )
+            bindings = (
+                (container.get("NetworkSettings", {}).get("Ports") or {}).get(port)
+                or (container.get("HostConfig", {}).get("PortBindings") or {}).get(port)
+                or []
+            )
+            if key and len(bindings) == 1:
+                host = bindings[0].get("HostIp") or "0.0.0.0"
+                env[key] = f"{'[' + host + ']' if ':' in host else host}:{bindings[0]['HostPort']}"
+        command = [
+            "docker",
+            "compose",
+            "--project-directory",
+            str(self.root),
+            "-p",
+            stack["project"],
+            "--env-file",
+            str(self.config),
+            "-f",
+            str(Path(__file__).resolve().parents[1] / "docker-compose.dev.yml"),
+        ]
+        rendered = json.loads(self.run([*command, "config", "--format", "json"], capture=True, env=env))
+        infra = [
+            c
+            for c in stack["containers"]
+            if c["Config"]["Labels"].get("com.docker.compose.service") in ("postgresql", "redis")
+        ]
+        if len(infra) != 2 or any(c["State"]["Status"] != "running" for c in infra):
+            raise ValueError("Existing PostgreSQL and Redis must be running before switch")
+        for container in stack["containers"]:
+            service = container["Config"]["Labels"]["com.docker.compose.service"]
+            spec = rendered["services"][service]
+            if spec.get("container_name") != container["Name"].lstrip("/"):
+                raise ValueError("Shared config does not match existing container names; restore its Compose settings")
+            if spec.get("image") != container["Config"]["Image"]:
+                raise ValueError(f"Shared config image differs for {service}; rebuild/update the single stack first")
+            mounts = {
+                m["target"]: str(Path(m["source"]).resolve()) for m in spec.get("volumes", []) if m["type"] == "bind"
+            }
+            source_targets = {
+                "/opt/backend",
+                "/opt/plugins",
+                "/opt/lensnode/lensnode",
+                "/app/src",
+                "/app/public",
+                "/app/design",
+                "/app/index.html",
+                "/worktree-entrypoint.sh",
+            }
+            for mount in container["Mounts"]:
+                if (
+                    sys.platform == "darwin"
+                    and mount["Destination"] == "/var/run/docker.sock"
+                    and mount["Source"] == "/run/host-services/docker.proxy.sock"
+                ):
+                    continue
+                if mount["Type"] == "bind" and mount["Destination"] not in source_targets:
+                    if mounts.get(mount["Destination"]) != str(host_path(mount["Source"])):
+                        raise ValueError(
+                            f"Shared config changes data/config mount for {service}; restore its Compose settings"
+                        )
+            expected_ports = {(str(p["target"]), str(p.get("published", ""))) for p in spec.get("ports", [])}
+            actual_ports = {
+                (port.split("/")[0], p["HostPort"])
+                for port, values in (
+                    container.get("NetworkSettings", {}).get("Ports")
+                    or container.get("HostConfig", {}).get("PortBindings")
+                    or {}
+                ).items()
+                for p in (values or [])
+            }
+            if service not in ("postgresql", "redis") and expected_ports != actual_ports:
+                raise ValueError(f"Shared config changes ports for {service}; restore its Compose settings")
+        api_source = next(
+            v["source"] for v in rendered["services"]["backend-api"]["volumes"] if v["target"] == "/opt/backend"
+        )
+        if Path(api_source).resolve() != Path(target["path"]) / "backend":
+            raise ValueError("Compose configuration did not select the target source")
+        startup = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "600"]
+        print(f"Switching single dev stack to {target['name']} ({branch(target['path'])})", flush=True)
+        self.run([*command, *startup, "backend-api", "frontend"], env=env)
+        self.run([*command, *startup, "backend-worker", "backend-scheduler", "lensnode", "flower", "nginx"], env=env)
+        current = next((r for r in self.discover() if r.get("project") == stack["project"] and r["containers"]), None)
+        if current is None or current["path"] != target["path"]:
+            raise ValueError("Switch failed: actual API source does not match the target worktree")
+        display_environments([current], detailed=True)
+
     def network(self, record, remove=False):
         """Attach shared servers to a private app network, avoiding shared service-name collisions."""
         name = record["project"] + "-net"
@@ -594,7 +724,7 @@ class DevManager:
         if source is None:
             raise ValueError("API container has no /opt/backend bind mount; tests were not run")
         print(f"Source under test: {source}  (branch: {branch(source)})", flush=True)
-        if Path(source).resolve() != (Path(record["path"]) / "backend").resolve():
+        if host_path(source) != (Path(record["path"]) / "backend").resolve():
             raise ValueError("Actual mounted source differs from selected worktree; tests were not run")
         try:
             current = Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve()
@@ -643,6 +773,9 @@ def main():
     up.add_argument("path", nargs="?", default=".")
     up.add_argument("--port", type=int)
     up.add_argument("--no-build", action="store_true", help="reuse this environment's existing images")
+    commands.add_parser("switch", help="retarget the existing single dev stack").add_argument(
+        "path", nargs="?", default="."
+    )
     for action in ("infra-up", "list", "status"):
         command = commands.add_parser(action)
         if action in ("list", "status"):
@@ -675,7 +808,9 @@ def main():
             manager.run(["docker", "logs", "-f", "--tail", "0", record["container"]])
             return
         with manager.lock():
-            if args.action == "infra-up":
+            if args.action == "switch":
+                manager.switch(args.path)
+            elif args.action == "infra-up":
                 if not config.is_file():
                     raise ValueError(f"Missing shared config: {config}")
                 manager.infra_up()

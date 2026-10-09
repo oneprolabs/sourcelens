@@ -34,6 +34,30 @@ Rebuild/install there when dependencies change. All worktrees in this mode
 share one database: switching back to code without an applied migration can
 leave the schema ahead of that code.
 
+## Switch the existing single stack with devctl
+
+```bash
+./devctl switch                        # Mount source from the current worktree.
+./devctl switch /absolute/path/to/tree  # Mount source from another local worktree.
+```
+
+`switch` requires one existing single development Compose stack and running
+PostgreSQL/Redis containers. It uses the primary checkout's `.env.dev`, runtime
+data, routing configuration and installed dependencies. It validates container
+names, images, ports and data mounts before recreating application containers
+with `--no-deps --no-build`. It waits for API/frontend before recreating workers,
+LensNode, Flower and nginx, then verifies the actual API source mount and reports
+service states. Shared infrastructure is not restarted or recreated.
+
+Unlike `up`, this command does not start an independent application environment.
+There is a brief interruption while application containers are recreated. Build
+or install dependencies in the configuration checkout separately when needed.
+The API startup applies migrations to the existing shared database: target code
+must be compatible with its migration history, including when switching back.
+A startup failure returns nonzero; the command does not automatically roll back
+source or database migrations. More than one single dev stack is rejected rather
+than choosing an arbitrary stack.
+
 ## Worktree discovery and lifecycle with devctl
 
 `devctl list` scans `git worktree list` and inspects Docker Compose containers.
