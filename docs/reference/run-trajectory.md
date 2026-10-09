@@ -8,6 +8,32 @@ SSE 只负责降低更新延迟；历史查询、导出、筛选和断线恢复�
 该协议借鉴连续事件窗口的设计，但不引入独立的 Session Event Store：SourceLens
 继续使用 Run、子 Run 和不可变 Trace Event 作为唯一持久化模型。
 
+## 质量诊断与发布边界
+
+执行完成与答案验证是不同信号。管理端 Run 详情的 `failure_summary` 除运行时
+失败范围外，还读取不可变轨迹中的工具失败与最后一次证据审核；已有运行时失败
+按工具来源去重，不重复计数，不返回参数、工具输出或异常原文。
+
+- `accept_best_effort` 表示证据未通过，计入未解决的 verification 失败。
+- `inconclusive` 或最终审核 gate 的低置信回退计入 warning；材料覆盖不足不等于答案被证明错误。
+- 未被运行时摘要记录的 `tool.failed` 计入工具失败，同一工具后续成功时标记 recovered。
+- JSON 工具契约中的 `ok=false`、执行工具 artifact 中非零 `exit_code` 发出 `tool.failed`。
+  文件内容和 shell 标准输出中的字面 JSON 不作为工具成功状态解析。
+
+模型将 DSML 工具请求放入正文且没有有效结构化工具调用时，以
+`MODEL_TOOL_PROTOCOL_ERROR` 失败；这些协议文本不得发布为最终答案。
+无效上下文摘要保留原历史，发出 `deepagents.summarization.failed`，不记为成功压缩。
+证据复核纠正会重新启用收敛限制，累计轮数和提醒次数随 checkpoint 恢复。
+
+活动汇总工具的 `possibly_truncated`、`projects_truncated` 和分源 `errors` 会标记
+审核材料覆盖不足。工作总结与报告均使用批量抓取契约：复用已取得的来源材料，
+按人和事件整理证据账本，优先从固定模板渲染报告，披露覆盖限制。
+这些是 agent 执行指引，不保证模型每次都使用模板，也不自动扩大远端分页上限。
+
+产出物仍遵循[最终候选批次发布规则](../decisions/003-reviewed-deliverable-publication.md)：
+复核纠正丢弃旧候选清单，修订文件必须重新保存；终态仅发布最终候选批次。
+完整材料审核未通过、或缺少必需的最终文件，业务 outcome 为 partial。
+
 ## 查询检查点
 
 管理端先请求：

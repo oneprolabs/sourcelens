@@ -1,0 +1,11 @@
+type: fix
+audience: user
+en: >-
+  Long-running reports preserve evidence during context compaction and keep
+  correction loops bounded. Unparsed model tool requests no longer appear as
+  final answers. Work summaries reuse batch retrieval guidance, and incomplete
+  source coverage and tool failures remain visible in execution diagnostics.
+zh-CN: >-
+  长时间报告任务在上下文压缩时保留证据，复核纠正继续受收敛限制约束。
+  未解析的模型工具请求不再显示为最终答案。工作总结复用批量抓取规则，
+  来源覆盖不足和工具失败会明确呈现在执行诊断中。
