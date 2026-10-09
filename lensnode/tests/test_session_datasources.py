@@ -206,3 +206,20 @@ def test_local_datasource_target_rejects_empty_directories(tmp_path):
     (root / "datasources" / f"{datasource_uuid}-empty").mkdir(parents=True)
 
     assert local_datasource_target(datasource_uuid, root) is None
+
+
+def test_materialized_source_keeps_its_retrieval_metadata(tmp_path):
+    """Only metadata belonging to an actually mounted source reaches the prompt."""
+
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    datasource_uuid = uuid.uuid4()
+    source = workspace / "datasources" / str(datasource_uuid)
+    source.mkdir(parents=True)
+    (source / "guide.md").write_text("Recovery")
+    command = _command(datasource_uuid)
+    metadata = {"retrieval": {"index": {"status": "ready"}, "files": 1}}
+    command["datasource_snapshots"][0]["metadata"] = metadata
+    materialize_datasources(SimpleNamespace(workspace_path=str(workspace)), command, runtime)
+    assert command["target_dirs"][0]["metadata"] == metadata

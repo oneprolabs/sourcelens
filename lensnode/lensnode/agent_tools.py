@@ -43,6 +43,7 @@ LOGGER = logging.getLogger("lensnode")
 # entries (their .start already carries the richer argument summary).
 SELF_REPORTING_TOOLS = {
     "search_workspace",
+    "search_indexed_workspace",
     "read_workspace_file",
     "find_files",
     "git_log",
@@ -606,6 +607,10 @@ def build_agent_tools(
         git_diff,
         read_prior_run_result,
     ]
+    if getattr(config, "text_index_enabled", False):
+        from .text_index.tool import build_indexed_tool
+
+        tools.append(build_indexed_tool(command, search_workspace, emit, source_recorder))
     if resources is not None and config is not None:
         tools.append(_build_append_file_tool(resources, emit_event))
         tools.append(
@@ -3182,6 +3187,20 @@ def _safe_resource_name(value):
 def _resolve_allowed_path(path, target_dirs, policy=None):
     """Resolve a file path and ensure it is under selected dirs."""
 
+    if not Path(path).is_absolute():
+        candidates = []
+        matched_prefix = False
+        for entry in target_dirs:
+            root = Path(entry.get("path", "")).resolve()
+            prefix = str(entry.get("name") or root.name) + "/"
+            if str(path).startswith(prefix):
+                matched_prefix = True
+                candidate = _resolve_allowed_path(str(root / str(path)[len(prefix):]), [entry], policy)
+                if candidate is not None:
+                    candidates.append(candidate)
+        unique = set(candidates)
+        if matched_prefix:
+            return unique.pop() if len(unique) == 1 else None
     candidate = Path(path).resolve()
     for item in target_dirs:
         root = Path(item.get("path", "")).resolve()

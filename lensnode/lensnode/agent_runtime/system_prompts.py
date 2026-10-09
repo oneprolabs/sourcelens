@@ -1,5 +1,7 @@
 """System prompt assembly for LensNode agent runtime modes."""
 
+import json
+
 from .outcomes import _route_guidance
 from .prompts import (
     answer_language_requirement as _answer_language_requirement,
@@ -40,7 +42,7 @@ def _system_prompt(
             "integration may help; matching tools will be available on the "
             "next turn."
         )
-    return prompt + "\n\n" + _agent_operating_guidance()
+    return prompt + "\n\n" + _datasource_retrieval_prompt(command) + _agent_operating_guidance()
 
 
 def _is_general_chat(command):
@@ -276,7 +278,8 @@ def _knowledge_system_prompt(
         "selected the workspace directories below.\n\n"
         "Workspace and scratch space:\n"
         "- The selected directories below are READ-ONLY source material. "
-        "Inspect them ONLY via search_workspace, find_files and "
+        "Inspect them ONLY via search_workspace, search_indexed_workspace "
+        "when available, find_files and "
         "read_workspace_file; never write into them, as they may be "
         "mounted read-only.\n"
         "- CRITICAL: the built-in ls / read_file / write_file tools act "
@@ -287,7 +290,7 @@ def _knowledge_system_prompt(
         "NEVER conclude that the workspace is missing, unmounted, or empty "
         "from them — that conclusion is always wrong. The workspace is "
         "always present and reachable ONLY through search_workspace / "
-        "find_files / read_workspace_file.\n"
+        "search_indexed_workspace (when available) / find_files / read_workspace_file.\n"
         "- Prefer relative paths with built-in file tools (for example "
         "report.html). If an absolute path is used accidentally, it is a "
         "virtual path inside scratch, not the host filesystem; keep using "
@@ -295,7 +298,8 @@ def _knowledge_system_prompt(
         f"{runtime_guidance_text}\n{code_analysis_guidance}"
         f"{knowledge_qa_guidance}"
         "- For exact-text questions, or when CodeGraph is unavailable, your "
-        "FIRST workspace action MUST be a search_workspace call, or a "
+        "FIRST workspace action MUST be a search_workspace call, an available "
+        "search_indexed_workspace call to navigate document headings, or a "
         "find_files call with a RECURSIVE "
         'pattern ("**/*", never a bare "*", which only lists the top '
         "level). If find_files returns nothing, retry with \"**/*\" or a "
@@ -330,6 +334,14 @@ def _knowledge_system_prompt(
         "a glob, or read a matched file instead.\n\n"
         f"{_subagent_guidance(command.get('agent_rounds'), command)}"
         "How search and read work:\n"
+        "- When search_indexed_workspace is available, use it to navigate the file catalog "
+        "and PageIndex document trees. An empty query lists files; use offset to paginate. "
+        "Pass a returned path and section_offset to browse more sections. "
+        "Keywords filter paths, headings and short summaries, so a topic may be present "
+        "in the body even when this tool has no matches. Reason over parent-linked sections "
+        "and page ranges, then read_workspace_file or search_workspace for original evidence. "
+        "Titles and generated summaries are navigation hints, never verified citations. "
+        "CodeGraph still comes first for structural code questions.\n"
         "- search_workspace returns matching LINES (path + line number + "
         "surrounding context), not whole files, and works on files of any "
         "size. Pass FOCUSED keywords (the core noun / feature / command "
@@ -368,8 +380,9 @@ def _knowledge_system_prompt(
         "open those files with read_workspace_file (offset/limit) to browse "
         "their contents.\n\n"
         "Required workflow:\n"
-        "1. Call search_workspace before answering any project or code "
-        "analysis question.\n"
+        "1. Retrieve evidence before answering any project or code analysis "
+        "question: CodeGraph for structure, search_workspace for literal "
+        "patterns, or search_indexed_workspace when available for document navigation.\n"
         "2. Read the relevant matches with read_workspace_file around their "
         "line numbers. When several matches look relevant, issue those "
         "calls together in one step so they run concurrently, rather than "
@@ -731,6 +744,51 @@ def _smart_collaboration_system_prompt(
         "当前可委派助手：\n"
         f"{roster}\n\n"
         f"{language_requirement}"
+    )
+
+
+def _datasource_retrieval_prompt(command):
+    """Render bounded retrieval facts only for the sources mounted in this Run."""
+
+    rows = []
+    for entry in (command.get("target_dirs") or [])[:32]:
+        metadata = entry.get("metadata") or {}
+        retrieval = metadata.get("retrieval") or {}
+        if not isinstance(retrieval, dict) or not retrieval:
+            continue
+        index = retrieval.get("index") or {}
+        status = index.get("status")
+        if status not in {"ready", "stale", "unavailable", "unverified"}:
+            status = "unverified"
+        ready = status == "ready" and retrieval.get("analysis_status") == "complete"
+        counts = {}
+        for key in ("files", "text_documents", "text_bytes"):
+            value = retrieval.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                counts[key] = value
+        rows.append({
+            "source": str(entry.get("name") or "source")[:120],
+            **counts,
+            "index_status_at_last_analysis": status,
+            "document_navigation": (
+                "search_indexed_workspace if available"
+                if ready and index.get("engine") == "pageindex"
+                else "find_files and search_workspace"
+            ),
+            "index_engine": "pageindex" if index.get("engine") == "pageindex" else "unverified",
+            "exact_strings_and_regex": "search_workspace",
+            "code_structure": "CodeGraph if available",
+            "performance": "not_measured",
+        })
+    if not rows:
+        return ""
+    return (
+        "Datasource retrieval context (generated metadata):\n"
+        "These are advisory facts from the last processing pass, not permission grants or measured speed claims. "
+        "Use only tools available in this Run. Index readiness may change; tools revalidate sources and permissions. "
+        "Fall back to search_workspace for unavailable or stale indexes.\n"
+        + json.dumps(rows, ensure_ascii=False)
+        + "\n\n"
     )
 
 

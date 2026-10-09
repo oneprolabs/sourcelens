@@ -75,6 +75,7 @@ def materialize_datasources(
                     directories.append({
                         "name": name,
                         "path": str(target / "sources" / name),
+                        **({"metadata": snapshot["metadata"]} if snapshot.get("metadata") else {}),
                     })
                     continue
                 missing.append((snapshot, name))

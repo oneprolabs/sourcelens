@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from lensnode.lensnode.datasource_sync import (
+from lensnode.datasource_sync import (
     DataSourceSyncError,
     _extract_zip_archive,
     _upload_extraction_limits,

@@ -1,5 +1,6 @@
 """Transfer frozen datasource versions to remote execution nodes."""
 
+import copy
 import os
 import tempfile
 import zipfile
@@ -20,6 +21,10 @@ def run_datasource_snapshots(run):
     ))
     result = []
     for row in rows:
+        metadata = copy.deepcopy(row.datasource.metadata or {})
+        retrieval = metadata.get("retrieval") or {}
+        if retrieval.get("lensnode_uuid") != str(run.lensnode.uuid if run.lensnode else ""):
+            metadata.pop("retrieval", None)
         result.append({
             "snapshot_uuid": str(row.uuid),
             "version_uuid": str(row.version.uuid) if row.version_id else "",
@@ -33,6 +38,7 @@ def run_datasource_snapshots(run):
                 else ""
             ),
             "required": row.required,
+            "metadata": metadata,
         })
     return result
 

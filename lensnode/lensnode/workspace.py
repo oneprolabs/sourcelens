@@ -412,9 +412,21 @@ def is_path_allowed(root, path, scope, policy):
         return False
     if not path.is_file():
         return False
-    if is_path_excluded(root, path, scope, policy):
+    if not is_path_policy_allowed(root, path, scope, policy):
         return False
     if _is_sidecar_artifact(path) and converted_source_path(path) is None:
+        return False
+    return True
+
+
+def is_path_policy_allowed(root, path, scope, policy):
+    """Apply retrieval rules to a contained path without filesystem checks.
+
+    Callers must separately validate containment and the live filesystem
+    before reading or returning content.
+    """
+
+    if is_path_excluded(root, path, scope, policy):
         return False
     exclude_extensions = _option(
         scope,
@@ -1143,7 +1155,7 @@ def is_path_excluded(root, path, scope, policy):
                 relative = path.resolve().relative_to(root.resolve())
     except ValueError:
         return True
-    if INTERNAL_CHECKPOINT_DIR in path.parts:
+    if INTERNAL_CHECKPOINT_DIR in path.parts or any(name in path.parts for name in (".cocoindex", ".pageindex")):
         return True
     if (
         _contains_path_parts(path.parts, INTERNAL_RUN_PATH)
@@ -1202,7 +1214,7 @@ def _contains_path_parts(parts, expected):
 def _exclude_globs(root, scope, policy):
     """Build ripgrep glob exclusions from scope and policy."""
 
-    globs = [f"**/{INTERNAL_CHECKPOINT_DIR}/**"]
+    globs = [f"**/{INTERNAL_CHECKPOINT_DIR}/**", "**/.cocoindex/**", "**/.pageindex/**"]
     if not _is_subject_runtime_root(root, scope):
         globs.append("**/.sourcelens/runtime/runs/**")
     exclude_dirs = _option(scope, policy, "exclude_dirs", DEFAULT_EXCLUDED_DIRS)

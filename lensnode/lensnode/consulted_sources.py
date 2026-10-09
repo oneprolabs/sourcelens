@@ -93,12 +93,13 @@ class ConsultedSources:
             text = str(match.get("text") or "")
             try:
                 line = int(match.get("line"))
+                end_line = int(match.get("end_line", line + len(after)))
             except (TypeError, ValueError):
                 continue
             entry = _entry(
                 match.get("path"),
                 line - len(before),
-                line + len(after),
+                max(line + len(after), end_line),
                 "\n".join([*before, text, *after]),
             )
             if entry is not None:

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lensnode import workspace as workspace_module
 from lensnode.agent_tools import build_agent_tools
 from lensnode.workspace import (
@@ -1019,3 +1021,24 @@ def test_search_reuses_one_allowlist_check_per_path(tmp_path, monkeypatch):
     assert result["matches"]
     assert len(checked) == len(set(checked))
     assert len(set(checked)) == 2
+
+
+@pytest.mark.parametrize("state_dir", [".cocoindex", ".pageindex"])
+def test_include_hidden_never_exposes_index_state(tmp_path, monkeypatch, state_dir):
+    """Index text remains private in native and fallback discovery modes."""
+
+    root = tmp_path / "docs"
+    internal = root / state_dir / "prepared"
+    internal.mkdir(parents=True)
+    indexed = internal / "chunks.json"
+    indexed.write_text("private indexed marker")
+    visible = root / "guide.md"
+    visible.write_text("public indexed marker")
+    targets = [{"path": str(root), "retrieval_scope": {"include_hidden": True, "exclude_dirs": []}}]
+    for fallback in (False, True):
+        if fallback:
+            monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+        assert [item["path"] for item in search_workspace(targets, "indexed marker")["matches"]] == [str(visible)]
+        assert str(indexed) not in glob_files(targets, "**/*")
+    tools = {tool.name: tool for tool in build_agent_tools({"target_dirs": targets})}
+    assert json.loads(tools["read_workspace_file"].invoke({"path": str(indexed)}))["error"] == "PATH_NOT_ALLOWED"
