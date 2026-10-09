@@ -69,6 +69,27 @@ def display_environments(records, detailed=False, verbose=False):
         current = str(Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve())
     except subprocess.CalledProcessError:
         current = None
+    if detailed and not verbose:
+        print(f"Current worktree: {Path(current).name if current else '(outside repository)'}")
+        environments = [r for r in records if r["containers"]]
+        if not environments:
+            print("No development service containers found.")
+        for record in environments:
+            print(f"\nServices worktree: {record['name']}")
+            services = []
+            for container in sorted(
+                record["containers"], key=lambda c: c["Config"]["Labels"]["com.docker.compose.service"]
+            ):
+                state = container["State"]
+                services.append(
+                    [
+                        container["Config"]["Labels"]["com.docker.compose.service"],
+                        state["Status"],
+                        state.get("Health", {}).get("Status", "-"),
+                    ]
+                )
+            print_table(["SERVICE", "STATE", "HEALTH"], services)
+        return
     running = sum(r["status"] == "running" for r in records)
     print(f"Worktrees: {len(records)}  |  Running: {running}  |  * current worktree")
     if not records:
