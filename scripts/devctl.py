@@ -120,8 +120,8 @@ def display_environments(records, detailed=False, verbose=False):
         is_current = "yes" if record["path"] == current else "-"
         is_active = "yes" if record.get("container") else "-"
         url = f"http://localhost:{record['port']}" if record.get("port", "-") != "-" else "-"
-        rows.append([is_current, is_active, record["status"], url, record["name"]])
-    print_table(["CURRENT", "ACTIVE", "STATE", "URL", "WORKTREE"], rows)
+        rows.append([record["name"], is_current, is_active, record["status"], url])
+    print_table(["WORKTREE", "CURRENT", "ACTIVE", "STATE", "URL"], rows)
     if not detailed and not verbose:
         return
     for index, record in enumerate(records, 1):
