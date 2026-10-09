@@ -1,157 +1,109 @@
 # Worktree development with Docker
 
-SourceLens supports two local workflows. Use `WORKTREE_DIR` to retarget the
-existing single dev stack, or `devctl` to run several worktrees at once.
-Both test entry points report the actual source mount before running tests.
-Both workflows use the existing `docker-compose.dev.yml`; no additional
-Compose files or duplicate service definitions are needed.
+SourceLens runs one local development stack. `devctl up` starts it with source
+from the current worktree, or switches that same stack when it already exists.
+All worktrees use the original PostgreSQL database, Redis, runtime data and ports.
+No worktree registration, private database, port allocation or image tag is needed.
+The existing `docker-compose.dev.yml` is the only Compose template.
 
-## Retarget the existing stack
-
-Run Compose from the directory that owns `.env.dev`, `data.dev`, and the
-installed `frontend/node_modules`:
+## Commands
 
 ```bash
-WORKTREE_DIR=/absolute/path/to/another-worktree \
-  docker compose -f docker-compose.dev.yml up -d --force-recreate
-
-# Run from the worktree you intend to test; test labels/options pass through.
-./scripts/test-dev.sh lens.tests.test_api --noinput
+./devctl up                 # Start/switch the single stack to this worktree.
+./devctl up main            # Use the primary Git checkout.
+./devctl up /path/to/tree
+./devctl up --build         # Explicitly rebuild images; default is no build.
+./devctl switch             # Explicit switch; requires an existing stack.
+./devctl switch main
+./devctl list               # All local worktrees and actual service ownership.
+./devctl status             # Current worktree and running service states.
+./devctl list -v            # Also show branches and full paths.
+./devctl status -v
+./devctl logs               # Recent app logs, then follow the API log.
+./devctl test main -- python manage.py test accounts.tests --noinput
+./devctl down               # Stop application services; keep PostgreSQL/Redis.
+./devctl clean              # Remove application containers; retain all data.
+./devctl up                 # Resume after down or clean.
+./devctl infra-up           # Start only the original PostgreSQL/Redis services.
 ```
 
-Unset `WORKTREE_DIR` (or set it to `.`) to use the Compose directory's source.
-Relative values are resolved against the Compose directory, not the shell's
-current directory. Switching needs `--force-recreate`; `docker restart` keeps
-the original mounts. The script reads `/opt/backend` from `docker inspect`,
-prints its host path and branch, and warns if it differs from the caller's
-worktree. An inspection failure or missing bind mount stops the test run.
+`test` requires a worktree target and checks the actual API source before running.
+Its default suite is `python manage.py test --noinput`. Explicit targets for
+`logs`, `down` and `clean` remain supported. Worktree targets can be paths,
+directory names or branches; `main` always means the original Git checkout,
+regardless of its checked-out branch. Ambiguous targets must use an absolute path.
 
-Backend, plugins, LensNode and frontend source follow the variable. Database
-data, runtime files, `.env.dev`, certificates, nginx configuration, build
-contexts, frontend configuration/manifests and `node_modules` stay with the
-Compose directory. A source switch does not update installed dependencies.
-Rebuild/install there when dependencies change. All worktrees in this mode
-share one database: switching back to code without an applied migration can
-leave the schema ahead of that code.
+`list` scans Git worktrees and joins Docker's actual API bind mount. The current
+shell directory is marked `*`; only the worktree whose code is mounted owns the
+single stack. `status` distinguishes the current shell worktree from the services'
+source worktree. It reports service state and health; `-v` adds full details.
+Production stacks and unrelated repositories are excluded.
 
-## Switch the existing single stack with devctl
+## Shared configuration and data
 
-```bash
-./devctl switch                        # Mount source from the current worktree.
-./devctl switch /absolute/path/to/tree  # Mount source from another local worktree.
-```
+The primary checkout owns `.env.dev`, nginx routing/certificates, runtime data
+and installed frontend dependencies. Linked worktrees automatically find it.
+`DEVCTL_ROOT` and `DEVCTL_CONFIG` are explicit configuration-home overrides.
+The Compose template and entrypoint come from the invoked tool's checkout, so an
+older primary Compose file cannot ignore source-switching settings.
 
-`switch` requires one existing single development Compose stack and running
-PostgreSQL/Redis containers. It uses the primary checkout's `.env.dev`, runtime
-data, routing configuration and installed dependencies. It validates container
-names, images, ports and data mounts before recreating application containers
-with `--no-deps --no-build`. It waits for API/frontend before recreating workers,
-LensNode, Flower and nginx, then verifies the actual API source mount and reports
-service states. Shared infrastructure is not restarted or recreated.
+`up` and `switch` retain existing images and published ports. Ordinary source
+changes are loaded through mounts without rebuilding. `--build` rebuilds backend,
+LensNode and frontend images; backend/LensNode build contexts use the selected
+worktree, while frontend manifests/dependencies remain in the configuration home.
+Missing local images produce a build instruction instead of an implicit build.
+The old `--no-build` flag is accepted for compatibility.
 
-Unlike `up`, this command does not start an independent application environment.
-There is a brief interruption while application containers are recreated. Build
-or install dependencies in the configuration checkout separately when needed.
-The API startup applies migrations to the existing shared database: target code
-must be compatible with its migration history, including when switching back.
-A startup failure returns nonzero; the command does not automatically roll back
-source or database migrations. More than one single dev stack is rejected rather
-than choosing an arbitrary stack.
+Before changing services, the tool validates source, container names, images,
+ports and retained data/config mounts. It stops all old application processes,
+then starts API/frontend with health gates followed by worker, scheduler,
+LensNode, Flower and nginx. Healthy PostgreSQL/Redis are not restarted or recreated.
+First startup or stopped infrastructure is started using the original project.
+Application recreation briefly interrupts requests. A startup failure returns
+nonzero; there is no automatic source or database rollback.
 
-## Worktree discovery and lifecycle with devctl
+All branches share migration history. API startup applies migrations; target
+code must remain compatible with the existing database. Containers switch source,
+not installed Python/frontend dependencies. Use `--build` when dependencies change.
+API/Vite reload ordinary source edits; run `up` to recreate workers/LensNode.
 
-`devctl list` scans `git worktree list` and inspects Docker Compose containers.
-Every local worktree is visible before startup. A running or stopped development
-stack is associated with its API container's actual `/opt/backend` bind mount,
-including stacks launched directly with `docker compose up` and retargeted with
-`WORKTREE_DIR`. Production Compose files and unrelated repositories are excluded.
-`status` also displays individual container states and health checks. Docker must
-be available for these live inspections; failures are reported explicitly.
+`down` stops only application containers. `clean` removes only application
+containers, leaving database/Redis containers, volumes, files and Git worktrees.
+Neither command calls `down -v`, deletes worktrees, drops databases or clears Redis.
+The stack remains discoverable through its infrastructure after `clean`.
 
-Targets can be a worktree path, directory name, branch, Compose project, or an
-existing display alias. Use an absolute path or project when a target is ambiguous.
-There is no registration or unregistration step.
+## Transition from older parallel environments
 
-```bash
-./devctl list
-./devctl status
-./devctl up                         # Start with existing images; do not build.
-./devctl up --build                 # Build backend/LensNode images explicitly.
-./devctl up /absolute/path/to/worktree --port 18082
-./devctl logs /absolute/path/to/worktree
-./devctl test /absolute/path/to/worktree -- python manage.py test lens.tests.test_api --noinput
-./devctl down /absolute/path/to/worktree
-./devctl clean /absolute/path/to/worktree
-./devctl up /absolute/path/to/worktree
-```
-
-The previous `up NAME PATH` syntax remains supported as a display alias. A name
-change does not create a new data identity: identities derive from the canonical
-worktree path. Existing saved identities are reused to preserve their data.
-
-The primary Git checkout owns routing files and `.env.dev`. Linked worktrees
-automatically use it without copying configuration. The Compose template and
-worktree entrypoint come from the checkout containing the invoked `devctl`, so
-an older primary checkout cannot restore fixed names or ignore isolation settings.
-Primary means the original checkout, regardless of its checked-out branch.
-`DEVCTL_ROOT` and `DEVCTL_CONFIG` remain explicit manager/config overrides.
-Python 3, Git, Docker and Compose V2 are required on macOS/Linux.
-
-For a new stack, `up` allocates a loopback port, starts shared PostgreSQL/Redis,
-creates a private database and network, uses private backend/LensNode images,
-and waits for API/frontend before starting remaining services. All services reuse
-`docker-compose.dev.yml`; `--no-deps` prevents duplicate infrastructure.
-`infra-up` starts only the shared services. `up` does not build by default; use
-`--build` for dependency changes or when no local development images exist.
-New worktrees reuse local `sourcelens-api:latest` and `sourcelens-lensnode:latest`
-under private tags; existing private tags take precedence. Tagging reuses image
-layers without building or downloading. If neither image exists, startup reports
-an actionable error. The old `--no-build` flag remains accepted for compatibility.
-
-For a discovered stack launched directly with Compose, `up` restarts its existing
-application containers and retains its original configuration, ports and shared
-data. Rebuild such a stack through its original Compose invocation when changing
-dependencies. `logs` prints recent application logs and follows the API log.
-`test` uses the discovered API container directly, verifies its source mount,
-and streams/saves the result. It does not require a devctl-created environment.
-The default command is `python manage.py test --noinput`.
-
-`down` stops application containers; `clean` removes them and, for isolated stacks,
-the private network. Both retain databases, Redis data, files, dependency volumes
-and launch/test metadata. Git worktrees remain visible after either operation.
-Even in a legacy project containing database services, only application containers
-are stopped/removed. Neither command executes `down -v` or deletes a Git worktree.
-
-## Isolation and retained metadata
-
-New isolated stacks share PostgreSQL/Redis processes but use separate databases,
-three Redis logical DBs for broker/cache/Channels, private application networks,
-image tags, runtime directories and frontend dependency volumes. HTTP ports bind
-only to loopback, automatically allocated from 18081–19080 or explicitly chosen.
-Retained Redis allocations are not reused by different worktree identities.
-Directly launched legacy stacks retain their original data isolation behavior.
+Before `up`/`switch` activates the single stack, old devctl parallel application
+containers are stopped and removed. Their dedicated PostgreSQL/Redis instances
+are stopped. Their databases, Redis volumes, files, networks, images and metadata
+are retained for separate manual maintenance; no data is copied or deleted.
+The original single-stack database remains the source of existing business data.
+Multiple independently launched single stacks are rejected rather than choosing
+an arbitrary database. Other projects and production containers are untouched.
 
 The state parent is `DEVCTL_STATE` or
-`${XDG_STATE_HOME:-~/.local/state}/sourcelens-dev`, scoped by Git's common directory.
-Docker resource identities also include the state parent, so temporary acceptance
-environments do not collide with daily development. The existing `registry.json`
-file is retained for compatibility, but serves only as launch allocation and test
-metadata: it does not decide which worktrees exist or whether containers run.
-Do not discard allocation metadata while retaining shared Redis/database data.
+`${XDG_STATE_HOME:-~/.local/state}/sourcelens-dev`. The compatibility `registry.json`
+now retains test results, active-source information and non-secret image/port
+settings needed after cleanup. Old allocation records are preserved for recovery
+but no longer drive worktree existence or startup. A lock in Git's common directory
+serializes lifecycle operations across all linked worktrees and state parents.
 
-A file lock serializes allocation and lifecycle changes. Writes are atomic and
-private. Credentials stay in the main configuration; generated private env files
-contain only per-environment endpoints and settings. Test results contain their
-actual source path, exit code and log path. API/Vite reload source edits; isolated
-workers/scheduler/LensNode can be recreated with `up`.
+## Direct Compose and verification
 
-## Verification
+The equivalent direct source switch is:
+
+```bash
+WORKTREE_DIR=/absolute/path/to/tree \
+  docker compose -f docker-compose.dev.yml up -d --force-recreate
+./scripts/test-dev.sh accounts.tests --noinput
+```
+
+Run from the checkout owning configuration/data. `WORKTREE_DIR` only changes
+source mounts; relative paths resolve against that checkout. Restart alone does
+not change mounts. The test helper reports the actual API source mount.
 
 ```bash
 python3 -m unittest scripts.test_devctl
 bash scripts/test_test_dev.sh
 ```
-
-Coverage includes Git-only discovery, direct Compose discovery, retargeted source
-mounts, production exclusion, path identity, concurrent allocation, data retention,
-private networking, source mismatch rejection and test failure propagation.

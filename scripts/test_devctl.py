@@ -3,14 +3,13 @@
 import json
 import os
 import shutil
-import socket
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.devctl import DevManager, main, manager_paths
+from scripts.devctl import DevManager, manager_paths
 
 
 class DevManagerTests(unittest.TestCase):
@@ -49,11 +48,6 @@ class DevManagerTests(unittest.TestCase):
         self.config = self.root / ".env.dev"
         self.config.write_text("POSTGRES_USER=postgres\nPOSTGRES_PASSWORD='complex $ password'\n")
         self.manager = DevManager(self.root, Path(self.temp.name) / "state", self.config)
-
-    def prepare(self, name, path=None, port=None):
-        """Apply the same registry lock used by the CLI."""
-        with self.manager.lock():
-            return self.manager.prepare(name, path or self.root, port)
 
     def test_worktrees_exist_without_launch_metadata(self):
         """Git alone supplies the inventory before any environment has been started."""
@@ -99,7 +93,6 @@ class DevManagerTests(unittest.TestCase):
         shutil.copyfile(Path(__file__).with_name("devctl.py"), scripts / "devctl.py")
         source_root = Path(__file__).resolve().parents[1]
         shutil.copyfile(source_root / "devctl", self.other / "devctl")
-        self.prepare("branch-a")
         env = dict(os.environ)
         env.pop("DEVCTL_ROOT", None)
         env.pop("DEVCTL_CONFIG", None)
@@ -167,24 +160,6 @@ class DevManagerTests(unittest.TestCase):
             records = self.manager.discover()
         self.assertTrue(all(r["status"] == "stopped" for r in records))
 
-    def test_alias_change_reuses_worktree_data_identity(self):
-        """A worktree's identity does not change with its display name."""
-        first = self.prepare("first")
-        second = self.prepare("second")
-        self.assertEqual(first["project"], second["project"])
-        self.assertEqual(first["redis_dbs"], second["redis_dbs"])
-
-    def test_clean_keeps_worktree_discoverable(self):
-        """Container cleanup never removes a Git worktree from the inventory."""
-        record = self.prepare("branch-a")
-        with patch.object(self.manager, "get", return_value=record), patch.object(
-            self.manager, "compose"
-        ), patch.object(self.manager, "network"):
-            self.manager.clean("branch-a")
-        with patch.object(self.manager, "run", return_value=""):
-            records = self.manager.discover()
-        self.assertEqual(self.manager.resolve(str(self.root), records)["status"], "stopped")
-
     def test_manual_cleanup_never_stops_shared_services(self):
         """A legacy project includes infrastructure, but only app containers may be cleaned."""
         api = self.compose_fixture()
@@ -219,6 +194,8 @@ class DevManagerTests(unittest.TestCase):
             container["Mounts"] = []
             containers.append(container)
             services[service] = dict(container_name=service, image=service + ":dev")
+        services["lensnode"] = dict(image="lensnode:dev")
+        services["frontend"] = dict(image="frontend:dev")
         stack = dict(
             name="main", path=str(self.root.resolve()), project="manual-dev", external=True, containers=containers
         )
@@ -229,16 +206,16 @@ class DevManagerTests(unittest.TestCase):
     def test_switch_recreates_only_applications_and_selects_target_source(self):
         """Single-stack switching uses the config home, no build, and no infrastructure up."""
         stack, target, after, config = self.switch_fixture()
-        with patch.object(
-            self.manager, "discover", side_effect=[[stack, target], [stack, target], [after]]
-        ), patch.object(self.manager, "run", side_effect=[json.dumps(config), "", ""]) as run, patch(
+        with patch.object(self.manager, "discover", side_effect=[[stack, target], [after]]), patch.object(
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", ""]
+        ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop"), patch(
             "scripts.devctl.display_environments"
         ):
             self.manager.switch(str(self.other))
         calls = run.call_args_list
         self.assertEqual(calls[0].kwargs["env"]["WORKTREE_DIR"], str(self.other.resolve()))
         self.assertEqual(calls[0].args[0][calls[0].args[0].index("--project-directory") + 1], str(self.root.resolve()))
-        for call in calls[1:]:
+        for call in calls[-2:]:
             self.assertIn("--no-deps", call.args[0])
             self.assertIn("--no-build", call.args[0])
             self.assertNotIn("postgresql", call.args[0])
@@ -255,272 +232,164 @@ class DevManagerTests(unittest.TestCase):
                 self.manager.switch(str(self.other))
         self.assertEqual(run.call_count, 1)
 
+    def test_up_uses_the_single_stack_without_build_or_new_database(self):
+        """Up and switch use the same project, shared configuration and application services."""
+        stack, target, after, config = self.switch_fixture()
+        with patch.object(self.manager, "discover", side_effect=[[stack, target], [after]]), patch.object(
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", ""]
+        ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop") as stop, patch(
+            "scripts.devctl.display_environments"
+        ):
+            self.manager.up(str(self.other))
+        stop.assert_called_once_with(stack)
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertFalse(any("build" in c or "createdb" in c or "tag" in c for c in commands))
+        self.assertTrue(all("manual-dev" in c for c in commands if "compose" in c))
+        self.assertEqual(self.manager.read_state()["single"]["project"], "manual-dev")
+
+    def test_build_is_explicit_and_happens_before_stopping_the_stack(self):
+        """A failed build must leave existing services running."""
+        stack, target, after, config = self.switch_fixture()
+        with patch.object(self.manager, "discover", return_value=[stack, target]), patch.object(
+            self.manager, "run", side_effect=[json.dumps(config), subprocess.CalledProcessError(1, ["build"])]
+        ) as run, patch.object(self.manager, "retire_parallel") as retire, patch.object(self.manager, "stop") as stop:
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.manager.up(str(self.other), build=True)
+        self.assertEqual(run.call_args.args[0][-4:], ["build", "backend-api", "lensnode", "frontend"])
+        retire.assert_not_called()
+        stop.assert_not_called()
+
+    def test_up_bootstraps_a_single_stack_without_worktree_allocations(self):
+        """First startup uses the standard singleton project and creates no private namespace."""
+        stack, target, after, config = self.switch_fixture()
+        after["project"] = "sourcelens-dev"
+        with patch.object(self.manager, "discover", side_effect=[[target], [after]]), patch.object(
+            self.manager, "run", side_effect=[json.dumps(config), "image", "image", "image", "", "", ""]
+        ) as run, patch.object(self.manager, "retire_parallel"), patch.object(self.manager, "stop"), patch(
+            "scripts.devctl.display_environments"
+        ):
+            self.manager.up(str(self.other))
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertEqual(commands[-3][-2:], ["postgresql", "redis"])
+        self.assertEqual(self.manager.read_state()["environments"], {})
+        self.assertEqual(self.manager.read_state()["allocations"], {})
+
+    def test_infrastructure_only_stack_is_discovered_after_clean(self):
+        """Removing application containers must not hide the original database project."""
+        fixture = self.compose_fixture(path=self.root)
+        fixture["Config"]["Labels"]["com.docker.compose.service"] = "postgresql"
+        fixture["Config"]["Labels"]["com.docker.compose.project.working_dir"] = str(self.root)
+        fixture["Mounts"] = []
+        with patch.object(self.manager, "run", side_effect=["db-id", json.dumps([fixture])]):
+            records = self.manager.discover()
+        self.assertEqual(self.manager.singleton(records)["project"], "manual-dev")
+        self.assertEqual(self.manager.singleton(records)["status"], "stopped")
+
+    def test_retire_parallel_stops_applications_and_old_infrastructure_but_keeps_data(self):
+        """Migration to singleton mode never drops databases or removes volumes."""
+        api = self.compose_fixture(project=self.manager.prefix + "-old")
+        record = dict(project=self.manager.prefix + "-old", external=False, containers=[api])
+        with patch.object(self.manager, "run", side_effect=["", "", "old-pg old-redis", ""]) as run:
+            self.manager.retire_parallel([record])
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertEqual(commands[0], ["docker", "stop", "api-id"])
+        self.assertEqual(commands[1], ["docker", "rm", "api-id"])
+        self.assertEqual(commands[-1], ["docker", "stop", "old-pg", "old-redis"])
+        self.assertFalse(any("-v" in c or "dropdb" in c for c in commands))
+
+    def test_down_keeps_database_and_redis_containers(self):
+        """Pausing a singleton never stops its shared infrastructure."""
+        stack, target, after, config = self.switch_fixture()
+        with patch.object(self.manager, "run") as run:
+            self.manager.stop(stack)
+        run.assert_called_once_with(["docker", "stop", "api-id"], capture=True)
+
+    def test_stale_parallel_metadata_does_not_show_old_ports(self):
+        """Unstarted worktrees are listed independently of obsolete allocation records."""
+        self.manager.update(
+            dict(name="old", path=str(self.other.resolve()), project="old-project", port=18081, redis_dbs=[0, 1, 2])
+        )
+        with patch.object(self.manager, "run", return_value=""):
+            record = self.manager.resolve(str(self.other), self.manager.discover())
+        self.assertNotIn("project", record)
+        self.assertNotIn("port", record)
+        self.assertEqual(record["name"], self.other.name)
+
+    def test_missing_local_image_does_not_stop_the_running_stack(self):
+        """Missing dependencies report --build before affecting services or data."""
+        stack, target, after, config = self.switch_fixture()
+        with patch.object(self.manager, "discover", return_value=[stack, target]), patch.object(
+            self.manager, "run", side_effect=[json.dumps(config), subprocess.CalledProcessError(1, ["inspect"])]
+        ), patch.object(self.manager, "retire_parallel") as retire, patch.object(self.manager, "stop") as stop:
+            with self.assertRaisesRegex(ValueError, "--build first"):
+                self.manager.up(str(self.other))
+        stop.assert_not_called()
+        retire.assert_not_called()
+
+    def test_multiple_single_stacks_are_rejected_before_changes(self):
+        """Never select an arbitrary database when more than one original stack exists."""
+        stack, target, after, config = self.switch_fixture()
+        second = dict(stack, project="second-dev")
+        with patch.object(self.manager, "discover", return_value=[stack, second]), patch.object(
+            self.manager, "run"
+        ) as run:
+            with self.assertRaisesRegex(ValueError, "Multiple single"):
+                self.manager.up(str(self.other))
+        run.assert_not_called()
+
+    def test_changed_database_volume_is_rejected_before_stopping_services(self):
+        """A shared-data stack must not silently open a different named database volume."""
+        stack, target, after, config = self.switch_fixture()
+        database = stack["containers"][1]
+        database["Mounts"] = [dict(Type="volume", Destination="/var/lib/postgresql/data", Name="existing-db")]
+        config["services"]["postgresql"]["volumes"] = [
+            dict(type="volume", source="pg", target="/var/lib/postgresql/data")
+        ]
+        config["volumes"] = dict(pg=dict(name="new-empty-db"))
+        with patch.object(self.manager, "discover", return_value=[stack, target]), patch.object(
+            self.manager, "run", return_value=json.dumps(config)
+        ), patch.object(self.manager, "stop") as stop:
+            with self.assertRaisesRegex(ValueError, "retained volume"):
+                self.manager.up(str(self.other))
+        stop.assert_not_called()
+
     def test_switch_requires_an_existing_single_stack(self):
         """Switch never creates a second stack when none is present."""
         with patch.object(self.manager, "run", return_value=""):
-            with self.assertRaisesRegex(ValueError, "exactly one"):
+            with self.assertRaisesRegex(ValueError, "No existing"):
                 self.manager.switch(str(self.other))
-
-    def test_parallel_environments_have_disjoint_resources(self):
-        """Database, broker/cache/Channels, port, images, and runtime files are isolated."""
-        a = self.prepare("branch-a")
-        b = self.prepare("branch-b", self.other)
-        for key in ("project", "port", "database", "data_dir", "backend_image", "lensnode_image"):
-            self.assertNotEqual(a[key], b[key], key)
-        self.assertTrue(set(a["redis_dbs"]).isdisjoint(b["redis_dbs"]))
-        self.assertNotIn("password", json.dumps(self.manager.read_state()).lower())
-
-    def test_existing_registration_cannot_change_identity_or_port(self):
-        """A name cannot silently retarget a different branch or endpoint."""
-        original = self.prepare("branch-a")
-        self.assertEqual(original["project"], self.prepare("branch-a")["project"])
-        with self.assertRaisesRegex(ValueError, "already points"):
-            self.prepare("branch-a", self.other)
-        with self.assertRaisesRegex(ValueError, "already uses port"):
-            self.prepare("branch-a", port=original["port"] + 1)
-
-    def test_name_and_port_validation(self):
-        """Reject project-name ambiguity, traversal, and invalid ports before Docker."""
-        for name in ("../escape", "Feature-A", "a_b", "-flag", "x" * 41):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                self.prepare(name)
-        for port in (80, 65536):
-            with self.assertRaises(ValueError):
-                self.prepare("branch-a", port=port)
-
-    def test_registered_and_live_ports_are_rejected(self):
-        """Check both managed reservations and other processes' loopback listeners."""
-        record = self.prepare("branch-a")
-        with self.assertRaisesRegex(ValueError, "allocated"):
-            self.prepare("branch-b", self.other, record["port"])
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            with self.assertRaisesRegex(ValueError, "in use"):
-                self.prepare("branch-b", self.other, listener.getsockname()[1])
-
-    def test_unrelated_repository_is_rejected(self):
-        """Never attach unrelated code to this repository's shared infrastructure."""
-        unrelated = Path(self.temp.name) / "unrelated"
-        subprocess.run(["git", "init", "-q", str(unrelated)], check=True)
-        with self.assertRaisesRegex(ValueError, "same repository"):
-            self.prepare("branch-a", unrelated)
-
-    def test_cleanup_preserves_data_and_infra_and_reserves_redis_slots(self):
-        """Cleanup must not delete databases, volumes, or another environment's broker state."""
-        a = self.prepare("branch-a")
-        Path(a["data_dir"]).mkdir(parents=True)
-        calls = []
-        with self.manager.lock(), patch.object(self.manager, "get", return_value=a), patch.object(
-            self.manager, "compose", side_effect=lambda *args, **kw: calls.append(args)
-        ), patch.object(self.manager, "network") as network:
-            self.manager.clean("branch-a")
-        self.assertEqual(calls, [(a, ["down", "--remove-orphans"])])
-        network.assert_called_once_with(a, remove=True)
-        self.assertTrue(Path(a["data_dir"]).exists())
-        self.assertEqual(self.manager.read_state()["environments"]["branch-a"]["status"], "stopped")
-        b = self.prepare("branch-b", self.other)
-        self.assertTrue(set(a["redis_dbs"]).isdisjoint(b["redis_dbs"]))
-
-    def test_environment_overrides_shared_config_and_shell_values(self):
-        """Inherited production endpoints/project names cannot override generated identities."""
-        record = self.prepare("branch-a")
-        with patch.dict(os.environ, {"DEV_HTTP_BIND": "80", "COMPOSE_PROJECT_NAME": "sourcelens"}):
-            env = self.manager.compose_env(record)
-        self.assertEqual(env["DEV_HTTP_BIND"], f"127.0.0.1:{record['port']}")
-        self.assertNotIn("COMPOSE_PROJECT_NAME", env)
-        self.assertEqual(env["DEV_CONFIG"], str(self.config.resolve()))
-
-    def test_every_mode_uses_existing_compose_and_selects_only_its_services(self):
-        """Shared infrastructure and apps must reuse the dev file without launching each other."""
-        record = self.prepare("branch-a")
-        for item in (None, record):
-            argv = self.manager.compose_command(item, ["ps"])
-            self.assertEqual(argv[argv.index("-f") + 1], str(self.manager.tool_root / "docker-compose.dev.yml"))
-        with patch.object(self.manager, "compose") as compose:
-            self.manager.infra_up()
-        self.assertEqual(compose.call_args.args[1][-2:], ["postgresql", "redis"])
-
-    def test_linked_tool_uses_its_template_with_primary_configuration(self):
-        """An older primary Compose file must not reintroduce fixed container names."""
-        (self.root / "docker-compose.dev.yml").write_text(
-            "services:\n  redis:\n    container_name: sourcelens-redis-dev\n"
-        )
-        record = self.prepare("branch-a", self.other)
-        for selected in (None, record):
-            argv = self.manager.compose_command(selected, ["config", "--format", "json"])
-            env = self.manager.compose_env(selected)
-            config = json.loads(subprocess.check_output(argv, env=env, text=True, stderr=subprocess.DEVNULL))
-            project = selected["project"] if selected else self.manager.prefix + "-infra"
-            self.assertEqual(config["services"]["redis"]["container_name"], project + "-redis-1")
-            self.assertEqual(env["DEV_CONFIG"], str(self.config.resolve()))
-            self.assertEqual(
-                env["DEV_WORKTREE_ENTRYPOINT"], str(self.manager.tool_root / "docker/worktree-entrypoint.sh")
-            )
-
-    def test_runtime_overrides_are_private_and_do_not_copy_credentials(self):
-        """The generated config only isolates endpoints; credentials remain in the shared config."""
-        record = self.prepare("branch-a")
-        env = self.manager.compose_env(record)
-        path = Path(env["DEV_OVERRIDE_CONFIG"])
-        content = path.read_text()
-        self.assertIn(f"POSTGRES_DB={record['database']}\n", content)
-        self.assertIn(f"CELERY_BROKER_URL=redis://redis:6379/{record['redis_dbs'][0]}\n", content)
-        self.assertNotIn("POSTGRES_PASSWORD", content)
-        self.assertNotIn("complex", content)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-
-    def test_application_startup_never_starts_database_services(self):
-        """Keep API/frontend health gating while reusing only the shared servers."""
-        record = self.prepare("branch-a")
-        with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
-            self.manager, "compose", return_value="1"
-        ) as compose, patch.object(self.manager, "run"):
-            self.manager.up(record)
-        commands = [call.args[1] for call in compose.call_args_list if call.args[0] == record]
-        self.assertEqual(len(commands), 2)
-        self.assertEqual(commands[0][-2:], ["backend-api", "frontend"])
-        self.assertEqual(commands[1][-5:], ["backend-worker", "backend-scheduler", "lensnode", "flower", "nginx"])
-        for command in commands:
-            self.assertIn("--no-deps", command)
-            self.assertIn("--wait", command)
-            self.assertNotIn("postgresql", command)
-            self.assertNotIn("redis", command)
-
-    def test_new_worktree_reuses_shared_local_images_without_building(self):
-        """A missing private tag is created from the shared image without copying layers."""
-        record = self.prepare("branch-a")
-        missing = subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
-        with patch.object(
-            self.manager, "run", side_effect=[missing, "shared-backend", "", missing, "shared-lensnode", ""]
-        ) as run:
-            self.manager.reuse_images(record)
-        commands = [c.args[0] for c in run.call_args_list]
-        self.assertIn(["docker", "tag", "sourcelens-api:latest", record["backend_image"]], commands)
-        self.assertIn(["docker", "tag", "sourcelens-lensnode:latest", record["lensnode_image"]], commands)
-        self.assertFalse(any("build" in c or "pull" in c for c in commands))
-
-    def test_existing_private_images_are_not_overwritten(self):
-        """An explicitly built worktree image takes precedence over the shared image."""
-        record = self.prepare("branch-a")
-        with patch.object(self.manager, "run", return_value="existing-image") as run:
-            self.manager.reuse_images(record)
-        self.assertEqual(run.call_count, 2)
-        self.assertTrue(all(c.args[0][:3] == ["docker", "image", "inspect"] for c in run.call_args_list))
-
-    def test_explicit_build_builds_images_before_startup(self):
-        """Only the explicit build option invokes Docker Compose build."""
-        record = self.prepare("branch-a")
-        with patch.object(self.manager, "infra_up"), patch.object(self.manager, "network"), patch.object(
-            self.manager, "compose", return_value="1"
-        ) as compose:
-            self.manager.up(record, build=True)
-        commands = [c.args[1] for c in compose.call_args_list if c.args[0] == record]
-        self.assertEqual(commands[0], ["build", "backend-api", "lensnode"])
-
-    def test_missing_image_reports_explicit_build_without_starting_infrastructure(self):
-        """Default startup must not build implicitly or create resources when images are absent."""
-        record = self.prepare("branch-a")
-        with patch.object(
-            self.manager, "run", side_effect=subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
-        ), patch.object(self.manager, "infra_up") as infra:
-            with self.assertRaisesRegex(ValueError, "--build first"):
-                self.manager.up(record)
-        infra.assert_not_called()
-
-    def test_registry_has_one_configuration_home(self):
-        """A tool copied into a different worktree cannot silently change shared credentials."""
-        self.prepare("branch-a")
-        with self.assertRaisesRegex(ValueError, "different configuration home"):
-            DevManager(self.other, Path(self.temp.name) / "state", self.config)
-
-    def test_independent_state_roots_do_not_share_docker_resources(self):
-        """An acceptance registry must not reuse the daily development infrastructure/Redis slots."""
-        other = DevManager(self.root, Path(self.temp.name) / "other-state", self.config)
-        self.assertNotEqual(self.manager.prefix, other.prefix)
-
-    def test_concurrent_agents_allocate_distinct_resources(self):
-        """Exercise the real file lock in two independent interpreter processes."""
-        script = (
-            "from pathlib import Path; from scripts.devctl import DevManager; import sys; "
-            "m=DevManager(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])); "
-            "\nwith m.lock(): m.prepare(sys.argv[4], Path(sys.argv[5]))"
-        )
-        processes = [
-            subprocess.Popen(
-                [
-                    os.sys.executable,
-                    "-c",
-                    script,
-                    str(self.root),
-                    str(Path(self.temp.name) / "state"),
-                    str(self.config),
-                    name,
-                    str(path),
-                ],
-            )
-            for name, path in (("branch-a", self.root), ("branch-b", self.other))
-        ]
-        for process in processes:
-            self.assertEqual(process.wait(timeout=20), 0)
-        records = list(self.manager.read_state()["environments"].values())
-        self.assertEqual(len(records), 2)
-        self.assertNotEqual(records[0]["port"], records[1]["port"])
-        self.assertTrue(set(records[0]["redis_dbs"]).isdisjoint(records[1]["redis_dbs"]))
-
-    def test_network_attaches_only_shared_servers_to_environment_network(self):
-        """API/frontend aliases remain on separate networks, while PostgreSQL/Redis are shared."""
-        record = self.prepare("branch-a")
-        name = record["project"] + "-net"
-        details = [{"Labels": {"io.sourcelens.devctl.project": record["project"]}, "Containers": {}}]
-        with patch.object(self.manager, "run", return_value=json.dumps(details)) as run, patch.object(
-            self.manager, "compose", side_effect=["postgres-id", "redis-id"]
-        ):
-            self.manager.network(record)
-        self.assertEqual(
-            run.call_args_list[1].args[0],
-            ["docker", "network", "connect", "--alias", "postgresql", name, "postgres-id"],
-        )
-        self.assertEqual(
-            run.call_args_list[2].args[0], ["docker", "network", "connect", "--alias", "redis", name, "redis-id"]
-        )
-
-    def test_foreign_network_cannot_be_modified(self):
-        """Refuse an unrelated network even if its name happens to collide."""
-        record = self.prepare("branch-a")
-        with patch.object(self.manager, "run", return_value='[{"Labels": {}}]') as run:
-            with self.assertRaisesRegex(ValueError, "not owned"):
-                self.manager.network(record, remove=True)
-        self.assertEqual(run.call_count, 1)
 
     def test_test_refuses_wrong_actual_mount(self):
         """An incorrect container mount must never produce a green suite for the registered branch."""
-        record = self.prepare("branch-a")
+        record = dict(
+            name="main", path=str(self.root.resolve()), project="manual-dev", container="api-id", external=True
+        )
         inspected = [
             {"Mounts": [{"Type": "bind", "Destination": "/opt/backend", "Source": str(self.other / "backend")}]}
         ]
-        with patch.object(self.manager, "compose", return_value="container-id") as compose, patch.object(
-            self.manager, "run", return_value=json.dumps(inspected)
-        ):
+        with patch.object(self.manager, "run", return_value=json.dumps(inspected)) as run:
             with self.assertRaisesRegex(ValueError, "mounted source differs"):
                 self.manager.test(record, ["python", "manage.py", "test"])
-        self.assertEqual(compose.call_count, 1)
+        self.assertEqual(run.call_count, 1)
 
     def test_suite_failure_is_saved_and_propagated(self):
         """Preserve a failing command's exit status and log instead of reporting success."""
-        record = self.prepare("branch-a")
+        record = dict(
+            name="main", path=str(self.root.resolve()), project="manual-dev", container="api-id", external=True
+        )
         inspected = [
             {"Mounts": [{"Type": "bind", "Destination": "/opt/backend", "Source": str(self.root / "backend")}]}
         ]
         real_popen = subprocess.Popen
-        with patch.object(self.manager, "compose", return_value="container-id"), patch.object(
-            self.manager, "run", return_value=json.dumps(inspected)
-        ), patch("scripts.devctl.subprocess.Popen") as popen:
+        with patch.object(self.manager, "run", return_value=json.dumps(inspected)), patch(
+            "scripts.devctl.subprocess.Popen"
+        ) as popen:
             process = popen.return_value
             process.__enter__.return_value.stdout = iter(["FAILED fixture\n"])
             process.__enter__.return_value.wait.return_value = 7
             popen.side_effect = lambda argv, **kwargs: real_popen(argv, **kwargs) if argv[0] == "git" else process
             self.assertEqual(self.manager.test(record, ["python", "manage.py", "test"]), 7)
-        saved = self.manager.read_state()["environments"]["branch-a"]["last_test"]
+        saved = self.manager.read_state()["environments"]["main"]["last_test"]
         self.assertEqual(saved["exit_code"], 7)
         self.assertIn("FAILED fixture", Path(saved["log"]).read_text())
 
