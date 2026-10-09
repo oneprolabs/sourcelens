@@ -8,8 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from lensnode.text_index.config import IndexUnavailable, TextIndexSettings
-from lensnode.text_index.documents import authorized_scopes, collect_documents, generation_for
+from lensnode.text_index.config import IndexUnavailable, TextIndexSettings, digest
+from lensnode.text_index.documents import authorized_scopes, read_document, read_manifest
+from lensnode.text_index.pipeline import current_revisions
 
 
 @pytest.fixture
@@ -29,13 +30,22 @@ def corpus(tmp_path):
     return root, identity, manifest
 
 
+def collect_documents(root, identity):
+    """Exercise safe outline inputs without retaining a production full-corpus collector."""
+
+    _, items = read_manifest(root, identity)
+    revisions = current_revisions(root, items)
+    unique = {item["local_path"]: item for item in items if item["local_path"] in revisions}
+    return [document for item in unique.values() if (document := read_document(root, item)) is not None]
+
+
 def test_generation_changes_with_source_and_profile(corpus):
-    root, identity, _ = corpus
-    before = generation_for(collect_documents(root, identity), "profile")
-    assert before == generation_for(collect_documents(root, identity), "profile")
-    assert before != generation_for(collect_documents(root, identity), "other-profile")
+    root, identity, items = corpus
+    before = digest(["profile", current_revisions(root, items["items"])])
+    assert before == digest(["profile", current_revisions(root, items["items"])])
+    assert before != digest(["other-profile", current_revisions(root, items["items"])])
     (root / "public.md").write_text("Changed source\n")
-    assert before != generation_for(collect_documents(root, identity), "profile")
+    assert before != digest(["profile", current_revisions(root, items["items"])])
 
 
 def test_incomplete_scan_cannot_publish_deletions(corpus):
@@ -133,10 +143,9 @@ def test_query_filters_are_derived_from_selected_scope(corpus):
     assert authorized_scopes(settings, [{"path": "/"}], {}) == []
 
 
-def test_pipeline_profile_tracks_chunking_parameters(tmp_path):
+def test_pipeline_profile_tracks_index_model(tmp_path):
     settings = TextIndexSettings(tmp_path / "workspace")
-    assert settings.profile != replace(settings, chunk_size=800).profile
-    assert settings.profile != replace(settings, chunk_overlap=100).profile
+    assert settings.profile != replace(settings, index_model="openai/test").profile
 
 
 def test_settings_need_only_workspace(tmp_path, monkeypatch):
@@ -156,10 +165,10 @@ def test_index_location_follows_datasource_and_rejects_symlinks(tmp_path):
     root = tmp_path / "source"
     root.mkdir()
     directory = index_directory(root, identity)
-    assert directory.parent == root / ".cocoindex"
+    assert directory.parent == root / ".pageindex"
     assert directory != index_directory(root, str(uuid4()))
     assert directory.relative_to(root) == index_directory(tmp_path / "moved", identity).relative_to(tmp_path / "moved")
-    (root / ".cocoindex").symlink_to(tmp_path, target_is_directory=True)
+    (root / ".pageindex").symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(IndexUnavailable, match="PATH_INVALID"):
         index_directory(root, identity)
 

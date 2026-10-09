@@ -289,3 +289,4 @@ references
 
 # Datasource-local text indexing state
 .cocoindex/
+.pageindex/

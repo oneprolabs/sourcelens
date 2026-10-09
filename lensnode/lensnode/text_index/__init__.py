@@ -1,1 +1,1 @@
-"""Optional CocoIndex text preparation and node-local full-text retrieval."""
+"""Datasource-local PageIndex trees and compact file navigation catalogs."""

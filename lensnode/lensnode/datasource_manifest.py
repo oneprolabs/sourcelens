@@ -194,7 +194,7 @@ def should_skip_dir(path, current_datasource_uuid, excluded_roots):
     """Return whether a directory belongs to another datasource."""
 
     path = Path(path)
-    if path.name == ".cocoindex":
+    if path.name in {".cocoindex", ".pageindex"}:
         return True
     if is_sidecar_dir(path) or is_excluded_path(path, excluded_roots):
         return True

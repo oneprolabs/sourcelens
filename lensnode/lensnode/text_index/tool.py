@@ -11,13 +11,16 @@ from langchain_core.tools import tool
 from .config import MAX_RESULTS, IndexUnavailable
 
 
-def query_worker(command, query, limit):
+def query_worker(command, query, limit, offset=0, path="", section_offset=0):
     """Send only trusted scope plus bounded query arguments to a child process."""
 
     payload = json.dumps(
         {
             "query": query,
             "limit": limit,
+            "offset": offset,
+            "path": path,
+            "section_offset": section_offset,
             "target_dirs": command.get("target_dirs") or [],
             "policy": (command.get("settings") or {}).get("retrieval_policy") or {},
         }
@@ -51,34 +54,45 @@ def build_indexed_tool(command, literal_search, emit, source_recorder=None):
     """Add indexed text retrieval while retaining the literal tool contract."""
 
     @tool("search_indexed_workspace")
-    def search_indexed_workspace(query: str, max_results: int = 8) -> str:
-        """Search prepared text chunks within the selected workspace using full-text terms.
+    def search_indexed_workspace(
+        query: str = "", max_results: int = 8, offset: int = 0, path: str = "", section_offset: int = 0
+    ) -> str:
+        """Navigate the selected datasource file directory and PageIndex document trees.
 
-        Use for ranked text passages across documents and code, with keywords
-        in the source language. This is lexical retrieval. Use CodeGraph for
-        definitions, callers, dependencies and impact; use search_workspace
-        for exact strings and regex. Read returned original paths to verify
-        evidence. Missing or stale indexes fall back to workspace search.
+        An empty query lists files; offset pages through the catalog. Keywords
+        filter paths, headings and short PDF summaries, never full text. Pass a
+        returned path to browse that document, and section_offset to page its tree. Reason
+        over returned parent-linked sections and page locations, then use
+        read_workspace_file or search_workspace to verify original evidence.
+        Use CodeGraph for code structure. Missing or stale catalogs fall back
+        to ordinary search; topic misses do not prove the documents lack it.
         """
 
         started = time.monotonic()
         query = str(query).strip()
-        if not query or len(query) > 2000:
+        if len(query) > 2000:
             return json.dumps({"error": "TEXT_INDEX_QUERY_INVALID"})
         limit = min(MAX_RESULTS, max(1, int(max_results)))
         emit("tool.search_indexed_workspace.start", {"query": query, "max_results": limit})
         reason = ""
         try:
-            result = query_worker(command, query, limit)
-            if not result.get("matches"):
+            result = query_worker(command, query, limit, offset, path, section_offset)
+            if query and not result.get("matches"):
                 raise IndexUnavailable("TEXT_INDEX_NO_MATCHES")
-            if source_recorder is not None:
+            if source_recorder is not None and result.get("mode") != "navigation":
                 source_recorder.record_search(query, result.get("matches") or [])
             for match in result.get("matches") or []:
                 match["path"] = public_path(match["path"], command.get("target_dirs") or [])
         except IndexUnavailable as exc:
             reason = str(exc)
-            result = json.loads(literal_search.invoke({"query": query, "max_results": limit}))
+            if query:
+                result = json.loads(literal_search.invoke({"query": query, "max_results": limit}))
+            else:
+                result = {
+                    "mode": "navigation",
+                    "matches": [],
+                    "guidance": "Use find_files with **/*, then search_workspace or read_workspace_file.",
+                }
             result["index_fallback"] = reason
         emit(
             "tool.search_indexed_workspace.done",

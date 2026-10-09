@@ -1,63 +1,64 @@
-"""Describe processed datasource retrieval capabilities without model inference."""
+"""Describe file-directory and document-tree readiness after datasource processing."""
 
-import sqlite3
+import os
 from pathlib import Path
 
-from .config import IndexUnavailable, TextIndexSettings, index_directory
-from .documents import collect_documents, generation_for, read_manifest, source_revisions
-from .store import connect_readonly, validate_source_revisions
+from .config import IndexUnavailable, TextIndexSettings, digest, index_directory
+from .documents import read_manifest
+from .pipeline import current_revisions, load_catalog
 
 
-def retrieval_metadata(root, datasource_uuid):
-    """Report verified local index state and conservative tool recommendations."""
+def retrieval_metadata(root, datasource_uuid, *, settings=None):
+    """Report bounded directory facts without reading or persisting document bodies."""
 
     root = Path(root)
-    settings = TextIndexSettings(root.parent)
+    settings = settings or TextIndexSettings(root.parent, index_model=os.getenv("LENSNODE_PAGEINDEX_MODEL", "").strip())
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "analysis_status": "complete",
         "text_documents": 0,
         "text_bytes": 0,
-        "index": {"status": "unavailable"},
+        "index": {"status": "unavailable", "engine": "pageindex"},
         "recommendation": {
             "default_tool": "search_workspace",
             "exact_tool": "search_workspace",
             "structural_tool": "codegraph",
-            "basis": "verified_index_state",
+            "basis": "verified_navigation_state",
             "performance": "not_measured",
         },
     }
     try:
-        documents = collect_documents(root, datasource_uuid)
-        result["text_documents"] = len(documents)
-        result["text_bytes"] = sum(len(document.text.encode("utf-8")) for document in documents)
-        generation = generation_for(documents, settings.profile)
-        result["source_generation"] = generation
-        path = index_directory(root, datasource_uuid) / "index.sqlite3"
-        if not path.exists():
-            return result
-        connection = connect_readonly(path)
+        _, items = read_manifest(root, datasource_uuid)
+        revisions = current_revisions(root, items)
+        result["source_generation"] = digest([settings.profile, revisions])
         try:
-            metadata = connection.execute("SELECT generation, profile FROM metadata").fetchone()
-            try:
-                validate_source_revisions(connection, source_revisions(root, read_manifest(root, datasource_uuid)[1]))
-            except IndexUnavailable:
-                result["index"]["status"] = "stale"
+            catalog = load_catalog(index_directory(root, datasource_uuid))
+        except IndexUnavailable as exc:
+            if str(exc) == "TEXT_INDEX_UNAVAILABLE":
                 return result
-        finally:
-            connection.close()
-        if metadata is None or metadata["generation"] != generation or metadata["profile"] != settings.profile:
-            result["index"]["status"] = "stale"
-            return result
-        result["index"] = {"status": "ready", "generation": generation}
-        result["recommendation"]["ranked_tool"] = "search_indexed_workspace"
-    except (IndexUnavailable, OSError, ValueError) as exc:
+            raise
+        documents = catalog["documents"]
+        status = (
+            "ready"
+            if catalog["profile"] == settings.profile
+            and revisions == {path: row["revision"] for path, row in documents.items()}
+            else "stale"
+        )
+        result["text_documents"] = sum(row["status"] == "ready" for row in documents.values())
+        result["text_bytes"] = sum(row["bytes"] for row in documents.values() if row["status"] == "ready")
+        result["index"] = {
+            "status": status,
+            "engine": "pageindex",
+            "generation": catalog["generation"],
+            "catalog_files": len(documents),
+            "document_trees": sum(bool(row["sections"]) for row in documents.values()),
+            "pdf_trees": sum(row["kind"] == "pdf" and row["status"] == "ready" for row in documents.values()),
+            "failed_files": sum(row["status"] == "failed" for row in documents.values()),
+        }
+        if status == "ready":
+            result["recommendation"]["navigation_tool"] = "search_indexed_workspace"
+    except (IndexUnavailable, OSError, ValueError, KeyError, TypeError) as exc:
         result["analysis_status"] = "incomplete"
         result["index"]["status"] = "unverified"
         result["analysis_reason"] = str(exc) if isinstance(exc, IndexUnavailable) else "TEXT_INDEX_ANALYSIS_FAILED"
-    except sqlite3.Error:
-        # Corrupt index schemas must not turn a completed datasource sync into a failure.
-        result["analysis_status"] = "incomplete"
-        result["index"]["status"] = "unverified"
-        result["analysis_reason"] = "TEXT_INDEX_ANALYSIS_FAILED"
     return result

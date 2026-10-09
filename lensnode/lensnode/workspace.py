@@ -1155,7 +1155,7 @@ def is_path_excluded(root, path, scope, policy):
                 relative = path.resolve().relative_to(root.resolve())
     except ValueError:
         return True
-    if INTERNAL_CHECKPOINT_DIR in path.parts or ".cocoindex" in path.parts:
+    if INTERNAL_CHECKPOINT_DIR in path.parts or any(name in path.parts for name in (".cocoindex", ".pageindex")):
         return True
     if (
         _contains_path_parts(path.parts, INTERNAL_RUN_PATH)
@@ -1214,7 +1214,7 @@ def _contains_path_parts(parts, expected):
 def _exclude_globs(root, scope, policy):
     """Build ripgrep glob exclusions from scope and policy."""
 
-    globs = [f"**/{INTERNAL_CHECKPOINT_DIR}/**", "**/.cocoindex/**"]
+    globs = [f"**/{INTERNAL_CHECKPOINT_DIR}/**", "**/.cocoindex/**", "**/.pageindex/**"]
     if not _is_subject_runtime_root(root, scope):
         globs.append("**/.sourcelens/runtime/runs/**")
     exclude_dirs = _option(scope, policy, "exclude_dirs", DEFAULT_EXCLUDED_DIRS)

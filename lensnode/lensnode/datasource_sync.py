@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -313,17 +314,28 @@ def sync_datasource(command, workspace_path=WORKSPACE_ROOT, emit=None):
     conversion_summary = post_process_documents(context, sync_result, emit)
     conversion_summary["deleted_sidecars"] = deleted_sidecars
     result["conversion_summary"] = conversion_summary
-    result["storage_usage"] = _storage_usage(target)
     result["datasource_metadata"] = _datasource_retrieval_metadata(target, context)
+    result["storage_usage"] = _storage_usage(target)
     return result
 
 
 def _datasource_retrieval_metadata(target, context):
     """Describe retrieval after source synchronization and document conversion."""
 
+    from .text_index.config import IndexUnavailable, TextIndexSettings
     from .text_index.metadata import retrieval_metadata
+    from .text_index.pipeline import build_catalog
 
-    retrieval = retrieval_metadata(target, context["datasource_uuid"])
+    settings = TextIndexSettings(Path(target).resolve().parent, index_model=os.getenv("LENSNODE_PAGEINDEX_MODEL", "").strip())
+    # Directory and heading navigation is refreshed after every successful processing pass.
+    # Model-backed PDF trees are opt-in and use the explicitly configured local SDK lane.
+    if os.getenv("LENSNODE_TEXT_INDEX_ENABLED", "").lower() not in {"true", "1", "yes"}:
+        settings = TextIndexSettings(settings.workspace_path)
+    try:
+        build_catalog(settings, target, context["datasource_uuid"])
+    except (IndexUnavailable, OSError, ValueError):
+        logging.getLogger(__name__).warning("Datasource navigation catalog could not be refreshed")
+    retrieval = retrieval_metadata(target, context["datasource_uuid"], settings=settings)
     retrieval["analyzed_at"] = utc_timestamp()
     retrieval["by_extension"] = _count_file_extensions(target)
     retrieval["files"] = sum(retrieval["by_extension"].values())
@@ -5577,7 +5589,7 @@ def _is_generated_datasource_path(root, path):
         parts = Path(path).relative_to(root).parts
     except ValueError:
         parts = Path(path).parts
-    if ".git" in parts or ".cocoindex" in parts:
+    if ".git" in parts or any(name in parts for name in (".cocoindex", ".pageindex")):
         return True
     if any(part.endswith(".sourcelens") for part in parts):
         return True

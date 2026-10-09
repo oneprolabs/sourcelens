@@ -6,11 +6,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-INDEX_DIR_NAME = ".cocoindex"
-PIPELINE_VERSION = 1
-MAX_FILES = 10000
+INDEX_DIR_NAME = ".pageindex"
+PIPELINE_VERSION = 2
+MAX_FILES = 100000
 MAX_FILE_BYTES = 2 * 1024 * 1024
-MAX_CORPUS_BYTES = 64 * 1024 * 1024
 MAX_RESULTS = 20
 
 
@@ -26,23 +25,16 @@ def digest(value):
 
 @dataclass(frozen=True)
 class TextIndexSettings:
-    """Local paths and chunking parameters; there is no model or database URL."""
+    """Local navigation state and an explicitly configured PDF indexing model."""
 
     workspace_path: Path
-    chunk_size: int = 1600
-    chunk_overlap: int = 200
+    index_model: str = ""
 
     @property
     def profile(self):
-        """Identify all processing parameters that affect prepared text."""
+        """Identify the navigation schema and model used to build PDF trees."""
 
-        return digest(
-            {
-                "chunk_size": self.chunk_size,
-                "chunk_overlap": self.chunk_overlap,
-                "pipeline": PIPELINE_VERSION,
-            }
-        )
+        return digest({"pipeline": PIPELINE_VERSION, "index_model": self.index_model})
 
     @classmethod
     def from_env(cls):
@@ -54,7 +46,7 @@ class TextIndexSettings:
                 raise ValueError
         except (KeyError, ValueError, OSError):
             raise IndexUnavailable("TEXT_INDEX_CONFIG_INVALID") from None
-        return cls(workspace_path=workspace)
+        return cls(workspace_path=workspace, index_model=os.getenv("LENSNODE_PAGEINDEX_MODEL", "").strip())
 
 
 def index_directory(root, datasource_uuid):

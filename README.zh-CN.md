@@ -25,7 +25,7 @@
 
 ![SourceLens 总览](docs/images/sourcelens_zh.png)
 
-SourceLens 让 AI 编程 agent 在沙箱中直接读取、导航和推理文件系统，无需 embedding、向量数据库或预先建索引即可使用。检索过程能够结合代码结构、跨文件关系和语义意图，而非仅停留在表层文本匹配。对于需要排序文本片段检索的数据源，可选启用 CocoIndex 增量处理与本地全文索引；该功能默认关闭，需要显式建索引，Agent 仍通过读取原文核验证据。
+SourceLens 让 AI 编程 agent 在沙箱中直接读取、导航和推理文件系统，无需 embedding、向量数据库或预先建索引即可使用。检索过程能够结合代码结构、跨文件关系和语义意图，而非仅停留在表层文本匹配。数据源处理后会在本地生成轻量文件目录和章节导航；可选使用 PageIndex local mode 为 PDF 生成章节树和短摘要，不保存全文分块，也不需要向量数据库，Agent 定位后读取原文核验证据。
 
 ## 项目背景
 
@@ -239,3 +239,29 @@ docker compose -f docker-compose.dev.yml up -d
 ---
 
 <sub>SourceLens 由 [OnePro Cloud](https://github.com/oneprolabs) 开发和维护。</sub>
+
+### 本地文档导航
+
+数据源同步或文档转换完成后，自动刷新数据源目录下的 `.pageindex/` 导航目录和
+检索 metadata。Markdown 标题提取无需模型调用；没有可用章节结构的文件仍保留
+在文件目录中。通过 `LENSNODE_TEXT_INDEX_ENABLED=true` 注册 Agent 导航工具。
+`search_indexed_workspace` 的空查询用于列出文件，关键词仅筛选路径、章节标题
+和短摘要；使用 `offset` 翻页，使用返回的 `path` 和 `section_offset` 浏览文档树。
+这些信息仅用于定位，不能直接作为证据，Agent 必须读取原文。
+
+PDF 章节树使用官方 PageIndex SDK local mode，还需显式配置
+`LENSNODE_PAGEINDEX_MODEL`。OpenAI 兼容端点可配置
+`LENSNODE_PAGEINDEX_API_BASE` / `LENSNODE_PAGEINDEX_API_KEY`；也支持 SDK 自身
+读取的 `OPENAI_API_KEY` 等提供方环境变量。本地模式仍会调用所选模型，产生相应
+费用，但不上传文档至 PageIndex Cloud。使用官方 PyPI SDK，并固定 `pageindex==0.2.22` 以保证构建可复现。仅保留章节层级、页码和有界短摘要，导出后清理 SDK
+临时生成的全文缓存。
+
+也可显式刷新本地导航：
+
+```bash
+python -m lensnode.text_index index --root /workspace/datasources/<source> --datasource <uuid>
+```
+
+CLI 仅更新本地目录；数据库 metadata 在下一次同步或转换后刷新。目录缺失、
+失效或查询无命中时回退普通搜索；单个 PDF 建树失败不阻塞其他文件的导航。
+旧 `.cocoindex/` 索引不再读取，并继续从普通检索中排除；不会自动删除已有状态。

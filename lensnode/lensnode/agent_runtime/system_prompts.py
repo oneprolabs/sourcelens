@@ -299,7 +299,7 @@ def _knowledge_system_prompt(
         f"{knowledge_qa_guidance}"
         "- For exact-text questions, or when CodeGraph is unavailable, your "
         "FIRST workspace action MUST be a search_workspace call, an available "
-        "search_indexed_workspace call for ranked lexical passages, or a "
+        "search_indexed_workspace call to navigate document headings, or a "
         "find_files call with a RECURSIVE "
         'pattern ("**/*", never a bare "*", which only lists the top '
         "level). If find_files returns nothing, retry with \"**/*\" or a "
@@ -334,12 +334,14 @@ def _knowledge_system_prompt(
         "a glob, or read a matched file instead.\n\n"
         f"{_subagent_guidance(command.get('agent_rounds'), command)}"
         "How search and read work:\n"
-        "- When search_indexed_workspace is available, use it to retrieve "
-        "ranked prepared text chunks with source-language keywords. It is "
-        "full-text retrieval, not semantic similarity or a call graph. "
-        "CodeGraph still comes first for structural code questions. Its "
-        "source paths can be passed directly to read_workspace_file; "
-        "converted-text lines are not original PDF page numbers.\n"
+        "- When search_indexed_workspace is available, use it to navigate the file catalog "
+        "and PageIndex document trees. An empty query lists files; use offset to paginate. "
+        "Pass a returned path and section_offset to browse more sections. "
+        "Keywords filter paths, headings and short summaries, so a topic may be present "
+        "in the body even when this tool has no matches. Reason over parent-linked sections "
+        "and page ranges, then read_workspace_file or search_workspace for original evidence. "
+        "Titles and generated summaries are navigation hints, never verified citations. "
+        "CodeGraph still comes first for structural code questions.\n"
         "- search_workspace returns matching LINES (path + line number + "
         "surrounding context), not whole files, and works on files of any "
         "size. Pass FOCUSED keywords (the core noun / feature / command "
@@ -380,7 +382,7 @@ def _knowledge_system_prompt(
         "Required workflow:\n"
         "1. Retrieve evidence before answering any project or code analysis "
         "question: CodeGraph for structure, search_workspace for literal "
-        "patterns, or search_indexed_workspace when available for ranked text.\n"
+        "patterns, or search_indexed_workspace when available for document navigation.\n"
         "2. Read the relevant matches with read_workspace_file around their "
         "line numbers. When several matches look relevant, issue those "
         "calls together in one step so they run concurrently, rather than "
@@ -768,7 +770,12 @@ def _datasource_retrieval_prompt(command):
             "source": str(entry.get("name") or "source")[:120],
             **counts,
             "index_status_at_last_analysis": status,
-            "ranked_passages": "search_indexed_workspace if available" if ready else "search_workspace",
+            "document_navigation": (
+                "search_indexed_workspace if available"
+                if ready and index.get("engine") == "pageindex"
+                else "find_files and search_workspace"
+            ),
+            "index_engine": "pageindex" if index.get("engine") == "pageindex" else "unverified",
             "exact_strings_and_regex": "search_workspace",
             "code_structure": "CodeGraph if available",
             "performance": "not_measured",

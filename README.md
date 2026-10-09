@@ -25,7 +25,7 @@
 
 ![SourceLens overview](docs/images/sourcelens_en.png)
 
-SourceLens uses AI coding agents running in a sandbox to directly read, navigate, and reason over the file system, without requiring embeddings, a vector database, or pre-indexing. Retrieval can combine code structure, cross-file relationships, and semantic intent, beyond surface-level text matching. Datasources that need ranked text passages can optionally use CocoIndex incremental processing and a local full-text index. This feature is disabled by default and requires an explicit indexing step; the agent still reads original files to verify evidence.
+SourceLens uses AI coding agents running in a sandbox to directly read, navigate, and reason over the file system, without requiring embeddings, a vector database, or pre-indexing. Retrieval can combine code structure, cross-file relationships, and semantic intent, beyond surface-level text matching. Datasource processing generates a compact file directory and heading navigation catalog locally. Optional PageIndex local mode adds PDF chapter trees and short summaries, without full-text chunks or a vector database; the agent navigates these structures and reads original files to verify evidence.
 
 ## Background
 
@@ -249,3 +249,33 @@ If SourceLens is useful to you, a ⭐ helps other people find it.
 ---
 
 <sub>SourceLens is built and maintained by [OnePro Cloud](https://github.com/oneprolabs).</sub>
+
+### Local document navigation
+
+After synchronization or document conversion, SourceLens refreshes the datasource-local
+`.pageindex/` catalog and retrieval metadata. Markdown headings are extracted without model
+calls; files without an available outline remain discoverable in the directory. Agent
+navigation is enabled with `LENSNODE_TEXT_INDEX_ENABLED=true`. The
+`search_indexed_workspace` tool lists files with an empty query, filters file paths,
+headings and summaries with keywords, and supports `offset`, `path` and `section_offset`
+for browsing. These hints are not citations: the agent must read the original material.
+
+To build PDF trees with the official PageIndex SDK in local mode, also configure
+`LENSNODE_PAGEINDEX_MODEL` (an explicit model name), and optionally
+`LENSNODE_PAGEINDEX_API_BASE` / `LENSNODE_PAGEINDEX_API_KEY` for an OpenAI-compatible
+endpoint. The SDK can also use its provider environment variables such as
+`OPENAI_API_KEY`. Local mode calls your chosen LLM and may incur model costs; documents
+are not uploaded to PageIndex Cloud. The official PyPI SDK is pinned to `pageindex==0.2.22` for reproducible builds. Generated trees retain page ranges and bounded
+summaries; the SDK's temporary extracted-text store is removed after export.
+
+An explicit refresh is also available:
+
+```bash
+python -m lensnode.text_index index --root /workspace/datasources/<source> --datasource <uuid>
+```
+
+This CLI updates local state; synchronize or convert the datasource again to refresh
+its backend metadata. Unavailable, failed, or stale navigation falls back to ordinary
+workspace search. PDF failures do not prevent other files from being cataloged.
+Existing `.cocoindex/` indexes are no longer read and remain excluded from workspace
+retrieval; this change does not automatically delete old local state.

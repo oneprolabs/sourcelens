@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lensnode import workspace as workspace_module
 from lensnode.agent_tools import build_agent_tools
 from lensnode.workspace import (
@@ -1021,11 +1023,12 @@ def test_search_reuses_one_allowlist_check_per_path(tmp_path, monkeypatch):
     assert len(set(checked)) == 2
 
 
-def test_include_hidden_never_exposes_cocoindex_state(tmp_path, monkeypatch):
+@pytest.mark.parametrize("state_dir", [".cocoindex", ".pageindex"])
+def test_include_hidden_never_exposes_index_state(tmp_path, monkeypatch, state_dir):
     """Index text remains private in native and fallback discovery modes."""
 
     root = tmp_path / "docs"
-    internal = root / ".cocoindex" / "prepared"
+    internal = root / state_dir / "prepared"
     internal.mkdir(parents=True)
     indexed = internal / "chunks.json"
     indexed.write_text("private indexed marker")

@@ -50,15 +50,18 @@ async def execute(args):
         settings,
         request["target_dirs"],
         request.get("policy") or {},
-        request["query"],
+        request.get("query", ""),
         request.get("limit", 8),
+        request.get("offset", 0),
+        request.get("path", ""),
+        request.get("section_offset", 0),
     )
 
 
 def main():
     """Keep credentials, exceptions, and library output out of tool results."""
 
-    parser = argparse.ArgumentParser(description="SourceLens optional local text index worker")
+    parser = argparse.ArgumentParser(description="SourceLens local PageIndex navigation worker")
     subparsers = parser.add_subparsers(dest="action", required=True)
     index = subparsers.add_parser("index", help="Build and atomically publish one manifest-backed datasource")
     index.add_argument("--root", required=True)

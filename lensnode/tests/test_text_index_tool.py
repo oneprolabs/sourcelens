@@ -138,3 +138,21 @@ def test_worker_timeout_is_bounded_and_reported(monkeypatch):
     monkeypatch.setattr(tool_module.subprocess, "run", timeout)
     with pytest.raises(IndexUnavailable, match="TIMEOUT"):
         tool_module.query_worker({}, "retry", 8)
+
+
+def test_navigation_hints_are_not_recorded_as_consulted_evidence(tmp_path, monkeypatch):
+    """Generated headings and summaries must not bypass original-file verification."""
+
+    recorder = ConsultedSources({"target_dirs": [{"path": str(tmp_path), "name": "docs"}]})
+    tools = tools_for(tmp_path, recorder=recorder)
+    monkeypatch.setattr(
+        tool_module,
+        "query_worker",
+        lambda *_args: {
+            "mode": "navigation",
+            "matches": [{"path": str(tmp_path / "guide.pdf"), "line": 1, "text": "Generated summary"}],
+        },
+    )
+    result = json.loads(tools["search_indexed_workspace"].invoke({"query": ""}))
+    assert result["matches"][0]["path"] == "docs/guide.pdf"
+    assert recorder.export_state()["searches"] == []
