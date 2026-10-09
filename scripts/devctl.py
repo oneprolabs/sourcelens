@@ -56,11 +56,11 @@ def branch(path):
             return "unavailable"
 
 
-def print_table(headers, rows):
+def print_table(headers, rows, indent=""):
     """Align plain-text columns without terminal escapes or extra dependencies."""
     widths = [max(len(str(row[i])) for row in [headers, *rows]) for i in range(len(headers))]
     for row in [headers, ["-" * width for width in widths], *rows]:
-        print("  ".join(str(value).ljust(width) for value, width in zip(row, widths)).rstrip())
+        print(indent + "  ".join(str(value).ljust(width) for value, width in zip(row, widths)).rstrip())
 
 
 def display_environments(records, detailed=False, verbose=False):
@@ -70,12 +70,19 @@ def display_environments(records, detailed=False, verbose=False):
     except subprocess.CalledProcessError:
         current = None
     if detailed and not verbose:
-        print(f"Current worktree: {Path(current).name if current else '(outside repository)'}")
+        print("Development status")
+        print(f"  Current worktree  {Path(current).name if current else '(outside repository)'}")
         environments = [r for r in records if r["containers"]]
         if not environments:
-            print("No development service containers found.")
+            print("\n  No development service containers found.")
+        elif current and not any(r["path"] == current for r in environments):
+            print("  Current services  not started")
         for record in environments:
-            print(f"\nServices worktree: {record['name']}")
+            active = sum(c["State"]["Status"] == "running" for c in record["containers"])
+            location = "current worktree" if record["path"] == current else "other worktree"
+            print(f"\n  {record['name']}  ({location})")
+            print(f"  {active}/{len(record['containers'])} services running")
+            print()
             services = []
             for container in sorted(
                 record["containers"], key=lambda c: c["Config"]["Labels"]["com.docker.compose.service"]
@@ -88,7 +95,7 @@ def display_environments(records, detailed=False, verbose=False):
                         state.get("Health", {}).get("Status", "-"),
                     ]
                 )
-            print_table(["SERVICE", "STATE", "HEALTH"], services)
+            print_table(["SERVICE", "STATE", "HEALTH"], services, indent="    ")
         return
     running = sum(r["status"] == "running" for r in records)
     print(f"Worktrees: {len(records)}  |  Running: {running}  |  * current worktree")
