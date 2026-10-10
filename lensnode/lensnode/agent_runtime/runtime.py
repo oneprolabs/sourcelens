@@ -113,6 +113,7 @@ from .resume import (
 )
 from .restrictions import NoTaskMiddleware as _NoTaskMiddleware
 from .routing import (
+    _apply_delivery_contract,
     _message_needs_retrieval,
     _parse_route_decision,
     _parse_route_decision_or_none,
@@ -789,9 +790,11 @@ class LensDeepAgentRuntime:
         def emit_agent_event(event, detail=None):
             if event == "deepagents.summarization.compacted":
                 state.runtime_evidence["evidence_completeness"] = "incomplete"
-            if event in {"tool.save_deliverable.done", "deepagents.evidence.verified"} and hasattr(
-                state, "persist_execution_state"
-            ):
+            if event in {
+                "tool.save_deliverable.done",
+                "deepagents.evidence.verified",
+                "deepagents.evidence.convergence",
+            } and hasattr(state, "persist_execution_state"):
                 state.persist_execution_state()
             if trajectory is not None and event.startswith("tool."):
                 detail = trajectory.tool_event_detail(detail)
@@ -1295,6 +1298,13 @@ class LensDeepAgentRuntime:
                 has_bound_skills=bool(state.resources.skill_paths),
                 image_data_urls=state.command.get("image_data_urls"),
             )
+            state.route_decision = _apply_delivery_contract(
+                state.route_decision,
+                state.question,
+                state.command.get("history"),
+                state.resources.context_skill_contents,
+                [*state.tools, *state.mcp_tools],
+            )
             if state.checkpoint_ready:
                 save_resume_metadata(
                     state.run_uuid,
@@ -1341,6 +1351,15 @@ class LensDeepAgentRuntime:
         state.evidence_requirement = state.route_decision[
             "evidence_requirement"
         ]
+        state.runtime_evidence["artifact_required"] = state.evidence_requirement == "artifact"
+        if state.route_decision.get("intent") == "action" and (
+            _is_activity_report(state.command) or state.route_decision.get("delivery_contract") == "activity_report"
+        ):
+            report_tools = _activity_report_batch_tools(state.command)
+            named_tools = {key for key in report_tools if key.split("_", 1)[0] in state.question.casefold()}
+            state.runtime_evidence["required_sources"] = [
+                f"plugin:{key}" for key in sorted(named_tools or report_tools)
+            ]
         state.required_capabilities = state.route_decision[
             "required_capabilities"
         ]

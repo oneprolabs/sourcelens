@@ -687,3 +687,20 @@ def test_decision_capability_is_never_an_evidence_family():
         "decision"
         not in capability_protocol.EVIDENCE_CAPABILITY_FAMILIES
     )
+
+
+def test_snapshot_validation_failure_reaches_model_with_safe_recovery_hint():
+    """The runtime Tool preserves the control plane's allowlisted correction."""
+
+    client = SimpleNamespace(post=lambda *args, **kwargs: httpx.Response(
+        400, json={"detail": "TOOL_ARGUMENTS_INVALID", "reason": "REPOSITORY_FORMAT_INVALID"},
+    ))
+    tool = build_plugin_tools(_command("github_read_file"), _config(), client)[0]
+    result = json.loads(tool.func(
+        repository="owner/*", path="README.md", ref="main",
+        runtime=SimpleNamespace(tool_call_id="invalid-read-1"),
+    ))
+    assert result["ok"] is False
+    assert result["error"] == "TOOL_ARGUMENTS_INVALID"
+    assert result["error_type"] == "request"
+    assert "owner/repository" in result["hint"]

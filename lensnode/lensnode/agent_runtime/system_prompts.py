@@ -618,7 +618,7 @@ def _is_activity_report(command):
     """Return whether a report can use at least one batch activity Tool."""
 
     question = str(command.get("question") or "").casefold()
-    report_terms = ("report", "报告", "日报", "周报", "月报")
+    report_terms = ("report", "报告", "日报", "周报", "月报", "工作内容", "工作情况", "工作汇总")
     return bool(
         any(term in question for term in report_terms)
         and _activity_report_batch_tools(command)

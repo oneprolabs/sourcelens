@@ -264,6 +264,10 @@ def _execute_plugin_tool(
     except PluginRuntimeError as exc:
         error = str(exc)
         result = {"ok": False, "error": error}
+        if error == "TOOL_ARGUMENTS_INVALID":
+            result["error_type"] = "request"
+        if exc.reason:
+            result.update(reason=exc.reason, hint=exc.hint)
     except (httpx.HTTPError, PluginHttpClientError):
         error = "PLUGIN_REQUEST_FAILED"
         result = {"ok": False, "error": error}

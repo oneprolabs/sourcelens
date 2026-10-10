@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Fix report attachment delivery, resume missing report generation, disclose incomplete source coverage, and provide actionable GitHub repository validation errors.
+zh-CN: 修复报告附件交付与缺失报告的继续生成，保留来源不完整状态，并提供可纠正的 GitHub 仓库参数错误提示。
