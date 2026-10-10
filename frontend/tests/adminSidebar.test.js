@@ -15,7 +15,8 @@ test('admin routes select their owning sidebar menu', () => {
     ['/management/groups', 'users'],
     ['/management/llm/config', 'llm'],
     ['/management/task-management/list', 'tasks'],
-    ['/management/notifier/settings', 'notifications']
+    ['/management/notifier/settings', 'notifications'],
+    ['/management/alerts/events', 'notifications']
   ]
 
   for (const [path, expectedMenu] of routes) {

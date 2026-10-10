@@ -42,6 +42,8 @@ from .environment_variables import (
 )
 from .model_checks import check_assistant_model_refs
 from .models import (
+    AlertEvent,
+    AlertRule,
     Assistant,
     AssistantAccess,
     AssistantMCP,
@@ -5001,3 +5003,139 @@ class SharedQAAdminDetailSerializer(SharedQAAdminSerializer):
             "question",
             "answer",
         ]
+
+
+class AlertRuleSerializer(serializers.ModelSerializer):
+    """Admin CRUD serializer for alert rules."""
+
+    events = serializers.ListField(
+        child=serializers.ChoiceField(choices=AlertRule.Event.choices),
+        allow_empty=False,
+    )
+    assistants = serializers.SlugRelatedField(
+        many=True,
+        slug_field="uuid",
+        queryset=Assistant.objects.all(),
+        required=False,
+    )
+    created_by = serializers.CharField(source="created_by.username", read_only=True)
+
+    class Meta:
+        model = AlertRule
+        fields = [
+            "uuid",
+            "name",
+            "enabled",
+            "events",
+            "token_threshold",
+            "rounds_threshold",
+            "channel_uuid",
+            "email_recipients",
+            "assistants",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["uuid", "created_by", "created_at", "updated_at"]
+
+    def validate_name(self, value):
+        """Require a non-empty display name."""
+
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Name is required.")
+        return name
+
+    def validate_email_recipients(self, value):
+        """Keep only non-empty recipient strings."""
+
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Expected a list of emails.")
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    def validate(self, attrs):
+        """Enforce threshold and channel requirements for selected events."""
+
+        events = attrs.get("events")
+        if events is None and self.instance is not None:
+            events = self.instance.events
+        events = set(events or [])
+        token_threshold = attrs.get(
+            "token_threshold",
+            self.instance.token_threshold if self.instance else None,
+        )
+        rounds_threshold = attrs.get(
+            "rounds_threshold",
+            self.instance.rounds_threshold if self.instance else None,
+        )
+        if AlertRule.Event.TOKEN_EXCEEDED in events and not token_threshold:
+            raise serializers.ValidationError(
+                {"token_threshold": "Required when token alerts are enabled."}
+            )
+        if AlertRule.Event.ROUNDS_EXCEEDED in events and not rounds_threshold:
+            raise serializers.ValidationError(
+                {"rounds_threshold": "Required when round alerts are enabled."}
+            )
+
+        channel_uuid = attrs.get(
+            "channel_uuid",
+            self.instance.channel_uuid if self.instance else None,
+        )
+        if channel_uuid:
+            from agentcore_notifier.adapters.django.models import (
+                NotificationChannel,
+            )
+
+            channel = NotificationChannel.objects.filter(uuid=channel_uuid).first()
+            if channel is None:
+                raise serializers.ValidationError(
+                    {"channel_uuid": "Notification channel not found."}
+                )
+            if channel.channel_type not in {
+                NotificationChannel.TYPE_WEBHOOK,
+                NotificationChannel.TYPE_EMAIL,
+            }:
+                raise serializers.ValidationError(
+                    {
+                        "channel_uuid": (
+                            "Only webhook and email channels can be used for alerts."
+                        )
+                    }
+                )
+            recipients = attrs.get(
+                "email_recipients",
+                self.instance.email_recipients if self.instance else [],
+            )
+            if (
+                channel.channel_type == NotificationChannel.TYPE_EMAIL
+                and not recipients
+            ):
+                raise serializers.ValidationError(
+                    {"email_recipients": "Required for email channels."}
+                )
+        return attrs
+
+
+class AlertEventSerializer(serializers.ModelSerializer):
+    """Read-only serializer for triggered alert events."""
+
+    rule_uuid = serializers.UUIDField(source="rule.uuid", read_only=True)
+    rule_name = serializers.CharField(source="rule.name", read_only=True)
+    run_uuid = serializers.UUIDField(source="run.uuid", read_only=True)
+
+    class Meta:
+        model = AlertEvent
+        fields = [
+            "uuid",
+            "rule_uuid",
+            "rule_name",
+            "run_uuid",
+            "event_type",
+            "detail",
+            "status",
+            "error_message",
+            "created_at",
+        ]
+        read_only_fields = fields

@@ -1,0 +1,5 @@
+type: feature
+audience: admin
+en: Added admin alert rules that send notifications through existing notification channels when a QA run fails, exceeds a configured token threshold, or exceeds a configured round threshold.
+zh-CN: 新增管理台告警规则：当问答 Run 回答失败、超出配置的 token 阈值或超出配置的轮次阈值时，通过现有通知渠道发送告警。
+es: Se añadieron reglas de alerta en la consola de administración que envían notificaciones a través de los canales existentes cuando una ejecución de consulta falla, supera un umbral de tokens configurado o supera un umbral de rondas configurado.

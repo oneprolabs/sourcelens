@@ -389,14 +389,15 @@ def fail_active_runs_for_lensnode(lensnode_uuid):
     """Fail active runs when their node cannot provide durable resume."""
 
     now = timezone.now()
-    run_ids = list(
+    runs = list(
         Run.objects.filter(
             lensnode__uuid=lensnode_uuid,
             status__in=[Run.Status.RUNNING, Run.Status.STREAMING],
-        ).values_list("id", flat=True)
+        ).values_list("id", "uuid")
     )
-    if not run_ids:
+    if not runs:
         return 0
+    run_ids = [run_id for run_id, _run_uuid in runs]
     Run.objects.filter(id__in=run_ids).update(
         status=Run.Status.FAILED,
         error="LENSNODE_DISCONNECTED",
@@ -405,6 +406,10 @@ def fail_active_runs_for_lensnode(lensnode_uuid):
         updated_at=now,
     )
     fail_running_steps_for_runs(run_ids)
+    from .alerts import schedule_run_alert_evaluation
+
+    for _run_id, run_uuid in runs:
+        schedule_run_alert_evaluation(run_uuid)
     return len(run_ids)
 
 
@@ -438,6 +443,7 @@ def mark_active_runs_awaiting_resume(lensnode_uuid):
         return 0
     updated_ids = []
     expired_ids = []
+    expired_uuids = []
     scheduled_expirations = []
     for run in runs:
         resume_by = get_run_resume_deadline(run, now=now)
@@ -462,6 +468,7 @@ def mark_active_runs_awaiting_resume(lensnode_uuid):
         updated_ids.append(run.id)
         if resume_by <= now:
             expired_ids.append(run.id)
+            expired_uuids.append(run.uuid)
         else:
             scheduled_expirations.append((run.uuid, resume_by))
     fail_running_steps_for_runs(updated_ids)
@@ -474,6 +481,10 @@ def mark_active_runs_awaiting_resume(lensnode_uuid):
                 RunExecution.Status.RUNNING,
             ],
         ).update(status=RunExecution.Status.FAILED, finished_at=now)
+        from .alerts import schedule_run_alert_evaluation
+
+        for run_uuid in expired_uuids:
+            schedule_run_alert_evaluation(run_uuid)
     for run_uuid, resume_by in scheduled_expirations:
         schedule_awaiting_run_expiration(run_uuid, resume_by)
     return len(updated_ids)
@@ -719,6 +730,9 @@ def resume_awaiting_runs_for_lensnode(
                     execution.finished_at = now
                     execution.save(update_fields=["status", "finished_at"])
                     fail_running_steps_for_runs([run.id])
+                    from .alerts import schedule_run_alert_evaluation
+
+                    schedule_run_alert_evaluation(run.uuid)
                     logger.error(
                         "run resume rejected run_uuid=%s lensnode_uuid=%s "
                         "reason=LENSNODE_RESUME_UNSUPPORTED",
@@ -3869,6 +3883,14 @@ def finish_lensnode_run(
         _finalize_delegated_children(run)
 
     _promote_next_queued_run(run.session.assistant)
+
+    if run.parent_run_id is None and run.status in {
+        Run.Status.DONE,
+        Run.Status.FAILED,
+    }:
+        from .alerts import schedule_run_alert_evaluation
+
+        schedule_run_alert_evaluation(run.uuid)
     return run
 
 
