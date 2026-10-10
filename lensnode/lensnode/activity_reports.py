@@ -91,6 +91,7 @@ class ActivityLedger:
         self.entries = {}
         self.staged_fingerprint = None
         self.staged_candidates = {}
+        self.completion_requested = False
         for path in self.root.glob("*.json"):
             if path.is_symlink():
                 raise ValueError("Invalid activity evidence file")
@@ -109,6 +110,12 @@ class ActivityLedger:
         with self.lock:
             entry = self.entries.get(key)
             return _json(entry["result"]) if entry else None
+
+    def has_evidence(self):
+        """Distinguish a collected report from a request awaiting clarification."""
+
+        with self.lock:
+            return bool(self.entries)
 
     def request_lock(self, provider, connection, version, tool, arguments):
         """Serialize identical concurrent activity requests within this Run."""
@@ -144,6 +151,7 @@ class ActivityLedger:
                 stream.write(_json(entry))
             os.replace(temporary, path)
             self.entries[key] = entry
+            self.completion_requested = False
 
     def report(self, expected_tools, language="zh"):
         """Render facts from saved snapshots without asking a model to infer work."""
@@ -159,7 +167,9 @@ class ActivityLedger:
             key = _json([entry["tool"], entry["connection"], sorted(scope), result.get("since"), result.get("until")])
             latest[key] = entry
         records = {}
-        limitations = []
+        # Provider snapshots prove their own query coverage, not the user's
+        # requested date and full resource scope. No trusted report spec exists.
+        limitations = ["请求资源与日期范围尚未核验 / requested resource and date coverage unverified"]
         tools = set()
         windows = set()
         for entry in sorted(latest.values(), key=lambda entry: (entry["provider"], entry["sequence"])):
@@ -307,7 +317,8 @@ def _record(provider, connection, resource, kind, item, since, until):
 def _render(report, language):
     """Escape all source text and keep links within HTTP(S)."""
 
-    chinese = str(language).lower().startswith("zh")
+    language_name = str(language).strip().lower()
+    chinese = language_name.startswith("zh") or "chinese" in language_name
     title = "可验证活动汇总" if chinese else "Verified activity summary"
     labels = (
         {
@@ -441,7 +452,10 @@ def build_activity_report_tool(ledger, expected_tools, command, resources, confi
         HTML yourself or refetch sources to correct a report.
         """
 
+        if not ledger.has_evidence():
+            return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"})
         report = finalize_activity_report(ledger, expected_tools, command, resources, config, emit_event, language)
+        ledger.completion_requested = True
         return _json(
             {
                 "ok": True,
@@ -457,19 +471,17 @@ def build_activity_report_tool(ledger, expected_tools, command, resources, confi
 class ActivityReportMiddleware(AgentMiddleware):
     """Finish from saved evidence before another model-generated report turn."""
 
-    def __init__(self, ledger, expected_tools, render):
+    def __init__(self, ledger, render):
         self.ledger = ledger
-        self.expected_tools = set(expected_tools)
         self.render = render
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
-        """Stop generation once each requested source has produced evidence."""
+        """Stop only after the model explicitly requests final rendering."""
 
         with self.ledger.lock:
-            retrieved = {entry["tool"] for entry in self.ledger.entries.values()}
-        if not self.expected_tools or not self.expected_tools.issubset(retrieved):
-            return None
+            if not self.ledger.completion_requested:
+                return None
         report = self.render()
         return {"jump_to": "end", "messages": [AIMessage(content=report["answer"])]}
 

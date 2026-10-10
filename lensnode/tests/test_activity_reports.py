@@ -55,6 +55,18 @@ def test_render_is_deterministic_and_never_turns_old_resolution_into_daily_compl
     assert "当前负责人" in first["html"]
 
 
+@pytest.mark.parametrize("language_code", [None, "zh", "zh-CN", "zh-TW"])
+def test_report_accepts_the_runtime_language_name_for_chinese_requests(tmp_path, language_code):
+    from lensnode.agent_runtime.prompts import command_answer_language
+
+    command = {"question": "总结 10/8，每个人的工作内容", "answer_language": language_code}
+    ledger = ActivityLedger(tmp_path / "private")
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, _result())
+    report = ledger.report({"jira_activity_summary"}, command_answer_language(command))
+    assert "可验证活动汇总" in report["answer"]
+    assert "当期更新" in report["html"]
+
+
 def test_partial_and_missing_sources_remain_visible_and_closed_mr_is_not_merged(tmp_path):
     ledger = ActivityLedger(tmp_path / "private")
     result = {
@@ -167,7 +179,7 @@ def test_evidence_budget_keeps_partial_results_and_marks_lost_tail():
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_graph_finishes_from_all_saved_sources_without_a_second_model_turn(tmp_path, asynchronous):
+def test_graph_waits_for_explicit_rendering_and_never_generates_a_model_report(tmp_path, asynchronous, monkeypatch):
     import asyncio
 
     from langchain.agents import create_agent
@@ -175,7 +187,7 @@ def test_graph_finishes_from_all_saved_sources_without_a_second_model_turn(tmp_p
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from lensnode.activity_reports import ActivityReportMiddleware
+    from lensnode.activity_reports import ActivityReportMiddleware, build_activity_report_tool
 
     ledger = ActivityLedger(tmp_path / "private")
 
@@ -187,6 +199,12 @@ def test_graph_finishes_from_all_saved_sources_without_a_second_model_turn(tmp_p
         ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
         return json.dumps(result)
 
+    monkeypatch.setattr(
+        "lensnode.activity_reports.finalize_activity_report",
+        lambda *args: ledger.report({"jira_activity_summary"}, "zh"),
+    )
+    render_activity_report = build_activity_report_tool(ledger, {"jira_activity_summary"}, {}, None, None, None)
+
     class Model(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
             """Allow real graph assembly with deterministic fake responses."""
@@ -196,29 +214,30 @@ def test_graph_finishes_from_all_saved_sources_without_a_second_model_turn(tmp_p
     model = Model(
         responses=[
             AIMessage(content="", tool_calls=[{"id": "source", "name": "jira_activity_summary", "args": {}}]),
+            AIMessage(content="", tool_calls=[{"id": "render", "name": "render_activity_report", "args": {}}]),
             AIMessage(content="This draft must never be generated."),
         ]
     )
     graph = create_agent(
         model,
-        tools=[jira_activity_summary],
+        tools=[jira_activity_summary, render_activity_report],
         middleware=[
             ActivityReportMiddleware(
                 ledger,
-                {"jira_activity_summary"},
                 lambda: ledger.report({"jira_activity_summary"}, "zh"),
             )
         ],
     )
     initial = {"messages": [HumanMessage(content="总结 10/8，每个人的工作内容")]}
     result = asyncio.run(graph.ainvoke(initial)) if asynchronous else graph.invoke(initial)
-    assert model.i == 1
+    assert model.i == 2
     assert "当期更新" in result["messages"][-1].content
     assert "This draft must never" not in result["messages"][-1].content
     assert "当前查询的活动快照" in result["messages"][-1].content
 
 
-def test_terminal_runtime_replaces_model_draft_and_marks_incomplete_sources_partial(tmp_path, monkeypatch):
+@pytest.mark.parametrize("has_evidence", [True, False])
+def test_terminal_runtime_replaces_model_draft_only_after_retrieving_evidence(tmp_path, monkeypatch, has_evidence):
     from datetime import datetime, timezone
 
     from lensnode.agent_runtime import runtime as runtime_module
@@ -226,7 +245,8 @@ def test_terminal_runtime_replaces_model_draft_and_marks_incomplete_sources_part
     ledger = ActivityLedger(tmp_path / "private")
     evidence = _result()
     evidence["possibly_truncated"] = True
-    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
+    if has_evidence:
+        ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
     report = ledger.report({"jira_activity_summary"}, "zh")
     command = {
         "question": "总结 10/8，每个人的工作内容",
@@ -278,6 +298,11 @@ def test_terminal_runtime_replaces_model_draft_and_marks_incomplete_sources_part
         consulted_sources=SimpleNamespace(citations=lambda *args: []),
     )
     result = runtime_module.LensDeepAgentRuntime(SimpleNamespace())._execute_agent(state)
+    if not has_evidence:
+        assert result["answer"] == "Unverified model draft"
+        assert not outputs
+        assert "activity-report.html" not in command["_deliverables"]
+        return
     assert result["outcome"] == "partial"
     assert result["termination_detail"]["error_type"] == "verification"
     assert "Unverified model draft" not in result["answer"]
@@ -364,3 +389,31 @@ def test_display_name_alone_does_not_establish_a_shared_source_identity(tmp_path
     ledger.record("gitlab", "connection", "1.0.0", "gitlab_activity_summary", {}, result)
     report = ledger.report({"gitlab_activity_summary"})
     assert len({record["person_id"] for record in report["records"]}) == 2
+
+
+def test_source_name_presence_does_not_end_an_unfinished_resource_query(tmp_path):
+    from lensnode.activity_reports import ActivityReportMiddleware
+
+    ledger = ActivityLedger(tmp_path / "private")
+    result = _result()
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {"projects": ["SL"]}, result)
+    middleware = ActivityReportMiddleware(ledger, lambda: ledger.report({"jira_activity_summary"}))
+    assert middleware.before_model({}, None) is None
+    report = ledger.report({"jira_activity_summary"})
+    assert report["complete"] is False
+    assert any("requested resource and date coverage unverified" in limit for limit in report["limitations"])
+    ledger.completion_requested = True
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {"projects": ["OPS"]}, result)
+    assert middleware.before_model({}, None) is None
+
+
+def test_explicit_render_without_evidence_keeps_clarification_flow(tmp_path):
+    from lensnode.activity_reports import build_activity_report_tool
+
+    ledger = ActivityLedger(tmp_path / "private")
+    command = {}
+    render = build_activity_report_tool(ledger, {"jira_activity_summary"}, command, None, None, None)
+    result = json.loads(render.invoke({}))
+    assert result == {"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"}
+    assert ledger.completion_requested is False
+    assert "_deliverables" not in command

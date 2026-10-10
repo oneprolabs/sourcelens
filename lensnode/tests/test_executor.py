@@ -1310,7 +1310,7 @@ def test_system_prompt_includes_assistant_workspace_guide():
         workspace_guide="Use the configured engineering scope.",
     )
 
-    assert "Assistant Workspace Guide" in prompt
+    assert "<workspace_context>" in prompt
     assert "Use the configured engineering scope." in prompt
 
 

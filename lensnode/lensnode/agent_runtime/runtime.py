@@ -141,6 +141,7 @@ from .system_prompts import (
     _is_general_chat,
     _knowledge_system_prompt,
     _subagent_guidance,
+    _supports_deterministic_activity_report,
     _system_prompt,
 )
 from .tracing import (
@@ -1177,7 +1178,7 @@ class LensDeepAgentRuntime:
                 evidence_reranker=state.decision_ranker,
             )
         state.activity_ledger = None
-        if state.runtime_mode.general_chat and _is_activity_report(state.command):
+        if state.runtime_mode.general_chat and _supports_deterministic_activity_report(state.command):
             state.activity_ledger = ActivityLedger(activity_ledger_root(self.config.workspace_path, state.run_uuid))
         state.plugin_tools = build_plugin_tools(
             state.command,
@@ -1244,7 +1245,6 @@ class LensDeepAgentRuntime:
             state.runtime_middleware += (
                 ActivityReportMiddleware(
                     state.activity_ledger,
-                    _activity_report_batch_tools(state.command),
                     lambda: finalize_activity_report(
                         state.activity_ledger,
                         _activity_report_batch_tools(state.command),
@@ -1884,7 +1884,7 @@ class LensDeepAgentRuntime:
         )
         state.exit_span(loop_span)
         activity_report = None
-        if getattr(state, "activity_ledger", None) is not None:
+        if getattr(state, "activity_ledger", None) is not None and state.activity_ledger.has_evidence():
             activity_report = finalize_activity_report(
                 state.activity_ledger,
                 _activity_report_batch_tools(state.command),

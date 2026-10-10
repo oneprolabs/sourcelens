@@ -6769,8 +6769,8 @@ def test_general_chat_prompt_prefers_batch_activity_tool_for_reports():
     )
 
     assert "github_activity_summary" in prompt
-    assert "do not delegate one subagent per repository" in prompt
-    assert "Do not call another GitHub list or detail Tool" in prompt
+    assert "each requested period" in prompt
+    assert "Apply requested person and resource filters" in prompt
 
 
 def test_report_execution_contract_includes_every_available_batch_source():
@@ -6788,7 +6788,7 @@ def test_report_execution_contract_includes_every_available_batch_source():
 
     assert "jira_activity_summary" in prompt
     assert "gitlab_activity_summary" in prompt
-    assert "once per available source" in prompt
+    assert "each requested period" in prompt
 
 
 def test_explicit_activity_report_uses_high_confidence_plan_route():
