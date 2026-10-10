@@ -6,7 +6,21 @@ import httpx
 
 
 class PluginRuntimeError(RuntimeError):
-    """Raised when a plugin runtime lease cannot be acquired."""
+    """Raised when trusted plugin execution cannot be authorized."""
+
+    def __init__(self, code, *, reason=None, hint=None):
+        super().__init__(code)
+        self.reason = reason
+        self.hint = hint
+
+
+_ARGUMENT_RECOVERY_HINTS = {
+    "REPOSITORY_FORMAT_INVALID": (
+        "Read repositories.md and use explicit owner/repository names; organizations and wildcards are invalid."
+    ),
+    "REPOSITORIES_DUPLICATED": "Deduplicate repositories case-insensitively before retrying.",
+    "REPOSITORY_OUTSIDE_SCOPE": "Read repositories.md and select only repositories authorized by the connection.",
+}
 
 
 def lease_url(ai_gateway_url):
@@ -59,6 +73,23 @@ def create_plugin_tool_snapshot(
         headers={"Authorization": f"Bearer {token}"},
     )
     if response.is_error:
+        try:
+            error_payload = _json_object(response, "PLUGIN_TOOL_SNAPSHOT_REQUEST_FAILED")
+        except PluginRuntimeError:
+            error_payload = None
+        if (
+            response.status_code == 400
+            and isinstance(error_payload, dict)
+            and error_payload.get("detail") == "TOOL_ARGUMENTS_INVALID"
+        ):
+            reason = error_payload.get("reason")
+            if isinstance(reason, str) and reason in _ARGUMENT_RECOVERY_HINTS:
+                raise PluginRuntimeError(
+                    "TOOL_ARGUMENTS_INVALID",
+                    reason=reason,
+                    hint=_ARGUMENT_RECOVERY_HINTS[reason],
+                )
+            raise PluginRuntimeError("TOOL_ARGUMENTS_INVALID")
         raise PluginRuntimeError("PLUGIN_TOOL_SNAPSHOT_REQUEST_FAILED")
     payload = _json_object(
         response,

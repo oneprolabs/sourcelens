@@ -889,7 +889,8 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                     files={"file": (filename, data, content_type)},
                 )
                 response.raise_for_status()
-                output_uuid = response.json().get("uuid")
+                payload = response.json()
+                output_uuid = payload.get("data", payload).get("uuid")
                 if not output_uuid:
                     raise ValueError("Deliverable upload response did not include its UUID.")
         except Exception as exc:

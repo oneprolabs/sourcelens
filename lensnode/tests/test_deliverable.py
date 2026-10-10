@@ -110,7 +110,10 @@ def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypat
 
     def handler(request):
         uploads.append(request.read())
-        return httpx.Response(201, json={"uuid": f"output-{len(uploads)}"})
+        return httpx.Response(
+            201,
+            json={"code": 0, "message": "success", "data": {"uuid": f"output-{len(uploads)}"}},
+        )
 
     _install_transport(monkeypatch, handler)
     command = {"run_uuid": "run-123"}

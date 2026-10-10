@@ -44,6 +44,12 @@ _CONVERGENCE_GUIDANCE = (
     "specific missing fact, using batched keywords (\"a|b|c\") and a "
     "narrower glob; do not repeat queries you already ran."
 )
+_DELIVERY_GUIDANCE = (
+    "Stop broad searches and finish the required deliverable from the evidence already collected. "
+    "Write the final report file and call save_deliverable before the final answer. "
+    "Disclose missing or truncated sources in the report. A text answer or a promise to create a file "
+    "does not fulfill artifact delivery."
+)
 
 
 class EvidenceGateMiddleware(AgentMiddleware):
@@ -92,9 +98,10 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.review_scope = review_scope
         self.on_recheck = on_recheck
         self.review_state = review_state if review_state is not None else {}
-        self.model_calls = 0
+        self.model_calls = int(self.review_state.get("model_calls") or 0)
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
-        self.convergence_nudges = 0
+        self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
+        self.delivery_turns = int(self.review_state.get("delivery_turns") or 0)
         self.saw_final_answer = False
         self._last_verification = None
 
@@ -185,7 +192,20 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if self.max_convergence_nudges <= 0:
             return None
         self.model_calls += 1
+        self.review_state["model_calls"] = self.model_calls
         if self.convergence_nudges >= self.max_convergence_nudges:
+            if isinstance(self.evidence, dict) and self.evidence.get("artifact_required") and self.delivery_turns < 3:
+                self.delivery_turns += 1
+                self.review_state["delivery_turns"] = self.delivery_turns
+                self._emit(
+                    "deepagents.evidence.convergence",
+                    {"action": "deliver", "turn": self.model_calls, "delivery_turn": self.delivery_turns},
+                )
+                if self.delivery_turns == 1:
+                    return {"messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
+                return None
+            if isinstance(self.evidence, dict):
+                self.evidence["convergence_exhausted"] = True
             self._emit(
                 "deepagents.evidence.convergence",
                 {"action": "end", "turn": self.model_calls},
@@ -194,11 +214,15 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if self.model_calls % self.interval != 0:
             return None
         self.convergence_nudges += 1
+        self.review_state["convergence_nudges"] = self.convergence_nudges
         self._emit(
             "deepagents.evidence.convergence",
             {"action": "nudge", "turn": self.model_calls},
         )
-        return {"messages": [HumanMessage(content=_CONVERGENCE_GUIDANCE)]}
+        guidance = _CONVERGENCE_GUIDANCE
+        if isinstance(self.evidence, dict) and self.evidence.get("artifact_required"):
+            guidance = _DELIVERY_GUIDANCE
+        return {"messages": [HumanMessage(content=guidance)]}
 
     def _after_model(self, state):
         if not self._active():
@@ -216,6 +240,14 @@ class EvidenceGateMiddleware(AgentMiddleware):
         answer = _message_text(last)
         if not answer.strip():
             return None
+        if (
+            isinstance(self.evidence, dict)
+            and self.evidence.get("artifact_required")
+            and not self.evidence.get("_deliverables")
+            and not self.review_state.get("delivery_nudged")
+        ):
+            self.review_state["delivery_nudged"] = True
+            return {"jump_to": "model", "messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
         self.saw_final_answer = True
         scope = self.review_scope() if self.review_scope else nullcontext()
         with scope:
