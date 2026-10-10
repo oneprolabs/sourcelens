@@ -351,3 +351,32 @@ def test_directory_and_write_results_do_not_claim_retrieval_support():
 
     assert middleware.after_model(state, None) is None
     assert not (policy.materials[0] or {}).get("retrieved_evidence")
+
+
+@pytest.mark.parametrize("retry_arguments", [{"project": "SL"}, {"project": "OPS"}, None])
+def test_only_the_same_retried_operation_restores_substantive_answer_review(retry_arguments):
+    policy = _ReviewPolicy(verdict="unsupported")
+    middleware = EvidenceGateMiddleware(policy, "Was the incident resolved?")
+    messages = [
+        AIMessage(content="", tool_calls=[{"id": "failed", "name": "jira_search", "args": {"project": "SL"}}]),
+        ToolMessage(name="jira_search", tool_call_id="failed", status="error", content="Request failed."),
+    ]
+    if retry_arguments is not None:
+        messages.append(
+            AIMessage(content="", tool_calls=[{"id": "retry", "name": "jira_search", "args": retry_arguments}])
+        )
+    messages.extend(
+        [
+            ToolMessage(name="jira_search", tool_call_id="retry", content='{"ok":true,"items":[{"status":"open"}]}'),
+            AIMessage(content="The incident was resolved."),
+        ]
+    )
+    result = middleware.after_model({"messages": messages}, None)
+    if retry_arguments == {"project": "SL"}:
+        assert result["jump_to"] == "model"
+        assert policy.materials[-1]["evidence_completeness"] == "complete"
+        assert policy.materials[-1]["retrieved_evidence"][0]["recovered"] is True
+    else:
+        assert result is None
+        assert policy.materials[-1]["evidence_completeness"] == "incomplete"
+    assert messages[1].status == "error"

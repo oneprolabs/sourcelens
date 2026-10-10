@@ -105,6 +105,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
         self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
         self.delivery_turns = int(self.review_state.get("delivery_turns") or 0)
+        self.correction_calls_remaining = int(self.review_state.get("correction_calls_remaining") or 0)
         self.saw_final_answer = False
         self._last_verification = None
 
@@ -196,6 +197,10 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         self.model_calls += 1
         self.review_state["model_calls"] = self.model_calls
+        if self.correction_calls_remaining > 0:
+            self.correction_calls_remaining -= 1
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+            return None
         if self.convergence_nudges >= self.max_convergence_nudges:
             if isinstance(self.evidence, dict) and self.evidence.get("artifact_required") and self.delivery_turns < 3:
                 self.delivery_turns += 1
@@ -276,6 +281,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 )
                 return None
             self.answer_nudges += 1
+            self.saw_final_answer = False
+            self.correction_calls_remaining = self.interval
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
             self.review_state["answer_nudges"] = self.answer_nudges
             if self.on_recheck is not None:
                 self.on_recheck()
@@ -336,6 +344,8 @@ def _tool_evidence(state):
     if not isinstance(state, dict):
         return []
     evidence = []
+    operations = {}
+    failures = {}
     excluded = {
         "write_todos",
         "write_file",
@@ -349,6 +359,14 @@ def _tool_evidence(state):
         "mkdir",
     }
     for message in state.get("messages") or []:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls or []:
+                arguments = call.get("args")
+                if isinstance(arguments, dict):
+                    operations[call.get("id")] = (
+                        call.get("name"),
+                        json.dumps(arguments, sort_keys=True, separators=(",", ":")),
+                    )
         if getattr(message, "type", "") != "tool":
             continue
         content = _message_text(message).strip()
@@ -359,20 +377,26 @@ def _tool_evidence(state):
             continue
         if name == "execute" and ("drwx" in content or content.startswith("total ")):
             continue
-        evidence.append(
-            {
-                "tool": name,
-                "content": content[:1200],
-                "incomplete": getattr(message, "status", None) == "error"
-                or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
-                "truncated": (
-                    len(content) > 1200
-                    or content.startswith("Tool result too large,")
-                    or "[Output was truncated due to size limits." in content
-                    or "[Output exceeded the capture size limit" in content
-                ),
-            }
-        )
+        item = {
+            "tool": name,
+            "content": content[:1200],
+            "incomplete": getattr(message, "status", None) == "error"
+            or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
+            "truncated": (
+                len(content) > 1200
+                or content.startswith("Tool result too large,")
+                or "[Output was truncated due to size limits." in content
+                or "[Output exceeded the capture size limit" in content
+            ),
+        }
+        operation = operations.get(getattr(message, "tool_call_id", None))
+        if operation is not None and operation[0] == name:
+            if item["incomplete"]:
+                failures.setdefault(operation, []).append(item)
+            else:
+                for failure in failures.pop(operation, []):
+                    failure.update(incomplete=False, truncated=False, recovered=True)
+        evidence.append(item)
     if len(evidence) > 32:
         # Keep each tool/source represented before filling the remaining budget.
         representatives = {}

@@ -144,6 +144,8 @@ def test_recheck_keeps_the_convergence_budget_active():
     assert middleware.after_model(_answer_state(), None)["jump_to"] == "model"
 
     assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None) is None
     assert middleware.before_model({}, None)["messages"]
     assert middleware.before_model({}, None) == {"jump_to": "end"}
 
@@ -157,6 +159,8 @@ def test_convergence_budget_survives_checkpoint_resume():
     assert first.before_model({}, None)["messages"]
     assert first.after_model(_answer_state(), None)["jump_to"] == "model"
 
+    resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
+    assert resumed.before_model({}, None) is None
     resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
     assert resumed.before_model({}, None) == {"jump_to": "end"}
 
@@ -275,3 +279,36 @@ def test_evidence_review_scope_wraps_verification():
 
     assert middleware.after_model(_answer_state(), None) is None
     assert entered == ["enter", "exit"]
+
+
+def test_exhausted_convergence_budget_allows_bounded_verification_and_restage():
+    policy = _Policy({"answer_supported": "unsupported"})
+    candidates = {"report.html": "old"}
+    middleware = EvidenceGateMiddleware(
+        policy,
+        "q",
+        interval=2,
+        max_convergence_nudges=1,
+        on_recheck=candidates.clear,
+    )
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None)["messages"]
+    assert middleware.after_model(_answer_state(), None)["jump_to"] == "model"
+    assert not candidates
+    assert middleware.before_model({}, None) is None
+    candidates["report.html"] = "corrected"
+    policy._verdicts = {"answer_supported": "supported"}
+    assert middleware.after_model(_answer_state("Corrected answer"), None) is None
+    assert candidates == {"report.html": "corrected"}
+    assert middleware.before_model({}, None) is None
+
+
+def test_verification_grace_expires_when_the_agent_keeps_searching():
+    policy = _Policy({"answer_supported": "unsupported"})
+    middleware = EvidenceGateMiddleware(policy, "q", interval=2, max_convergence_nudges=1)
+    middleware.before_model({}, None)
+    middleware.before_model({}, None)
+    middleware.after_model(_answer_state(), None)
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None) == {"jump_to": "end"}
