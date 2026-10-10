@@ -136,11 +136,21 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
             self.run.uuid,
             self.node.uuid,
             [
-                self.trace_event(sequence=1, event_type="tool.started", call_id="bad", payload={"name": "execute"}),
+                self.trace_event(
+                    sequence=1,
+                    event_type="tool.started",
+                    call_id="bad",
+                    payload={"name": "execute", "arguments": {"command": "pytest"}},
+                ),
                 self.trace_event(
                     sequence=2, event_type="tool.failed", call_id="bad", payload={"error": "private content"}
                 ),
-                self.trace_event(sequence=3, event_type="tool.started", call_id="fixed", payload={"name": "execute"}),
+                self.trace_event(
+                    sequence=3,
+                    event_type="tool.started",
+                    call_id="fixed",
+                    payload={"name": "execute", "arguments": {"command": "pytest"}},
+                ),
                 self.trace_event(sequence=4, event_type="tool.completed", call_id="fixed", payload={}),
             ],
         )
@@ -176,3 +186,30 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         )
         summary = _admin_run_failure_summary(self.run)
         self.assertEqual(summary["unresolved_failure_count"], 0)
+
+    def test_unrelated_success_does_not_recover_a_failed_operation(self):
+        for arguments in ({"command": "ls"}, None):
+            with self.subTest(arguments=arguments):
+                self.run.trace_events.all().delete()
+                start = {"name": "execute"}
+                if arguments is not None:
+                    start["arguments"] = arguments
+                append_run_trace_events(
+                    self.run.uuid,
+                    self.node.uuid,
+                    [
+                        self.trace_event(
+                            sequence=1,
+                            event_type="tool.started",
+                            call_id="bad",
+                            payload={"name": "execute", "arguments": {"command": "pytest"}},
+                        ),
+                        self.trace_event(sequence=2, event_type="tool.failed", call_id="bad"),
+                        self.trace_event(sequence=3, event_type="tool.started", call_id="other", payload=start),
+                        self.trace_event(sequence=4, event_type="tool.completed", call_id="other"),
+                    ],
+                )
+                summary = _admin_run_failure_summary(self.run)
+                self.assertEqual(summary["unresolved_failure_count"], 1)
+                self.assertEqual(summary["recovered_failure_count"], 0)
+                self.assertNotIn("pytest", str(summary))

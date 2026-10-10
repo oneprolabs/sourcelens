@@ -285,6 +285,7 @@ def _admin_run_trace_diagnostics(run):
     """Read quality verdicts and untracked tool failures from immutable events."""
 
     names = {}
+    operations = {}
     tool_failures = []
     review = None
     gate_fallbacks = {}
@@ -302,15 +303,27 @@ def _admin_run_trace_diagnostics(run):
         call_id = event["call_id"]
         if kind == "tool.started":
             names[call_id] = payload.get("name")
+            arguments = payload.get("arguments")
+            operations[call_id] = (
+                hashlib.sha256(json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if isinstance(arguments, dict)
+                else None
+            )
         elif kind in {"tool.completed", "tool.failed"}:
             name = names.get(call_id)
             if not isinstance(name, str):
                 continue
             if kind == "tool.failed":
-                tool_failures.append({"source": f"tool:{name}", "scope": "unresolved"})
+                tool_failures.append(
+                    {"source": f"tool:{name}", "scope": "unresolved", "operation": operations.get(call_id)}
+                )
             else:
                 for failure in tool_failures:
-                    if failure["source"] == f"tool:{name}":
+                    if (
+                        failure["source"] == f"tool:{name}"
+                        and failure["operation"] is not None
+                        and failure["operation"] == operations.get(call_id)
+                    ):
                         failure["scope"] = "recovered"
         elif payload.get("agent_event") == "deepagents.evidence.verified":
             review = payload
