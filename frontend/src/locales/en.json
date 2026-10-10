@@ -1521,6 +1521,32 @@
     }
   },
   "lensAdmin": {
+    "modelReplacement": {
+      "affectedAssistants": "Affected assistants",
+      "modelSettings": "Model settings",
+      "done": "Done",
+      "title": "Replace models in bulk",
+      "field": "Model role",
+      "source": "Current model",
+      "target": "Target model",
+      "allModels": "All current models",
+      "unsetModel": "No model assigned",
+      "noModels": "No eligible target models. Configure and enable a model in model management.",
+      "affected": "Models will change for {count} assistants",
+      "limit": "Replace up to 1000 assistants at a time. Narrow the filters.",
+      "success": "Models replaced successfully",
+      "conflict": "Assistant models changed. Review the refreshed list and try again.",
+      "selectPage": "Select assistants on this page",
+      "selectAssistant": "Select assistant {name}",
+      "assistants": "Select assistants",
+      "searchAssistants": "Search assistant names or slugs",
+      "selectAllAssistants": "Select all ({count})",
+      "selectAllResults": "Select all search results ({count})",
+      "clearSelection": "Clear selection",
+      "selectedCount": "{count} assistants selected",
+      "noAssistants": "No matching assistants",
+      "replace": "Replace models"
+    },
     "datasourceSelection": {
       "title": "Data access",
       "selected": "Selected sources",

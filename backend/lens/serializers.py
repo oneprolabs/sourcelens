@@ -727,6 +727,8 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "capability",
             "agent_rounds",
             "slug",
+            "agent_model_ref",
+            "multimodal_model_ref",
             "lensnode",
             "lensnode_name",
             "mode",

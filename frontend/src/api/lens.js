@@ -54,6 +54,11 @@ export async function updateAssistant(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function replaceAssistantModels(payload) {
+  const response = await api.post('/lens/assistants/replace-model/', payload)
+  return unwrapResponse(response)
+}
+
 export async function listAssistantDataSourceBindings(uuid) {
   const response = await api.get(`/lens/assistants/${uuid}/datasources/`)
   return unwrapResponse(response)

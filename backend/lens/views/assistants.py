@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from accounts.permissions import HasRequiredFeature
 
 from core.paginations import APIPagination
+from lens.model_replacement import ModelReplacementSerializer, replace_assistant_models
 from lens.models import (
     Assistant,
     AssistantDataSourceBinding,
@@ -121,9 +122,18 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
             "partial_update",
             "archive",
             "restore",
+            "replace_model",
         ):
             return [permissions.IsAuthenticated(), HasRequiredFeature()]
         return super().get_permissions()
+
+    @action(detail=False, methods=["post"], url_path="replace-model")
+    def replace_model(self, request):
+        """Preview or atomically replace models for an explicit assistant batch."""
+
+        serializer = ModelReplacementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(replace_assistant_models(user=request.user, **serializer.validated_data))
 
     def get_queryset(self):
         """Scope assistants to those the caller may see."""
