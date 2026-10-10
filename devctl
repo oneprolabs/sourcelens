@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Switch the shared SourceLens development stack between Git worktrees."""
+
+from scripts.devctl import main
+
+if __name__ == "__main__":
+    main()

@@ -149,6 +149,13 @@ black --check backend/              # 检查格式
 isort --check backend/              # 检查 import 顺序
 ```
 
+For Docker development tests, use `scripts/test-dev.sh [test labels/options]`
+for direct Compose usage, or `devctl test TARGET -- python manage.py test ...`
+for the shared development stack. Both report the actual container source;
+devctl also rejects mismatches. Use `devctl up [TARGET]` to start or switch the
+single stack; see `docs/worktree-development.md` for shared database/Redis,
+configuration, dependencies and cleanup behavior. Keep the configuration home fixed.
+
 ### Django 管理命令
 ```bash
 python backend/manage.py migrate
