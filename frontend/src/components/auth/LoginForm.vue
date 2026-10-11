@@ -138,11 +138,6 @@ const handleLogin = async () => {
   if (!validateLogin()) {
     return
   }
-  if (!pwTurnstilePassed.value) {
-    errorMessage.value = t('auth.codeLogin.turnstileRequired')
-    return
-  }
-
   loading.value = true
   errorMessage.value = ''
   try {
