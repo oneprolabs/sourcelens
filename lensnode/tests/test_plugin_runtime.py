@@ -589,3 +589,45 @@ def test_tool_only_plugin_rejects_datasource_sync(monkeypatch):
         "status": "failed",
         "error": "PLUGIN_DATASOURCE_UNSUPPORTED",
     }
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    "reason,hint",
+    [
+        ("REPOSITORY_FORMAT_INVALID", "owner/repository"),
+        ("REPOSITORIES_DUPLICATED", "case-insensitively"),
+        ("REPOSITORY_OUTSIDE_SCOPE", "authorized"),
+    ],
+)
+def test_snapshot_argument_errors_have_static_recovery_hints(reason, hint, wrapped):
+    """Known validation reasons are actionable without exposing upstream text."""
+
+    payload = {"detail": "TOOL_ARGUMENTS_INVALID", "reason": reason, "hint": "private upstream text"}
+    if wrapped:
+        payload = {"code": 400, "message": "failed", "data": payload}
+    client = SimpleNamespace(post=lambda *args, **kwargs: httpx.Response(400, json=payload))
+    with pytest.raises(PluginRuntimeError) as caught:
+        create_plugin_tool_snapshot(client, "http://gateway", "token", "run", "connection", "tool", "call", {})
+    assert str(caught.value) == "TOOL_ARGUMENTS_INVALID"
+    assert hint in caught.value.hint
+    assert "private upstream text" not in caught.value.hint
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"detail": "TOOL_ARGUMENTS_INVALID", "reason": "secret upstream body"},
+        {"detail": "private upstream body"},
+        ["private upstream body"],
+    ],
+)
+def test_snapshot_argument_errors_do_not_echo_unknown_payloads(payload):
+    """Unknown response text remains redacted."""
+
+    client = SimpleNamespace(post=lambda *args, **kwargs: httpx.Response(400, json=payload))
+    with pytest.raises(PluginRuntimeError) as caught:
+        create_plugin_tool_snapshot(client, "http://gateway", "token", "run", "connection", "tool", "call", {})
+    assert "upstream" not in str(caught.value)
+    assert caught.value.reason is None
+    assert caught.value.hint is None

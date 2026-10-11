@@ -39,10 +39,11 @@ TOOL_SOURCES = frozenset({
 class ToolSnapshotError(ValueError):
     """Raised with a stable code and HTTP status for Tool snapshot requests."""
 
-    def __init__(self, code, status_code):
+    def __init__(self, code, status_code, reason=None):
         super().__init__(code)
         self.code = code
         self.status_code = status_code
+        self.reason = reason
 
 
 @transaction.atomic
@@ -117,7 +118,12 @@ def create_tool_execution_snapshot(
             arguments,
         )
     except ToolProviderError as exc:
-        raise ToolSnapshotError("TOOL_ARGUMENTS_INVALID", 400) from exc
+        reason = {
+            "repository must use owner/repository": "REPOSITORY_FORMAT_INVALID",
+            "repositories must be unique": "REPOSITORIES_DUPLICATED",
+            "repository is outside connection scope": "REPOSITORY_OUTSIDE_SCOPE",
+        }.get(str(exc))
+        raise ToolSnapshotError("TOOL_ARGUMENTS_INVALID", 400, reason=reason) from exc
     _reject_sensitive_values(connection.config)
     _reject_sensitive_values(connection.allowed_scope)
     resolved_config = {

@@ -68,7 +68,7 @@ class DeliverableLifecycleTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.node_token}",
         )
         self.assertEqual(response.status_code, 201, response.data)
-        output = RunOutputFile.objects.get(uuid=response.data["uuid"])
+        output = RunOutputFile.objects.get(uuid=response.json()["data"]["uuid"])
         self.addCleanup(output.file.delete, save=False)
         return output
 

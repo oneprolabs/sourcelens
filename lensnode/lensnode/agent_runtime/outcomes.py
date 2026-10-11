@@ -56,6 +56,29 @@ def _finalize_runtime_outcome(
 ):
     """Resolve a run outcome after observing actual tool execution."""
 
+    runtime_evidence = runtime_evidence or {}
+    if runtime_evidence.get("artifact_required") and not runtime_evidence.get("_deliverables"):
+        return "partial", _evidence_termination_detail("artifact")
+    if runtime_evidence.get("convergence_exhausted"):
+        return "partial", {"reason": "evidence_convergence_limit", "error_type": "execution_limit"}
+    required_sources = set(runtime_evidence.get("required_sources") or [])
+    if required_sources:
+        evidence = getattr(capability_middleware, "successful_evidence", []) or []
+        latest_requests = {(item.get("source"), item.get("request_sha256")): item for item in evidence}
+        completed_sources = {
+            item.get("source") for item in latest_requests.values() if item.get("coverage_complete") is not False
+        }
+        incomplete_sources = {
+            item.get("source") for item in latest_requests.values() if item.get("coverage_complete") is False
+        }
+        missing = sorted((required_sources - completed_sources) | (required_sources & incomplete_sources))
+        if missing:
+            return "partial", {
+                "reason": "source_coverage_incomplete",
+                "capability": "plugin",
+                "error_type": "verification",
+                "sources": missing,
+            }
     if not execution_gate_enabled:
         if truncated:
             return "partial", {

@@ -46,7 +46,11 @@ from lensnode.gateway_model import (
 def test_runtime_answer_composes_execution_phases(monkeypatch):
     calls = []
     resources = SimpleNamespace()
-    state = SimpleNamespace(resources=resources)
+    state = SimpleNamespace(
+        resources=resources,
+        run_span=None,
+        exit_span=lambda *_args: None,
+    )
     runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
 
     monkeypatch.setattr(
@@ -105,6 +109,10 @@ def test_general_chat_uses_route_classifier_before_agent_loop(monkeypatch):
         question="hello",
         tools=[],
         mcp_tools=[],
+        runtime_evidence={},
+        new_span=lambda *_args: "stage",
+        enter_span=lambda *_args: None,
+        exit_span=lambda *_args: None,
     )
     monkeypatch.setattr(
         agent_runtime,
@@ -225,6 +233,10 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
             "required_capabilities": [],
         },
         scenario={"prompt": "Answer safely."},
+        runtime_evidence={},
+        new_span=lambda *_args: "stage",
+        enter_span=lambda *_args: None,
+        exit_span=lambda *_args: None,
     )
     streamed_answer = (
         "I used read_file on /subject-documents/"

@@ -717,8 +717,11 @@ class PluginToolExecutionSnapshotView(
                 source=request.data.get("source"),
             )
         except ToolSnapshotError as exc:
+            detail = {"detail": exc.code}
+            if exc.reason:
+                detail["reason"] = exc.reason
             return Response(
-                {"detail": exc.code},
+                detail,
                 status=exc.status_code,
             )
         response = Response(

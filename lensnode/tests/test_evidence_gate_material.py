@@ -75,7 +75,7 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     "completeness,expected,requirement",
     [
         ("complete", "partial", "none"),
-        ("incomplete", "completed", "none"),
+        ("incomplete", "partial", "none"),
         ("incomplete", "partial", "artifact"),
     ],
 )
@@ -123,6 +123,9 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
     if requirement == "artifact":
         assert result["termination_detail"]["reason"] == "evidence_unavailable"
         assert result["termination_detail"]["capability"] == "artifact_delivery"
+    elif completeness == "incomplete" and requirement == "none":
+        assert result["termination_detail"]["reason"] == "evidence_incomplete"
+        assert result["termination_detail"]["error_type"] == "verification"
     elif expected == "partial":
         assert result["termination_detail"]["reason"] == "evidence_insufficient"
         assert result["termination_detail"]["error_type"] == "verification"
