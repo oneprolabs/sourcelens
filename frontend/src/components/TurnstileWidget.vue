@@ -40,6 +40,17 @@ function loadScript() {
 }
 
 onMounted(async () => {
+  try {
+    const response = await fetch('/api/v1/auth/turnstile/status')
+    const policy = await response.json()
+    if (policy.bypassed) {
+      emit('verified', '')
+      return
+    }
+  } catch (err) {
+    // Fall through to the normal Turnstile challenge when policy discovery fails.
+  }
+
   // Bypass when Turnstile is disabled or no site key is configured.
   if (!enabled || !siteKey) {
     emit('verified', '')

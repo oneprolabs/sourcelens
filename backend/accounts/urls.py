@@ -3,6 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 from dj_rest_auth.views import (
     LoginView, LogoutView,
@@ -60,7 +61,20 @@ class CustomLoginView(LoginView):
         return super().post(request, *args, **kwargs)
 
 
+class TurnstileStatusView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        client_ip = turnstile.get_client_ip(request.META)
+        return Response({'bypassed': turnstile.is_bypassed_ip(client_ip)})
+
+
 urlpatterns = [
+    path(
+        'api/v1/auth/turnstile/status',
+        TurnstileStatusView.as_view(),
+        name='turnstile_status',
+    ),
     # Login endpoint
     path(
         'api/v1/auth/login',
