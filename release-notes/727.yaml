@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Hide the Cloudflare Turnstile widget for clients whose IP is allowlisted for backend verification bypass.
+zh-CN: 对后端验证白名单中的客户端隐藏 Cloudflare Turnstile 组件。
