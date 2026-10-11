@@ -354,4 +354,8 @@ volumes:
     name: ${DEV_REDIS_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_redis-data}
     external: ${DEV_SHARED_VOLUMES_EXTERNAL:-false}
   node-modules:
+    name: ${DEV_NODE_MODULES_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_node-modules}
+    external: ${DEV_NODE_MODULES_EXTERNAL:-false}
   npm-cache:
+    name: ${DEV_NPM_CACHE_VOLUME_NAME:-${COMPOSE_PROJECT_NAME}_npm-cache}
+    external: ${DEV_NPM_CACHE_EXTERNAL:-false}

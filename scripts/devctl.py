@@ -77,6 +77,7 @@ def display_environments(records, detailed=False, verbose=False):
     except subprocess.CalledProcessError:
         current = None
     records = [dict(r, name=r.get("display_name", r["name"])) for r in records]
+    records.sort(key=lambda r: r["name"] != "main")
     current_name = next(
         (r["name"] for r in records if r["path"] == current), Path(current).name if current else "(outside repository)"
     )
@@ -109,21 +110,18 @@ def display_environments(records, detailed=False, verbose=False):
             print_table(["SERVICE", "STATE", "HEALTH"], services, indent="    ")
         return
     running = sum(r["status"] == "running" for r in records)
-    print(f"Worktrees: {len(records)}  |  Running: {running}  |  * current worktree  > active source")
+    print(f"Worktrees: {len(records)}  |  Running: {running}")
     if not records:
         print("No local worktrees found.")
         return
     print()
     rows = []
-    for index, record in enumerate(records, 1):
-        containers = record["containers"]
-        active = sum(c["State"]["Status"] == "running" for c in containers)
-        marker = ("*" if record["path"] == current else " ") + (
-            ">" if record.get("container") and record["status"] == "running" else " "
-        )
+    for record in records:
+        is_current = "yes" if record["path"] == current else "-"
+        is_active = "yes" if record.get("container") else "-"
         url = f"http://localhost:{record['port']}" if record.get("port", "-") != "-" else "-"
-        rows.append([f"{index}{marker}", record["status"], f"{active}/{len(containers)}", url, record["name"]])
-    print_table(["#", "STATE", "SERVICES", "URL", "WORKTREE"], rows)
+        rows.append([record["name"], is_current, is_active, record["status"], url])
+    print_table(["WORKTREE", "CURRENT", "ACTIVE", "STATE", "URL"], rows)
     if not detailed and not verbose:
         return
     for index, record in enumerate(records, 1):
@@ -509,6 +507,26 @@ class DevManager:
         self.retire_parallel(records)
         if len(infra) != 2 or any(c["State"]["Status"] != "running" for c in infra):
             self.run([*command, "up", "-d", "--no-deps", "--wait", "postgresql", "redis"], env=env)
+        network_name = rendered["networks"]["backend_network"]["name"]
+        self.run(["docker", "network", "inspect", network_name], capture=True)
+        env.update(DEV_NETWORK_NAME=network_name, DEV_NETWORK_EXTERNAL="true")
+        for volume, key in (
+            ("postgres-data", "DEV_POSTGRES_VOLUME_NAME"),
+            ("redis-data", "DEV_REDIS_VOLUME_NAME"),
+            ("node-modules", "DEV_NODE_MODULES_VOLUME_NAME"),
+            ("npm-cache", "DEV_NPM_CACHE_VOLUME_NAME"),
+        ):
+            name = rendered.get("volumes", {}).get(volume, {}).get("name")
+            if not name:
+                continue
+            try:
+                self.run(["docker", "volume", "inspect", name], capture=True)
+            except subprocess.CalledProcessError:
+                if volume in ("postgres-data", "redis-data"):
+                    raise ValueError(f"Missing shared data volume: {name}") from None
+                self.run(["docker", "volume", "create", name], capture=True)
+            env[key] = name
+        env.update(DEV_SHARED_VOLUMES_EXTERNAL="true", DEV_NODE_MODULES_EXTERNAL="true", DEV_NPM_CACHE_EXTERNAL="true")
         state = self.read_state()
         state["single"] = dict(
             project=stack["project"],
