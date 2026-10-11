@@ -8,6 +8,7 @@ from typing import Annotated
 from urllib.parse import quote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from langchain.tools import ToolRuntime, tool
 from pydantic import Field
 
@@ -17,8 +18,9 @@ PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "jira"
 PLUGIN_VERSION = "1.0.0"
 RESPONSE_MAX_BYTES = 1_000_000
-ACTIVITY_DEFAULT_MAX_RESULTS = 50
-ACTIVITY_MAX_RESULTS = 100
+ACTIVITY_DEFAULT_MAX_RESULTS = 500
+ACTIVITY_MAX_RESULTS = 1000
+ACTIVITY_MAX_PAGES = 10
 
 
 def http_origins(endpoint):
@@ -45,12 +47,13 @@ def build_tool(definition, executor):
             return executor(key, {"issue_key": issue_key}, runtime)
         return tool(key, description=description)(invoke)
     if key == "jira_activity_summary":
+
         def invoke(
             projects: Annotated[list[str], Field(min_length=1, max_length=50)],
             since: Annotated[str, Field(min_length=1, max_length=64)],
             until: Annotated[str, Field(min_length=1, max_length=64)],
             runtime: ToolRuntime,
-            max_results: Annotated[int, Field(ge=1, le=100)] = 50,
+            max_results: Annotated[int, Field(ge=1, le=1000)] = 500,
         ) -> str:
             return executor(
                 key,
@@ -191,31 +194,68 @@ def _jira_project_activity(
         jira_timezone,
     )
     jql = (
-        f'project = "{project}" AND updated >= "{lower_bound}" '
-        f'AND updated < "{upper_bound}" ORDER BY updated DESC'
+        f'project = "{project}" AND ('
+        f'(updated >= "{lower_bound}" AND updated < "{upper_bound}") OR '
+        f'(resolved >= "{lower_bound}" AND resolved < "{upper_bound}") OR '
+        f'(created >= "{lower_bound}" AND created < "{upper_bound}")) ORDER BY updated DESC'
     )
-    payload = _request(
-        client,
-        _api_url(endpoint, "search", cloud_resource="search/jql"),
-        headers,
-        {
-            "jql": jql,
-            "maxResults": max_results,
-            "fields": (
-                "summary,status,assignee,reporter,creator,priority,"
-                "created,updated,resolutiondate,description"
-            ),
-        },
-    )
-    raw_items = payload.get("issues") if isinstance(payload, dict) else None
-    if not isinstance(raw_items, list):
-        raise PluginRuntimeError("JIRA_RESPONSE_INVALID")
+    url = _api_url(endpoint, "search", cloud_resource="search/jql")
+    params = {
+        "jql": jql,
+        "maxResults": min(max_results, 100),
+        "fields": "summary,status,assignee,reporter,creator,priority,created,updated,resolutiondate,description",
+    }
     items = []
-    for raw_item in raw_items:
-        item = _activity_issue(raw_item, project)
-        if _in_window(item.get("updated"), since, until):
-            items.append(item)
-    return items, len(raw_items) >= max_results
+    seen = set()
+    tokens = set()
+    fetched = 0
+    for _ in range(ACTIVITY_MAX_PAGES):
+        try:
+            payload = _request(client, url, headers, params)
+        except (PluginRuntimeError, httpx.HTTPError):
+            if not seen:
+                raise
+            return items[:max_results], True
+        raw_items = payload.get("issues") if isinstance(payload, dict) else None
+        if not isinstance(raw_items, list):
+            if seen:
+                return items[:max_results], True
+            raise PluginRuntimeError("JIRA_RESPONSE_INVALID")
+        new_count = 0
+        for raw_item in raw_items:
+            item = _activity_issue(raw_item, project)
+            if item["key"] in seen:
+                continue
+            seen.add(item["key"])
+            new_count += 1
+            if any(_in_window(item.get(field), since, until) for field in ("updated", "created", "resolution_date")):
+                items.append(item)
+        fetched += len(raw_items)
+        if raw_items and not new_count:
+            return items[:max_results], True
+        total = payload.get("total")
+        if payload.get("isLast") is True or (type(total) is int and len(seen) >= total):
+            return items[:max_results], len(items) > max_results
+        more = (
+            payload.get("isLast") is False
+            or bool(payload.get("nextPageToken"))
+            or (type(total) is int and fetched < total)
+        )
+        if not raw_items:
+            return items[:max_results], more or len(items) > max_results
+        if len(raw_items) < params["maxResults"] and not more:
+            return items[:max_results], len(items) > max_results
+        if len(items) >= max_results or not new_count:
+            return items[:max_results], True
+        if url.endswith("/search/jql"):
+            token = payload.get("nextPageToken")
+            if not isinstance(token, str) or not token or token in tokens:
+                return items[:max_results], True
+            tokens.add(token)
+            params["nextPageToken"] = token
+        else:
+            params["startAt"] = fetched
+    return items[:max_results], True
 
 
 def _jira_timezone(client, endpoint, headers):
@@ -269,9 +309,17 @@ def _activity_issue(value, project):
             "reporter": nested("reporter"),
             "creator": nested("creator"),
             "created": str(fields.get("created") or "")[:64],
-            "resolution_date": str(
-                fields.get("resolutiondate") or ""
-            )[:64],
+            "resolution_date": str(fields.get("resolutiondate") or "")[:64],
+            "assignee_identity": (
+                str(
+                    (fields.get("assignee") or {}).get("accountId")
+                    or (fields.get("assignee") or {}).get("key")
+                    or (fields.get("assignee") or {}).get("name")
+                    or ""
+                )[:160]
+                if isinstance(fields.get("assignee"), dict)
+                else ""
+            ),
         }
     )
     item["description"] = item["description"][:2000]

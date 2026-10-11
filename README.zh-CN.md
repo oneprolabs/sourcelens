@@ -17,6 +17,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-4C1?style=flat-square)](https://github.com/oneprolabs/sourcelens/pulls)
 
 [**快速安装**](#-快速安装) · [**为什么选择 SourceLens**](#为什么选择-sourcelens) · [**我们相信什么**](#-我们相信什么) · [**本地开发**](#-本地开发) · [**社区**](#-社区与联系我们)
+ · [**平台文档**](docs/README.md)
 
 </div>
 
@@ -117,7 +118,7 @@ Windows Git Bash `$HOME/sourcelens`。其余参数见 `install.sh --help`。
 `--yes` 可跳过，之后在 `/management/llm/config` 里配。
 
 - **NAT 虚拟机**：把宿主机 TCP `10083` 转发到虚拟机 TCP `10083`。
-- **零停机升级**：见 [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)。
+- **零停机升级**：见 [`docs/operations/blue-green-deployment.md`](docs/operations/blue-green-deployment.md)。
 
 </details>
 

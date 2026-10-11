@@ -302,6 +302,18 @@ class PluginToolSnapshotTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["detail"], "TOOL_ARGUMENTS_INVALID")
+        self.assertEqual(response.data["reason"], "REPOSITORY_OUTSIDE_SCOPE")
+
+    def test_tool_snapshot_rejects_wildcard_with_safe_reason(self):
+        """Invalid repository names expose a stable correction reason."""
+
+        run = self._create_active_run()
+        response = self._create_snapshot(run, arguments={"repository": "HyperBDR/*", "path": "README.md"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["reason"], "REPOSITORY_FORMAT_INVALID")
+        self.assertEqual(set(response.data), {"detail", "reason"})
+        self.assertEqual(response.json()["data"]["reason"], "REPOSITORY_FORMAT_INVALID")
 
     def test_tool_snapshot_accepts_repository_identity_case_insensitively(
         self,

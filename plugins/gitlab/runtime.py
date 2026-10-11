@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlsplit, urlunsplit
 
+import httpx
 from langchain.tools import ToolRuntime, tool
 from pydantic import Field
 
@@ -19,14 +20,15 @@ PLUGIN_KEY = "gitlab"
 PLUGIN_VERSION = "1.0.0"
 READ_MAX_BYTES = 200_000
 SEARCH_MAX_BYTES = 1_000_000
-ACTIVITY_DEFAULT_MAX_RESULTS = 50
-ACTIVITY_MAX_RESULTS = 100
-ACTIVITY_MAX_PROJECTS = 50
+ACTIVITY_DEFAULT_MAX_RESULTS = 500
+ACTIVITY_MAX_RESULTS = 1000
+ACTIVITY_MAX_PAGES = 10
+ACTIVITY_MAX_PROJECTS = 200
 GITLAB_ALL_PROJECTS = "*"
 ACTIVITY_RESOURCE_MAX = {
-    "commits": 50,
-    "merge_requests": 20,
-    "issues": 20,
+    "commits": 1000,
+    "merge_requests": 500,
+    "issues": 500,
 }
 GITLAB_MAX_SUBMODULE_CONFIG_BYTES = 64 * 1024
 
@@ -66,12 +68,13 @@ def build_tool(definition, executor):
                                   "ref": ref, "max_results": max_results}, runtime)
         return tool(key, description=description)(invoke)
     if key == "gitlab_activity_summary":
+
         def invoke(
             projects: Annotated[list[str], Field(min_length=1, max_length=50)],
             since: Annotated[str, Field(min_length=1, max_length=64)],
             until: Annotated[str, Field(min_length=1, max_length=64)],
             runtime: ToolRuntime,
-            max_results: Annotated[int, Field(ge=1, le=100)] = 50,
+            max_results: Annotated[int, Field(ge=1, le=1000)] = 500,
         ) -> str:
             return executor(
                 key,
@@ -203,24 +206,10 @@ def _activity_summary(client, arguments, secret, endpoint, config):
     return payload
 
 
-def _all_activity_projects(client, endpoint, secret):
-    """Resolve the all-projects sentinel to visible project identities."""
+def _activity_page(client, url, secret, params):
+    """Read one bounded activity page and validate the provider response."""
 
-    status, body, truncated = _get(
-        client,
-        f"{endpoint}/api/v4/projects",
-        secret,
-        {
-            "membership": "true",
-            "simple": "true",
-            "order_by": "last_activity_at",
-            "sort": "desc",
-            "per_page": min(ACTIVITY_MAX_PROJECTS + 1, 100),
-            "page": 1,
-        },
-        SEARCH_MAX_BYTES,
-        False,
-    )
+    status, body, truncated = _get(client, url, secret, params, SEARCH_MAX_BYTES, False)
     _status(status)
     if truncated:
         raise PluginRuntimeError("GITLAB_RESPONSE_TOO_LARGE")
@@ -230,25 +219,52 @@ def _all_activity_projects(client, endpoint, secret):
         raise PluginRuntimeError("GITLAB_RESPONSE_INVALID") from exc
     if not isinstance(payload, list):
         raise PluginRuntimeError("GITLAB_RESPONSE_INVALID")
+    return payload
+
+
+def _all_activity_projects(client, endpoint, secret):
+    """Resolve the all-projects sentinel to visible project identities."""
+
     projects = []
     seen = set()
-    for item in payload:
-        name = item.get("path_with_namespace") if isinstance(item, dict) else None
-        if not isinstance(name, str):
-            continue
-        value = name.strip().strip("/")
-        if "/" not in value or len(value) > 255:
-            continue
-        identity = value.casefold()
-        if identity in seen:
-            continue
-        seen.add(identity)
-        projects.append(value)
-        if len(projects) >= ACTIVITY_MAX_PROJECTS:
-            break
-    if not projects:
-        raise PluginRuntimeError("GITLAB_PROJECTS_UNAVAILABLE")
-    return projects, len(projects) < len(payload)
+    for page in range(1, ACTIVITY_MAX_PAGES + 1):
+        try:
+            payload = _activity_page(
+                client,
+                f"{endpoint}/api/v4/projects",
+                secret,
+                {
+                    "simple": "true",
+                    "order_by": "last_activity_at",
+                    "sort": "desc",
+                    "per_page": 100,
+                    "page": page,
+                },
+            )
+        except (PluginRuntimeError, httpx.HTTPError):
+            if page == 1:
+                raise
+            return projects, True
+        new_count = 0
+        for item in payload:
+            name = item.get("path_with_namespace") if isinstance(item, dict) else None
+            if not isinstance(name, str):
+                continue
+            value = name.strip().strip("/")
+            if "/" not in value or len(value) > 255 or value.casefold() in seen:
+                continue
+            seen.add(value.casefold())
+            projects.append(value)
+            new_count += 1
+        if len(projects) > ACTIVITY_MAX_PROJECTS:
+            return projects[:ACTIVITY_MAX_PROJECTS], True
+        if len(payload) < 100:
+            if not projects:
+                raise PluginRuntimeError("GITLAB_PROJECTS_UNAVAILABLE")
+            return projects, False
+        if len(projects) >= ACTIVITY_MAX_PROJECTS or not new_count:
+            return projects, True
+    return projects, True
 
 
 def _gitlab_activity_resource(
@@ -263,7 +279,8 @@ def _gitlab_activity_resource(
 ):
     """Query and project one fixed GitLab activity resource."""
 
-    page_size = min(max_results, ACTIVITY_RESOURCE_MAX[resource])
+    result_limit = min(max_results, ACTIVITY_RESOURCE_MAX[resource])
+    page_size = min(result_limit, 50)
     encoded_project = quote(project, safe="")
     if resource == "commits":
         path = f"projects/{encoded_project}/repository/commits"
@@ -292,30 +309,48 @@ def _gitlab_activity_resource(
             else _activity_issue
         )
         timestamp_field = "updated_at"
-    status, body, truncated = _get(
-        client,
-        f"{endpoint}/api/v4/{path}",
-        secret,
-        params,
-        SEARCH_MAX_BYTES,
-        False,
-    )
-    _status(status)
-    if truncated:
-        raise PluginRuntimeError("GITLAB_RESPONSE_TOO_LARGE")
-    try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise PluginRuntimeError("GITLAB_RESPONSE_INVALID") from exc
-    if not isinstance(payload, list):
-        raise PluginRuntimeError("GITLAB_RESPONSE_INVALID")
-    items = [
-        projector(item)
-        for item in payload
-        if isinstance(item, dict)
-        and _in_window(item.get(timestamp_field), since, until)
-    ]
-    return items, len(payload) >= page_size
+    items = []
+    seen = set()
+    for page in range(1, ACTIVITY_MAX_PAGES + 1):
+        params["page"] = page
+        try:
+            payload = _activity_page(client, f"{endpoint}/api/v4/{path}", secret, params)
+        except (PluginRuntimeError, httpx.HTTPError):
+            if page == 1:
+                raise
+            return items, True
+        new_count = 0
+        for raw in payload:
+            if not isinstance(raw, dict):
+                continue
+            identity = raw.get("id", raw.get("iid"))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            new_count += 1
+            timestamps = (
+                (timestamp_field,)
+                if resource == "commits"
+                else (
+                    timestamp_field,
+                    "created_at",
+                    "merged_at",
+                    "closed_at",
+                )
+            )
+            if any(_in_window(raw.get(field), since, until) for field in timestamps):
+                items.append(projector(raw))
+        older = False
+        if resource != "commits" and payload and isinstance(payload[-1], dict):
+            try:
+                older = _timestamp(payload[-1].get(timestamp_field)) < since
+            except PluginRuntimeError:
+                pass
+        if len(payload) < page_size or older:
+            return items[:result_limit], len(items) > result_limit
+        if len(items) >= result_limit or not new_count:
+            return items[:result_limit], True
+    return items[:result_limit], True
 
 
 def _activity_commit(value):
@@ -325,6 +360,7 @@ def _activity_commit(value):
         "sha": str(value.get("id") or "")[:64],
         "title": str(value.get("title") or "")[:300],
         "author_name": str(value.get("author_name") or "")[:160],
+        "author_email": str(value.get("author_email") or "")[:254],
         "authored_at": str(value.get("authored_date") or "")[:64],
         "committed_at": str(value.get("committed_date") or "")[:64],
         "url": str(value.get("web_url") or "")[:500],
@@ -443,7 +479,13 @@ def build_datasource_command(snapshot, material, trigger):
     resolved = snapshot.get("resolved_config")
     if not isinstance(resolved, dict): raise PluginRuntimeError("PLUGIN_CONFIG_INVALID")
     endpoint = _endpoint(resolved.get("endpoint"))
-    if not isinstance(material, dict) or material.get("plugin_key") != PLUGIN_KEY or str(material.get("endpoint") or "").rstrip("/") != endpoint or not material.get("value"):
+    if (
+        not isinstance(material, dict)
+        or material.get("plugin_key") != PLUGIN_KEY
+        or str(material.get("endpoint") or "").rstrip("/") != endpoint
+        or not isinstance(material.get("value"), str)
+        or (not material["value"] and material.get("authentication") != "anonymous")
+    ):
         raise PluginRuntimeError("PLUGIN_MATERIAL_MISMATCH")
     datasource = resolved.get("datasource_config") or {}
     if not isinstance(datasource, dict):
@@ -468,11 +510,12 @@ def build_datasource_command(snapshot, material, trigger):
     config = {
         "branch": datasource.get("branch") or "",
         "directory": datasource.get("directory") or "",
-        "auth_scheme": "token",
-        "access_token": material["value"],
-        "allow_submodules": True,
+        "auth_scheme": "token" if material["value"] else "none",
+        "allow_submodules": bool(material["value"]),
         "gitlab_endpoint": endpoint,
     }
+    if material["value"]:
+        config["access_token"] = material["value"]
     config["repositories"] = [
         {
             "repo_url": f"{endpoint}/{project}.git",
@@ -584,7 +627,17 @@ def _text(arguments, name):
 
 
 def _get(client, url, token, params, max_bytes, truncate):
-    with client.stream("GET", url, params=params, follow_redirects=False, headers={"Accept": "application/json", "PRIVATE-TOKEN": token, "User-Agent": "SourceLens-LensNode"}) as response:
+    with client.stream(
+        "GET",
+        url,
+        params=params,
+        follow_redirects=False,
+        headers={
+            "Accept": "application/json",
+            **({"PRIVATE-TOKEN": token} if token else {}),
+            "User-Agent": "SourceLens-LensNode",
+        },
+    ) as response:
         if response.is_redirect: raise PluginRuntimeError("GITLAB_REDIRECT_REJECTED")
         if response.status_code >= 400: return response.status_code, b"", False
         body = b"".join(response.iter_bytes())

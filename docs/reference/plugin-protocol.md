@@ -17,21 +17,23 @@ Datasource 同步或面向大模型的 Tool；声明的能力都必须由宿主�
   assets/
 ```
 
-`key` 使用小写字母开头的短标识，`version` 使用三段式 SemVer，且两层目录身份
-必须分别与 Manifest 的 `key` 和 `version` 一致。Plugin 项目可以独立维护源码、
-测试、文档和发布流程；宿主不从 Manifest 加载任意 Python 模块、Shell 命令或
-远程前端代码。
+`key` 使用小写字母开头的短标识，`version` 使用三段式 SemVer。包使用
+`plugins/<key>/` 平铺目录，目录名必须与 Manifest 的 `key` 一致；物理目录
+不体现版本。Plugin 项目可以独立维护源码、测试、文档和发布流程；宿主不从
+Manifest 加载任意 Python 模块、Shell 命令或远程前端代码。
 
-目录发现只登记安装事实，不决定生产版本。每个已安装版本由控制面维护独立的发布
-状态与部署角色：新发现版本默认为 `debugging` 且没有角色；管理员显式发布后才成为
-`published`，并可独立设为 `candidate` 或 `active`。首次引导现有安装时，每个 Plugin
-的最高已安装版本会初始化为 `published + active`，此后安装更高版本不会自动切换
-生产流量。
+Manifest 和已安装文件是包身份、schema、能力与业务版本的事实源。Registry
+直接发现文件系统包；未指定版本时选择最高已安装 SemVer，指定版本时精确匹配
+`plugin_key + plugin_version`。控制面不保存独立的发布状态、部署角色或包摘要。
 
-发布会冻结整个版本目录的 SHA-256 摘要。`published` 和 `retired` 版本的内容不可
-原地覆盖；摘要不一致时，Registry 必须拒绝正常加载并返回稳定冲突错误。需要修改
-内容时必须使用新的 SemVer 目录。退役只停止新绑定和部署角色分配，不删除目录；
-历史执行快照仍可按精确 `plugin_key + plugin_version` 解析该版本。
+`PluginRelease` 表及其生命周期 API 已移除。受信任包的文件修改在下一次 Registry
+读取时生效，入口内容哈希用于 Runtime 模块缓存失效，不是数据库冻结或发布审批
+机制。历史快照只有在相应精确版本仍安装时才能解析；版本号本身不保证旧内容保留。
+包目录必须在配置的受控根目录内；Registry 拒绝路径逃逸、包边界符号链接、
+身份不匹配和无效 Manifest。默认部署使用平铺目录，Registry 也保留对已安装版本
+子目录的发现兼容。精确版本不存在时失败，不自动改用最新版本。
+
+ZIP 上传、第三方不受信任代码、制品签名和进程隔离不属于当前包契约。
 
 ## 2. Manifest 身份与能力族
 
@@ -51,12 +53,13 @@ Datasource 同步或面向大模型的 Tool；声明的能力都必须由宿主�
 }
 ```
 
-V1 的 `capability_family` 取值为 `plugin`。它表示 Tool 由受信任的内置 Plugin
-Runtime 执行，而不是 MCP Server。实际业务授权仍由 Tool 的 `capability` 字段和
-Connection 的资源范围共同决定，例如 `repository.read`。
+集成能力族为 `plugin`，Decision 工具可声明 `decision`；两者由受信任的 Plugin
+Runtime 执行。`plugin_type` 表示集成或决策类型，不等同于调用者消费方式。实际授权
+由 Tool 的 `capability` 和 Connection 资源范围共同决定，例如 `repository.read`。
+Decision 声明和运行语义见 [Decision Plugin](decision-plugins.md)。
 
-`version` 是必填的 SemVer 业务发布版本。它用于执行归因、评分与诊断聚合、候选
-验证、灰度、回滚；`protocol_version` 只表示宿主接口兼容性，不能替代业务版本。
+`version` 是必填的 SemVer 业务发布版本，用于执行归因与精确包解析；
+`protocol_version` 只表示宿主接口兼容性，不能替代业务版本。
 
 `mcp` 只表示名称为 `mcp__...` 的 MCP Server Tool；Skill、Plugin 和 MCP 是三个
 不同的能力族。为兼容旧模型输出，宿主在路由修复阶段允许将旧的
@@ -91,7 +94,7 @@ Connection 的资源范围共同决定，例如 `repository.read`。
 
 - `key` 在同一 Plugin 内唯一，且只能包含小写字母、数字和下划线；
 - `description` 是面向模型的完整操作说明，不能包含凭证或隐藏指令；
-- `capability_family` 必须是宿主支持的能力族；V1 仅接受 `plugin`；
+- `capability_family` 必须是宿主支持的 `plugin` 或 `decision`；
 - `capability` 是稳定的业务权限标识；
 - V1 的 `side_effect` 必须为 `none`，只读能力才允许注册；
 - `input_schema` 必须是受控的 JSON Schema 子集，不能改变 Connection 资源边界。
@@ -172,7 +175,7 @@ LensNode 负责快照、lease、材料读取、取消、进度上报和结果生
 
 宿主会校验入口文件是受控目录中的普通文件，且入口身份与 Manifest 的
 `key + version` 一致，并按 `plugin_key + plugin_version + 内容哈希` 缓存加载
-模块。Tool 注册后必须附带运行时元数据：
+模块。面向模型的 Tool 注册后必须附带运行时元数据：
 
 ```text
 metadata.capability_family = "plugin"
@@ -198,7 +201,7 @@ metadata.capability = <Tool.capability>
 
 约束：
 
-- 模型只能看到 Tool 名称、说明和输入 schema；
+- 模型只能看到暴露给模型的 Tool 名称、说明和输入 schema；内部工具不直接注册给模型；
 - Token、Connection 配置中的敏感值和 Lease 内容不能进入模型上下文、Tool 参数、
   普通 Trace Event 或 Tool Result；
 - Snapshot 固定 `plugin_key + plugin_version + protocol_version`、Manifest、
@@ -229,6 +232,29 @@ Header 或启用重定向。该能力用于 OAuth/应用凭证换取短时 Token
 宿主仍强制 HTTPS、origin allowlist、无重定向和请求/响应上限。HTTP/2 只优化传输
 层，不能放宽 Connection scope、Tool capability 或 Provider 参数校验。
 
+### 6.2 Connection、凭证与运行时接口
+
+Connection 绑定 Plugin、endpoint、非敏感配置、资源范围和 SecretVersion。
+允许范围约束平台请求，不会降低原始 PAT 本身的权限。SecretMaterial 保存加密材料，
+SecretVersion 表示可审计的凭证版本；普通轮换不改写已有快照，紧急撤销使相关连接
+和有效 lease 失效。
+
+LensNode 使用节点身份读取脱敏快照并兑换短时材料：
+
+```text
+GET  /api/lens/plugin-runtime/snapshots/{snapshot_uuid}/
+POST /api/lens/plugin-runtime/leases/
+POST /api/lens/plugin-runtime/leases/{lease_uuid}/material/
+```
+
+Tool 调用通过 `POST /api/lens/plugin-runtime/tool-snapshots/` 创建执行快照。
+材料不能进入任务消息、持久化快照、普通日志或模型上下文；只在受信任 Runtime
+内存使用。手动、定时和重试同步使用同一执行边界，不能在授权失败后降级到旧凭证。
+
+LensNode 是受信任节点。外部 Plugin 文件也是受信任部署代码；Connection scope 和
+lease 不等于对任意上传代码的沙箱隔离。出站 origin 限制与部署网络策略共同约束
+自托管 endpoint，URL 格式检查不能单独防范所有私网访问与 DNS rebinding。
+
 ## 7. Assistant Binding 约定
 
 Direct Assistant 绑定 Plugin 时只提交 Connection 身份和启用状态：
@@ -254,10 +280,27 @@ Manifest 声明的全部只读 Tool 注册给模型；前端不展示工具复�
 无法区分同名 Tool 的 Connection。MCP Adapter 属于独立兼容入口，仍可显式选择
 Manifest 中的 Tool，并与 Direct Plugin binding 共同执行全局 Tool 名冲突校验。
 
+### 7.1 Skill 依赖与 MCP Adapter
+
+Skill 使用 `required_plugins` 声明 Plugin 和 capability，例如：
+
+```yaml
+required_plugins:
+  - plugin: github
+    capabilities: [repository.read]
+```
+
+控制面验证绑定是否满足依赖。Skill 获得授权工具，不默认获得原始 Token。
+Plugin MCP Adapter 是 `MCPServer` 的受控 `plugin` transport，仅选择有效
+Connection 和已声明的只读工具，不接受额外 endpoint、Header、环境或凭证。
+固化 Run 时转换为 `loaded_plugins`，继续使用原生快照、lease、scope 与调用审计。
+普通 URL/STDIO MCP 保持独立路径；直接绑定和 Adapter 之间仍检查全局工具名冲突。
+
 ## 8. Datasource 约定
 
 Datasource 与 Tool 共用 Connection，但执行契约分离：Datasource 保存资源选择、
-同步策略和目标目录，Plugin 负责资源校验、内容读取和增量同步。资源发现遵循
+同步策略和目标目录，Plugin 负责资源校验、内容读取和增量同步。供应商配置见
+[数据源指南](../guides/datasources.md)，目录与状态见 [数据处理参考](datasource-processing.md)。资源发现遵循
 Manifest 声明的资源依赖；依赖字段变化后才请求对应的 Provider 选项。
 
 Plugin 可以只声明 Datasource 能力并令 `tools` 为空。Connection 也可以只保存
@@ -272,14 +315,14 @@ Provider 的并发、超时、deadline、取消、Retry-After 和部分失败处
 ## 9. 协议兼容
 
 - `protocol_version` 只代表宿主与 Plugin 的接口版本，不代表业务 capability 版本；
-- `plugin_version` 是 SemVer 业务发布版本，当前四个内置 Plugin 均为 `1.0.0`；
-- 安装布局为 `plugins/<key>/`，物理目录不体现版本；新发现
-  版本保持 `debugging`，不会因为 SemVer 更高而自动用于生产；
-- 正常 Connection、Datasource、Assistant 和新执行快照只解析
-  `published + active` 版本；候选验证显式解析 `published + candidate` 版本；
+- `plugin_version` 是 Manifest 中声明的 SemVer 业务版本；
+- 安装布局为 `plugins/<key>/`，物理目录不体现版本；
+- Connection、Datasource、Assistant 与执行快照使用同一文件系统 Registry，
+  不查询数据库发布状态或 `active` / `candidate` 部署角色；
+- 未指定版本时选择最高已安装 SemVer；历史快照按精确版本解析，缺失版本不能
+  静默替换为当前版本；
 - Manifest、Runtime、API 和执行快照必须保留 `plugin_version`；
-- 发布时冻结的包摘要用于保证同一版本内容不可变，不取代 `plugin_version`；
-- `retired` 版本不能再获得部署角色，但仍保留给记录了精确版本的历史快照；
+- 入口内容哈希用于模块缓存失效，不提供冻结发布内容的保证；
 - 不兼容的入口、Manifest 或安全语义必须提升 `protocol_version`；
 - 新增字段优先采用可选字段和默认值，不能删除既有字段或改变其含义；
 - 宿主、Control Runtime、LensNode Runtime 必须拒绝未协商的协议版本。

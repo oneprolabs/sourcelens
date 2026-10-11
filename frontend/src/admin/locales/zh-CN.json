@@ -1517,7 +1517,7 @@
       },
       "gitlab": {
         "displayName": "GitLab",
-        "description": "使用个人访问令牌连接已授权的 GitLab.com 或私有部署项目；数据源同步仓库文件，助手可只读查看代码、提交、Merge Request 和 Issue。",
+        "description": "公开 GitLab.com 或自建 GitLab 项目可匿名访问，私有项目使用个人访问令牌；支持同步仓库文件，并通过只读助手工具查询代码、提交、合并请求和议题。",
         "connectionFields": {
           "endpoint": {
             "title": "GitLab 服务地址",
@@ -1525,7 +1525,7 @@
           },
           "secret_value": {
             "title": "个人访问令牌",
-            "description": "仅用于写入、且对已授权项目具有 read_api 和 read_repository 权限的令牌。"
+            "description": "公开项目可留空。私有项目使用具有 read_api 和 read_repository 权限的令牌；令牌仅可写入。"
           },
           "projects": {
             "title": "允许访问的项目",
@@ -2148,7 +2148,7 @@
       "step1Title": "来源",
       "step1Desc": "选择数据源类型。",
       "step2Title": "连接与资源",
-      "step2Desc": "填写名称，选择连接，并指定需要同步的仓库或资源。",
+      "step2Desc": "填写名称和资源地址，按需选择认证连接。",
       "step3Title": "同步与处理策略",
       "step3Desc": "配置同步策略与文档内容处理。",
       "summarySource": "数据源",
@@ -2314,6 +2314,7 @@
       "duplicateResourceUrl": "飞书资源地址不能重复。",
       "checkRepositoryAccess": "检查可用性",
       "repositoriesAccessible": "仓库可访问，可以继续创建数据源。",
+      "publicAccess": "公开访问（无需凭证）",
       "publicRepository": "公开",
       "githubErrors": {
         "notFound": "仓库或分支不存在，或当前连接无权访问。",

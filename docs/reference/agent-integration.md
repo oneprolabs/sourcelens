@@ -1,4 +1,4 @@
-# SourceLens Q&A distribution
+# 外部 Agent 集成
 
 SourceLens Q&A is delivered to external coding agents as a shared Skill plus a
 read-only REST contract. The client package lives in the sibling
@@ -91,9 +91,6 @@ local Skill directory and adds the `sourcelens` CLI to `PATH`; there is no MCP
 server to register. The CLI reads the service base URL from
 `SOURCELENS_BASE_URL` and talks to the REST endpoints above.
 
-A future hosted flow could support browser/device authentication and a
-short-lived session. See Authentication for what ships today.
-
 ## Authentication
 
 The service reuses the platform JWT authentication. Coding agents cannot run
@@ -121,11 +118,9 @@ GET  /api/lens/runs/<uuid>/                 GET  /api/lens/assistants/[<uuid>/]
 ```
 
 Everything else is refused with `403 AGENT_TOKEN_SCOPE_RESTRICTED`, including
-reads of admin endpoints and any write. Tokens without the claim (web sessions,
+reads of admin endpoints and writes outside the listed Session/Run operations. Tokens without the claim (web sessions,
 ordinary access tokens) are unaffected. Update the setting when the client
 needs another read-only route.
 
 SimpleJWT blacklisting is not enabled, so an issued token cannot be revoked
-individually before it expires. A dedicated, revocable API key is the planned
-follow-up, and device/browser authorization issuing a short-lived session
-remains the target for the hosted flow.
+individually before it expires.

@@ -46,7 +46,11 @@ from lensnode.gateway_model import (
 def test_runtime_answer_composes_execution_phases(monkeypatch):
     calls = []
     resources = SimpleNamespace()
-    state = SimpleNamespace(resources=resources)
+    state = SimpleNamespace(
+        resources=resources,
+        run_span=None,
+        exit_span=lambda *_args: None,
+    )
     runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
 
     monkeypatch.setattr(
@@ -105,6 +109,10 @@ def test_general_chat_uses_route_classifier_before_agent_loop(monkeypatch):
         question="hello",
         tools=[],
         mcp_tools=[],
+        runtime_evidence={},
+        new_span=lambda *_args: "stage",
+        enter_span=lambda *_args: None,
+        exit_span=lambda *_args: None,
     )
     monkeypatch.setattr(
         agent_runtime,
@@ -225,6 +233,10 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
             "required_capabilities": [],
         },
         scenario={"prompt": "Answer safely."},
+        runtime_evidence={},
+        new_span=lambda *_args: "stage",
+        enter_span=lambda *_args: None,
+        exit_span=lambda *_args: None,
     )
     streamed_answer = (
         "I used read_file on /subject-documents/"
@@ -6757,8 +6769,8 @@ def test_general_chat_prompt_prefers_batch_activity_tool_for_reports():
     )
 
     assert "github_activity_summary" in prompt
-    assert "do not delegate one subagent per repository" in prompt
-    assert "Do not call another GitHub list or detail Tool" in prompt
+    assert "each requested period" in prompt
+    assert "Apply requested person and resource filters" in prompt
 
 
 def test_report_execution_contract_includes_every_available_batch_source():
@@ -6776,7 +6788,7 @@ def test_report_execution_contract_includes_every_available_batch_source():
 
     assert "jira_activity_summary" in prompt
     assert "gitlab_activity_summary" in prompt
-    assert "once per available source" in prompt
+    assert "each requested period" in prompt
 
 
 def test_explicit_activity_report_uses_high_confidence_plan_route():

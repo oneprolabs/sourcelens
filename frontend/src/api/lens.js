@@ -54,6 +54,11 @@ export async function updateAssistant(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function replaceAssistantModels(payload) {
+  const response = await api.post('/lens/assistants/replace-model/', payload)
+  return unwrapResponse(response)
+}
+
 export async function listAssistantDataSourceBindings(uuid) {
   const response = await api.get(`/lens/assistants/${uuid}/datasources/`)
   return unwrapResponse(response)
@@ -543,6 +548,18 @@ export async function validateConnection(uuid) {
 export async function validateConnectionDatasource(uuid, payload) {
   const response = await api.post(
     `/lens/admin/connections/${uuid}/validate-datasource/`,
+    payload,
+    {
+      headers: { 'Cache-Control': 'no-store' },
+      timeout: DATASOURCE_ACCESS_TIMEOUT
+    }
+  )
+  return unwrapResponse(response)
+}
+
+export async function validatePublicDatasource(payload) {
+  const response = await api.post(
+    '/lens/admin/connections/validate-public-datasource/',
     payload,
     {
       headers: { 'Cache-Control': 'no-store' },

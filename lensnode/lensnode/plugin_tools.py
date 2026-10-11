@@ -4,9 +4,11 @@ import json
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 
 import httpx
 
+from .activity_reports import ACTIVITY_TOOLS, bound_activity_result
 from .plugin_package_loader import (
     PluginPackageLoadError,
     load_runtime_contract,
@@ -34,6 +36,7 @@ def build_plugin_tools(
     http_client,
     emit_event=None,
     plugin_http_pool=None,
+    activity_ledger=None,
 ):
     """Build tools from installed runtimes in frozen Plugin bindings."""
 
@@ -88,24 +91,37 @@ def build_plugin_tools(
                 _plugin_key=plugin_key,
                 _plugin_version=plugin_version,
             ):
-                return _execute_plugin_tool(
-                    command,
-                    config,
-                    http_client,
-                    _connection_uuid,
-                    _plugin_key,
-                    _plugin_version,
-                    selected_tool_key,
-                    runtime,
-                    arguments,
-                    _contract.execute_tool,
-                    emit_event,
-                    plugin_http_pool=plugin_http_pool,
-                    http_origins=_contract.http_origins,
-                    http_post_paths=_contract.http_post_paths,
-                    result_cache=result_cache,
-                    result_cache_lock=result_cache_lock,
+                scope = (
+                    activity_ledger.request_lock(
+                        _plugin_key,
+                        _connection_uuid,
+                        _plugin_version,
+                        selected_tool_key,
+                        arguments,
+                    )
+                    if activity_ledger is not None and selected_tool_key in ACTIVITY_TOOLS
+                    else nullcontext()
                 )
+                with scope:
+                    return _execute_plugin_tool(
+                        command,
+                        config,
+                        http_client,
+                        _connection_uuid,
+                        _plugin_key,
+                        _plugin_version,
+                        selected_tool_key,
+                        runtime,
+                        arguments,
+                        _contract.execute_tool,
+                        emit_event,
+                        plugin_http_pool=plugin_http_pool,
+                        http_origins=_contract.http_origins,
+                        http_post_paths=_contract.http_post_paths,
+                        result_cache=result_cache,
+                        result_cache_lock=result_cache_lock,
+                        activity_ledger=activity_ledger,
+                    )
 
             if not callable(contract.build_tool):
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
@@ -148,6 +164,7 @@ def _execute_plugin_tool(
     result_cache_lock=None,
     source="model_tool",
     trace_call_id=None,
+    activity_ledger=None,
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
@@ -161,6 +178,13 @@ def _execute_plugin_tool(
         tool_key,
         arguments,
     )
+    if activity_ledger is not None and tool_key in ACTIVITY_TOOLS:
+        cached = activity_ledger.cached(plugin_key, connection_uuid, plugin_version, tool_key, arguments)
+        if cached is not None:
+            _emit(
+                emit_event, "tool.plugin.cache_hit", {"plugin": plugin_key, "tool": tool_key, "parent_call_id": call_id}
+            )
+            return cached
     if result_cache is not None and result_cache_lock is not None:
         with result_cache_lock:
             cached = result_cache.get(cache_key)
@@ -264,6 +288,10 @@ def _execute_plugin_tool(
     except PluginRuntimeError as exc:
         error = str(exc)
         result = {"ok": False, "error": error}
+        if error == "TOOL_ARGUMENTS_INVALID":
+            result["error_type"] = "request"
+        if exc.reason:
+            result.update(reason=exc.reason, hint=exc.hint)
     except (httpx.HTTPError, PluginHttpClientError):
         error = "PLUGIN_REQUEST_FAILED"
         result = {"ok": False, "error": error}
@@ -288,6 +316,11 @@ def _execute_plugin_tool(
                 "duration_ms": int((time.monotonic() - started) * 1000),
             },
         )
+    if tool_key in ACTIVITY_TOOLS and not error:
+        result = bound_activity_result(result, RESULT_MAX_BYTES)
+    if activity_ledger is not None and tool_key in ACTIVITY_TOOLS and not error:
+        activity_ledger.record(plugin_key, connection_uuid, plugin_version, tool_key, arguments, result)
+        _emit(emit_event, "tool.activity_evidence.saved", {"tool": tool_key, "parent_call_id": call_id})
     encoded = _json(result)
     if (
         error == ""

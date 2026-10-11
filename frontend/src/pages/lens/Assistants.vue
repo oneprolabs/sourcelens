@@ -24,6 +24,18 @@
             </BaseButton>
             <BaseButton
               v-if="!showArchived"
+              variant="outline"
+              size="sm"
+              :disabled="loading || !assistants.length"
+              @click="showModelReplacement = true"
+            >
+              {{ t('lensAdmin.modelReplacement.title') }}
+              <span v-if="selectedAssistantUuids.length"
+                >({{ selectedAssistantUuids.length }})</span
+              >
+            </BaseButton>
+            <BaseButton
+              v-if="!showArchived"
               variant="primary"
               size="sm"
               @click="startCreate"
@@ -161,6 +173,7 @@
               class="assistants-table w-full table-fixed divide-y divide-line"
             >
               <colgroup>
+                <col v-if="!showArchived" style="width: 44px" />
                 <col style="width: 24%" />
                 <col style="width: 13%" />
                 <col style="width: 23%" />
@@ -170,6 +183,15 @@
               </colgroup>
               <thead class="bg-surface-sunken">
                 <tr>
+                  <th v-if="!showArchived" scope="col" class="table-head">
+                    <input
+                      type="checkbox"
+                      :checked="allPageSelected"
+                      :indeterminate="somePageSelected && !allPageSelected"
+                      :aria-label="t('lensAdmin.modelReplacement.selectPage')"
+                      @change="togglePageSelection($event.target.checked)"
+                    />
+                  </th>
                   <th
                     scope="col"
                     v-for="column in activeColumns"
@@ -186,6 +208,18 @@
                   :key="row.uuid"
                   class="transition-colors hover:bg-line-soft"
                 >
+                  <td v-if="!showArchived" class="table-cell">
+                    <input
+                      v-model="selectedAssistantUuids"
+                      type="checkbox"
+                      :value="row.uuid"
+                      :aria-label="
+                        t('lensAdmin.modelReplacement.selectAssistant', {
+                          name: row.name
+                        })
+                      "
+                    />
+                  </td>
                   <td class="table-cell assistant-name-cell">
                     <div class="assistant-name-row">
                       <span
@@ -370,6 +404,14 @@
     />
 
     <!-- Assistant Drawer (create wizard + edit) -->
+    <AssistantModelReplacementModal
+      v-if="showModelReplacement"
+      :assistants="assistants"
+      :selected-uuids="selectedAssistantUuids"
+      @close="showModelReplacement = false"
+      @updated="modelReplacementFinished"
+      @refresh="load"
+    />
     <AssistantFormDrawer
       :show="showDrawer"
       :mode="mode"
@@ -488,6 +530,7 @@ import PaginationBar from '@/components/ui/PaginationBar.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 import AssistantDetailDrawer from './AssistantDetailDrawer.vue'
+import AssistantModelReplacementModal from './AssistantModelReplacementModal.vue'
 import AssistantFormDrawer from './AssistantFormDrawerDirectEnvironment.vue'
 import { buildWorkspaceGuidePayload } from './assistantWorkspaceGuide'
 import {
@@ -518,6 +561,8 @@ const actionUuid = ref('')
 const detailAssistant = ref(null)
 
 const assistants = ref([])
+const selectedAssistantUuids = ref([])
+const showModelReplacement = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const searchQuery = ref('')
@@ -588,9 +633,35 @@ const pagedAssistants = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredAssistants.value.slice(start, start + pageSize.value)
 })
+const allPageSelected = computed(
+  () =>
+    pagedAssistants.value.length > 0 &&
+    pagedAssistants.value.every((row) =>
+      selectedAssistantUuids.value.includes(row.uuid)
+    )
+)
+const somePageSelected = computed(() =>
+  pagedAssistants.value.some((row) =>
+    selectedAssistantUuids.value.includes(row.uuid)
+  )
+)
+
+function togglePageSelection(checked) {
+  const pageUuids = pagedAssistants.value.map((row) => row.uuid)
+  selectedAssistantUuids.value = checked
+    ? [...new Set([...selectedAssistantUuids.value, ...pageUuids])]
+    : selectedAssistantUuids.value.filter((uuid) => !pageUuids.includes(uuid))
+}
+
+async function modelReplacementFinished() {
+  showModelReplacement.value = false
+  selectedAssistantUuids.value = []
+  await load()
+}
 
 function resetPage() {
   currentPage.value = 1
+  selectedAssistantUuids.value = []
 }
 
 function clearFilters() {

@@ -75,7 +75,7 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     "completeness,expected,requirement",
     [
         ("complete", "partial", "none"),
-        ("incomplete", "completed", "none"),
+        ("incomplete", "partial", "none"),
         ("incomplete", "partial", "artifact"),
     ],
 )
@@ -123,6 +123,9 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
     if requirement == "artifact":
         assert result["termination_detail"]["reason"] == "evidence_unavailable"
         assert result["termination_detail"]["capability"] == "artifact_delivery"
+    elif completeness == "incomplete" and requirement == "none":
+        assert result["termination_detail"]["reason"] == "evidence_incomplete"
+        assert result["termination_detail"]["error_type"] == "verification"
     elif expected == "partial":
         assert result["termination_detail"]["reason"] == "evidence_insufficient"
         assert result["termination_detail"]["error_type"] == "verification"
@@ -194,6 +197,51 @@ def test_bounded_review_input_remains_valid_json_and_keeps_all_providers():
     assert payload["evidence_completeness"] == "incomplete"
     for provider in ["github", "gitlab", "jira"]:
         assert f"{provider}: INC-42" in arguments["state"]
+
+
+@pytest.mark.parametrize(
+    "payload,incomplete",
+    [
+        ({"ok": True, "possibly_truncated": True}, True),
+        ({"ok": True, "projects_truncated": True}, True),
+        ({"ok": True, "repositories": [{"errors": {"commits": "REQUEST_FAILED"}}]}, True),
+        ({"ok": True, "projects": [{"possibly_truncated": {"commits": True}}]}, True),
+        ({"ok": True, "projects": [{"possibly_truncated": {"commits": False}}]}, False),
+        ({"ok": False, "error": "REQUEST_FAILED"}, True),
+    ],
+)
+def test_source_contract_limits_reach_answer_review_even_for_short_results(payload, incomplete):
+    """API result limits and partial failures cannot imply complete coverage."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Summarize activity.")
+    middleware.after_model(
+        {
+            "messages": [
+                ToolMessage(name="gitlab_activity_summary", tool_call_id="source", content=json.dumps(payload)),
+                AIMessage(content="Activity report."),
+            ]
+        },
+        None,
+    )
+    assert policy.materials[0]["evidence_completeness"] == ("incomplete" if incomplete else "complete")
+
+
+def test_reading_a_document_with_error_fields_does_not_change_coverage():
+    """Literal source contents are not tool metadata."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Explain this JSON.")
+    middleware.after_model(
+        {
+            "messages": [
+                ToolMessage(name="read_file", tool_call_id="source", content='{"errors":{"example":"test"}}'),
+                AIMessage(content="An example error document."),
+            ]
+        },
+        None,
+    )
+    assert policy.materials[0]["evidence_completeness"] == "complete"
 
 
 def test_truncated_tool_evidence_is_explicitly_incomplete():
@@ -303,3 +351,32 @@ def test_directory_and_write_results_do_not_claim_retrieval_support():
 
     assert middleware.after_model(state, None) is None
     assert not (policy.materials[0] or {}).get("retrieved_evidence")
+
+
+@pytest.mark.parametrize("retry_arguments", [{"project": "SL"}, {"project": "OPS"}, None])
+def test_only_the_same_retried_operation_restores_substantive_answer_review(retry_arguments):
+    policy = _ReviewPolicy(verdict="unsupported")
+    middleware = EvidenceGateMiddleware(policy, "Was the incident resolved?")
+    messages = [
+        AIMessage(content="", tool_calls=[{"id": "failed", "name": "jira_search", "args": {"project": "SL"}}]),
+        ToolMessage(name="jira_search", tool_call_id="failed", status="error", content="Request failed."),
+    ]
+    if retry_arguments is not None:
+        messages.append(
+            AIMessage(content="", tool_calls=[{"id": "retry", "name": "jira_search", "args": retry_arguments}])
+        )
+    messages.extend(
+        [
+            ToolMessage(name="jira_search", tool_call_id="retry", content='{"ok":true,"items":[{"status":"open"}]}'),
+            AIMessage(content="The incident was resolved."),
+        ]
+    )
+    result = middleware.after_model({"messages": messages}, None)
+    if retry_arguments == {"project": "SL"}:
+        assert result["jump_to"] == "model"
+        assert policy.materials[-1]["evidence_completeness"] == "complete"
+        assert policy.materials[-1]["retrieved_evidence"][0]["recovered"] is True
+    else:
+        assert result is None
+        assert policy.materials[-1]["evidence_completeness"] == "incomplete"
+    assert messages[1].status == "error"

@@ -1,0 +1,16 @@
+type: fix
+audience: user
+en: >-
+  Long-running reports preserve evidence during context compaction and keep
+  correction loops bounded. Unparsed model tool requests no longer appear as
+  final answers. Work summaries reuse batch retrieval guidance, and incomplete
+  source coverage and tool failures remain visible in execution diagnostics.
+  Activity sources paginate within fixed budgets, retain collected rows when
+  later pages fail, and reuse durable evidence to generate deterministic final
+  reports with explicit event dates, attribution roles, and coverage limits.
+zh-CN: >-
+  长时间报告任务在上下文压缩时保留证据，复核纠正继续受收敛限制约束。
+  未解析的模型工具请求不再显示为最终答案。工作总结复用批量抓取规则，
+  来源覆盖不足和工具失败会明确呈现在执行诊断中。
+  活动来源在固定预算内分页，后续页失败仍保留已收集记录；持久证据生成固定模板
+  最终报告，明确事件日期、人员归属角色和覆盖限制。

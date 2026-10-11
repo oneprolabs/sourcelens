@@ -533,14 +533,9 @@ def _activity_max_results(value):
     """Return one bounded activity result count."""
 
     if value is None:
-        return 50
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < 1
-        or value > 100
-    ):
-        raise ToolProviderError("max_results must be between 1 and 100")
+        return 500
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > 1000:
+        raise ToolProviderError("max_results must be between 1 and 1000")
     return value
 
 

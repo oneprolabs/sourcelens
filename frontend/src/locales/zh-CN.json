@@ -1521,6 +1521,32 @@
     }
   },
   "lensAdmin": {
+    "modelReplacement": {
+      "affectedAssistants": "受影响的助手",
+      "modelSettings": "模型设置",
+      "done": "完成",
+      "title": "批量替换模型",
+      "field": "替换用途",
+      "source": "原模型",
+      "target": "目标模型",
+      "allModels": "全部原模型",
+      "unsetModel": "未指定模型",
+      "noModels": "没有可用的目标模型，请先在模型管理中配置并启用。",
+      "affected": "将替换 {count} 个助手的模型",
+      "limit": "每次最多替换 1000 个助手，请缩小筛选范围。",
+      "success": "模型替换成功",
+      "conflict": "助手模型已被修改，请检查刷新后的清单后重试。",
+      "selectPage": "勾选本页助手",
+      "selectAssistant": "勾选助手 {name}",
+      "assistants": "选择助手",
+      "searchAssistants": "搜索助手名称或标识",
+      "selectAllAssistants": "全选（{count}）",
+      "selectAllResults": "全选搜索结果（{count}）",
+      "clearSelection": "清空已选",
+      "selectedCount": "已选择 {count} 个助手",
+      "noAssistants": "没有匹配的助手",
+      "replace": "替换模型"
+    },
     "datasourceSelection": {
       "title": "数据访问",
       "selected": "指定数据源",

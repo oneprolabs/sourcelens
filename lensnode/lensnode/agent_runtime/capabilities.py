@@ -12,6 +12,28 @@ from ..checkpoint import CheckpointResumeError
 from ..gateway_model import _tool_result_metadata
 from .capability_protocol import is_capability_family
 from .messages import normalize_plan_steps as _normalize_plan_steps
+
+
+def _incomplete_activity_coverage(payload):
+    """Read provider coverage flags without treating record text as tool status."""
+
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("error") or payload.get("errors"):
+        return True
+    if any(payload.get(key) is True for key in ("projects_truncated", "repositories_truncated", "truncated")):
+        return True
+    flags = payload.get("possibly_truncated")
+    if isinstance(flags, dict) and any(value is True for value in flags.values()):
+        return True
+    return any(
+        _incomplete_activity_coverage(item)
+        for key in ("projects", "repositories")
+        if isinstance(payload.get(key), list)
+        for item in payload[key]
+    )
+
+
 class CapabilityBoundaryMiddleware(AgentMiddleware):
     """Apply bounded recovery without stopping the whole agent run."""
 
@@ -391,7 +413,7 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
             return f"{capability}:{tool_name}"
         return f"tool:{tool_name}"
 
-    def _record_success(self, capability, tool_name, request):
+    def _record_success(self, capability, tool_name, request, payload=None):
         if capability is None:
             return
         source = self._source_scope(capability, tool_name, request)
@@ -413,6 +435,9 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 "tool": tool_name,
                 "source": source,
                 "request_sha256": request_sha256,
+                "coverage_complete": not (
+                    tool_name.endswith("_activity_summary") and _incomplete_activity_coverage(payload)
+                ),
             }
         )
         self._record_recovery(capability, source)
@@ -519,7 +544,7 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 return result
             payload = {"ok": False, "error": "MCP_TOOL_FAILED"}
         if payload.get("ok") is True:
-            self._record_success(capability, tool_name, request)
+            self._record_success(capability, tool_name, request, payload)
             return result
         if capability is None:
             return result
