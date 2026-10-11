@@ -281,6 +281,59 @@ def _admin_run_model_usage(run):
     }
 
 
+def _admin_run_trace_diagnostics(run):
+    """Read quality verdicts and untracked tool failures from immutable events."""
+
+    names = {}
+    operations = {}
+    tool_failures = []
+    review = None
+    gate_fallbacks = {}
+    for event in (
+        RunTraceEvent.objects.filter(
+            run=run, event_type__in=["tool.started", "tool.completed", "tool.failed", "step.event"]
+        )
+        .order_by("sequence")
+        .values("event_type", "call_id", "payload")
+    ):
+        payload = event["payload"]
+        if not isinstance(payload, dict) or payload.get("late_event") or payload.get("after_run_finished"):
+            continue
+        kind = event["event_type"]
+        call_id = event["call_id"]
+        if kind == "tool.started":
+            names[call_id] = payload.get("name")
+            arguments = payload.get("arguments")
+            operations[call_id] = (
+                hashlib.sha256(json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if isinstance(arguments, dict)
+                else None
+            )
+        elif kind in {"tool.completed", "tool.failed"}:
+            name = names.get(call_id)
+            if not isinstance(name, str):
+                continue
+            if kind == "tool.failed":
+                tool_failures.append(
+                    {"source": f"tool:{name}", "scope": "unresolved", "operation": operations.get(call_id)}
+                )
+            else:
+                for failure in tool_failures:
+                    if (
+                        failure["source"] == f"tool:{name}"
+                        and failure["operation"] is not None
+                        and failure["operation"] == operations.get(call_id)
+                    ):
+                        failure["scope"] = "recovered"
+        elif payload.get("agent_event") == "deepagents.evidence.verified":
+            review = payload
+        elif payload.get("agent_event") == "deepagents.decision.gate.done":
+            gate = payload.get("gate")
+            if isinstance(gate, str) and gate in {"evidence_sufficient", "answer_supported", "evidence_strength"}:
+                gate_fallbacks[gate] = payload.get("verdict") == "fallback"
+    return tool_failures, review, any(gate_fallbacks.values())
+
+
 def _admin_run_failure_summary(run):
     """Return safe terminal failure-scope diagnostics from Run events."""
 
@@ -308,13 +361,15 @@ def _admin_run_failure_summary(run):
     }
     allowed_scopes = {"recovered", "unresolved", "warning"}
     outcome_event = None
+    review_event = None
     for step in run.steps.all():
         _detail, events = _admin_step_detail(step)
         for event in events:
             if event.get("agent_event") == "deepagents.runtime.outcome":
                 outcome_event = event
-    if outcome_event is None:
-        return empty
+            elif event.get("agent_event") == "deepagents.evidence.verified":
+                review_event = event
+    outcome_event = outcome_event or empty
 
     summary = {}
     for key in (
@@ -354,6 +409,43 @@ def _admin_run_failure_summary(run):
             }
         )
     summary["failures"] = failures
+    tool_failures, trace_review, gate_fallback = _admin_run_trace_diagnostics(run)
+    tracked_sources = {
+        item["source"] for item in failure_items if isinstance(item, dict) and isinstance(item.get("source"), str)
+    }
+    tracked_sources.update(
+        f"tool:{item['tool']}" for item in failure_items if isinstance(item, dict) and isinstance(item.get("tool"), str)
+    )
+    for item in tool_failures:
+        if item["source"] in tracked_sources:
+            continue
+        scope = item["scope"]
+        summary[f"{scope}_failure_count"] += 1
+        failures.append(
+            {
+                "capability": "tool",
+                "error_type": "tool",
+                "scope": scope,
+                "required": False,
+                "affects_required_evidence": False,
+            }
+        )
+    review_event = trace_review or review_event or {}
+    action = review_event.get("action")
+    if (isinstance(action, str) and action in {"accept_best_effort", "inconclusive"}) or gate_fallback:
+        scope = "unresolved" if action == "accept_best_effort" else "warning"
+        count_key = "unresolved_failure_count" if scope == "unresolved" else "warning_count"
+        summary[count_key] += 1
+        failures.append(
+            {
+                "capability": "tool",
+                "error_type": "verification",
+                "scope": scope,
+                "required": True,
+                "affects_required_evidence": scope == "unresolved",
+            }
+        )
+    summary["failures"] = failures[:12]
     return summary
 
 

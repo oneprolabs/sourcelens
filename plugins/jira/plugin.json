@@ -118,9 +118,9 @@
           "until": {"type": "string", "format": "date-time"},
           "max_results": {
             "type": "integer",
-            "default": 50,
+            "default": 500,
             "minimum": 1,
-            "maximum": 100
+            "maximum": 1000
           }
         },
         "required": ["projects", "since", "until"],

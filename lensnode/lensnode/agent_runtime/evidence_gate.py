@@ -17,7 +17,10 @@ DEFAULT_MAX_CONVERGENCE_NUDGES = 2
 _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
     "fully supported by the evidence you retrieved. Do not answer from "
-    "memory. Search again for the specific missing facts — batch "
+    "memory. Reuse retrieved source results and any saved evidence ledger "
+    "first; correct unsupported claims using that evidence. Do not repeat "
+    "the same batch activity requests or treat truncated results as complete. "
+    "If specific missing facts can be retrieved with available tools, batch "
     'alternative keywords with "|" in ONE search_workspace call (for '
     'example "昇腾|Ascend|910B") and read the most relevant matched files '
     "— then give a final answer that every claim traces to retrieved "
@@ -25,7 +28,7 @@ _RECHECK_GUIDANCE = (
     "conclusions, compatibility or adaptation, examples, plans, and "
     "actual execution. Do not describe adaptation, examples, or plans as "
     "actual operation or validation. If the workspace genuinely lacks the "
-    "information, state that limitation briefly. Return the answer itself, "
+    "information or source coverage is limited, state that limitation briefly. Return the answer itself, "
     "not a search log, evidence inventory, list of files to read, or a "
     "promise to investigate later. Keep the existing answer structure and "
     "focus on the user's question."
@@ -102,6 +105,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
         self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
         self.delivery_turns = int(self.review_state.get("delivery_turns") or 0)
+        self.correction_calls_remaining = int(self.review_state.get("correction_calls_remaining") or 0)
         self.saw_final_answer = False
         self._last_verification = None
 
@@ -129,7 +133,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "evidence_completeness": (
                     "incomplete"
                     if (isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete")
-                    or any(item.get("truncated") for item in message_evidence)
+                    or any(item.get("truncated") or item.get("incomplete") for item in message_evidence)
                     else "complete"
                 ),
             }
@@ -193,6 +197,10 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         self.model_calls += 1
         self.review_state["model_calls"] = self.model_calls
+        if self.correction_calls_remaining > 0:
+            self.correction_calls_remaining -= 1
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+            return None
         if self.convergence_nudges >= self.max_convergence_nudges:
             if isinstance(self.evidence, dict) and self.evidence.get("artifact_required") and self.delivery_turns < 3:
                 self.delivery_turns += 1
@@ -273,6 +281,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 )
                 return None
             self.answer_nudges += 1
+            self.saw_final_answer = False
+            self.correction_calls_remaining = self.interval
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
             self.review_state["answer_nudges"] = self.answer_nudges
             if self.on_recheck is not None:
                 self.on_recheck()
@@ -299,12 +310,42 @@ def _message_text(message):
     return str(content or "")
 
 
+def _source_coverage_incomplete(content):
+    """Recognize explicit coverage limits in activity summary contracts."""
+
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    sources = [payload]
+    for key in ("projects", "repositories"):
+        items = payload.get(key)
+        if isinstance(items, list):
+            sources.extend(item for item in items if isinstance(item, dict))
+    for source in sources:
+        truncated = source.get("possibly_truncated")
+        if (
+            source.get("ok") is False
+            or source.get("projects_truncated") is True
+            or source.get("truncated") is True
+            or truncated is True
+            or (isinstance(truncated, dict) and any(value is True for value in truncated.values()))
+            or bool(source.get("errors"))
+        ):
+            return True
+    return False
+
+
 def _tool_evidence(state):
     """Return a bounded view of retrieved tool output for post-run review."""
 
     if not isinstance(state, dict):
         return []
     evidence = []
+    operations = {}
+    failures = {}
     excluded = {
         "write_todos",
         "write_file",
@@ -318,6 +359,14 @@ def _tool_evidence(state):
         "mkdir",
     }
     for message in state.get("messages") or []:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls or []:
+                arguments = call.get("args")
+                if isinstance(arguments, dict):
+                    operations[call.get("id")] = (
+                        call.get("name"),
+                        json.dumps(arguments, sort_keys=True, separators=(",", ":")),
+                    )
         if getattr(message, "type", "") != "tool":
             continue
         content = _message_text(message).strip()
@@ -328,18 +377,26 @@ def _tool_evidence(state):
             continue
         if name == "execute" and ("drwx" in content or content.startswith("total ")):
             continue
-        evidence.append(
-            {
-                "tool": name,
-                "content": content[:1200],
-                "truncated": (
-                    len(content) > 1200
-                    or content.startswith("Tool result too large,")
-                    or "[Output was truncated due to size limits." in content
-                    or "[Output exceeded the capture size limit" in content
-                ),
-            }
-        )
+        item = {
+            "tool": name,
+            "content": content[:1200],
+            "incomplete": getattr(message, "status", None) == "error"
+            or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
+            "truncated": (
+                len(content) > 1200
+                or content.startswith("Tool result too large,")
+                or "[Output was truncated due to size limits." in content
+                or "[Output exceeded the capture size limit" in content
+            ),
+        }
+        operation = operations.get(getattr(message, "tool_call_id", None))
+        if operation is not None and operation[0] == name:
+            if item["incomplete"]:
+                failures.setdefault(operation, []).append(item)
+            else:
+                for failure in failures.pop(operation, []):
+                    failure.update(incomplete=False, truncated=False, recovered=True)
+        evidence.append(item)
     if len(evidence) > 32:
         # Keep each tool/source represented before filling the remaining budget.
         representatives = {}

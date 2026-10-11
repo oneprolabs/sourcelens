@@ -1,7 +1,7 @@
 """Context compaction policy for long-running LensNode investigations."""
 
 from langchain.agents.middleware import SummarizationMiddleware
-from langchain_core.messages import HumanMessage, RemoveMessage
+from langchain_core.messages import HumanMessage, RemoveMessage, trim_messages
 
 from ..gateway_model import LensGatewayChatModel
 
@@ -25,6 +25,21 @@ CONTINUATION_SUMMARY_PROMPT = (
     "keep investigating, then produce the final answer in a later step.\n\n"
     "<messages>\n{messages}\n</messages>"
 )
+
+
+class InvalidSummaryError(ValueError):
+    """Keep the existing conversation when compaction has no usable summary."""
+
+
+def _validated_summary(summary):
+    """Reject empty summaries and upstream placeholders before removing history."""
+
+    if not summary.strip() or summary.strip() in {
+        "Previous conversation was too long to summarize.",
+        "No previous conversation history.",
+    }:
+        raise InvalidSummaryError("invalid_summary")
+    return summary
 
 
 class LensSummarizationMiddleware(SummarizationMiddleware):
@@ -70,11 +85,64 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
         # only HumanMessages move) and the user turns survive verbatim.
         return non_human, human_anchors + preserved
 
+    def _trim_messages_for_summary(self, messages):
+        """Trim evidence without requiring human anchors already preserved elsewhere."""
+
+        if self.trim_tokens_to_summarize is None:
+            return messages
+        return trim_messages(
+            messages,
+            max_tokens=self.trim_tokens_to_summarize,
+            token_counter=self.token_counter,
+            strategy="last",
+            allow_partial=True,
+            include_system=True,
+        )
+
+    def _create_summary(self, messages_to_summarize):
+        """Validate the synchronous summary before the upstream history replacement."""
+
+        return _validated_summary(super()._create_summary(messages_to_summarize))
+
+    async def _acreate_summary(self, messages_to_summarize):
+        """Validate the asynchronous summary before the upstream history replacement."""
+
+        return _validated_summary(await super()._acreate_summary(messages_to_summarize))
+
+    def _invalid_summary(self):
+        """Report skipped compaction without reporting evidence as successfully saved."""
+
+        emit = getattr(self, "_emit_event", None)
+        if emit is not None:
+            emit("deepagents.summarization.failed", {"reason": "invalid_summary"})
+
     def before_model(self, state, runtime):
         """Summarize on threshold and report what was compacted."""
 
         before_tokens = self.token_counter(state["messages"])
-        result = super().before_model(state, runtime)
+        try:
+            result = super().before_model(state, runtime)
+        except InvalidSummaryError:
+            self._invalid_summary()
+            return None
+        self._report_compaction(before_tokens, result)
+        return result
+
+    async def abefore_model(self, state, runtime):
+        """Apply the same preservation and diagnostics to asynchronous agents."""
+
+        before_tokens = self.token_counter(state["messages"])
+        try:
+            result = await super().abefore_model(state, runtime)
+        except InvalidSummaryError:
+            self._invalid_summary()
+            return None
+        self._report_compaction(before_tokens, result)
+        return result
+
+    def _report_compaction(self, before_tokens, result):
+        """Report token savings only after a usable summary was generated."""
+
         emit = getattr(self, "_emit_event", None)
         if result is not None and emit is not None:
             kept = [
@@ -91,7 +159,6 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
                     "saved_tokens": max(before_tokens - after_tokens, 0),
                 },
             )
-        return result
 
 
 def build_summarization_middleware(

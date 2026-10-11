@@ -512,7 +512,7 @@ def test_gitlab_activity_summary_uses_python_http_for_all_projects():
     ))
 
     assert result["ok"] is True
-    assert len(client.provider_requests) == 6
+    assert len(client.provider_requests) == 8
     assert all(
         url.startswith("http://gitlab.internal.example:8080/api/v4/")
         for url, _params in client.provider_requests

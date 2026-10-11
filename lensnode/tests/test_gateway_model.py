@@ -56,6 +56,52 @@ def _install_transport(monkeypatch, handler, client_options=None):
     )
 
 
+@pytest.mark.parametrize("streaming,final", [(False, False), (True, False), (True, True)])
+def test_dsml_text_without_structured_calls_is_rejected_before_publication(monkeypatch, streaming, final):
+    """A provider's unparsed tool request must never become a final answer."""
+
+    content = '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_file">\n</｜｜DSML｜｜ calls>'
+    outputs = []
+    frames = []
+    observations = []
+    if streaming:
+        chunks = [content[:2], content[2:12], content[12:]]
+        body = "".join(
+            "data: " + json.dumps({"type": "token", "kind": "content", "content": chunk}) + "\n\n" for chunk in chunks
+        )
+        body += 'data: {"type":"done","usage":{},"tool_calls":[],"finish_reason":"stop"}\n\n'
+        response = httpx.Response(200, content=body.encode())
+    else:
+        response = httpx.Response(200, json={"message": {"content": content, "finish_reason": "stop"}})
+    _install_transport(monkeypatch, lambda request: response)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=outputs.append if streaming else None,
+        emit_observation=observations.append,
+        trace_context={"root_observation_id": "root"},
+        trajectory=RunTrajectory("run-protocol", frames.append),
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        model._generate([HumanMessage(content="Summarize yesterday")], runtime_final_synthesis=final)
+
+    assert raised.value.code == "MODEL_TOOL_PROTOCOL_ERROR"
+    assert outputs == []
+    events = [frame["events"][0] for frame in frames]
+    assert any(event["event_type"] == "model.failed" for event in events)
+    assert observations[-1]["action"] == "end"
+    assert observations[-1]["status"] == "failed"
+
+
+def test_dsml_discussion_is_not_treated_as_a_tool_request():
+    """Quoted protocol examples in an explanation remain ordinary content."""
+
+    content = "The DSML example is:\n```xml\n<｜｜DSML｜｜ calls>\n```"
+    assert _message_from_gateway({"content": content}).content == content
+
+
 def test_streaming_touches_activity_on_every_event(monkeypatch):
     captured = {}
     client_options = {}

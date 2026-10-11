@@ -582,7 +582,7 @@ def _pending_write_tool_call_ids(pending_writes):
     return frozenset(tool_call_ids)
 
 
-def _cleanup_expired_checkpoints(saver, active_run_uuids=()):
+def _cleanup_expired_checkpoints(saver, active_run_uuids=(), workspace_path=None):
     """Remove locally orphaned checkpoints after the bounded resume TTL."""
 
     now = time.time()
@@ -624,6 +624,10 @@ def _cleanup_expired_checkpoints(saver, active_run_uuids=()):
         ]
         for run_uuid in run_uuids:
             saver.delete_thread(run_uuid)
+            if workspace_path is not None:
+                from .activity_reports import cleanup_activity_evidence
+
+                cleanup_activity_evidence(workspace_path, run_uuid)
         if run_uuids:
             saver.conn.executemany(
                 "DELETE FROM lensnode_run_metadata WHERE run_uuid = ?",
@@ -640,7 +644,7 @@ def cleanup_expired_checkpoints(workspace_path, active_run_uuids=()):
         return 0
     try:
         saver = get_checkpoint_saver(workspace_path)
-        return _cleanup_expired_checkpoints(saver, active_run_uuids)
+        return _cleanup_expired_checkpoints(saver, active_run_uuids, workspace_path)
     except Exception:
         LOGGER.exception("Failed to clean up expired run checkpoints")
         return 0
@@ -649,6 +653,13 @@ def cleanup_expired_checkpoints(workspace_path, active_run_uuids=()):
 def cleanup_run_checkpoint(run_uuid, workspace_path=None):
     """Delete the checkpoint thread for a terminal run, if any."""
 
+    if workspace_path is not None:
+        from .activity_reports import cleanup_activity_evidence
+
+        try:
+            cleanup_activity_evidence(workspace_path, run_uuid)
+        except OSError:
+            LOGGER.exception("Failed to clean up activity evidence for run %s", run_uuid)
     if not checkpoint_enabled():
         return
     if workspace_path is None:
