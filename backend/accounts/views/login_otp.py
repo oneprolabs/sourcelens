@@ -57,7 +57,7 @@ class SendLoginCodeView(APIView):
         email = serializer.validated_data['email']
         token = serializer.validated_data.get('turnstile_token', '')
         language = request.data.get('language', 'en-US')
-        client_ip = request.META.get('REMOTE_ADDR')
+        client_ip = turnstile.get_client_ip(request.META)
 
         ok, errors = turnstile.verify_token(token, client_ip)
         if not ok:

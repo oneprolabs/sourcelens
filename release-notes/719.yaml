@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Allow trusted test IPs to bypass Turnstile through the TURNSTILE_BYPASS_IPS backend setting while keeping verification enabled for other clients.
+zh-CN: 新增后端 TURNSTILE_BYPASS_IPS 配置，允许受信任的测试 IP 跳过 Turnstile，同时继续为其他客户端执行验证。

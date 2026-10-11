@@ -46,7 +46,7 @@ class CustomLoginView(LoginView):
         token = request.data.get('turnstile_token', '')
         passed, _errors = turnstile.verify_token(
             token,
-            request.META.get('REMOTE_ADDR'),
+            turnstile.get_client_ip(request.META),
         )
         if not passed:
             return Response(
