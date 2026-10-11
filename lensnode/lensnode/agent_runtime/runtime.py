@@ -1873,13 +1873,19 @@ class LensDeepAgentRuntime:
                 **termination_detail,
                 "decision_gates": post_run_gates,
             }
-            if (
-                outcome == "completed"
-                and post_run_gates.get("evidence_completeness") != "incomplete"
-                and not _verdicts_supported(post_run_gates)
-            ):
-                outcome = "partial"
-                termination_detail.update(reason="evidence_insufficient", error_type="verification")
+            if outcome == "completed":
+                if post_run_gates.get("evidence_completeness") == "incomplete":
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="evidence_incomplete",
+                        error_type="verification",
+                    )
+                elif not _verdicts_supported(post_run_gates):
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="evidence_insufficient",
+                        error_type="verification",
+                    )
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",
