@@ -659,7 +659,15 @@
       "chatModel": "Modelo de chat",
       "decisionModel": "Modelo de decisión",
       "decisionTestQuestion": "Pregunta de decisión (sí/no)",
-      "decisionTestQuestionDefault": "¿La entrada es una prueba de conexión?"
+      "decisionTestQuestionDefault": "¿La entrada es una prueba de conexión?",
+      "accountId": "ID de cuenta de Cloudflare",
+      "accountIdPlaceholder": "ID de cuenta de Cloudflare de 32 caracteres",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "Introduzca la clave API o el token del proveedor",
+      "bearerCredentialHint": "Introduzca solo la credencial, sin el prefijo Bearer.",
+      "numRetries": "Reintentos",
+      "metadataLoadError": "No se pudieron cargar los proveedores y modelos. Actualice para reintentar.",
+      "decisionApiBasePlaceholder": "Introduzca la URL base de la API del servicio (obligatorio)"
     },
     "dataSettings": {
       "title": "Tareas programadas",

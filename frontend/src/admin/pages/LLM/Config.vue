@@ -23,7 +23,7 @@
               :loading="loading"
               :title="t('common.refresh')"
               class="flex items-center gap-1 shadow-sm hover:shadow-md transition-shadow"
-              @click="loadAll"
+              @click="loadPage"
             >
               <svg
                 v-if="!loading"
@@ -41,7 +41,12 @@
               </svg>
               <span class="sr-only">{{ t('common.refresh') }}</span>
             </BaseButton>
-            <BaseButton variant="primary" size="sm" @click="openAddModal">
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :disabled="metadataLoading || !metadataReady"
+              @click="openAddModal"
+            >
               {{ t('llm.config.addConfig') }}
             </BaseButton>
           </div>
@@ -601,7 +606,7 @@
             <textarea
               v-model="testDecisionQuestion"
               rows="2"
-              class="form-input w-full"
+              class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
           <div v-else>
@@ -993,27 +998,65 @@
               {{ refPriceLine(selectedModelInfo.reference_pricing) }}
             </div>
           </div>
+          <div v-if="requiresAccountId">
+            <label
+              for="llm-account-id"
+              class="block text-sm font-medium text-gray-700 mb-1"
+              >{{ t('llm.config.accountId') }}</label
+            >
+            <input
+              id="llm-account-id"
+              v-model="form.config.account_id"
+              type="text"
+              :required="!form.config.api_base"
+              pattern="[a-fA-F0-9]{32}"
+              class="form-input w-full"
+              :placeholder="t('llm.config.accountIdPlaceholder')"
+            />
+          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
               t('llm.config.apiBase')
             }}</label>
             <input
-              v-model="form.config.api_base"
+              :value="form.config.api_base || accountApiBase"
+              @input="form.config.api_base = $event.target.value"
               type="url"
+              :required="
+                form.model_type === 'decision' &&
+                !defaultApiBaseForProvider &&
+                !requiresAccountId
+              "
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
               :placeholder="defaultApiBasePlaceholder"
             />
           </div>
-          <div>
+          <div v-if="requiresApiKey">
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.apiKey')
+              t(
+                form.model_type === 'decision' && form.provider === 'cloudflare'
+                  ? 'llm.config.apiToken'
+                  : 'llm.config.apiKey'
+              )
             }}</label>
             <input
               v-model="form.config.api_key"
               type="password"
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
-              :placeholder="t('llm.config.apiKeyPlaceholder')"
+              :placeholder="
+                t(
+                  editingId
+                    ? 'llm.config.apiKeyPlaceholder'
+                    : 'llm.config.apiCredentialPlaceholder'
+                )
+              "
             />
+            <p
+              v-if="form.model_type === 'decision'"
+              class="mt-1 text-xs text-gray-500"
+            >
+              {{ t('llm.config.bearerCredentialHint') }}
+            </p>
           </div>
 
           <div
@@ -1162,6 +1205,8 @@ import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import ProviderIcon from '@/components/llm/ProviderIcon.vue'
 import {
   modelParamSchema,
+  decisionAccountApiBase,
+  decisionEditableParams,
   modelProviderOptions,
   selectableChatModels,
   selectableDecisionModels
@@ -1222,13 +1267,16 @@ const PARAM_LABEL_KEYS = {
   request_timeout_seconds: 'requestTimeoutSeconds',
   vision: 'visionCapability',
   temperature: 'temperature',
-  top_p: 'topP'
+  top_p: 'topP',
+  account_id: 'accountId',
+  num_retries: 'numRetries'
 }
 const NUMERIC_PARAM_RULES = {
   max_tokens: { min: 1, step: 1 },
   request_timeout_seconds: { min: 1, step: 1 },
   temperature: { min: 0, max: 2, step: 0.1 },
-  top_p: { min: 0, max: 1, step: 0.1 }
+  top_p: { min: 0, max: 1, step: 0.1 },
+  num_retries: { min: 0, step: 1 }
 }
 
 function providerLabel(provider) {
@@ -1248,6 +1296,7 @@ const { t } = useI18n()
 const { showError, showSuccess } = useToast()
 
 const loading = ref(true)
+const metadataLoading = ref(true)
 const configList = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -1256,8 +1305,14 @@ const deleteTarget = ref(null)
 const userList = ref([])
 const modelsData = ref({ providers: [], capability_labels: {} })
 const providerSchemas = ref({})
+const metadataReady = computed(
+  () =>
+    modelsData.value.providers.length > 0 &&
+    Object.keys(providerSchemas.value).length > 0
+)
 
 const showConfigModal = ref(false)
+const editingApiKey = ref('')
 const showTestModal = ref(false)
 const testConfigRow = ref(null)
 const testPrompt = ref('')
@@ -1333,8 +1388,28 @@ const currentProviderSchema = computed(() =>
 
 const advancedEditableParams = computed(() =>
   getProviderEditableParams(form.provider).filter(
-    (parameter) => !CORE_CONFIG_PARAMS.has(parameter) && parameter !== 'vision'
+    (parameter) =>
+      !CORE_CONFIG_PARAMS.has(parameter) &&
+      parameter !== 'vision' &&
+      parameter !== 'account_id'
   )
+)
+
+const requiresAccountId = computed(
+  () =>
+    form.model_type === 'decision' &&
+    currentProviderSchema.value.requires_account_id === true
+)
+const requiresApiKey = computed(() =>
+  getProviderEditableParams(form.provider).includes('api_key')
+)
+const accountApiBase = computed(() =>
+  form.model_type === 'decision'
+    ? decisionAccountApiBase(
+        currentProviderSchema.value,
+        form.config.account_id
+      )
+    : ''
 )
 
 const isCustomProvider = computed(() => form.provider === 'openai_compatible')
@@ -1366,7 +1441,19 @@ const defaultApiBaseForProvider = computed(() => {
 })
 
 const defaultApiBasePlaceholder = computed(() => {
-  return defaultApiBaseForProvider.value || t('llm.config.apiBasePlaceholder')
+  if (requiresAccountId.value)
+    return (
+      accountApiBase.value ||
+      'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run'
+    )
+  return (
+    defaultApiBaseForProvider.value ||
+    t(
+      form.model_type === 'decision'
+        ? 'llm.config.decisionApiBasePlaceholder'
+        : 'llm.config.apiBasePlaceholder'
+    )
+  )
 })
 
 const isCurrentModelInList = computed(() => {
@@ -1592,9 +1679,8 @@ function getRowCapabilities(row) {
 
 function getProviderEditableParams(provider, modelType = form.model_type) {
   if (modelType === 'decision')
-    return (
+    return decisionEditableParams(
       modelParamSchema(providerSchemas.value, provider, modelType)
-        .editable_params || []
     )
   if (provider === 'openai_compatible') {
     return CUSTOM_EDITABLE_PARAMS
@@ -1718,6 +1804,7 @@ function onProviderChange() {
 }
 
 function resetForm() {
+  editingApiKey.value = ''
   form.scope = 'global'
   form.user_id = null
   form.provider = 'openai'
@@ -1792,12 +1879,17 @@ function openAddModal() {
 }
 
 async function editConfig(row) {
+  if (metadataLoading.value || !metadataReady.value) {
+    showError(t('llm.config.metadataLoadError'))
+    return
+  }
   editingId.value = row.uuid || row.id
   try {
     const data = await llmAdminApi.getLLMConfigDetail(row.uuid || row.id)
     form.model_type = data?.model_type || 'llm'
     form.provider = (data?.provider || 'openai').toLowerCase()
     const c = data?.config || {}
+    editingApiKey.value = c.api_key || ''
     form.config = {
       ...c,
       api_key: c.api_key ?? '',
@@ -1999,6 +2091,14 @@ async function testConnection() {
     // the read API; send the config id so the server can resolve it from
     // storage instead of testing the mask as the key.
     if (editingId.value) {
+      // The validation API checks required fields before resolving stored secrets.
+      if (
+        !payload.config.api_key &&
+        requiresApiKey.value &&
+        editingApiKey.value
+      ) {
+        payload.config.api_key = editingApiKey.value
+      }
       if (typeof editingId.value === 'number') {
         payload.config_id = editingId.value
       } else {
@@ -2191,11 +2291,14 @@ async function runBulkAction(action) {
   }
 }
 
-onMounted(() => {
-  loadProviderSchemas()
-  loadModels()
-  loadAll()
-})
+async function loadPage() {
+  metadataLoading.value = true
+  await Promise.all([loadProviderSchemas(), loadModels(), loadAll()])
+  metadataLoading.value = false
+  if (!metadataReady.value) showError(t('llm.config.metadataLoadError'))
+}
+
+onMounted(loadPage)
 </script>
 
 <style scoped>

@@ -54,3 +54,20 @@ export function selectableDecisionModels(schema) {
     capabilities: ['decision']
   }))
 }
+
+/** Decision credentials follow provider requirements, including keyless endpoints. */
+export function decisionEditableParams(schema) {
+  return (schema?.editable_params || []).filter((parameter) => {
+    if (parameter === 'account_id') return schema.requires_account_id === true
+    if (parameter === 'api_key') return schema.api_key_required !== false
+    return true
+  })
+}
+
+/** Cloudflare derives its native endpoint from the configured account identity. */
+export function decisionAccountApiBase(schema, accountId) {
+  const value = String(accountId || '').trim()
+  return schema?.requires_account_id && /^[a-fA-F0-9]{32}$/.test(value)
+    ? `https://api.cloudflare.com/client/v4/accounts/${value}/ai/run`
+    : ''
+}

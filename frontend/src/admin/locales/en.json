@@ -659,7 +659,15 @@
       "chatModel": "Chat model",
       "decisionModel": "Decision model",
       "decisionTestQuestion": "Decision question (yes/no)",
-      "decisionTestQuestionDefault": "Is the input a connection test?"
+      "decisionTestQuestionDefault": "Is the input a connection test?",
+      "accountId": "Cloudflare Account ID",
+      "accountIdPlaceholder": "32-character Cloudflare Account ID",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "Enter the provider API key or token",
+      "bearerCredentialHint": "Enter the credential only, without the Bearer prefix.",
+      "numRetries": "Retries",
+      "metadataLoadError": "Provider metadata could not be loaded. Refresh to retry.",
+      "decisionApiBasePlaceholder": "Enter the service API base URL (required)"
     },
     "dataSettings": {
       "title": "Scheduled Tasks",

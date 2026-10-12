@@ -659,7 +659,15 @@
       "chatModel": "对话模型",
       "decisionModel": "决策模型",
       "decisionTestQuestion": "决策问题（是/否）",
-      "decisionTestQuestionDefault": "输入内容是否为连接测试？"
+      "decisionTestQuestionDefault": "输入内容是否为连接测试？",
+      "accountId": "Cloudflare 账户 ID",
+      "accountIdPlaceholder": "32 位 Cloudflare 账户 ID",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "输入厂商提供的 API Key 或 Token",
+      "bearerCredentialHint": "只填写密钥或令牌，无需添加 Bearer 前缀。",
+      "numRetries": "重试次数",
+      "metadataLoadError": "厂商与模型目录加载失败，请刷新后重试。",
+      "decisionApiBasePlaceholder": "填写服务的 API Base URL（必填）"
     },
     "dataSettings": {
       "title": "定时任务",

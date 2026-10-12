@@ -6,6 +6,8 @@ import {
   selectableChatModels
 } from '../src/components/llm/providerModels.js'
 import {
+  decisionAccountApiBase,
+  decisionEditableParams,
   modelProviderOptions,
   modelParamSchema,
   selectableDecisionModels
@@ -65,6 +67,41 @@ test('chat providers respect catalog model types when schemas lack that metadata
     modelProviderOptions(providers, schemas, 'decision').map((item) => item.id),
     ['openai', 'litellm_proxy', 'openai_compatible']
   )
+})
+
+test('decision credentials include only fields supported by the selected provider', () => {
+  const editable_params = [
+    'model',
+    'api_base',
+    'api_key',
+    'account_id',
+    'request_timeout_seconds'
+  ]
+  assert.deepEqual(decisionEditableParams({ editable_params }), [
+    'model',
+    'api_base',
+    'api_key',
+    'request_timeout_seconds'
+  ])
+  assert.deepEqual(
+    decisionEditableParams({ editable_params, requires_account_id: true }),
+    editable_params
+  )
+  assert.deepEqual(
+    decisionEditableParams({ editable_params, api_key_required: false }),
+    ['model', 'api_base', 'request_timeout_seconds']
+  )
+})
+
+test('Cloudflare derives its endpoint only from a complete account ID', () => {
+  const schema = { requires_account_id: true }
+  const accountId = 'a'.repeat(32)
+  assert.equal(
+    decisionAccountApiBase(schema, accountId),
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`
+  )
+  assert.equal(decisionAccountApiBase(schema, 'incomplete'), '')
+  assert.equal(decisionAccountApiBase({}, accountId), '')
 })
 
 test('keeps plain chat models selectable', () => {
