@@ -1975,6 +1975,7 @@ def test_lensnode_run_cancel_cancels_running_task():
 
 def test_lensnode_datasource_conversion_reports_safe_cancellation(
     monkeypatch,
+    tmp_path,
 ):
     """Managed conversion cancellation stops at a cooperative boundary."""
 
@@ -2000,7 +2001,7 @@ def test_lensnode_datasource_conversion_reports_safe_cancellation(
                 "name": "test-node",
                 "request_timeout_s": 240,
                 "max_concurrent_runs": 1,
-                "workspace_path": "/workspace",
+                "workspace_path": str(tmp_path),
                 "ai_gateway_url": "http://gateway",
                 "token": "node-token",
             },
