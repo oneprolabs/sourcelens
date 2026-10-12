@@ -3,9 +3,9 @@
 import pytest
 
 from lensnode.agent_runtime.system_prompts import (
+    _activity_report_expected_tools,
     _general_chat_system_prompt,
     _is_activity_report,
-    _supports_deterministic_activity_report,
 )
 
 
@@ -25,12 +25,12 @@ def test_work_summaries_receive_batch_contract_without_a_planned_route(question)
     }
     assert _is_activity_report(command)
     prompt = _general_chat_system_prompt(command, [])
-    if _supports_deterministic_activity_report(command):
-        assert "once per available source" in prompt
-    else:
-        assert "each requested period" in prompt
+    assert "once per available source" in prompt
     assert "evidence ledger" in prompt
     assert "deterministic template" in prompt
+    assert "Use its returned grounded answer, then stop" not in prompt
+    assert "Do not generate HTML yourself" not in prompt
+    assert "Follow the bound report Skill's output format" in prompt
 
 
 def test_code_summary_does_not_trigger_activity_report_routing():
@@ -64,8 +64,28 @@ def test_unrelated_reports_do_not_trigger_activity_report_routing(question):
 def test_filtered_or_multiple_period_reports_keep_the_model_completion_flow(question):
     command = {"question": question, "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}]}
     assert _is_activity_report(command)
-    assert not _supports_deterministic_activity_report(command)
     prompt = _general_chat_system_prompt(command, [])
     assert "each requested period" in prompt
     assert "Apply requested person and resource filters" in prompt
-    assert "once per available source" not in prompt
+    assert "read_activity_evidence" in prompt
+
+
+def test_named_source_reports_do_not_require_unrequested_bound_sources():
+    command = {
+        "question": "总结昨天 GitHub 每个人的工作内容",
+        "loaded_plugins": [
+            {
+                "tools": [
+                    {"key": key}
+                    for key in (
+                        "github_activity_summary",
+                        "gitlab_activity_summary",
+                        "jira_activity_summary",
+                    )
+                ]
+            }
+        ],
+    }
+    assert _activity_report_expected_tools(command) == {"github_activity_summary"}
+    command["question"] = "总结昨天每个人的工作内容"
+    assert len(_activity_report_expected_tools(command)) == 3

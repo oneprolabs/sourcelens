@@ -328,6 +328,7 @@ def _source_coverage_incomplete(content):
         truncated = source.get("possibly_truncated")
         if (
             source.get("ok") is False
+            or source.get("source_coverage_complete") is False
             or source.get("projects_truncated") is True
             or source.get("truncated") is True
             or truncated is True

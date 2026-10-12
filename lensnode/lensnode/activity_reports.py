@@ -1,7 +1,6 @@
-"""Durable source evidence and deterministic, attributable activity reports."""
+"""Durable, attributable source evidence for model-authored activity reports."""
 
 import hashlib
-import html
 import json
 import os
 import shutil
@@ -9,10 +8,6 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
-
-from langchain.agents.middleware import AgentMiddleware, hook_config
-from langchain_core.messages import AIMessage
 
 ACTIVITY_TOOLS = frozenset({"github_activity_summary", "gitlab_activity_summary", "jira_activity_summary"})
 
@@ -89,9 +84,6 @@ class ActivityLedger:
         self.lock = threading.RLock()
         self.request_locks = {}
         self.entries = {}
-        self.staged_fingerprint = None
-        self.staged_candidates = {}
-        self.completion_requested = False
         for path in self.root.glob("*.json"):
             if path.is_symlink():
                 raise ValueError("Invalid activity evidence file")
@@ -151,10 +143,9 @@ class ActivityLedger:
                 stream.write(_json(entry))
             os.replace(temporary, path)
             self.entries[key] = entry
-            self.completion_requested = False
 
-    def report(self, expected_tools, language="zh"):
-        """Render facts from saved snapshots without asking a model to infer work."""
+    def report(self, expected_tools):
+        """Normalize saved evidence without producing a business report or answer."""
 
         with self.lock:
             entries = sorted(self.entries.values(), key=lambda entry: entry["sequence"])
@@ -167,9 +158,7 @@ class ActivityLedger:
             key = _json([entry["tool"], entry["connection"], sorted(scope), result.get("since"), result.get("until")])
             latest[key] = entry
         records = {}
-        # Provider snapshots prove their own query coverage, not the user's
-        # requested date and full resource scope. No trusted report spec exists.
-        limitations = ["请求资源与日期范围尚未核验 / requested resource and date coverage unverified"]
+        limitations = []
         tools = set()
         windows = set()
         for entry in sorted(latest.values(), key=lambda entry: (entry["provider"], entry["sequence"])):
@@ -213,8 +202,6 @@ class ActivityLedger:
                             existing["sources"].extend(record["sources"])
         for tool in sorted(set(expected_tools) - tools):
             limitations.append(f"{tool}: 尚无来源结果 / source not retrieved")
-        if len(windows) > 1:
-            limitations.append("来源时间窗口不一致 / source time windows differ")
         if not windows:
             limitations.append("尚无可验证的来源材料 / no source evidence")
         ordered = sorted(records.values(), key=lambda item: (item["person_id"], item["timestamp"], item["id"]))
@@ -230,7 +217,6 @@ class ActivityLedger:
                 for entry in sorted(latest.values(), key=lambda entry: (entry["provider"], entry["sequence"]))
             ],
         }
-        report["html"], report["answer"] = _render(report, language)
         return report
 
 
@@ -314,181 +300,40 @@ def _record(provider, connection, resource, kind, item, since, until):
     }
 
 
-def _render(report, language):
-    """Escape all source text and keep links within HTTP(S)."""
-
-    language_name = str(language).strip().lower()
-    chinese = language_name.startswith("zh") or "chinese" in language_name
-    title = "可验证活动汇总" if chinese else "Verified activity summary"
-    labels = (
-        {
-            "updated": "当期更新",
-            "committed": "当期提交",
-            "created": "当期创建",
-            "merged": "当期合并",
-            "resolved": "当期解决",
-            "closed": "当期关闭",
-        }
-        if chinese
-        else {}
-    )
-    notes = (
-        "人员按来源账号分别列出；负责人及条目作者不代表本次更新的操作者。不同提交 SHA 不自动合并为一项工作。"
-        if chinese
-        else (
-            "People are grouped by source account. Assignees and item authors are not necessarily update actors. "
-            "Different commit SHAs are not inferred to be the same work."
-        )
-    )
-    notes += (
-        " 汇总依据当前查询的活动快照，不能据此还原全部历史操作或证明未列出的人员没有工作。"
-        if chinese
-        else (
-            " Current activity snapshots do not reconstruct every historical action or prove that unlisted people did no work."
-        )
-    )
-    sections = []
-    window_text = "; ".join(f"{lower} — {upper}" for lower, upper in report["windows"])
-    delivery = (
-        "活动报告与证据文件已生成，可下载查看。"
-        if chinese
-        else "The activity report and evidence files are available to download."
-    )
-    answer = [title, window_text, notes, delivery]
-    current = None
-    for record in report["records"]:
-        if record["person_id"] != current:
-            current = record["person_id"]
-            heading = f"{record['person']} ({record['provider']})"
-            sections.append(f"<h2>{html.escape(heading)}</h2>")
-            answer.append(f"\n{heading}")
-        event = labels.get(record["event"], record["event"])
-        text = f"{event} · {', '.join(record['resources'])} · {record['id']} · {record['title']}"
-        answer.append(f"- {text}")
-        link = ""
-        url = record["url"]
-        try:
-            parsed = urlsplit(url)
-        except ValueError:
-            parsed = urlsplit("")
-        if parsed.scheme in {"https", "http"} and parsed.netloc:
-            link = f' <a href="{html.escape(url, quote=True)}" rel="noopener noreferrer">来源 / Source</a>'
-        sections.append(
-            f"<article><p>{html.escape(text)}{link}</p><small>{html.escape(record['role'])} · "
-            f"{html.escape(record['timestamp'])} · {html.escape(record['current_state'])}</small></article>"
-        )
-    if report["limitations"]:
-        answer.extend(["\n覆盖限制 / Coverage limits", *report["limitations"]])
-    warnings = "".join(f"<li>{html.escape(item)}</li>" for item in report["limitations"])
-    windows = html.escape(window_text)
-    document = f"""<!doctype html><html lang="{'zh-CN' if chinese else 'en'}"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
-<style>body{{font:16px/1.7 system-ui,sans-serif;max-width:1000px;margin:auto;padding:24px;background:#f8fafc;color:#172033}}
-article{{background:white;padding:12px 18px;margin:10px 0;border:1px solid #dbe3ee;border-radius:10px;overflow-wrap:anywhere}}
-small{{color:#475569}}h2{{margin-top:32px}}a{{color:#2563eb}}aside{{padding:16px;background:#fff4d6}}</style>
-<h1>{title}</h1><p>{windows}</p><p>{html.escape(notes)}</p>
-{'<aside><strong>覆盖限制 / Coverage limits</strong><ul>' + warnings + '</ul></aside>' if warnings else ''}
-{''.join(sections)}</html>"""
-    return document, "\n".join(answer)
-
-
-def finalize_activity_report(ledger, expected_tools, command, resources, config, emit_event, language="zh"):
-    """Stage the exact report and evidence generated from the final ledger."""
-
-    from .agent_tools import _build_save_deliverable_tool
-
-    report = ledger.report(expected_tools, language)
-    root = resources.root.resolve()
-    contents = {
-        "activity-report.html": report["html"],
-        "activity-evidence.json": _json({key: value for key, value in report.items() if key not in {"html", "answer"}}),
-    }
-    fingerprint = hashlib.sha256(_json(contents).encode()).hexdigest()
-    manifest = command.setdefault("_deliverables", {})
-    reusable = (
-        ledger.staged_fingerprint == fingerprint
-        and all(manifest.get(filename) == candidate for filename, candidate in ledger.staged_candidates.items())
-        and set(ledger.staged_candidates) == set(contents)
-    )
-    candidates = dict(ledger.staged_candidates) if reusable else {}
-    manifest.clear()
-    manifest.update(candidates)
-    save = _build_save_deliverable_tool(command, resources, config, emit_event)
-    for filename, content in contents.items():
-        temporary = root / f".activity-{uuid.uuid4().hex}.tmp"
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, root / filename)
-        if not reusable:
-            result = json.loads(save.invoke({"path": filename}))
-            if result.get("ok") is not True:
-                manifest.clear()
-                raise RuntimeError("ACTIVITY_REPORT_DELIVERY_FAILED")
-    ledger.staged_fingerprint = fingerprint
-    ledger.staged_candidates = dict(manifest)
-    if emit_event is not None:
-        emit_event(
-            "deepagents.activity_report.rendered",
-            {
-                "records": len(report["records"]),
-                "complete": report["complete"],
-                "html_sha256": hashlib.sha256(report["html"].encode()).hexdigest(),
-            },
-        )
-    return report
-
-
-def build_activity_report_tool(ledger, expected_tools, command, resources, config, emit_event, language="zh"):
-    """Let the agent finish a report without generating HTML tokens."""
+def build_activity_evidence_tool(ledger, expected_tools):
+    """Expose bounded saved evidence without staging files or ending the agent."""
 
     from langchain.tools import tool
 
-    @tool("render_activity_report")
-    def render_activity_report() -> str:
-        """Render and stage the activity report from saved batch-source evidence.
+    @tool("read_activity_evidence")
+    def read_activity_evidence(offset: int = 0, limit: int = 50) -> str:
+        """Read normalized activity evidence saved by the batch source tools.
 
-        Call each available batch activity tool first with the same requested time
-        window. Then call this tool once. It writes the report and evidence JSON,
-        stages their downloads, and returns the grounded final answer. Do not write
-        HTML yourself or refetch sources to correct a report.
+        Use offset and limit to revisit records without refetching sources. Records
+        retain source identities, event dates, roles and coverage limits. They are
+        evidence, not a finished work summary. Query coverage does not establish
+        that the selected dates and resources match the user's request. Follow the
+        bound report Skill to interpret the evidence and deliver the final report.
         """
 
         if not ledger.has_evidence():
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"})
-        report = finalize_activity_report(ledger, expected_tools, command, resources, config, emit_event, language)
-        ledger.completion_requested = True
+        if offset < 0 or not 1 <= limit <= 100:
+            return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_INVALID"})
+        evidence = ledger.report(expected_tools)
+        records = evidence["records"]
+        end = min(offset + limit, len(records))
         return _json(
             {
                 "ok": True,
-                "answer": report["answer"],
-                "complete": report["complete"],
-                "files": ["activity-report.html", "activity-evidence.json"],
+                "records": records[offset:end],
+                "total_records": len(records),
+                "next_offset": end if end < len(records) else None,
+                "windows": evidence["windows"],
+                "source_tools": evidence["source_tools"],
+                "limitations": evidence["limitations"],
+                "source_coverage_complete": evidence["complete"],
             }
         )
 
-    return render_activity_report
-
-
-class ActivityReportMiddleware(AgentMiddleware):
-    """Finish from saved evidence before another model-generated report turn."""
-
-    def __init__(self, ledger, render):
-        self.ledger = ledger
-        self.render = render
-
-    @hook_config(can_jump_to=["end"])
-    def before_model(self, state, runtime):
-        """Stop only after the model explicitly requests final rendering."""
-
-        with self.ledger.lock:
-            if not self.ledger.completion_requested:
-                return None
-        report = self.render()
-        return {"jump_to": "end", "messages": [AIMessage(content=report["answer"])]}
-
-    @hook_config(can_jump_to=["end"])
-    async def abefore_model(self, state, runtime):
-        """Move file upload out of the asynchronous graph's event loop."""
-
-        import asyncio
-
-        return await asyncio.to_thread(self.before_model, state, runtime)
+    return read_activity_evidence

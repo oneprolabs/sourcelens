@@ -1,7 +1,5 @@
 """System prompt assembly for LensNode agent runtime modes."""
 
-import re
-
 from .outcomes import _route_guidance
 from .prompts import (
     answer_language_requirement as _answer_language_requirement,
@@ -557,18 +555,6 @@ def _report_execution_guidance(command):
     if not batch_tools or not _is_activity_report(command):
         return ""
 
-    if not _supports_deterministic_activity_report(command):
-        return (
-            "\n\nActivity report execution contract:\n"
-            f"- Available batch sources: {', '.join(sorted(batch_tools))}.\n"
-            "- Use batch activity tools for each requested period and approved resource batch. "
-            "Do not stop after one window when the request requires more.\n"
-            "- Apply requested person and resource filters before writing the answer or artifact. "
-            "Keep a reusable evidence ledger and prefer a deterministic template for presentation.\n"
-            "- Disclose source coverage limits and preserve clarification questions when inputs are missing. "
-            "The automatic render_activity_report tool is unavailable for this request."
-        )
-
     lines = [
         "\n\nActivity report execution contract:",
         "- Call each batch activity Tool once per available source where one "
@@ -613,9 +599,16 @@ def _report_execution_guidance(command):
             "- Reuse that ledger for corrections instead of retrieving the same "
             "sources again. Prefer a deterministic template rendered from normalized "
             "data instead of regenerating the entire HTML in each model response.",
-            "- Call render_activity_report only after every requested resource batch is retrieved. "
-            "It deterministically renders and stages the report from the saved evidence. "
-            "Use its returned grounded answer, then stop. Do not generate HTML yourself.",
+            "- Use read_activity_evidence to revisit saved records without refetching sources. "
+            "This is evidence for the report, not the final answer.",
+            "- Apply requested person and resource filters before writing the answer or artifact. "
+            "Do not stop after one window when the request requires more; retrieve each requested period.",
+            "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
+            "to group people, distinguish completed work from work in progress, and ground risks and comments "
+            "in the evidence. Never infer a shared identity from a display name alone.",
+            "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
+            "business summary and any material coverage limits. Keep verification diagnostics out of the "
+            "business report unless they explain a real evidence gap.",
         )
     )
     return "\n".join(lines)
@@ -656,20 +649,13 @@ def _is_activity_report(command):
     )
 
 
-def _supports_deterministic_activity_report(command):
-    """Limit automatic completion to explicit single-day, all-person summaries.
+def _activity_report_expected_tools(command):
+    """Limit evidence coverage checks to sources named in the request."""
 
-    Named-person filters, comparisons, and multiple windows still need the model
-    to interpret the request. A tool-name checklist cannot prove their coverage.
-    """
-
-    if not _is_activity_report(command):
-        return False
-    question = str(command.get("question") or "").strip().casefold()
-    day = r"(?:今天|昨天|昨日|\d{1,2}/\d{1,2}|\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2})"
-    chinese = rf"(?:总结|汇总)\s*{day}\s*[，,：:]?\s*(?:每个人|所有人|全员)(?:的)?工作(?:内容)?[。.!！]?"
-    english = r"(?:summarize|summary of) (?:today|yesterday)(?:'s)? work (?:by person|for everyone)[.!]?"
-    return bool(re.fullmatch(chinese, question) or re.fullmatch(english, question))
+    tools = _activity_report_batch_tools(command)
+    question = str(command.get("question") or "").casefold()
+    named = {key for key in tools if key.split("_", 1)[0] in question}
+    return named or tools
 
 
 def _is_github_activity_report(command):

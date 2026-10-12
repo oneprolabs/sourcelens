@@ -3,10 +3,9 @@
 import json
 from types import SimpleNamespace
 
-import httpx
 import pytest
 
-from lensnode.activity_reports import ActivityLedger, bound_activity_result, finalize_activity_report
+from lensnode.activity_reports import ActivityLedger, bound_activity_result, build_activity_evidence_tool
 
 
 def _result():
@@ -40,31 +39,20 @@ def test_ledger_survives_reconstruction_and_reuses_exact_source_arguments(tmp_pa
     assert restored.cached("jira", "other-connection", "1.0.0", "jira_activity_summary", args) is None
 
 
-def test_render_is_deterministic_and_never_turns_old_resolution_into_daily_completion(tmp_path):
+def test_normalized_evidence_never_turns_old_resolution_into_daily_completion(tmp_path):
     ledger = ActivityLedger(tmp_path / "private")
     result = _result()
     args = {"since": result["since"], "until": result["until"], "projects": ["SL"]}
     ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", args, result)
-    first = ledger.report({"jira_activity_summary"}, "zh")
-    second = ledger.report({"jira_activity_summary"}, "zh")
+    first = ledger.report({"jira_activity_summary"})
+    second = ledger.report({"jira_activity_summary"})
     assert first == second
     assert len(first["records"]) == 1
     assert first["records"][0]["event"] == "updated"
-    assert "&lt;script&gt;" in first["html"]
-    assert "<script>" not in first["html"]
-    assert "当前负责人" in first["html"]
-
-
-@pytest.mark.parametrize("language_code", [None, "zh", "zh-CN", "zh-TW"])
-def test_report_accepts_the_runtime_language_name_for_chinese_requests(tmp_path, language_code):
-    from lensnode.agent_runtime.prompts import command_answer_language
-
-    command = {"question": "总结 10/8，每个人的工作内容", "answer_language": language_code}
-    ledger = ActivityLedger(tmp_path / "private")
-    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, _result())
-    report = ledger.report({"jira_activity_summary"}, command_answer_language(command))
-    assert "可验证活动汇总" in report["answer"]
-    assert "当期更新" in report["html"]
+    assert first["records"][0]["title"] == "<script>alert(1)</script>"
+    assert "current assignee, not update actor" in first["records"][0]["role"]
+    assert "answer" not in first
+    assert "html" not in first
 
 
 def test_partial_and_missing_sources_remain_visible_and_closed_mr_is_not_merged(tmp_path):
@@ -91,7 +79,7 @@ def test_partial_and_missing_sources_remain_visible_and_closed_mr_is_not_merged(
         ],
     }
     ledger.record("gitlab", "connection", "1.0.0", "gitlab_activity_summary", {}, result)
-    report = ledger.report({"gitlab_activity_summary", "jira_activity_summary"}, "zh")
+    report = ledger.report({"gitlab_activity_summary", "jira_activity_summary"})
     assert report["complete"] is False
     assert report["records"][0]["event"] == "updated"
     assert "jira_activity_summary" in str(report["limitations"])
@@ -116,57 +104,11 @@ def test_exact_commit_duplicates_are_grouped_but_display_names_do_not_merge_prov
     )
     result = _result()
     ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
-    report = ledger.report({"github_activity_summary", "jira_activity_summary"}, "zh")
+    report = ledger.report({"github_activity_summary", "jira_activity_summary"})
     assert len(report["records"]) == 2
     assert len({record["person_id"] for record in report["records"]}) == 2
     github = next(record for record in report["records"] if record["provider"] == "github")
     assert len(github["resources"]) == 2
-
-
-def test_report_delivery_replaces_drafts_and_is_idempotent_until_evidence_changes(tmp_path, monkeypatch):
-    ledger = ActivityLedger(tmp_path / "private")
-    result = _result()
-    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
-    resources = SimpleNamespace(root=tmp_path / "scratch")
-    resources.root.mkdir()
-    config = SimpleNamespace(
-        deliverable_max_bytes=10_000_000,
-        request_timeout_s=5,
-        token="node-token",
-        tls_skip_verify=False,
-        tls_ca_file=None,
-        deliverable_upload_url="http://gateway/upload/",
-    )
-    command = {"run_uuid": "run-report", "_deliverables": {"old-draft.html": "old-candidate"}}
-    uploads = []
-
-    def respond(request):
-        body = request.read()
-        assert b'name="staged"\r\n\r\ntrue' in body
-        uploads.append(body)
-        return httpx.Response(200, json={"uuid": f"candidate-{len(uploads)}"})
-
-    real_client = httpx.Client
-    monkeypatch.setattr(
-        "lensnode.agent_tools.httpx.Client",
-        lambda **kwargs: real_client(
-            transport=httpx.MockTransport(respond),
-            **kwargs,
-        ),
-    )
-    first = finalize_activity_report(ledger, {"jira_activity_summary"}, command, resources, config, None)
-    candidates = dict(command["_deliverables"])
-    assert first["html"].encode() in uploads[0]
-    evidence = json.loads((resources.root / "activity-evidence.json").read_text())
-    assert evidence["source_snapshots"][0]["result"] == result
-    assert set(candidates) == {"activity-report.html", "activity-evidence.json"}
-    finalize_activity_report(ledger, {"jira_activity_summary"}, command, resources, config, None)
-    assert len(uploads) == 2
-    assert command["_deliverables"] == candidates
-    command["_deliverables"].clear()
-    finalize_activity_report(ledger, {"jira_activity_summary"}, command, resources, config, None)
-    assert len(uploads) == 4
-    assert command["_deliverables"] != candidates
 
 
 def test_evidence_budget_keeps_partial_results_and_marks_lost_tail():
@@ -179,7 +121,7 @@ def test_evidence_budget_keeps_partial_results_and_marks_lost_tail():
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_graph_waits_for_explicit_rendering_and_never_generates_a_model_report(tmp_path, asynchronous, monkeypatch):
+def test_graph_continues_from_source_evidence_to_business_report(tmp_path, asynchronous):
     import asyncio
 
     from langchain.agents import create_agent
@@ -187,9 +129,8 @@ def test_graph_waits_for_explicit_rendering_and_never_generates_a_model_report(t
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from lensnode.activity_reports import ActivityReportMiddleware, build_activity_report_tool
-
     ledger = ActivityLedger(tmp_path / "private")
+    delivered = []
 
     @tool
     def jira_activity_summary() -> str:
@@ -199,11 +140,12 @@ def test_graph_waits_for_explicit_rendering_and_never_generates_a_model_report(t
         ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
         return json.dumps(result)
 
-    monkeypatch.setattr(
-        "lensnode.activity_reports.finalize_activity_report",
-        lambda *args: ledger.report({"jira_activity_summary"}, "zh"),
-    )
-    render_activity_report = build_activity_report_tool(ledger, {"jira_activity_summary"}, {}, None, None, None)
+    @tool
+    def save_deliverable(path: str) -> str:
+        """Stage the business report for final publication."""
+
+        delivered.append(path)
+        return json.dumps({"ok": True})
 
     class Model(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
@@ -211,58 +153,52 @@ def test_graph_waits_for_explicit_rendering_and_never_generates_a_model_report(t
 
             return self
 
+    answer = "Alice: work in progress; detailed report attached."
     model = Model(
         responses=[
             AIMessage(content="", tool_calls=[{"id": "source", "name": "jira_activity_summary", "args": {}}]),
-            AIMessage(content="", tool_calls=[{"id": "render", "name": "render_activity_report", "args": {}}]),
-            AIMessage(content="This draft must never be generated."),
+            AIMessage(content="", tool_calls=[{"id": "evidence", "name": "read_activity_evidence", "args": {}}]),
+            AIMessage(
+                content="", tool_calls=[{"id": "deliver", "name": "save_deliverable", "args": {"path": "report.html"}}]
+            ),
+            AIMessage(content=answer),
         ]
     )
     graph = create_agent(
         model,
-        tools=[jira_activity_summary, render_activity_report],
-        middleware=[
-            ActivityReportMiddleware(
-                ledger,
-                lambda: ledger.report({"jira_activity_summary"}, "zh"),
-            )
+        tools=[
+            jira_activity_summary,
+            build_activity_evidence_tool(ledger, {"jira_activity_summary"}),
+            save_deliverable,
         ],
     )
     initial = {"messages": [HumanMessage(content="总结 10/8，每个人的工作内容")]}
     result = asyncio.run(graph.ainvoke(initial)) if asynchronous else graph.invoke(initial)
-    assert model.i == 2
-    assert "当期更新" in result["messages"][-1].content
-    assert "This draft must never" not in result["messages"][-1].content
-    assert "当前查询的活动快照" in result["messages"][-1].content
+    assert result["messages"][-1].content == answer
+    assert delivered == ["report.html"]
 
 
-@pytest.mark.parametrize("has_evidence", [True, False])
-def test_terminal_runtime_replaces_model_draft_only_after_retrieving_evidence(tmp_path, monkeypatch, has_evidence):
+@pytest.mark.parametrize("coverage", ["missing", "complete", "partial"])
+def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, monkeypatch, coverage):
     from datetime import datetime, timezone
 
     from lensnode.agent_runtime import runtime as runtime_module
 
     ledger = ActivityLedger(tmp_path / "private")
     evidence = _result()
-    evidence["possibly_truncated"] = True
-    if has_evidence:
+    evidence["possibly_truncated"] = coverage == "partial"
+    if coverage != "missing":
         ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
-    report = ledger.report({"jira_activity_summary"}, "zh")
     command = {
         "question": "总结 10/8，每个人的工作内容",
         "task": "general_chat",
         "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
-        "_deliverables": {"old-draft.html": "old"},
+        "_deliverables": {"business-report.html": "business-candidate"},
     }
-
-    def finalize(*args):
-        command["_deliverables"].clear()
-        command["_deliverables"].update({"activity-report.html": "verified", "activity-evidence.json": "evidence"})
-        return report
-
-    monkeypatch.setattr(runtime_module, "finalize_activity_report", finalize)
     monkeypatch.setattr(
-        runtime_module, "_run_agent_with_turn_limit", lambda *args, **kwargs: ("Unverified model draft", False, "")
+        runtime_module,
+        "_run_agent_with_turn_limit",
+        lambda *args, **kwargs: ("Business summary based on retrieved evidence", False, ""),
     )
     outputs = []
     state = SimpleNamespace(
@@ -298,25 +234,21 @@ def test_terminal_runtime_replaces_model_draft_only_after_retrieving_evidence(tm
         consulted_sources=SimpleNamespace(citations=lambda *args: []),
     )
     result = runtime_module.LensDeepAgentRuntime(SimpleNamespace())._execute_agent(state)
-    if not has_evidence:
-        assert result["answer"] == "Unverified model draft"
-        assert not outputs
-        assert "activity-report.html" not in command["_deliverables"]
-        return
-    assert result["outcome"] == "partial"
-    assert result["termination_detail"]["error_type"] == "verification"
-    assert "Unverified model draft" not in result["answer"]
-    assert result["answer"] == report["answer"]
-    assert outputs[-1][1]["reset"] is True
-    assert "old-draft.html" not in command["_deliverables"]
+    assert result["answer"] == "Business summary based on retrieved evidence"
+    assert not outputs
+    assert command["_deliverables"] == {"business-report.html": "business-candidate"}
+    assert result["outcome"] == ("partial" if coverage == "partial" else "completed")
+    if coverage == "partial":
+        assert result["termination_detail"]["error_type"] == "verification"
 
 
-def test_invalid_source_links_are_not_rendered_as_active_links(tmp_path):
+def test_source_coverage_is_not_forced_incomplete_when_snapshot_has_no_gaps(tmp_path):
     ledger = ActivityLedger(tmp_path / "private")
     result = _result()
-    result["items"][0]["url"] = "https://[invalid"
     ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
-    assert '<a href="https://' not in ledger.report({"jira_activity_summary"})["html"]
+    report = ledger.report({"jira_activity_summary"})
+    assert report["complete"] is True
+    assert report["limitations"] == []
 
 
 def test_resumed_report_does_not_reuse_the_rejected_model_drafts_verdict(tmp_path):
@@ -391,29 +323,51 @@ def test_display_name_alone_does_not_establish_a_shared_source_identity(tmp_path
     assert len({record["person_id"] for record in report["records"]}) == 2
 
 
-def test_source_name_presence_does_not_end_an_unfinished_resource_query(tmp_path):
-    from lensnode.activity_reports import ActivityReportMiddleware
+def test_evidence_read_is_paged_and_does_not_publish_or_finish(tmp_path):
+    ledger = ActivityLedger(tmp_path / "private")
+    result = _result()
+    result["items"] = [dict(result["items"][0], key=f"SL-{number}") for number in range(3)]
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
+    read = build_activity_evidence_tool(ledger, {"jira_activity_summary"})
+    first = json.loads(read.invoke({"limit": 2}))
+    last = json.loads(read.invoke({"offset": first["next_offset"], "limit": 2}))
+    assert len(first["records"]) == 2
+    assert len(last["records"]) == 1
+    assert last["next_offset"] is None
+    assert first["source_coverage_complete"] is True
+    assert "answer" not in first
+    assert "files" not in first
+    assert not list(tmp_path.glob("*.html"))
+    assert json.loads(read.invoke({"offset": -1}))["error"] == "ACTIVITY_EVIDENCE_PAGE_INVALID"
+
+
+def test_evidence_read_without_sources_keeps_clarification_flow(tmp_path):
+    ledger = ActivityLedger(tmp_path / "private")
+    read = build_activity_evidence_tool(ledger, {"jira_activity_summary"})
+    assert json.loads(read.invoke({})) == {"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"}
+
+
+def test_saved_partial_evidence_is_still_incomplete_for_answer_verification(tmp_path):
+    from lensnode.agent_runtime.evidence_gate import _source_coverage_incomplete
 
     ledger = ActivityLedger(tmp_path / "private")
     result = _result()
-    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {"projects": ["SL"]}, result)
-    middleware = ActivityReportMiddleware(ledger, lambda: ledger.report({"jira_activity_summary"}))
-    assert middleware.before_model({}, None) is None
-    report = ledger.report({"jira_activity_summary"})
-    assert report["complete"] is False
-    assert any("requested resource and date coverage unverified" in limit for limit in report["limitations"])
-    ledger.completion_requested = True
-    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {"projects": ["OPS"]}, result)
-    assert middleware.before_model({}, None) is None
+    result["possibly_truncated"] = True
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, result)
+    read = build_activity_evidence_tool(ledger, {"jira_activity_summary"})
+    assert _source_coverage_incomplete(read.invoke({})) is True
 
 
-def test_explicit_render_without_evidence_keeps_clarification_flow(tmp_path):
-    from lensnode.activity_reports import build_activity_report_tool
-
+def test_multiple_requested_windows_remain_separate_evidence_without_forced_partial(tmp_path):
     ledger = ActivityLedger(tmp_path / "private")
-    command = {}
-    render = build_activity_report_tool(ledger, {"jira_activity_summary"}, command, None, None, None)
-    result = json.loads(render.invoke({}))
-    assert result == {"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"}
-    assert ledger.completion_requested is False
-    assert "_deliverables" not in command
+    first = _result()
+    second = _result()
+    second.update(since="2026-10-08T16:00:00Z", until="2026-10-09T16:00:00Z")
+    second["items"][0]["updated"] = "2026-10-09T08:00:00Z"
+    for result in (first, second):
+        args = {"since": result["since"], "until": result["until"], "projects": ["SL"]}
+        ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", args, result)
+    evidence = json.loads(build_activity_evidence_tool(ledger, {"jira_activity_summary"}).invoke({}))
+    assert len(evidence["windows"]) == 2
+    assert len(evidence["records"]) == 2
+    assert evidence["source_coverage_complete"] is True
