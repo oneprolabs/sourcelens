@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Track persistent executor stop confirmation separately from conversion cancellation, with exact-task retries and restart-safe dispatch fencing.
+zh-CN: 将数据源转换的取消结果与执行器停止确认分开持久化，支持按原任务重试，并阻止重启后的迟到派发。

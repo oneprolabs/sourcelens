@@ -3370,6 +3370,14 @@ def cancel_datasource_conversion_on_lensnode(lensnode, task_id):
 
     if lensnode is None or not task_id:
         return None
+    from agentcore_task.adapters.django.models import TaskExecution
+
+    task = TaskExecution.objects.filter(task_id=task_id, module="lens_datasource_conversion").first()
+    if task is None:
+        return None
+    metadata = task.metadata or {}
+    if metadata.get("lensnode_uuid") and str(metadata["lensnode_uuid"]) != str(lensnode.uuid):
+        return None
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return None
@@ -3381,6 +3389,7 @@ def cancel_datasource_conversion_on_lensnode(lensnode, task_id):
             "payload": {
                 "type": "datasource_convert_cancel",
                 "task_id": str(task_id),
+                "datasource_uuid": str(metadata.get("datasource_uuid") or ""),
             },
         },
         best_effort=True,

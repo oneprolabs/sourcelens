@@ -164,6 +164,8 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_datasource_sync_event(content)
         elif frame_type == "datasource_convert_done":
             await self._handle_datasource_conversion_done(content)
+        elif frame_type == "datasource_convert_stopped":
+            await self._handle_datasource_conversion_done(content, stop_only=True)
         elif frame_type == "datasource_upload_done":
             await self._handle_datasource_upload_done(content)
         elif frame_type == "datasource_upload_ready":
@@ -1080,18 +1082,18 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             complete_datasource_sync_task(task_id, content)
         return task_id
 
-    async def _handle_datasource_conversion_done(self, content):
+    async def _handle_datasource_conversion_done(self, content, stop_only=False):
         """Complete managed workspace conversion from LensNode result."""
 
         request_id = content.get("request_id") or ""
         task_id = content.get("task_id") or ""
         if not request_id and not task_id:
             return
-        resolved_task_id = await database_sync_to_async(
-            self._complete_datasource_conversion_done
-        )(
-            request_id, content, self.channel_name
+        resolved_task_id = await database_sync_to_async(self._complete_datasource_conversion_done)(
+            request_id, content, self.channel_name, str(self.lensnode.uuid), stop_only
         )
+        if not resolved_task_id:
+            return
         await database_sync_to_async(self._clear_active_datasource_operation)(
             self.lensnode.uuid,
             resolved_task_id or task_id,
@@ -1251,6 +1253,8 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         request_id,
         content,
         connection_id,
+        lensnode_uuid=None,
+        stop_only=False,
     ):
         from .tasks import (
             complete_datasource_conversion_task,
@@ -1262,11 +1266,15 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             content,
         )
         if task_id:
-            complete_datasource_conversion_task(
+            task = complete_datasource_conversion_task(
                 task_id,
                 content,
                 connection_id=connection_id,
+                lensnode_uuid=lensnode_uuid,
+                stop_only=stop_only,
             )
+            if task is None:
+                return None
         return task_id
 
     async def _send_bad_frame(self, message):
