@@ -1022,7 +1022,7 @@
               type="text"
               :required="!form.config.api_base"
               pattern="[a-fA-F0-9]{32}"
-              class="form-input w-full"
+              class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
               :placeholder="t('llm.config.accountIdPlaceholder')"
             />
           </div>
