@@ -46,18 +46,19 @@ class ModelReplacementConflict(APIException):
 def replace_assistant_models(*, user, model_field, target_model_ref, assistant_models, preview):
     """Validate the complete batch before writing any assistant."""
 
+    model_type = LLMConfig.MODEL_TYPE_DECISION if model_field == "decision_model_ref" else LLMConfig.MODEL_TYPE_LLM
     target = (
         LLMConfig.objects.select_for_update()
         .filter(
             uuid=target_model_ref,
             scope=LLMConfig.Scope.GLOBAL,
-            model_type=LLMConfig.MODEL_TYPE_LLM,
+            model_type=model_type,
             is_active=True,
         )
         .first()
     )
     if target is None:
-        raise serializers.ValidationError({"target_model_ref": "Select an active global LLM configuration."})
+        raise serializers.ValidationError({"target_model_ref": f"Select an active global {model_type} configuration."})
     if model_field == "multimodal_model_ref":
         reason = validate_vision_model_ref(target.uuid)
         if reason:

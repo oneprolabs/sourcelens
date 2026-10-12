@@ -412,9 +412,9 @@ class DecisionRanker:
         return [build_decision_rank_tool(self)]
 
     def _score_candidates(self, decision, binding, bounded, instructions):
-        """Score every candidate in parallel, preserving input order.
+        """Score every candidate, preserving input order.
 
-        One candidate is one bounded external call, so scoring a full window
+        Legacy Plugin scoring uses one bounded external call per candidate, so scoring a full window
         concurrently keeps the rerank within a single timeout budget instead
         of paying the per-candidate timeout sequentially.  The returned list
         is aligned with ``bounded`` by index, so aggregation stays
@@ -422,7 +422,8 @@ class DecisionRanker:
         """
 
         scored = [(None, "error")] * len(bounded)
-        workers = min(len(bounded), RANK_MAX_CANDIDATES)
+        # The gateway serializes metered calls against the shared Run budget.
+        workers = 1 if binding.get("model_ref") else min(len(bounded), RANK_MAX_CANDIDATES)
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(

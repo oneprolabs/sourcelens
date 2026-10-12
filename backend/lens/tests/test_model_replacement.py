@@ -100,6 +100,28 @@ class AssistantModelReplacementTests(TestCase):
         self.assertEqual(self.post(assistant_models=[]).status_code, 400)
         self.assertEqual(self.post(assistant_models=self.payload["assistant_models"] * 2).status_code, 400)
 
+    def test_decision_replacement_enforces_the_model_slot_type(self):
+        """Decision slots reject chat models and accept active decision models."""
+
+        items = [{"uuid": str(row.uuid), "model_ref": None} for row in self.rows]
+        response = self.post(model_field="decision_model_ref", assistant_models=items, preview=False)
+        self.assertEqual(response.status_code, 400)
+        for row in self.rows:
+            row.refresh_from_db()
+            self.assertIsNone(row.decision_model_ref)
+
+        decision = self.model("jev-latest", model_type="decision")
+        self.assertEqual(self.post(target_model_ref=str(decision.uuid)).status_code, 400)
+        response = self.post(
+            model_field="decision_model_ref", assistant_models=items, target_model_ref=str(decision.uuid), preview=False
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        for row in self.rows:
+            row.refresh_from_db()
+            self.assertEqual(row.decision_model_ref, decision.uuid)
+            self.assertEqual(row.agent_model_ref, self.old.uuid)
+            self.assertEqual(row.settings["_model_check"]["decision_model_ref"]["status"], "ok")
+
     @patch("agentcore_metering.adapters.django.services.runtime_config.get_litellm_params")
     def test_vision_replacement_requires_vision_capability(self, mock_params):
         """The multimodal slot accepts only enabled vision models."""

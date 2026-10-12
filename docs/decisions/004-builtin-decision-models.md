@@ -25,6 +25,9 @@ The gateway uses `DecisionTracker`, shares the parent Run's token budget,
 and correlates metered usage with the Run and decision call. Decision model
 events distinguish this usage from agent model calls. Refusals retain usage
 without being treated as successful decisions.
+Built-in ranking scores candidates sequentially to respect the gateway's
+shared budget lock. Each candidate retains its own timeout, so a full ranking
+window can take longer than one decision call.
 
 Portable predicate answers carry a probability. Choice answers carry a
 selected label and score answers carry a numeric rubric position. SourceLens

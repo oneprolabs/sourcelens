@@ -1,5 +1,7 @@
 """Built-in decisions preserve portable answers and existing fallback semantics."""
 
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -132,6 +134,33 @@ def test_ranking_uses_numeric_scores_without_probability_distributions():
     assert ranked["ranked"][0]["score"] == 2.0
     assert ranked["ranked"][0]["probability"] is None
     assert ranked["usage"]["total_tokens"] == 4
+
+
+def test_ranking_does_not_contend_for_the_gateway_run_budget_lock():
+    budget_lock = threading.Lock()
+
+    def handle(request):
+        if not budget_lock.acquire(timeout=0.2):
+            return httpx.Response(429, json={"detail": "Run token budget is unavailable."})
+        try:
+            time.sleep(0.3)
+            return httpx.Response(
+                200,
+                json={
+                    "answers": [{"type": "score", "name": "evidence_relevance", "score": 1}],
+                    "usage": {"total_tokens": 2},
+                },
+            )
+        finally:
+            budget_lock.release()
+
+    candidates = [{"label": str(index), "content": str(index)} for index in range(3)]
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        ranked = DecisionRanker(command(), config(), client).rank("evidence_relevance", candidates)
+
+    assert len(ranked["ranked"]) == len(candidates)
+    assert ranked["failed"] == []
+    assert ranked["usage"]["total_tokens"] == 6
 
 
 def test_refusal_keeps_metered_usage_in_the_failed_model_event():
