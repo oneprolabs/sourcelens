@@ -425,6 +425,7 @@
       :plugin-manifests="pluginManifests"
       :plugin-icon-urls="pluginIconUrls"
       :llm-config-options="llmConfigOptions"
+      :decision-catalog="decisionCatalog"
       :datasource-options="datasourceOptions"
       :saving="saving"
       :form-error="formError"
@@ -496,6 +497,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import apiClient from '@/api/index'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
 import { copyToClipboard } from '@/utils/clipboard'
 import { extractErrorMessage } from '@/utils/api'
@@ -577,6 +579,7 @@ const pluginManifests = ref({})
 const pluginIconUrls = ref({})
 const globalSettings = ref([])
 const llmConfigOptions = ref([])
+const decisionCatalog = ref({ decisions: [] })
 const datasourceOptions = ref([])
 let formResourcesPromise = null
 let globalSettingsPromise = null
@@ -788,7 +791,12 @@ async function loadFormResources() {
     listMcpServers(),
     listConnections({ status: 'active' }),
     listPlugins(),
-    llmAdminApi.getLLMConfigAll({ scope: 'global' }).catch(() => [])
+    llmAdminApi
+      .getLLMConfigAll({ scope: 'global', model_type: 'all' })
+      .catch(() => []),
+    apiClient
+      .get('/lens/admin/decision-catalog/')
+      .then((response) => response.data?.data || response.data)
   ])
     .then(
       ([
@@ -799,7 +807,8 @@ async function loadFormResources() {
         mcpRows,
         connectionRows,
         installedPlugins,
-        llmRows
+        llmRows,
+        decisionRows
       ]) => {
         lensnodes.value = normalizeList(lensnodeRows)
         skills.value = normalizeList(skillRows)
@@ -809,6 +818,7 @@ async function loadFormResources() {
         mcps.value = normalizeList(mcpRows)
         pluginConnections.value = normalizeList(connectionRows)
         llmConfigOptions.value = normalizeList(llmRows)
+        decisionCatalog.value = decisionRows
         const plugins = normalizeList(installedPlugins)
         return Promise.all([
           Promise.all(
@@ -974,6 +984,10 @@ function defaultForm() {
     lensnode_uuid: '',
     datasource_bindings: [],
     agent_model_ref: '',
+    decision_model_ref: '',
+    decision_auto: true,
+    decision_gates: {},
+    decision_analyses: {},
     agent_rounds: 'balanced',
     max_concurrency: 5,
     multimodal_model_ref: '',
@@ -1025,6 +1039,10 @@ function formFromRow(row) {
       ? row.datasource_bindings
       : [],
     agent_model_ref: row.agent_model_ref || '',
+    decision_model_ref: row.decision_model_ref || '',
+    decision_auto: row.decision_auto !== false,
+    decision_gates: structuredClone(row.decision_gates || {}),
+    decision_analyses: structuredClone(row.decision_analyses || {}),
     agent_rounds: row.agent_rounds || 'balanced',
     max_concurrency: row.max_concurrency ?? 5,
     multimodal_model_ref: row.multimodal_model_ref || '',
@@ -1149,6 +1167,10 @@ function buildPayload() {
     datasource_bindings:
       form.value.mode === 'smart' ? [] : form.value.datasource_bindings || [],
     agent_model_ref: form.value.agent_model_ref || null,
+    decision_model_ref: form.value.decision_model_ref || null,
+    decision_auto: form.value.decision_auto !== false,
+    decision_gates: form.value.decision_gates || {},
+    decision_analyses: form.value.decision_analyses || {},
     agent_rounds: form.value.agent_rounds || 'balanced',
     ...(mode.value === 'edit'
       ? { max_concurrency: Number(form.value.max_concurrency) || 5 }

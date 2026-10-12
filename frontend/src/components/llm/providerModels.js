@@ -1,9 +1,8 @@
 // Model picker filtering for the LLM config UI.
 //
-// The LLM config page configures chat models only. Embedding and
-// image-generation models stay in the provider catalog (other surfaces may
-// need them, and model_type derivation uses them) but must not be offered as
-// selectable chat models.
+// Embedding and image-generation models stay in the provider catalog but
+// must not be offered as selectable chat models. Decision models use their
+// dedicated schema.
 
 const NON_CHAT_CAPABILITIES = ['embedding', 'text-to-image']
 
@@ -25,4 +24,29 @@ export function selectableChatModels(models) {
   return (models || [])
     .filter(isSelectableChatModel)
     .sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')))
+}
+
+/** Select the documented schema without mixing chat and decision parameters. */
+export function modelParamSchema(schemas, provider, modelType) {
+  const schema = schemas?.[provider] || {}
+  return modelType === 'decision' ? schema.decision || {} : schema
+}
+
+/** Mixed providers remain available for both explicitly selected model types. */
+export function modelProviderOptions(providers, schemas, modelType) {
+  return (providers || []).filter((provider) => {
+    const schema = schemas?.[provider.id] || {}
+    return modelType === 'decision'
+      ? Boolean(schema.decision)
+      : !schema.model_types?.every((type) => type === 'decision')
+  })
+}
+
+/** Decision aliases come from agentcore's per-provider decision metadata. */
+export function selectableDecisionModels(schema) {
+  return (schema?.models || []).map((id) => ({
+    id,
+    label: id,
+    capabilities: ['decision']
+  }))
 }

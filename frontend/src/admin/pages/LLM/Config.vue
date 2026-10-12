@@ -140,6 +140,11 @@
                           class="min-w-0 break-words text-sm font-semibold text-gray-900"
                         >
                           {{ row.config?.model || '–' }}
+                          <span
+                            v-if="row.model_type === 'decision'"
+                            class="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-800"
+                            >{{ t('llm.config.decisionModel') }}</span
+                          >
                         </h2>
                       </div>
                       <p class="mt-1 text-xs text-gray-500">
@@ -410,6 +415,11 @@
                         class="px-4 py-4 whitespace-nowrap text-sm text-gray-700"
                       >
                         {{ row.config?.model || '–' }}
+                        <span
+                          v-if="row.model_type === 'decision'"
+                          class="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-800"
+                          >{{ t('llm.config.decisionModel') }}</span
+                        >
                       </td>
                       <td class="px-4 py-4 text-sm text-gray-700">
                         <div
@@ -584,7 +594,17 @@
               :placeholder="t('llm.config.testPromptPlaceholder')"
             />
           </div>
-          <div>
+          <div v-if="isDecisionTest">
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{
+              t('llm.config.decisionTestQuestion')
+            }}</label>
+            <textarea
+              v-model="testDecisionQuestion"
+              rows="2"
+              class="form-input w-full"
+            />
+          </div>
+          <div v-else>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               {{ t('llm.config.maxOutputTokens') }} (max_tokens)
             </label>
@@ -596,7 +616,7 @@
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
-          <div class="flex flex-col gap-1 pt-1">
+          <div v-if="!isDecisionTest" class="flex flex-col gap-1 pt-1">
             <div class="flex items-center gap-2 min-h-[1.5rem]">
               <input
                 id="test-streaming"
@@ -807,6 +827,21 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
+              t('llm.config.modelType')
+            }}</label>
+            <BaseSelect
+              v-model="form.model_type"
+              :disabled="Boolean(editingId)"
+              @change="onModelTypeChange"
+            >
+              <option value="llm">{{ t('llm.config.chatModel') }}</option>
+              <option value="decision">
+                {{ t('llm.config.decisionModel') }}
+              </option>
+            </BaseSelect>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{
               t('llm.config.provider')
             }}</label>
             <div
@@ -981,7 +1016,10 @@
             />
           </div>
 
-          <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+          <div
+            v-if="form.model_type !== 'decision'"
+            class="rounded-xl border border-gray-200 bg-gray-50/80 p-4"
+          >
             <h3 class="text-sm font-semibold text-gray-700">
               {{ t('llm.config.modelCapabilities') }}
             </h3>
@@ -1122,7 +1160,12 @@ import { llmAdminApi } from '@/admin/api'
 import { DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS } from '@/admin/api/llmTimeout'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import ProviderIcon from '@/components/llm/ProviderIcon.vue'
-import { selectableChatModels } from '@/components/llm/providerModels.js'
+import {
+  modelParamSchema,
+  modelProviderOptions,
+  selectableChatModels,
+  selectableDecisionModels
+} from '@/components/llm/providerModels.js'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -1218,6 +1261,10 @@ const showConfigModal = ref(false)
 const showTestModal = ref(false)
 const testConfigRow = ref(null)
 const testPrompt = ref('')
+const testDecisionQuestion = ref('')
+const isDecisionTest = computed(
+  () => testConfigRow.value?.model_type === 'decision'
+)
 const testMaxTokens = ref(2048)
 const testCallLoading = ref(false)
 const testCallResult = ref(null)
@@ -1238,6 +1285,7 @@ const form = reactive({
   scope: 'global',
   user_id: null,
   provider: 'openai',
+  model_type: 'llm',
   config: {
     api_key: '',
     api_base: '',
@@ -1253,7 +1301,11 @@ const form = reactive({
 })
 
 const providersFromModels = computed(() => {
-  return (modelsData.value?.providers || []).map((p) => ({
+  return modelProviderOptions(
+    modelsData.value?.providers,
+    providerSchemas.value,
+    form.model_type
+  ).map((p) => ({
     id: p.id,
     label: p.label
   }))
@@ -1275,8 +1327,8 @@ function providerIconUrl(provider) {
   return providerIconUrls.value[(provider || '').toLowerCase()] || ''
 }
 
-const currentProviderSchema = computed(
-  () => providerSchemas.value[form.provider] || null
+const currentProviderSchema = computed(() =>
+  modelParamSchema(providerSchemas.value, form.provider, form.model_type)
 )
 
 const advancedEditableParams = computed(() =>
@@ -1288,16 +1340,19 @@ const advancedEditableParams = computed(() =>
 const isCustomProvider = computed(() => form.provider === 'openai_compatible')
 
 const currentProviderModels = computed(() => {
+  if (form.model_type === 'decision')
+    return selectableDecisionModels(currentProviderSchema.value)
   const list = (modelsData.value?.providers || []).find(
     (p) => (p.id || '').toLowerCase() === (form.provider || '').toLowerCase()
   )
   return list?.models || []
 })
 
-// This page configures chat models only; embedding and image-generation
-// models stay in the catalog but are filtered out of the model dropdown.
+// Each model type uses its own catalog and parameter schema.
 const selectableModels = computed(() =>
-  selectableChatModels(currentProviderModels.value)
+  form.model_type === 'decision'
+    ? currentProviderModels.value
+    : selectableChatModels(currentProviderModels.value)
 )
 
 const defaultApiBaseForProvider = computed(() => {
@@ -1535,7 +1590,12 @@ function getRowCapabilities(row) {
   return model?.capabilities || []
 }
 
-function getProviderEditableParams(provider) {
+function getProviderEditableParams(provider, modelType = form.model_type) {
+  if (modelType === 'decision')
+    return (
+      modelParamSchema(providerSchemas.value, provider, modelType)
+        .editable_params || []
+    )
   if (provider === 'openai_compatible') {
     return CUSTOM_EDITABLE_PARAMS
   }
@@ -1559,18 +1619,20 @@ function getProviderEditableParams(provider) {
   return COMMON_EDITABLE_PARAMS
 }
 
-function getParameterDefault(provider, parameter) {
-  const schema = providerSchemas.value[provider] || {}
+function getParameterDefault(provider, parameter, modelType = form.model_type) {
+  const schema = modelParamSchema(providerSchemas.value, provider, modelType)
   const providerDefault = schema[`default_${parameter}`]
   if (providerDefault !== null && providerDefault !== undefined) {
     return providerDefault
   }
+  if (modelType === 'decision')
+    return parameter === 'request_timeout_seconds' ? 3 : undefined
   return GLOBAL_PARAM_DEFAULTS[parameter]
 }
 
 function getRowModelParameters(row) {
   const config = row.config || {}
-  return getProviderEditableParams(row.provider)
+  return getProviderEditableParams(row.provider, row.model_type)
     .filter((parameter) => !CORE_CONFIG_PARAMS.has(parameter))
     .map((parameter) => {
       const configuredValue = config[parameter]
@@ -1582,7 +1644,7 @@ function getRowModelParameters(row) {
         name: parameter,
         value: hasConfiguredValue
           ? configuredValue
-          : getParameterDefault(row.provider, parameter),
+          : getParameterDefault(row.provider, parameter, row.model_type),
         isDefault: !hasConfiguredValue
       }
     })
@@ -1636,8 +1698,17 @@ function updateParameterValue(parameter, value) {
     : value
 }
 
+function onModelTypeChange() {
+  form.provider = form.model_type === 'decision' ? 'typesafe' : 'openai'
+  form.config = { api_key: '', api_base: '', model: '' }
+  onProviderChange()
+}
+
 function onProviderChange() {
-  form.config.model = ''
+  form.config.model =
+    form.model_type === 'decision'
+      ? currentProviderSchema.value?.default_model || ''
+      : ''
   form.config.api_base = defaultApiBaseForProvider.value || ''
   const editableParams = new Set(getProviderEditableParams(form.provider))
   for (const parameter of Object.keys(form.config)) {
@@ -1650,6 +1721,7 @@ function resetForm() {
   form.scope = 'global'
   form.user_id = null
   form.provider = 'openai'
+  form.model_type = 'llm'
   form.config = {
     api_key: '',
     api_base: '',
@@ -1692,7 +1764,7 @@ async function loadProviderSchemas() {
 async function loadAll() {
   loading.value = true
   try {
-    const data = await llmAdminApi.getLLMConfigAll()
+    const data = await llmAdminApi.getLLMConfigAll({ model_type: 'all' })
     configList.value = Array.isArray(data) ? data : []
   } catch (e) {
     if (e?.response?.status !== 404) console.error(e)
@@ -1723,6 +1795,7 @@ async function editConfig(row) {
   editingId.value = row.uuid || row.id
   try {
     const data = await llmAdminApi.getLLMConfigDetail(row.uuid || row.id)
+    form.model_type = data?.model_type || 'llm'
     form.provider = (data?.provider || 'openai').toLowerCase()
     const c = data?.config || {}
     form.config = {
@@ -1755,6 +1828,7 @@ function closeConfigModal() {
 function openTestModal(row) {
   testConfigRow.value = row
   testPrompt.value = ''
+  testDecisionQuestion.value = t('llm.config.decisionTestQuestionDefault')
   testMaxTokens.value = 2048
   testCallResult.value = null
   streamingContent.value = ''
@@ -1773,6 +1847,7 @@ function closeTestModal() {
 async function sendTestCall() {
   const row = testConfigRow.value
   if (!(row?.uuid || row?.id) || !testPrompt.value.trim()) return
+  if (isDecisionTest.value && !testDecisionQuestion.value.trim()) return
   const boundedMaxTokens = Math.min(
     4096,
     Math.max(1, Number(testMaxTokens.value) || 2048)
@@ -1788,6 +1863,24 @@ async function sendTestCall() {
     config_uuid: row.uuid || row.id
   }
   try {
+    if (isDecisionTest.value) {
+      const res = await llmAdminApi.postDecisionTest({
+        config_uuid: row.uuid || row.id,
+        input: testPrompt.value.trim(),
+        questions: [
+          {
+            type: 'predicate',
+            name: 'result',
+            instructions: testDecisionQuestion.value.trim()
+          }
+        ]
+      })
+      testCallResult.value = {
+        ...res,
+        content: JSON.stringify(res.answers || [], null, 2)
+      }
+      return
+    }
     if (testStreaming.value) {
       const controller = new AbortController()
       testCallAbortController.value = controller
@@ -1899,6 +1992,7 @@ async function testConnection() {
   try {
     const payload = {
       provider: form.provider,
+      model_type: form.model_type,
       config: buildFormConfigPayload()
     }
     // When editing a saved config the form's api_key is the masked value from
@@ -1940,6 +2034,7 @@ async function submitConfigForm() {
   try {
     const body = {
       provider: form.provider,
+      model_type: form.model_type,
       config: buildFormConfigPayload(Boolean(editingId.value)),
       is_active: form.is_active
     }
@@ -1993,7 +2088,9 @@ function rowActions(row) {
       label: t('llm.config.testCall'),
       icon: CirclePlay
     },
-    ...(row.scope === 'global' && !row.is_default
+    ...(row.model_type !== 'decision' &&
+    row.scope === 'global' &&
+    !row.is_default
       ? [
           {
             key: 'default',

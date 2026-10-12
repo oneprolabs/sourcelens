@@ -93,6 +93,13 @@ export const llmAdminApi = {
       })
       .then(extractData)
   },
+  postDecisionTest(body) {
+    return apiClient
+      .post('/v1/admin/llm-config/decision-test', body, {
+        timeout: resolveLLMConfigTestTimeoutMs(body)
+      })
+      .then(extractData)
+  },
   /**
    * POST run test call with a saved config. Body: { config_uuid, prompt, max_tokens? }.
    * Sync call; records to LLM usage. Returns { ok, content?, detail?, usage? }.

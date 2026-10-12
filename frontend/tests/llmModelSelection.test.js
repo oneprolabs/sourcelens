@@ -5,6 +5,45 @@ import {
   isSelectableChatModel,
   selectableChatModels
 } from '../src/components/llm/providerModels.js'
+import {
+  modelProviderOptions,
+  modelParamSchema,
+  selectableDecisionModels
+} from '../src/components/llm/providerModels.js'
+
+test('decision providers and models use their dedicated schema on mixed providers', () => {
+  const schemas = {
+    openai: {
+      editable_params: ['temperature'],
+      decision: {
+        models: ['gpt-6-luna'],
+        editable_params: ['model', 'api_key']
+      }
+    },
+    typesafe: {
+      model_types: ['decision'],
+      decision: { models: ['jev-latest'] }
+    },
+    anthropic: { editable_params: ['temperature'] }
+  }
+  const providers = [{ id: 'openai' }, { id: 'typesafe' }, { id: 'anthropic' }]
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'decision').map((item) => item.id),
+    ['openai', 'typesafe']
+  )
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'llm').map((item) => item.id),
+    ['openai', 'anthropic']
+  )
+  assert.deepEqual(
+    modelParamSchema(schemas, 'openai', 'decision').editable_params,
+    ['model', 'api_key']
+  )
+  assert.deepEqual(
+    selectableDecisionModels(schemas.openai.decision).map((item) => item.id),
+    ['gpt-6-luna']
+  )
+})
 
 test('keeps plain chat models selectable', () => {
   assert.equal(
