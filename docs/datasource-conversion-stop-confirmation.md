@@ -81,6 +81,10 @@ without changing `REVOKED`, existing results, errors, finish time, checkpoints o
 history. They may populate a missing summary, but cannot replace an existing
 one or update a newer conversion's datasource state. Duplicates retain the first
 confirmation's provenance. A dedicated stopped frame changes evidence only.
+If a terminal acknowledgement is lost, the same authenticated node may replay
+the frame on its current connection without changing the first confirmation's
+connection or provenance. Cancellation grace cleanup also retains confirmed
+evidence when it finalizes the task outcome.
 
 Reconnect reconciliation includes revoked tasks without confirmation and
 resends their exact cancellation commands. The existing health/startup cleanup

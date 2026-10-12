@@ -10,7 +10,7 @@ from uuid import uuid4
 from agentcore_task.adapters.django.models import TaskExecution
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import close_old_connections
+from django.db import close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -18,12 +18,15 @@ from rest_framework.test import APIClient
 from lens.consumers import LensNodeConsumer
 from lens.models import DataSource, LensNode
 from lens.tasks import (
+    _finalize_stale_cancelling_datasource_tasks,
     acquire_datasource_lock,
+    cleanup_stale_datasource_sync_tasks,
     complete_datasource_conversion_task,
     datasource_conversion_task,
     reconcile_cancelled_conversion_stops,
     reconcile_orphaned_datasource_conversions,
     register_datasource_conversion_task,
+    resume_datasource_conversion,
 )
 
 
@@ -350,6 +353,24 @@ class ConversionStopTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.metadata, before)
 
+    def test_unassigned_conversion_stays_unconfirmed_without_breaking_cleanup(self):
+        """A legacy task without an owning node cannot disrupt periodic cleanup."""
+        self.datasource.lensnode = None
+        self.datasource.save(update_fields=["lensnode"])
+        task = self.task(status="PENDING")
+        response, _ = self.cancel(task.task_id)
+        self.assertEqual(response.status_code, 200, response.data)
+        task.refresh_from_db()
+        self.assertEqual(task.metadata["lensnode_uuid"], "")
+        before = deepcopy(task.metadata)
+        with patch("lens.services.cancel_datasource_conversion_on_lensnode") as send_cancel:
+            self.assertEqual(reconcile_cancelled_conversion_stops(), 0)
+            cleanup_stale_datasource_sync_tasks()
+        send_cancel.assert_not_called()
+        task.refresh_from_db()
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual(task.metadata, before)
+
     def test_periodic_stop_retry_rebinds_legacy_and_unconfirmed_tasks_to_original_node(self):
         """Reassigning a datasource cannot redirect stop requests for old executors."""
         legacy = self.task("legacy-revoked", "REVOKED")
@@ -428,9 +449,146 @@ class ConversionStopTests(TestCase):
                 if stop_only:
                     self.assertEqual(task.metadata["conversion_summary"], before)
 
+    def test_dispatch_failure_is_persisted_before_celery_receives_exception(self):
+        """A transport failure cannot roll back the registered task's failure."""
+        task = self.task(status="PENDING")
+        with (
+            patch("lens.tasks._datasource_capacity_available", return_value=True),
+            patch("lens.tasks.dispatch_datasource_conversion_async", side_effect=RuntimeError("Transport unavailable")),
+            self.assertRaisesRegex(RuntimeError, "Transport unavailable"),
+        ):
+            datasource_conversion_task(str(self.datasource.uuid), {"document": True}, task_id=task.task_id)
+        task.refresh_from_db()
+        self.datasource.refresh_from_db()
+        self.assertEqual(task.status, "FAILURE")
+        self.assertEqual(task.error, "DATASOURCE_CONVERSION_FAILED")
+        self.assertEqual(self.datasource.last_conversion_status, "FAILURE")
+        self.assertIsNone(cache.get(self.lock_key))
+
+    def test_confirmed_terminal_replays_after_reconnect_preserve_first_evidence(self):
+        """A lost terminal acknowledgement must be recoverable on the next socket."""
+        for status in ("success", "failed", "cancelled"):
+            with self.subTest(status=status):
+                self.lensnode.connection_id = "original-connection"
+                self.lensnode.save(update_fields=["connection_id"])
+                task = self.task(f"replay-{status}")
+                frame = self.evidence(task_id=task.task_id, status=status)
+                self.callback(task, frame)
+                task.refresh_from_db()
+                proof = deepcopy(task.metadata)
+                outcome = (task.status, task.result, task.error, task.finished_at)
+                self.lensnode.connection_id = "reconnected"
+                self.lensnode.save(update_fields=["connection_id"])
+                with patch("lens.services.cancel_datasource_conversion_on_lensnode") as send_cancel:
+                    reconcile_orphaned_datasource_conversions(self.lensnode.uuid, "reconnected", [])
+                send_cancel.assert_not_called()
+                resolved = LensNodeConsumer._complete_datasource_conversion_done(
+                    "", frame, "reconnected", str(self.lensnode.uuid)
+                )
+                self.assertEqual(resolved, task.task_id)
+                task.refresh_from_db()
+                self.assertEqual((task.status, task.result, task.error, task.finished_at), outcome)
+                self.assertEqual(task.metadata, proof)
+
+    def test_grace_finalizer_keeps_confirmed_stop_evidence(self):
+        """Finalizing a legacy cancellation preserves evidence already received."""
+        task = self.task(
+            status="CANCELLING",
+            metadata={"timeout_cancel_requested_at": (timezone.now() - timedelta(hours=1)).isoformat()},
+        )
+        self.callback(task, self.evidence(stop_confirmation_source="lensnode_absent_fenced"), stop_only=True)
+        task.refresh_from_db()
+        proof = {key: value for key, value in task.metadata.items() if key.startswith("stop_")}
+        with patch("lens.services.cancel_datasource_conversion_on_lensnode"):
+            self.assertEqual(_finalize_stale_cancelling_datasource_tasks(timezone.now()), 1)
+        task.refresh_from_db()
+        self.assertEqual(task.status, "REVOKED")
+        self.assertEqual({key: value for key, value in task.metadata.items() if key.startswith("stop_")}, proof)
+
+    def test_replaced_socket_cannot_acknowledge_or_confirm_terminal_work(self):
+        """Stored task ownership cannot authorize a socket superseded by reconnect."""
+        for confirmed in (False, True):
+            with self.subTest(confirmed=confirmed):
+                self.lensnode.connection_id = "original-connection"
+                self.lensnode.save(update_fields=["connection_id"])
+                task = self.task(f"stale-terminal-{confirmed}", "REVOKED")
+                frame = self.evidence(task_id=task.task_id)
+                if confirmed:
+                    self.callback(task, frame, stop_only=True)
+                task.refresh_from_db()
+                before = deepcopy(task.metadata)
+                self.lensnode.connection_id = "reconnected"
+                self.lensnode.save(update_fields=["connection_id"])
+                self.assertIsNone(self.callback(task, frame, stop_only=True))
+                task.refresh_from_db()
+                self.assertEqual(task.metadata, before)
+                self.assertIsNotNone(self.callback(task, frame, connection_id="reconnected", stop_only=True))
+                task.refresh_from_db()
+                self.assertEqual(task.metadata["stop_confirmation_state"], "confirmed")
+                expected_connection = "original-connection" if confirmed else "reconnected"
+                self.assertEqual(task.metadata["stop_confirmation_connection_id"], expected_connection)
+
 
 class ConversionDispatchCancellationTests(TransactionTestCase):
     """Exercise cancellation racing with a real locked dispatch transaction."""
+
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_completion_and_resume_use_the_same_row_lock_order(self):
+        """A recovery request cannot deadlock with an executor's terminal callback."""
+        node = LensNode.objects.create(name="Lock order node", status=LensNode.Status.ONLINE, connection_id="owner")
+        datasource = DataSource.objects.create(
+            name="Lock order snapshot",
+            source_type=DataSource.SourceType.MANAGED_WORKSPACE,
+            lensnode=node,
+            target_path="/workspace/lock-order",
+        )
+        task = register_datasource_conversion_task(datasource, "lock-order-conversion", {"document": True})
+        task.status = "STARTED"
+        task.save(update_fields=["status"])
+        self.addCleanup(cache.delete, f"lens:datasource-sync:{datasource.uuid}")
+        callback_holds_task = Event()
+        recovery_requests_task = Event()
+
+        def complete():
+            """Hold the task while the real recovery request reaches its row lock."""
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    TaskExecution.objects.select_for_update().get(pk=task.pk)
+                    callback_holds_task.set()
+                    if not recovery_requests_task.wait(5):
+                        raise RuntimeError("Recovery did not request its task lock")
+                    result = complete_datasource_conversion_task(
+                        task.task_id,
+                        {"status": "success", "task_id": task.task_id, "datasource_uuid": str(datasource.uuid)},
+                        connection_id="owner",
+                        lensnode_uuid=str(node.uuid),
+                    )
+                    return result.status
+            finally:
+                close_old_connections()
+
+        def recover():
+            """Observe lock acquisition without replacing database locking behavior."""
+            close_old_connections()
+
+            def observe_task_lock(execute, sql, params, many, context):
+                if TaskExecution._meta.db_table in sql and "FOR UPDATE" in sql:
+                    recovery_requests_task.set()
+                return execute(sql, params, many, context)
+
+            try:
+                with connection.execute_wrapper(observe_task_lock):
+                    return resume_datasource_conversion(datasource, task)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            completion = executor.submit(complete)
+            self.assertTrue(callback_holds_task.wait(5), "Callback did not lock the task")
+            recovery = executor.submit(recover)
+            self.assertEqual(completion.result(timeout=5), "SUCCESS")
+            self.assertEqual(recovery.result(timeout=5)["reason"], "CONVERSION_ALREADY_COMPLETED")
 
     @skipUnlessDBFeature("has_select_for_update")
     def test_cancellation_during_dispatch_cannot_resurrect_revoked_task(self):
