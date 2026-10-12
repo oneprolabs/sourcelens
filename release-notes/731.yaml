@@ -1,0 +1,5 @@
+type: fix
+audience: user
+en: Explain model quota, authentication, permission, rate-limit, and request failures with actionable messages, and stop retrying permanent model errors.
+zh-CN: 针对模型余额或配额、鉴权、权限、限流和请求错误展示明确的处理提示，并停止对永久性模型错误重试。
+es: Mostrar mensajes claros para errores de cuota, autenticación, permisos, límites de solicitudes y peticiones del modelo, sin reintentar errores permanentes.

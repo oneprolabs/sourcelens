@@ -6063,6 +6063,45 @@ def test_stream_error_is_not_recovered_without_checkpoint_or_budget(
     assert agent.call_count == 1
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "MODEL_INVALID_REQUEST",
+        "MODEL_QUOTA_EXCEEDED",
+        "MODEL_AUTHENTICATION_ERROR",
+        "MODEL_PERMISSION_DENIED",
+        "MODEL_NOT_FOUND",
+    ],
+)
+def test_permanent_model_failure_is_not_recovered(code):
+    error = GatewayStreamError(code, "provider rejected the request")
+
+    class Agent:
+        call_count = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.call_count += 1
+            raise error
+
+    agent = Agent()
+    recovery_events = []
+
+    with pytest.raises(GatewayStreamError) as raised:
+        _run_agent_with_turn_limit(
+            agent,
+            [{"role": "user", "content": "question"}],
+            max_turns=5,
+            thread={"configurable": {"thread_id": "run-1"}},
+            stream_recovery_attempts=3,
+            stream_recovery_backoff_s=0,
+            on_stream_recovery=lambda: recovery_events.append(True),
+        )
+
+    assert raised.value is error
+    assert agent.call_count == 1
+    assert recovery_events == []
+
+
 def test_stream_error_stops_after_recovery_budget_is_exhausted():
     errors = [
         GatewayStreamError("MODEL_STREAM_ERROR", "first failure"),

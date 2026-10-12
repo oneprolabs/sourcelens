@@ -1915,6 +1915,7 @@ import { extractErrorMessage } from '@/utils/api'
 import { copyToClipboard } from '@/utils/clipboard'
 import { stripSourceMarkers } from '@/utils/inlineReferences'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
+import { modelErrorMessage } from '@/utils/modelErrors'
 import { qaShareUrl } from '@/utils/lens'
 import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
 import { useToast } from '@/composables/useToast'
@@ -3020,12 +3021,13 @@ const showRetryHint = computed(() => {
   })
 })
 
-// Map a backend run error code to a clear, blame-clarifying message: a
-// timeout is the model being slow (after retries), not a platform fault.
+// Explain known failure causes with localized, actionable messages.
 function mapRunError(code) {
   const c = String(code || '').toUpperCase()
   const lensNodeMessage = lensNodeErrorMessage(code, t)
   if (lensNodeMessage) return lensNodeMessage
+  const modelMessage = modelErrorMessage(code, t)
+  if (modelMessage) return modelMessage
   if (c.includes('IMAGE_PREPROCESSING')) {
     return t('lens.chat.errorImagePreprocessing')
   }
