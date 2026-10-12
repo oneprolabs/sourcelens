@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import collections
+from contextvars import copy_context
 import json
 import logging
 from pathlib import Path
@@ -8,6 +9,7 @@ import os
 import signal
 import shutil
 import threading
+import uuid
 from urllib.parse import urlencode
 
 import httpx
@@ -22,6 +24,7 @@ from .checkpoint import (
     get_checkpoint_saver,
 )
 from .config import load_config
+from .conversion_stop import ConversionStopStore
 from .datasource_sync import DataSourceSyncError
 from .datasource_sync import append_managed_upload_chunk
 from .datasource_sync import cleanup_managed_upload
@@ -135,6 +138,8 @@ class LensNodeClient:
             exclusive_barrier=True,
         )
         self.datasource_conversion_cancels = {}
+        self._conversion_stops = None
+        self.executor_instance_id = uuid.uuid4().hex
         self.datasource_upload_cancels = {}
         self.datasource_upload_transfers = {}
         self._datasource_transfer_lock = threading.Lock()
@@ -215,6 +220,7 @@ class LensNodeClient:
         if payload.get("type") in {
             "datasource_sync_done",
             "datasource_convert_done",
+            "datasource_convert_stopped",
             "datasource_upload_done",
         } and payload.get("task_id"):
             task_id = str(payload["task_id"])
@@ -567,6 +573,7 @@ class LensNodeClient:
             in {
                 "datasource_sync_done",
                 "datasource_convert_done",
+                "datasource_convert_stopped",
                 "datasource_upload_done",
             }
         }
@@ -662,18 +669,7 @@ class LensNodeClient:
         elif message_type == "datasource_upload_delete":
             await self._handle_datasource_upload_delete(message)
         elif message_type == "datasource_convert_cancel":
-            task_id = str(message.get("task_id") or "")
-            cancel_event = self.datasource_conversion_cancels.get(task_id)
-            if cancel_event is not None:
-                cancel_event.set()
-            LOGGER.info(
-                task_log(
-                    (
-                        "Requested safe cancellation for command "
-                        f"datasource_convert {task_id}."
-                    )
-                )
-            )
+            await self._cancel_datasource_conversion(message)
         elif message_type == "datasource_cancel":
             task_id = str(message.get("task_id") or "")
             cancel_event = (
@@ -765,6 +761,7 @@ class LensNodeClient:
                         in {
                             "datasource_sync_done",
                             "datasource_convert_done",
+                            "datasource_convert_stopped",
                             "datasource_upload_done",
                         }
                         and str(item.get("task_id") or "") == task_id
@@ -1408,6 +1405,10 @@ class LensNodeClient:
         task_id = str(message.get("task_id") or request_id)
         if not task_id:
             return
+        fence = self.conversion_stops.get(task_id)
+        if fence is not None:
+            await self._cancel_datasource_conversion(message)
+            return
         task_key = f"datasource-convert:{task_id}"
         if task_key in self.running_tasks:
             return
@@ -1427,6 +1428,66 @@ class LensNodeClient:
         )
         self.running_tasks[task_key] = task
         task.add_done_callback(lambda item: self._consume_task_exception(item))
+
+    @property
+    def conversion_stops(self):
+        """Open the conversion fence store only when datasource work is used."""
+
+        if self._conversion_stops is None:
+            self._conversion_stops = ConversionStopStore(self.config.workspace_path)
+        return self._conversion_stops
+
+    async def _cancel_datasource_conversion(self, message):
+        """Fence delayed dispatch and acknowledge only after the worker exits."""
+
+        task_id = str(message.get("task_id") or "")
+        operation = self.active_datasource_operations.get(task_id) or {}
+        datasource_uuid = str(message.get("datasource_uuid") or operation.get("datasource_uuid") or "")
+        if not task_id or not datasource_uuid:
+            return
+        if operation and str(operation.get("datasource_uuid")) != datasource_uuid:
+            return
+        if operation and operation.get("operation") != "conversion":
+            return
+        if not self.conversion_stops.fence(task_id, datasource_uuid):
+            return
+        cancel_event = self.datasource_conversion_cancels.get(task_id)
+        if cancel_event is not None:
+            cancel_event.set()
+            return
+        if f"datasource-convert:{task_id}" in self.running_tasks:
+            return
+        fence = self.conversion_stops.get(task_id)
+        original = fence["frame"] or self._pending_datasource_terminal_frames.get(task_id)
+        if original is not None:
+            self._enqueue(original)
+            return
+        frame = {
+            "type": "datasource_convert_stopped",
+            "task_id": task_id,
+            "datasource_uuid": datasource_uuid,
+            "executor_stopped": True,
+            "executor_instance_id": self.executor_instance_id,
+            "stop_confirmed_at": utc_now().isoformat(),
+            "stop_confirmation_source": "lensnode_absent_fenced",
+        }
+        self.conversion_stops.fence(task_id, datasource_uuid, frame)
+        self._enqueue(frame)
+
+    def _enqueue_conversion_done(self, payload, message):
+        """Persist terminal results after the real conversion executor returns."""
+
+        payload.update(
+            {
+                "datasource_uuid": str(message.get("datasource_uuid") or ""),
+                "executor_stopped": True,
+                "executor_instance_id": self.executor_instance_id,
+                "stop_confirmed_at": utc_now().isoformat(),
+                "stop_confirmation_source": "lensnode_callback",
+            }
+        )
+        if self.conversion_stops.fence(payload["task_id"], payload["datasource_uuid"], payload):
+            self._enqueue(payload)
 
     async def _execute_datasource_conversion(self, message):
         """Execute managed workspace conversion and emit safe results."""
@@ -1496,25 +1557,39 @@ class LensNodeClient:
                 }
             )
             try:
-                result = await asyncio.to_thread(
-                    convert_managed_workspace,
-                    command,
-                    self.config.workspace_path,
-                    emit,
+                worker = loop.run_in_executor(
+                    None, copy_context().run, convert_managed_workspace, command, self.config.workspace_path, emit
                 )
+                while True:
+                    try:
+                        result = await asyncio.shield(worker)
+                        break
+                    except asyncio.CancelledError:
+                        # Cancelling an asyncio wrapper cannot stop its Python
+                        # thread. Keep its ownership and capacity until exit.
+                        message["cancel_event"].set()
+                        if worker.done() and not worker.cancelled():
+                            try:
+                                result = worker.result()
+                            except asyncio.CancelledError:
+                                raise RunCancelledError(
+                                    "Managed datasource conversion worker exited after cancellation."
+                                )
+                            break
             finally:
                 if slot_acquired:
                     await self.execution_queue.release(ExecutionClass.EXCLUSIVE)
-            self._enqueue(
+            self._enqueue_conversion_done(
                 {
                     "type": "datasource_convert_done",
                     "request_id": request_id,
                     "task_id": task_id,
                     **result,
-                }
+                },
+                message,
             )
         except RunCancelledError:
-            self._enqueue(
+            self._enqueue_conversion_done(
                 {
                     "type": "datasource_convert_done",
                     "request_id": request_id,
@@ -1523,7 +1598,8 @@ class LensNodeClient:
                     "error": "DATASOURCE_CONVERSION_CANCELLED",
                     "completion_reason": "DATASOURCE_CONVERSION_CANCELLED",
                     "stop_confirmation_source": "lensnode_callback",
-                }
+                },
+                message,
             )
         except DataSourceSyncError as exc:
             LOGGER.warning(
@@ -1531,28 +1607,30 @@ class LensNodeClient:
                 task_id,
                 exc,
             )
-            self._enqueue(
+            self._enqueue_conversion_done(
                 {
                     "type": "datasource_convert_done",
                     "request_id": request_id,
                     "task_id": task_id,
                     "status": "failed",
                     "error": str(exc) or "DATASOURCE_CONVERSION_FAILED",
-                }
+                },
+                message,
             )
         except Exception:
             LOGGER.exception(
                 "Managed datasource conversion failed task_id=%s",
                 task_id,
             )
-            self._enqueue(
+            self._enqueue_conversion_done(
                 {
                     "type": "datasource_convert_done",
                     "request_id": request_id,
                     "task_id": task_id,
                     "status": "failed",
                     "error": "DATASOURCE_CONVERSION_FAILED",
-                }
+                },
+                message,
             )
         finally:
             self.datasource_conversion_cancels.pop(task_id, None)
@@ -1869,6 +1947,8 @@ class LensNodeClient:
                         "Managed datasource conversion was cancelled while " "queued."
                     )
                 await asyncio.wait((acquire_task,), timeout=0.1)
+            if cancel_event.is_set():
+                raise RunCancelledError("Managed datasource operation was cancelled before execution.")
             return acquire_task.result()
         except BaseException:
             if not acquire_task.done():
@@ -2040,6 +2120,7 @@ class LensNodeClient:
         if payload.get("type") not in {
             "datasource_sync_done",
             "datasource_convert_done",
+            "datasource_convert_stopped",
             "datasource_upload_done",
         }:
             return
