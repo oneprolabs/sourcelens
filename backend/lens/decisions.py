@@ -99,7 +99,7 @@ def validate_assistant_decisions(attrs, instance, capability):
             )
         except PluginRegistryError as exc:
             raise serializers.ValidationError({field: str(exc)}) from exc
-        if field in attrs:
+        if field in attrs or "decision_model_ref" in attrs:
             attrs[field] = normalized
 
 

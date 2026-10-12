@@ -161,6 +161,22 @@ class BuiltinDecisionTests(TestCase):
                 with self.assertRaises(serializers.ValidationError):
                     validate_assistant_decisions({"decision_model_ref": row.uuid}, None, "general_chat")
 
+    def test_attaching_a_model_normalizes_preexisting_manual_gate_settings(self):
+        self.assistant.capability = "knowledge_qa"
+        self.assistant.decision_model_ref = None
+        self.assistant.decision_auto = False
+        self.assistant.decision_gates = {"search_needed": {}}
+        attrs = {"decision_model_ref": self.model.uuid}
+
+        validate_assistant_decisions(attrs, self.assistant, self.assistant.capability)
+        for field, value in attrs.items():
+            setattr(self.assistant, field, value)
+        gate = build_assistant_decision_model(self.assistant)["gates"]["search_needed"]
+
+        self.assertEqual(gate["threshold"], 0.5)
+        self.assertEqual(gate["margin"], 0.1)
+        self.assertEqual(gate["max_state_chars"], 4000)
+
     def test_clearing_a_migrated_model_does_not_reactivate_legacy_decisions(self):
         from lens.serializers import AssistantSerializer
         from lens.services import build_loaded_plugins
