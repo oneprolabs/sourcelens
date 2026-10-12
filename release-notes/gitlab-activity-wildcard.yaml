@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Allow GitLab activity summaries to use the wildcard for all projects authorized by the Connection, including explicit project lists.
+zh-CN: GitLab 活动汇总支持通过通配符查询 Connection 授权的全部项目，包括显式配置的项目列表。

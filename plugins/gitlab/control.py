@@ -648,9 +648,9 @@ class GitLabToolProvider:
             projects = _tool_projects(arguments.get("projects"))
             if GITLAB_ALL_PROJECTS in projects:
                 if allowed is not None:
-                    raise ToolProviderError(
-                        "project is outside connection scope"
-                    )
+                    projects = GitLabDatasourceProvider().validate_connection_scope(
+                        allowed_scope
+                    )["projects"]
             elif allowed is not None and any(
                 project.casefold() not in allowed for project in projects
             ):
