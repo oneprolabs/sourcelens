@@ -14,6 +14,7 @@ from ..plugin_package_loader import (
     load_runtime_contract,
 )
 from ..plugin_tools import _execute_plugin_tool
+from .builtin_decisions import call_builtin_decision
 from .evidence_material import bound_review_state
 
 GATE_SOURCE = "decision_gate"
@@ -165,6 +166,10 @@ def gate_bindings(command):
                 "plugin_version": str(entry.get("plugin_version") or ""),
                 "connection_uuid": str(entry.get("connection_uuid") or ""),
             }
+    builtin = command.get("decision_model") or {}
+    if builtin.get("model_ref"):
+        for key, config in (builtin.get("gates") or {}).items():
+            index[key] = {**config, "model_ref": builtin["model_ref"], "tool_key": "builtin_decision"}
     return index
 
 
@@ -317,6 +322,10 @@ class DecisionRunner:
             threshold = binding.get("threshold")
             margin = binding.get("margin")
             if expect_choice:
+                if binding.get("model_ref") and isinstance(result.value, str):
+                    verdict = "accept"
+                    value = result.value
+                    return value
                 if not isinstance(result.value, dict) or not result.value:
                     reason = "invalid_response"
                     return None
@@ -384,6 +393,22 @@ class DecisionRunner:
         return self._execute(gate, binding, question, history, tools, call_id)
 
     def _execute(self, gate, binding, question, history, tools, call_id):
+        if binding.get("model_ref"):
+            arguments = _gate_arguments(gate, question, history, tools, binding.get("max_state_chars"))
+            if arguments is None:
+                return None, "error"
+            return call_builtin_decision(
+                self._command,
+                self._config,
+                self._http_client,
+                binding,
+                gate,
+                arguments,
+                call_id,
+                GATE_SOURCE,
+                GATE_TIMEOUT_S,
+                emit=self._tagged_emit,
+            )
         plugin_key = str(binding.get("plugin_key") or "")
         plugin_version = str(binding.get("plugin_version") or "")
         connection_uuid = str(binding.get("connection_uuid") or "")

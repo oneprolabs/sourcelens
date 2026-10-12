@@ -13,6 +13,7 @@ from ..plugin_package_loader import (
     PluginPackageLoadError,
     load_runtime_contract,
 )
+from .builtin_decisions import call_builtin_decision
 from .decision_gates import DecisionRunner, gate_bindings, run_decision_tool
 from .evidence_material import review_material
 from .routing import (
@@ -288,6 +289,10 @@ def analysis_bindings(command):
                 "plugin_version": str(entry.get("plugin_version") or ""),
                 "connection_uuid": str(entry.get("connection_uuid") or ""),
             }
+    builtin = command.get("decision_model") or {}
+    if builtin.get("model_ref"):
+        for key, config in (builtin.get("analyses") or {}).items():
+            index[key] = {**config, "model_ref": builtin["model_ref"], "tool_key": "builtin_decision"}
     return index
 
 
@@ -377,7 +382,7 @@ class DecisionRanker:
                 {
                     "label": item.label,
                     "score": item.score,
-                    "probability": item.result.value,
+                    "probability": item.result.value if isinstance(item.result.value, dict) else None,
                     "legend": item.result.legend,
                 }
                 for item in ranked
@@ -439,6 +444,32 @@ class DecisionRanker:
         return scored
 
     def _score(self, decision, binding, candidate, instructions, index):
+        if binding.get("model_ref"):
+            cache_key = (binding["model_ref"], decision, candidate["content"], instructions)
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached, ""
+            arguments = _score_arguments(binding, candidate["content"], instructions)
+            if arguments is None:
+                return None, "error"
+            call_id = f"rank:{decision}:{self._attempt}:{self._used}:{index}"
+            result, reason = call_builtin_decision(
+                self._command,
+                self._config,
+                self._http_client,
+                binding,
+                decision,
+                arguments,
+                call_id,
+                RANK_SOURCE,
+                RANK_TIMEOUT_S,
+                emit=self._tagged_emit,
+            )
+            if result is not None:
+                with self._cache_lock:
+                    self._cache[cache_key] = result
+            return result, reason
         tool_key = str(binding.get("tool_key") or "")
         plugin_key = str(binding.get("plugin_key") or "")
         plugin_version = str(binding.get("plugin_version") or "")
