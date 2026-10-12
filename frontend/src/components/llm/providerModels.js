@@ -36,9 +36,10 @@ export function modelParamSchema(schemas, provider, modelType) {
 export function modelProviderOptions(providers, schemas, modelType) {
   return (providers || []).filter((provider) => {
     const schema = schemas?.[provider.id] || {}
+    const modelTypes = provider.model_types || schema.model_types
     return modelType === 'decision'
       ? Boolean(schema.decision)
-      : !schema.model_types?.every((type) => type === 'decision')
+      : !modelTypes?.every((type) => type === 'decision')
   })
 }
 

@@ -45,6 +45,26 @@ test('decision providers and models use their dedicated schema on mixed provider
   )
 })
 
+test('chat providers respect catalog model types when schemas lack that metadata', () => {
+  const providers = [
+    { id: 'openai', model_types: ['llm', 'decision'] },
+    { id: 'litellm_proxy', model_types: ['decision'] }
+  ]
+  const schemas = {
+    openai: { decision: { models: ['gpt-6-luna'] } },
+    litellm_proxy: { decision: { models: [] } }
+  }
+
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'llm').map((item) => item.id),
+    ['openai']
+  )
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'decision').map((item) => item.id),
+    ['openai', 'litellm_proxy']
+  )
+})
+
 test('keeps plain chat models selectable', () => {
   assert.equal(
     isSelectableChatModel({

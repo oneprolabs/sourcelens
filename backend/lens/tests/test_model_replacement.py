@@ -112,6 +112,14 @@ class AssistantModelReplacementTests(TestCase):
 
         decision = self.model("jev-latest", model_type="decision")
         self.assertEqual(self.post(target_model_ref=str(decision.uuid)).status_code, 400)
+        Assistant.objects.filter(pk__in=[row.pk for row in self.rows]).update(
+            capability="knowledge_qa", decision_auto=False, decision_gates={"search_needed": {}}
+        )
+        preview = self.post(model_field="decision_model_ref", assistant_models=items, target_model_ref=str(decision.uuid))
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.rows[0].refresh_from_db()
+        self.assertEqual(self.rows[0].decision_gates, {"search_needed": {}})
+        self.assertIsNone(self.rows[0].decision_model_ref)
         response = self.post(
             model_field="decision_model_ref", assistant_models=items, target_model_ref=str(decision.uuid), preview=False
         )
@@ -121,6 +129,22 @@ class AssistantModelReplacementTests(TestCase):
             self.assertEqual(row.decision_model_ref, decision.uuid)
             self.assertEqual(row.agent_model_ref, self.old.uuid)
             self.assertEqual(row.settings["_model_check"]["decision_model_ref"]["status"], "ok")
+            self.assertEqual(row.decision_gates["search_needed"]["threshold"], 0.5)
+            self.assertEqual(row.decision_gates["search_needed"]["margin"], 0.1)
+
+    def test_invalid_manual_decisions_reject_the_whole_replacement_batch(self):
+        """Validate effective gate settings even when changing only the model."""
+
+        decision = self.model("jev-latest", model_type="decision")
+        Assistant.objects.filter(pk=self.rows[1].pk).update(decision_gates={"unknown": {}})
+        items = [{"uuid": str(row.uuid), "model_ref": None} for row in self.rows]
+        response = self.post(
+            model_field="decision_model_ref", assistant_models=items, target_model_ref=str(decision.uuid), preview=False
+        )
+        self.assertEqual(response.status_code, 400)
+        for row in self.rows:
+            row.refresh_from_db()
+            self.assertIsNone(row.decision_model_ref)
 
     @patch("agentcore_metering.adapters.django.services.runtime_config.get_litellm_params")
     def test_vision_replacement_requires_vision_capability(self, mock_params):
