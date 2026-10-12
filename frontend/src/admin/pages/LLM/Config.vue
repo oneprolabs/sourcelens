@@ -1350,7 +1350,7 @@ const modelDropdownRef = ref(null)
 
 const form = reactive({
   scope: 'global',
-  user_id: null,
+  user_id: '',
   provider: 'openai',
   model_type: 'llm',
   config: {
@@ -1818,7 +1818,7 @@ function onProviderChange() {
 function resetForm() {
   editingApiKey.value = ''
   form.scope = 'global'
-  form.user_id = null
+  form.user_id = ''
   form.provider = 'openai'
   form.model_type = 'llm'
   form.config = {
