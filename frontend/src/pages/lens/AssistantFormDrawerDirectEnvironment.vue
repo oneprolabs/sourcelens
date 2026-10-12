@@ -164,24 +164,48 @@
             >
               {{ t('lensAdmin.wizard.configureDecisionModel') }}
             </router-link>
-            <div v-if="form.decision_model_ref" class="mt-3 space-y-3">
-              <label class="flex items-center gap-2 text-xs text-ink-700">
-                <input
-                  type="checkbox"
-                  :checked="form.decision_auto !== false"
-                  @change="setBuiltinDecisionAuto($event.target.checked)"
-                />
-                {{ t('lensAdmin.wizard.decisionAutomatic') }}
-              </label>
+            <div
+              v-if="form.decision_model_ref"
+              class="mt-3 space-y-3 rounded-lg border border-line p-3"
+            >
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label
+                  class="flex cursor-pointer items-center gap-2 text-xs text-ink-700"
+                >
+                  <input
+                    type="radio"
+                    name="builtin-decision-mode"
+                    class="h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
+                    :checked="form.decision_auto !== false"
+                    @change="setBuiltinDecisionAuto(true)"
+                  />
+                  {{ t('lensAdmin.wizard.decisionAutomatic') }}
+                </label>
+                <label
+                  class="flex cursor-pointer items-center gap-2 text-xs text-ink-700"
+                >
+                  <input
+                    type="radio"
+                    name="builtin-decision-mode"
+                    class="h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
+                    :checked="form.decision_auto === false"
+                    @change="setBuiltinDecisionAuto(false)"
+                  />
+                  {{ t('lensAdmin.wizard.decisionModeAdvanced') }}
+                </label>
+              </div>
               <div v-if="form.decision_auto === false" class="space-y-3">
                 <div
                   v-for="gate in builtinGates"
                   :key="gate.key"
-                  class="rounded border border-line p-2"
+                  class="space-y-2 rounded-md bg-surface-sunken p-3"
                 >
-                  <label class="flex items-center gap-2 text-xs text-ink-700">
+                  <label
+                    class="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-800"
+                  >
                     <input
                       type="checkbox"
+                      class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
                       :checked="Boolean(form.decision_gates?.[gate.key])"
                       @change="
                         toggleBuiltinDecision(
@@ -193,11 +217,14 @@
                     />
                     {{ decisionTitle('', gate) }}
                   </label>
+                  <p class="pl-6 text-xs leading-5 text-ink-500">
+                    {{ decisionDescription('', gate) }}
+                  </p>
                   <div
                     v-if="
                       form.decision_gates?.[gate.key] && gate.kind === 'noul'
                     "
-                    class="mt-2 flex gap-3"
+                    class="grid grid-cols-1 gap-3 pl-6 sm:grid-cols-2"
                   >
                     <label class="text-xs text-ink-500"
                       >{{ t('lensAdmin.wizard.decisionGateThreshold') }}
@@ -207,7 +234,7 @@
                         min="0"
                         max="1"
                         step="0.05"
-                        class="form-input mt-1 w-24"
+                        class="form-input mt-1"
                       />
                     </label>
                     <label class="text-xs text-ink-500"
@@ -218,33 +245,43 @@
                         min="0"
                         max="1"
                         step="0.05"
-                        class="form-input mt-1 w-24"
+                        class="form-input mt-1"
                       />
                     </label>
                   </div>
                 </div>
               </div>
-              <p class="text-xs font-medium text-ink-700">
-                {{ t('lensAdmin.wizard.decisionAnalyses') }}
-              </p>
-              <label
-                v-for="analysis in builtinAnalyses"
-                :key="analysis.key"
-                class="flex items-center gap-2 text-xs text-ink-700"
-              >
-                <input
-                  type="checkbox"
-                  :checked="Boolean(form.decision_analyses?.[analysis.key])"
-                  @change="
-                    toggleBuiltinDecision(
-                      'decision_analyses',
-                      analysis,
-                      $event.target.checked
-                    )
-                  "
-                />
-                {{ decisionTitle('', analysis) }}
-              </label>
+              <div class="space-y-2 border-t border-line pt-3">
+                <p class="text-xs font-medium text-ink-700">
+                  {{ t('lensAdmin.wizard.decisionAnalyses') }}
+                </p>
+                <label
+                  v-for="analysis in builtinAnalyses"
+                  :key="analysis.key"
+                  class="flex cursor-pointer items-start gap-2 rounded-md bg-surface-sunken p-3"
+                >
+                  <input
+                    type="checkbox"
+                    class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                    :checked="Boolean(form.decision_analyses?.[analysis.key])"
+                    @change="
+                      toggleBuiltinDecision(
+                        'decision_analyses',
+                        analysis,
+                        $event.target.checked
+                      )
+                    "
+                  />
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-xs font-medium text-ink-800">
+                      {{ decisionTitle('', analysis) }}
+                    </span>
+                    <span class="mt-0.5 block text-xs leading-5 text-ink-500">
+                      {{ decisionDescription('', analysis) }}
+                    </span>
+                  </span>
+                </label>
+              </div>
             </div>
           </FormRow>
           <FormRow
@@ -2230,6 +2267,7 @@ function toggleBuiltinDecision(field, decision, enabled) {
 watch(
   () => props.form.capability,
   () => {
+    if (!props.decisionCatalog.decisions?.length) return
     const keys = new Set(builtinGates.value.map((gate) => gate.key))
     props.form.decision_gates = Object.fromEntries(
       Object.entries(props.form.decision_gates || {}).filter(([key]) =>
@@ -2427,7 +2465,10 @@ function decisionTitle(pluginKey, decision) {
 }
 
 function decisionDescription(pluginKey, decision) {
-  const key = `lensAdmin.plugins.${pluginKey}.decisions.${decision?.key}.description`
+  const prefix = pluginKey
+    ? `lensAdmin.plugins.${pluginKey}`
+    : 'lensAdmin.decisionSettings'
+  const key = `${prefix}.decisions.${decision?.key}.description`
   if (te(key)) return t(key)
   return decision?.summary || ''
 }
