@@ -405,7 +405,13 @@ def _stream_agent_states_with_recovery(
             return
         except GatewayStreamError as exc:
             if (
-                exc.code == "MODEL_INVALID_REQUEST"
+                exc.code in {
+                    "MODEL_INVALID_REQUEST",
+                    "MODEL_QUOTA_EXCEEDED",
+                    "MODEL_AUTHENTICATION_ERROR",
+                    "MODEL_PERMISSION_DENIED",
+                    "MODEL_NOT_FOUND",
+                }
                 or not thread
                 or remaining_attempts <= 0
             ):

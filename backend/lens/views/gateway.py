@@ -35,6 +35,7 @@ from lens.llm_resilience import (
     call_and_track_with_fallback,
     is_transient_provider_error,
 )
+from lens.model_errors import model_error_code
 from lens.models import (
     DataSourceVersion,
     Run,
@@ -564,31 +565,11 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
     def _gateway_stream_error_code(self, exc):
         """Return a stable error code for a gateway stream exception."""
 
-        name = type(exc).__name__.upper()
-        message = str(exc).upper()
-        if "TIMEOUT" in name or "TIMEOUT" in message or "TIMED OUT" in message:
-            return "MODEL_TIMEOUT"
-        if (
-            "BADREQUEST" in name
-            or "INVALID REQUEST" in message
-            or "PROVIDER_INVALID_REQUEST" in message
-        ):
-            return "MODEL_INVALID_REQUEST"
+        code = model_error_code(exc)
+        if code:
+            return code
         if is_transient_provider_error(exc):
             return MODEL_UNAVAILABLE
-        stream_markers = [
-            "CHUNKED",
-            "INCOMPLETE",
-            "PEER CLOSED",
-            "REMOTE PROTOCOL",
-            "CONNECTION RESET",
-            "CONNECTION CLOSED",
-        ]
-        if any(
-            marker in name or marker in message
-            for marker in stream_markers
-        ):
-            return "MODEL_STREAM_ERROR"
         return "MODEL_STREAM_ERROR"
 
 
