@@ -154,16 +154,6 @@
                       </div>
                       <p class="mt-1 text-xs text-gray-500">
                         {{ providerLabel(row.provider) }}
-                        <span aria-hidden="true"> · </span>
-                        {{
-                          row.scope === 'global'
-                            ? t('llm.config.scopeGlobal')
-                            : t('llm.config.scopeUser')
-                        }}
-                        <template v-if="row.scope === 'user'">
-                          <span aria-hidden="true"> · </span>
-                          {{ row.username || row.user_id || '–' }}
-                        </template>
                       </p>
                     </div>
 
@@ -310,16 +300,6 @@
                       <th
                         class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
                       >
-                        {{ t('llm.config.scopeLabel') }}
-                      </th>
-                      <th
-                        class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
-                      >
-                        {{ t('llm.config.user') }}
-                      </th>
-                      <th
-                        class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
-                      >
                         {{ t('llm.config.provider') }}
                       </th>
                       <th
@@ -384,24 +364,6 @@
                           :checked="selectedIds.has(row.uuid || row.id)"
                           @change="setRowSelected(row, $event.target.checked)"
                         />
-                      </td>
-                      <td
-                        class="px-4 py-4 whitespace-nowrap text-sm text-gray-900"
-                      >
-                        {{
-                          row.scope === 'global'
-                            ? t('llm.config.scopeGlobal')
-                            : t('llm.config.scopeUser')
-                        }}
-                      </td>
-                      <td
-                        class="px-4 py-4 whitespace-nowrap text-sm text-gray-600"
-                      >
-                        {{
-                          row.scope === 'user'
-                            ? row.username || row.user_id || '–'
-                            : '–'
-                        }}
                       </td>
                       <td
                         class="px-4 py-4 whitespace-nowrap text-sm text-gray-900"
@@ -807,29 +769,6 @@
         @close="closeConfigModal"
       >
         <form @submit.prevent="submitConfigForm" class="space-y-4">
-          <div v-if="!editingId">
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.scopeLabel')
-            }}</label>
-            <BaseSelect v-model="form.scope">
-              <option value="global">{{ t('llm.config.scopeGlobal') }}</option>
-              <option value="user">{{ t('llm.config.scopeUser') }}</option>
-            </BaseSelect>
-          </div>
-          <div v-if="!editingId && form.scope === 'user'">
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.user')
-            }}</label>
-            <BaseSelect v-model="form.user_id" :required="userList.length > 0">
-              <option value="">{{ t('llm.config.user') }}…</option>
-              <option v-for="u in userList" :key="u.id" :value="u.id">
-                {{ u.username || u.id }}
-              </option>
-            </BaseSelect>
-            <p v-if="userList.length === 0" class="mt-1 text-sm text-amber-600">
-              {{ t('llm.config.noUsersHint') }}
-            </p>
-          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
               t('llm.config.modelType')
@@ -1314,7 +1253,6 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const bulkLoadingKey = ref('')
 const deleteTarget = ref(null)
-const userList = ref([])
 const modelsData = ref({ providers: [], capability_labels: {} })
 const providerSchemas = ref({})
 const metadataReady = computed(
@@ -1349,8 +1287,6 @@ const modelDropdownOpen = ref(false)
 const modelDropdownRef = ref(null)
 
 const form = reactive({
-  scope: 'global',
-  user_id: '',
   provider: 'openai',
   model_type: 'llm',
   config: {
@@ -1493,13 +1429,6 @@ const modelSelectTriggerLabel = computed(() => {
 })
 
 const submitDisabled = computed(() => {
-  if (
-    !editingId.value &&
-    form.scope === 'user' &&
-    userList.value.length === 0
-  ) {
-    return true
-  }
   if (!editingId.value && !connectionTestedSuccess.value) {
     return true
   }
@@ -1817,8 +1746,6 @@ function onProviderChange() {
 
 function resetForm() {
   editingApiKey.value = ''
-  form.scope = 'global'
-  form.user_id = ''
   form.provider = 'openai'
   form.model_type = 'llm'
   form.config = {
@@ -1873,20 +1800,10 @@ async function loadAll() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const data = await llmAdminApi.getUsers()
-    userList.value = Array.isArray(data) ? data : []
-  } catch {
-    userList.value = []
-  }
-}
-
 function openAddModal() {
   editingId.value = null
   resetForm()
   form.config.api_base = defaultApiBaseForProvider.value || ''
-  loadUsers()
   showConfigModal.value = true
 }
 
@@ -2136,11 +2053,6 @@ async function testConnection() {
 }
 
 async function submitConfigForm() {
-  if (!editingId.value && form.scope === 'user' && !form.user_id) {
-    formMessage.value = t('llm.config.user') + '?'
-    formMessageSuccess.value = false
-    return
-  }
   formSaving.value = true
   formMessage.value = ''
   try {
@@ -2153,10 +2065,7 @@ async function submitConfigForm() {
     if (editingId.value) {
       await llmAdminApi.putLLMConfigDetail(editingId.value, body)
     } else {
-      if (form.scope === 'user' && form.user_id) {
-        body.scope = 'user'
-        body.user_id = form.user_id
-      }
+      body.scope = 'global'
       await llmAdminApi.postLLMConfig(body)
     }
     formMessage.value = t('llm.config.saveSuccess')

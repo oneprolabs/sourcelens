@@ -567,7 +567,7 @@
     "config": {
       "title": "Configuraciones",
       "subtitle": "Configuración de modelos a nivel global y de usuario",
-      "subtitleList": "Gestionar configuraciones globales y a nivel de usuario.",
+      "subtitleList": "Gestionar configuraciones de modelos.",
       "globalTitle": "Configuración global",
       "perUserTitle": "Anulaciones por usuario",
       "perUserDesc": "Las configuraciones específicas del usuario anulan las globales. Lista a continuación.",

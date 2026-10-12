@@ -567,7 +567,7 @@
     "config": {
       "title": "Configs",
       "subtitle": "Global and user-level model settings",
-      "subtitleList": "Manage global and user-level configs.",
+      "subtitleList": "Manage model configurations.",
       "globalTitle": "Global configuration",
       "perUserTitle": "Per-user overrides",
       "perUserDesc": "User-specific configs override global. List below.",

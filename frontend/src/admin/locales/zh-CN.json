@@ -567,7 +567,7 @@
     "config": {
       "title": "模型配置",
       "subtitle": "全局与按用户的大模型提供商配置",
-      "subtitleList": "以列表展示全局与按用户配置，支持增删改查。",
+      "subtitleList": "管理模型配置，支持增删改查。",
       "globalTitle": "全局配置",
       "perUserTitle": "按用户覆盖",
       "perUserDesc": "用户单独配置会覆盖全局配置。下列为已配置用户。",
