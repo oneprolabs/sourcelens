@@ -144,7 +144,7 @@ const handleSendCode = async () => {
   try {
     await authApi.sendLoginCode({
       email: codeForm.email,
-      turnstileToken: turnstileToken.value,
+      turnstile_token: turnstileToken.value,
       language: locale.value
     })
     codeSent.value = true

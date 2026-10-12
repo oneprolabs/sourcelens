@@ -62,11 +62,21 @@ class CustomLoginView(LoginView):
 
 
 class TurnstileStatusView(APIView):
+    """Expose the same client policy used by authentication enforcement."""
+
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request, *args, **kwargs):
+        """Return a non-cacheable policy without exposing the client IP."""
         client_ip = turnstile.get_client_ip(request.META)
-        return Response({'bypassed': turnstile.is_bypassed_ip(client_ip)})
+        return Response(
+            {
+                'required': turnstile.is_verification_required(client_ip),
+                'bypassed': turnstile.is_bypassed_ip(client_ip),
+            },
+            headers={'Cache-Control': 'no-store'},
+        )
 
 
 urlpatterns = [
