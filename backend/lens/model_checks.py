@@ -3,6 +3,7 @@ from django.utils import timezone
 MODEL_REF_FIELDS = (
     "multimodal_model_ref",
     "agent_model_ref",
+    "decision_model_ref",
 )
 
 
@@ -12,7 +13,7 @@ def build_model_check_settings(assistant):
     result = {"checked_at": timezone.now().isoformat()}
     for field_name in MODEL_REF_FIELDS:
         model_ref = getattr(assistant, field_name)
-        result[field_name] = _check_model_ref(model_ref)
+        result[field_name] = _check_model_ref(model_ref, "decision" if field_name == "decision_model_ref" else "llm")
     return result
 
 
@@ -26,7 +27,7 @@ def check_assistant_model_refs(assistant):
     return settings["_model_check"]
 
 
-def _check_model_ref(model_ref):
+def _check_model_ref(model_ref, model_type="llm"):
     if not model_ref:
         return {
             "status": "skipped",
@@ -46,10 +47,10 @@ def _check_model_ref(model_ref):
             "model_ref": model_ref_value,
         }
 
-    if config.model_type != LLMConfig.MODEL_TYPE_LLM:
+    if config.model_type != model_type:
         return {
             "status": "error",
-            "error": "LLMConfig model_type is not llm.",
+            "error": f"LLMConfig model_type is not {model_type}.",
             "model_ref": model_ref_value,
         }
 

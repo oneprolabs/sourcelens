@@ -67,7 +67,7 @@ from .plugins.decisions import (
     resolve_decision_analyses,
     resolve_decision_gates,
 )
-from .plugins.registry import installed_plugin
+from .plugins.registry import RETIRED_PLUGIN_KEYS, installed_plugin
 from .routing_descriptions import build_routing_description
 from .runtime_events import public_step_detail, sanitize_termination_detail
 from .session_lifecycle import lock_active_session
@@ -1870,6 +1870,8 @@ def build_loaded_plugins(assistant):
         analysis_config,
         decision_auto,
     ) in bindings:
+        if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+            continue
         secret_version = connection.secret_version
         if secret_version is not None and (
             secret_version.status != "active"
@@ -2472,9 +2474,12 @@ def _build_run_runtime_snapshot(
 ):
     """Return execution provenance that later edits cannot change."""
 
+    from lens.decisions import build_assistant_decision_model
+
     model_refs = {
         "agent": str(assistant.agent_model_ref or ""),
         "multimodal": str(assistant.multimodal_model_ref or ""),
+        "decision": str(assistant.decision_model_ref or ""),
     }
     model_config_hashes = {
         name: _llm_config_hash(model_ref)
@@ -2537,6 +2542,7 @@ def _build_run_runtime_snapshot(
                     "target_dirs": [],
                     "workspace_guide": item.workspace_guide,
                     "agent_model_ref": str(item.agent_model_ref or ""),
+                    "decision_model": build_assistant_decision_model(item),
                     "settings": item.settings or {},
                     "loaded_plugins": loaded_plugins,
                     "loaded_skills": loaded_skills,
@@ -2551,6 +2557,7 @@ def _build_run_runtime_snapshot(
         "lensnode_agent_version": (lensnode.agent_version if lensnode else ""),
         "answer_language": normalize_answer_language(answer_language),
         "model_refs": model_refs,
+        "decision_model": build_assistant_decision_model(assistant),
         "model_config_hashes": model_config_hashes,
         "settings": settings_payload,
         "settings_hash": _canonical_hash(settings_payload),
@@ -3236,6 +3243,7 @@ def dispatch_run_to_lensnode(
                 "loaded_plugins": execution.loaded_plugins,
                 "decision_gates": decision_gates,
                 "decision_analyses": decision_analyses,
+                "decision_model": runtime_snapshot.get("decision_model") or {},
                 "agent_model_ref": (agent_model_ref),
                 "agent_rounds": agent_rounds,
                 "max_agent_turns": max_agent_turns_for_rounds(agent_rounds),

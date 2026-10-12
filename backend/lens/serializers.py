@@ -84,6 +84,7 @@ from .plugins.decisions import (
 )
 from .plugins.public_connections import is_anonymous_connection, persist_public_connection, public_datasource_connection
 from .plugins.registry import (
+    RETIRED_PLUGIN_KEYS,
     PluginRegistryError,
     connection_secret_is_available,
     installed_plugin,
@@ -523,6 +524,7 @@ class PluginBindingsField(serializers.Field):
                 "decision_auto": binding.decision_auto,
             }
             for binding in bindings.select_related("connection").all()
+            if binding.connection.plugin_key not in RETIRED_PLUGIN_KEYS
         ]
 
     def to_internal_value(self, data):
@@ -552,6 +554,8 @@ class PluginBindingsField(serializers.Field):
                 raise serializers.ValidationError(
                     "Plugin Connection does not exist."
                 )
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                raise serializers.ValidationError("This Plugin has been retired. Configure a decision model.")
             if connection.pk in seen:
                 raise serializers.ValidationError(
                     "Plugin Connection bindings must be unique."
@@ -728,6 +732,10 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "agent_rounds",
             "slug",
             "agent_model_ref",
+            "decision_model_ref",
+            "decision_auto",
+            "decision_gates",
+            "decision_analyses",
             "multimodal_model_ref",
             "lensnode",
             "lensnode_name",
@@ -900,6 +908,10 @@ class AssistantSerializer(serializers.ModelSerializer):
             "collaboration_members",
             "multimodal_model_ref",
             "agent_model_ref",
+            "decision_model_ref",
+            "decision_auto",
+            "decision_gates",
+            "decision_analyses",
             "agent_rounds",
             "token_budget_profile",
             "max_concurrency",
@@ -1190,7 +1202,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                         ).filter(
                             enabled=True,
                             connection__status=Connection.Status.ACTIVE,
-                        )
+                        ).exclude(connection__plugin_key__in=RETIRED_PLUGIN_KEYS)
                     )
                 else:
                     has_enabled_plugin = any(
@@ -1213,6 +1225,9 @@ class AssistantSerializer(serializers.ModelSerializer):
         self._validate_skill_plugin_requirements(attrs)
         self._validate_plugin_tool_uniqueness(attrs)
         self._validate_decision_bindings(attrs, capability)
+        from lens.decisions import validate_assistant_decisions
+
+        validate_assistant_decisions(attrs, self.instance, capability)
         settings = attrs.get(
             "settings",
             getattr(self.instance, "settings", {}),
@@ -1291,6 +1306,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             if not binding.get("enabled", True):
                 continue
             connection = binding["connection"]
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                continue
             plugin = installed_plugin(connection.plugin_key)
             capabilities_by_plugin.setdefault(plugin.key, set()).update(
                 tool.capability
@@ -1362,6 +1379,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             connection = binding.get("connection")
             if connection is None:
                 continue
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                continue
             plugin = installed_plugin(connection.plugin_key)
             tool_keys.extend(tool.key for tool in plugin.tools)
         tool_keys.extend(
@@ -1409,6 +1428,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             if not gates and not analyses:
                 continue
             if connection is None:
+                continue
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
                 continue
             plugin = installed_plugin(connection.plugin_key)
             for key in gates:
@@ -1933,6 +1954,8 @@ class ConnectionSerializer(serializers.ModelSerializer):
             "plugin_key",
             getattr(self.instance, "plugin_key", ""),
         )
+        if plugin_key in RETIRED_PLUGIN_KEYS:
+            raise serializers.ValidationError({"plugin_key": "This Plugin has been retired. Configure a decision model."})
         config = attrs.get(
             "config",
             getattr(self.instance, "config", {}),

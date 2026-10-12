@@ -34,6 +34,7 @@ from lens.plugins.decisions import (
 )
 from lens.plugins.public_connections import ANONYMOUS_CONNECTION_FILTER, public_datasource_connection
 from lens.plugins.registry import (
+    RETIRED_PLUGIN_KEYS,
     PluginNotFoundError,
     discover_plugins,
     installed_plugin,
@@ -275,6 +276,8 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
         del request
         plugins = []
         for key in sorted({plugin.key for plugin in discover_plugins()}):
+            if key in RETIRED_PLUGIN_KEYS:
+                continue
             try:
                 plugins.append(installed_plugin(key))
             except PluginNotFoundError:
@@ -430,6 +433,7 @@ class ConnectionViewSet(BaseAdminViewSet):
 
     queryset = (
         Connection.objects.exclude(ANONYMOUS_CONNECTION_FILTER)
+        .exclude(plugin_key__in=RETIRED_PLUGIN_KEYS)
         .select_related("secret_version")
         .annotate(
             assistant_usage_count=Count(
