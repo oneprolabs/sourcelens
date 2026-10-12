@@ -37,9 +37,12 @@ export function modelProviderOptions(providers, schemas, modelType) {
   return (providers || []).filter((provider) => {
     const schema = schemas?.[provider.id] || {}
     const modelTypes = provider.model_types || schema.model_types
-    return modelType === 'decision'
-      ? Boolean(schema.decision)
-      : !modelTypes?.every((type) => type === 'decision')
+    if (modelType === 'decision') return Boolean(schema.decision)
+    // Custom chat models remain supported despite this provider's empty catalog.
+    return (
+      provider.id === 'openai_compatible' ||
+      !modelTypes?.every((type) => type === 'decision')
+    )
   })
 }
 
