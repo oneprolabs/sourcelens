@@ -853,6 +853,7 @@
               class="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm"
             >
               <ProviderIcon
+                :key="form.provider"
                 :provider="form.provider"
                 :icon="providerIconUrl(form.provider)"
                 size="sm"
@@ -872,6 +873,17 @@
                 >
                   {{ p.label }}
                 </option>
+                <template #option="{ option }">
+                  <span class="flex items-center gap-2">
+                    <ProviderIcon
+                      :provider="option.value"
+                      :icon="providerIconUrl(option.value)"
+                      size="sm"
+                      aria-hidden="true"
+                    />
+                    <span class="whitespace-nowrap">{{ option.label }}</span>
+                  </span>
+                </template>
               </BaseSelect>
             </div>
           </div>
