@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Align the Turnstile widget with backend verification policy and send verification tokens correctly in password and email-code login.
+zh-CN: 统一 Turnstile 组件与后端验证策略，并修复密码登录和邮箱验证码登录的验证令牌提交。

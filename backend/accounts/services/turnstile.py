@@ -50,6 +50,15 @@ def is_bypassed_ip(remote_ip):
     return False
 
 
+def is_verification_required(remote_ip=None):
+    """Return the shared verification policy for the current client."""
+    return bool(
+        getattr(settings, 'TURNSTILE_ENABLED', True)
+        and getattr(settings, 'TURNSTILE_SECRET_KEY', '')
+        and not is_bypassed_ip(remote_ip)
+    )
+
+
 def verify_token(token, remote_ip=None):
     """
     Verify a Turnstile token with Cloudflare.
@@ -63,24 +72,11 @@ def verify_token(token, remote_ip=None):
             - (True, []) when verification passes or is bypassed.
             - (False, [..]) with Cloudflare error codes on failure.
     """
-    if not getattr(settings, 'TURNSTILE_ENABLED', True):
-        logger.info(
-            "Turnstile verification is disabled by configuration."
-        )
+    if not is_verification_required(remote_ip):
+        logger.info("Turnstile verification is not required for this request.")
         return True, []
 
-    if is_bypassed_ip(remote_ip):
-        logger.info("Turnstile verification bypassed for allowlisted IP: %s", remote_ip)
-        return True, []
-
-    secret = getattr(settings, 'TURNSTILE_SECRET_KEY', '')
-    if not secret:
-        logger.warning(
-            "Turnstile secret key is not configured; bypassing "
-            "verification (development mode)."
-        )
-        return True, []
-
+    secret = settings.TURNSTILE_SECRET_KEY
     if not token:
         return False, ['missing-input-response']
 

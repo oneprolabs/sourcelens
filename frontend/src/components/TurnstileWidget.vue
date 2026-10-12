@@ -11,11 +11,11 @@ const SCRIPT_SRC =
 
 const emit = defineEmits(['verified', 'expired', 'error'])
 
-const { enabled, siteKey } = getTurnstileConfig(
-  import.meta.env.VITE_TURNSTILE_SITE_KEY
-)
+const { siteKey } = getTurnstileConfig(import.meta.env.VITE_TURNSTILE_SITE_KEY)
 const container = ref(null)
 let widgetId = null
+let bypassed = false
+let disposed = false
 
 /**
  * Load the Cloudflare Turnstile script once and resolve when ready.
@@ -41,9 +41,14 @@ function loadScript() {
 
 onMounted(async () => {
   try {
-    const response = await fetch('/api/v1/auth/turnstile/status')
+    const response = await fetch('/api/v1/auth/turnstile/status', {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000)
+    })
     const policy = await response.json()
-    if (policy.bypassed) {
+    if (disposed) return
+    if (response.ok && policy.data?.required === false) {
+      bypassed = true
       emit('verified', '')
       return
     }
@@ -51,14 +56,14 @@ onMounted(async () => {
     // Fall through to the normal Turnstile challenge when policy discovery fails.
   }
 
-  // Bypass when Turnstile is disabled or no site key is configured.
-  if (!enabled || !siteKey) {
-    emit('verified', '')
+  if (disposed) return
+  if (!siteKey) {
+    emit('error', new Error('Turnstile site key is not configured'))
     return
   }
-
   try {
     await loadScript()
+    if (disposed) return
     widgetId = window.turnstile.render(container.value, {
       sitekey: siteKey,
       callback: (token) => emit('verified', token),
@@ -74,9 +79,9 @@ onMounted(async () => {
  * Reset the widget so the user can solve the challenge again.
  */
 function reset() {
-  if (enabled && siteKey && widgetId !== null && window.turnstile) {
+  if (widgetId !== null && window.turnstile) {
     window.turnstile.reset(widgetId)
-  } else if (!enabled || !siteKey) {
+  } else if (bypassed) {
     // Bypass mode: verification always passes, so re-emit a fresh token
     // to restore the consumer's state after a failed submit.
     emit('verified', '')
@@ -84,12 +89,13 @@ function reset() {
 }
 
 onBeforeUnmount(() => {
-  if (enabled && siteKey && widgetId !== null && window.turnstile) {
+  disposed = true
+  if (widgetId !== null && window.turnstile) {
     window.turnstile.remove(widgetId)
   }
 })
 
-defineExpose({ reset, hasSiteKey: enabled && !!siteKey })
+defineExpose({ reset, hasSiteKey: !!siteKey })
 </script>
 
 <style scoped>
