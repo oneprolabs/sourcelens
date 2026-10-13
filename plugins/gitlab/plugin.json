@@ -157,7 +157,7 @@
     },
     {
       "key": "gitlab_activity_summary",
-      "description": "Get compact commits, merge requests, and issues in one ISO-8601 time window across approved GitLab projects. Pass projects as [\"*\"] to cover all projects allowed by the Connection: its explicit project list, or every credential-visible project when the Connection scope is [\"*\"]. Use this once for engineering reports. The Plugin makes fixed read-only GitLab REST API requests in Python and returns bounded projections.",
+      "description": "Get compact commits, merge requests, and issues in one ISO-8601 time window across approved GitLab projects. Pass projects as [\"*\"] to cover all projects allowed by the Connection: its explicit project list, or every credential-visible project when the Connection scope is [\"*\"]. Use this once for engineering reports. The Plugin makes fixed read-only GitLab REST API requests in Python and returns bounded projections. Cover all relevant approved projects, using additional batches only for remaining scope. Do not follow a returned report batch with GitLab list or detail calls.",
       "capability": "repository.read",
       "side_effect": "none",
       "input_schema": {

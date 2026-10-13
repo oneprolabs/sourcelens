@@ -315,6 +315,118 @@ class PluginToolSnapshotTests(TestCase):
         self.assertEqual(set(response.data), {"detail", "reason"})
         self.assertEqual(response.json()["data"]["reason"], "REPOSITORY_FORMAT_INVALID")
 
+    def _create_activity_run(self):
+        """Freeze the activity tool alongside the existing test binding."""
+
+        run = self._create_active_run()
+        execution = run.execution
+        execution.loaded_plugins[0]["tools"].append(
+            {
+                "key": "github_activity_summary",
+                "capability": "repository.read",
+                "side_effect": "none",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "repositories": {"type": "array"},
+                        "since": {"type": "string"},
+                        "until": {"type": "string"},
+                    },
+                    "required": ["repositories", "since", "until"],
+                },
+            }
+        )
+        execution.save(update_fields=["loaded_plugins"])
+        return run
+
+    def test_activity_wildcard_cannot_expand_a_frozen_scope(self):
+        """Broadening a live Connection must not broaden an already admitted Run."""
+
+        run = self._create_activity_run()
+        self.connection.allowed_scope = {"repositories": ["*"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        response = self._create_snapshot(
+            run,
+            tool_key="github_activity_summary",
+            arguments={
+                "repositories": ["*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(
+            uuid=response.data["snapshot_uuid"]
+        )
+        self.assertEqual(snapshot.resolved_config["allowed_scope"], {"repositories": ["HyperBDR/sourcelens"]})
+        self.assertEqual(snapshot.resolved_config["arguments"]["repositories"], ["*"])
+
+    def test_activity_wildcard_respects_a_tightened_live_scope(self):
+        """The scope of one Tool snapshot is the intersection of frozen and live grants."""
+
+        self.connection.allowed_scope = {"repositories": ["*"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        run = self._create_activity_run()
+        self.connection.allowed_scope = {"repositories": ["HyperBDR/sourcelens"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        response = self._create_snapshot(
+            run,
+            tool_key="github_activity_summary",
+            arguments={
+                "repositories": ["HyperBDR/*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(
+            uuid=response.data["snapshot_uuid"]
+        )
+        self.assertEqual(snapshot.resolved_config["allowed_scope"], self.connection.allowed_scope)
+
+    def test_activity_wildcard_intersects_two_finite_scopes_case_insensitively(self):
+        """Only repositories shared by both grants survive a finite scope change."""
+
+        self.connection.allowed_scope = {"repositories": ["HyperBDR/sourcelens", "HyperBDR/previous"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        run = self._create_activity_run()
+        self.connection.allowed_scope = {"repositories": ["hyperbdr/sourcelens", "HyperBDR/new"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        response = self._create_snapshot(
+            run,
+            tool_key="github_activity_summary",
+            arguments={
+                "repositories": ["*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(uuid=response.data["snapshot_uuid"])
+        self.assertEqual(snapshot.resolved_config["allowed_scope"], {"repositories": ["HyperBDR/sourcelens"]})
+
+    def test_activity_wildcard_rejects_disjoint_frozen_and_live_scopes(self):
+        """Disjoint grants cannot produce an unrestricted execution snapshot."""
+
+        run = self._create_activity_run()
+        self.connection.allowed_scope = {"repositories": ["HyperBDR/another"]}
+        self.connection.save(update_fields=["allowed_scope"])
+        response = self._create_snapshot(
+            run,
+            tool_key="github_activity_summary",
+            arguments={
+                "repositories": ["*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["reason"], "REPOSITORY_OUTSIDE_SCOPE")
+
     def test_tool_snapshot_accepts_repository_identity_case_insensitively(
         self,
     ):

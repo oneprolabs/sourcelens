@@ -213,6 +213,12 @@ def test_bounded_review_input_remains_valid_json_and_keeps_all_providers():
 def test_source_contract_limits_reach_answer_review_even_for_short_results(payload, incomplete):
     """API result limits and partial failures cannot imply complete coverage."""
 
+    from lensnode.plugin_package_loader import load_runtime_contract
+
+    if payload.get("ok") is True:
+        payload = load_runtime_contract("gitlab", "1.0.0").project_tool_result(
+            "gitlab_activity_summary", payload, 900_000
+        )
     policy = _ReviewPolicy()
     middleware = EvidenceGateMiddleware(policy, "Summarize activity.")
     middleware.after_model(

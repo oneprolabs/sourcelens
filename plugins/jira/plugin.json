@@ -101,7 +101,7 @@
     },
     {
       "key": "jira_activity_summary",
-      "description": "Get compact Jira issue activity in one ISO-8601 time window across approved projects. Use this once for engineering reports instead of separate searches per project. The Plugin makes fixed read-only Jira REST API requests in Python and returns bounded projected fields only.",
+      "description": "Get compact Jira issue activity in one ISO-8601 time window across approved projects. Use this once for engineering reports instead of separate searches per project. The Plugin makes fixed read-only Jira REST API requests in Python and returns bounded projected fields only. Cover all relevant approved projects, using additional batches only for remaining scope. Do not follow a returned report batch with Jira search or detail calls.",
       "capability": "jira.issue.search",
       "side_effect": "none",
       "input_schema": {

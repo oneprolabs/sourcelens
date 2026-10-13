@@ -43,6 +43,16 @@ class PluginRegistryTests(TestCase):
         self.assertEqual([plugin.key for plugin in plugins], ["github"])
         self.assertEqual(plugins[0].version, "1.0.0")
 
+    def test_shared_support_directory_is_not_a_connection_plugin(self):
+        """Shared runtime modules must not require a Connection manifest."""
+
+        with tempfile.TemporaryDirectory() as root:
+            support = Path(root) / "_shared"
+            support.mkdir()
+            (support / "workflow.py").write_text("# Shared Plugin code\n")
+            with override_settings(LENS_PLUGIN_ROOTS=[root]):
+                self.assertEqual(discover_plugins(), [])
+
     def test_duplicate_configured_root_is_scanned_once(self):
         with tempfile.TemporaryDirectory() as root:
             plugin_dir = Path(root) / "github"

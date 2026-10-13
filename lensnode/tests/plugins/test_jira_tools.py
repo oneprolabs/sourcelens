@@ -381,11 +381,12 @@ def test_jira_activity_summary_rechecks_frozen_project_scope():
 
 
 def test_activity_evidence_is_reused_after_tools_are_rebuilt(tmp_path):
-    from lensnode.activity_reports import ActivityLedger
+    from lensnode.plugin_agent import prepare_agent_extensions
 
-    ledger = ActivityLedger(tmp_path / "private")
+    command = {**_command("jira_activity_summary"), "question": "Summarize yesterday's work", "run_uuid": "durable-run"}
+    extensions = prepare_agent_extensions(command, tmp_path)
     client = JiraRuntimeClient()
-    first = build_plugin_tools(_command("jira_activity_summary"), _config(), client, activity_ledger=ledger)[0]
+    first = build_plugin_tools(command, _config(), client, agent_extensions=extensions)[0]
     arguments = {
         "projects": ["SL"],
         "since": "2026-09-01T00:00:00Z",
@@ -395,7 +396,7 @@ def test_activity_evidence_is_reused_after_tools_are_rebuilt(tmp_path):
     }
     original = json.loads(first.func(**arguments))
     requests = len(client.provider_requests)
-    restored = ActivityLedger(tmp_path / "private")
-    second = build_plugin_tools(_command("jira_activity_summary"), _config(), client, activity_ledger=restored)[0]
+    restored = prepare_agent_extensions(command, tmp_path)
+    second = build_plugin_tools(command, _config(), client, agent_extensions=restored)[0]
     assert json.loads(second.func(**arguments)) == original
     assert len(client.provider_requests) == requests

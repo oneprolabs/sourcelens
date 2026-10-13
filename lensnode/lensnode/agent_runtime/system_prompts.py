@@ -25,6 +25,8 @@ def _system_prompt(
             context_skill_contents,
             workspace_guide=workspace_guide,
         )
+        if runtime_guidance:
+            prompt += "\n\n" + "\n".join(runtime_guidance)
     else:
         prompt = _knowledge_system_prompt(
             scenario,
@@ -441,7 +443,6 @@ def _general_chat_system_prompt(
     history_artifact_guidance = _history_artifact_guidance(command)
     confidentiality_guidance = _confidentiality_guidance()
     visualization_guidance = _interactive_visualization_guidance()
-    report_guidance = _report_execution_guidance(command)
     return (
         f"{_platform_safety_boundary()}\n"
         f"{language_requirement}\n\n"
@@ -543,127 +544,7 @@ def _general_chat_system_prompt(
         f"{history_artifact_guidance}"
         f"{skill_guidance}"
         f"{_route_guidance(command.get('runtime_route'))}"
-        f"{report_guidance}"
         f"\n\n{_platform_safety_boundary()}"
-    )
-
-
-def _report_execution_guidance(command):
-    """Return a compact execution contract for batch activity reports."""
-
-    batch_tools = _activity_report_batch_tools(command)
-    if not batch_tools or not _is_activity_report(command):
-        return ""
-
-    lines = [
-        "\n\nActivity report execution contract:",
-        "- Call each batch activity Tool once per available source where one "
-        "batch covers the scope; use additional batches for remaining approved resources. "
-        "Verify the requested date window and resource scope before rendering.",
-        "- do not delegate one subagent per repository or project; each "
-        "batch Tool already retrieves its source concurrently.",
-    ]
-    if "github_activity_summary" in batch_tools:
-        lines.extend(
-            (
-                "- Call github_activity_summary once with all approved "
-                "repositories. Its commits already come from each "
-                "repository's default branch. Omit per_page and use the "
-                "server default.",
-                "- Treat that batch result as the GitHub retrieval boundary. "
-                "Do not call another GitHub list or detail Tool in this run.",
-            )
-        )
-    if "jira_activity_summary" in batch_tools:
-        lines.append(
-            "- Call jira_activity_summary with all relevant approved "
-            "projects, using multiple batches if necessary. Do not call another Jira search or detail Tool in "
-            "this run."
-        )
-    if "gitlab_activity_summary" in batch_tools:
-        lines.append(
-            "- Call gitlab_activity_summary with all relevant approved "
-            "projects, using multiple batches if necessary. Do not call another GitLab list or detail Tool in "
-            "this run."
-        )
-    lines.extend(
-        (
-            "- If a source reports errors or possibly_truncated, disclose "
-            "that coverage limitation briefly instead of paginating or "
-            "retrying per resource.",
-            "- The runtime persists retrieved source results in a private evidence ledger. "
-            "Normalize records by verified source identity and event; keep "
-            "source IDs, timestamps, and coverage limits. Distinguish current "
-            "status from transitions within the requested time window, and "
-            "deduplicate exact commit SHAs without inventing identities or equating backports.",
-            "- Reuse that ledger for corrections instead of retrieving the same "
-            "sources again. Prefer a deterministic template rendered from normalized "
-            "data instead of regenerating the entire HTML in each model response.",
-            "- Use read_activity_evidence to revisit saved records without refetching sources. "
-            "This is evidence for the report, not the final answer.",
-            "- Apply requested person and resource filters before writing the answer or artifact. "
-            "Do not stop after one window when the request requires more; retrieve each requested period.",
-            "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
-            "to group people, distinguish completed work from work in progress, and ground risks and comments "
-            "in the evidence. Never infer a shared identity from a display name alone.",
-            "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
-            "business summary and any material coverage limits. Keep verification diagnostics out of the "
-            "business report unless they explain a real evidence gap.",
-        )
-    )
-    return "\n".join(lines)
-
-
-def _activity_report_batch_tools(command):
-    """Return available batch report Tool keys from frozen Plugins."""
-
-    supported = {
-        "github_activity_summary",
-        "gitlab_activity_summary",
-        "jira_activity_summary",
-    }
-    return {
-        tool.get("key")
-        for plugin in command.get("loaded_plugins") or []
-        if isinstance(plugin, dict)
-        for tool in plugin.get("tools") or []
-        if isinstance(tool, dict) and tool.get("key") in supported
-    }
-
-
-def _is_activity_report(command):
-    """Return whether a report can use at least one batch activity Tool."""
-
-    question = str(command.get("question") or "").casefold()
-    activity_terms = ("report", "报告", "日报", "周报", "月报", "工作内容", "工作情况", "工作汇总")
-    activity_context = any(term in question for term in ("工作", "活动", "工程", "work", "activity"))
-    dated_report = any(
-        term in question for term in ("日报", "周报", "月报", "daily report", "weekly report", "monthly report")
-    )
-    work_summary = any(term in question for term in ("总结", "summarize", "summary")) and any(
-        term in question for term in ("工作", "活动", "work", "activity")
-    )
-    return bool(
-        (dated_report or work_summary or (activity_context and any(term in question for term in activity_terms)))
-        and _activity_report_batch_tools(command)
-    )
-
-
-def _activity_report_expected_tools(command):
-    """Limit evidence coverage checks to sources named in the request."""
-
-    tools = _activity_report_batch_tools(command)
-    question = str(command.get("question") or "").casefold()
-    named = {key for key in tools if key.split("_", 1)[0] in question}
-    return named or tools
-
-
-def _is_github_activity_report(command):
-    """Return whether a report has the GitHub batch activity Tool."""
-
-    return bool(
-        _is_activity_report(command)
-        and "github_activity_summary" in _activity_report_batch_tools(command)
     )
 
 

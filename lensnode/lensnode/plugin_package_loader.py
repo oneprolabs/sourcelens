@@ -11,6 +11,7 @@ from pathlib import Path
 
 PLUGIN_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 PLUGIN_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+TOOL_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 MAX_RUNTIME_BYTES = 2 * 1024 * 1024
 
 
@@ -31,6 +32,9 @@ class PluginRuntimeContract:
     sync_datasource: object
     http_post_paths: object = None
     project_decision: object = None
+    agent_extensions: object = None
+    tool_metadata: object = None
+    project_tool_result: object = None
 
 
 def load_runtime_contract(plugin_key, plugin_version, roots=None):
@@ -138,6 +142,21 @@ def _runtime_contract(path, plugin_key, plugin_version):
     project_decision = getattr(module, "project_decision", None)
     if project_decision is not None and not callable(project_decision):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
+    agent_extensions = getattr(module, "agent_extensions", None)
+    project_tool_result = getattr(module, "project_tool_result", None)
+    for hook in (agent_extensions, project_tool_result):
+        if hook is not None and not callable(hook):
+            raise PluginPackageLoadError("plugin agent contract is invalid")
+    tool_metadata = getattr(module, "TOOL_METADATA", {})
+    if (
+        not isinstance(tool_metadata, dict)
+        or len(tool_metadata) > 100
+        or any(
+            not isinstance(key, str) or not TOOL_KEY_PATTERN.fullmatch(key) or not isinstance(value, dict)
+            for key, value in tool_metadata.items()
+        )
+    ):
+        raise PluginPackageLoadError("plugin tool metadata is invalid")
     return PluginRuntimeContract(
         plugin_key=plugin_key,
         plugin_version=plugin_version,
@@ -148,6 +167,9 @@ def _runtime_contract(path, plugin_key, plugin_version):
         sync_datasource=sync_datasource,
         http_post_paths=http_post_paths,
         project_decision=project_decision,
+        agent_extensions=agent_extensions,
+        tool_metadata=tool_metadata,
+        project_tool_result=project_tool_result,
     )
 
 
@@ -174,3 +196,30 @@ def _load_runtime_module(
     except Exception as exc:
         raise PluginPackageLoadError("plugin runtime failed to load") from exc
     return module
+
+
+def load_plugin_support(name):
+    """Load a shared regular module from the controlled Plugin roots."""
+
+    if not isinstance(name, str) or not TOOL_KEY_PATTERN.fullmatch(name):
+        raise PluginPackageLoadError("plugin support identity is invalid")
+    for value in _configured_roots():
+        root = Path(value).resolve()
+        package = root / "_shared"
+        path = package / f"{name}.py"
+        if not package.exists():
+            continue
+        if package.is_symlink() or path.is_symlink():
+            raise PluginPackageLoadError("plugin support entrypoint is invalid")
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_file() or resolved.stat().st_size > MAX_RUNTIME_BYTES:
+                raise PluginPackageLoadError("plugin support entrypoint is invalid")
+            content = resolved.read_bytes()
+        except OSError as exc:
+            raise PluginPackageLoadError("plugin support entrypoint is required") from exc
+        if root not in resolved.parents or not resolved.is_file() or len(content) > MAX_RUNTIME_BYTES:
+            raise PluginPackageLoadError("plugin support entrypoint is invalid")
+        digest = hashlib.sha256(content).hexdigest()[:16]
+        return _load_runtime_module(str(resolved), f"support_{name}", "1.0.0", digest)
+    raise PluginPackageLoadError("installed plugin support is required")

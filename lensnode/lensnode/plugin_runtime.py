@@ -16,7 +16,8 @@ class PluginRuntimeError(RuntimeError):
 
 _ARGUMENT_RECOVERY_HINTS = {
     "REPOSITORY_FORMAT_INVALID": (
-        "Read repositories.md and use explicit owner/repository names; organizations and wildcards are invalid."
+        "Read repositories.md and follow this Tool's repository selector schema "
+        "for owner/repository names or supported wildcards. Correct the arguments and retry."
     ),
     "REPOSITORIES_DUPLICATED": "Deduplicate repositories case-insensitively before retrying.",
     "REPOSITORY_OUTSIDE_SCOPE": "Read repositories.md and select only repositories authorized by the connection.",

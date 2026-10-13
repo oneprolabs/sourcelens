@@ -14,26 +14,6 @@ from .capability_protocol import is_capability_family
 from .messages import normalize_plan_steps as _normalize_plan_steps
 
 
-def _incomplete_activity_coverage(payload):
-    """Read provider coverage flags without treating record text as tool status."""
-
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("error") or payload.get("errors"):
-        return True
-    if any(payload.get(key) is True for key in ("projects_truncated", "repositories_truncated", "truncated")):
-        return True
-    flags = payload.get("possibly_truncated")
-    if isinstance(flags, dict) and any(value is True for value in flags.values()):
-        return True
-    return any(
-        _incomplete_activity_coverage(item)
-        for key in ("projects", "repositories")
-        if isinstance(payload.get(key), list)
-        for item in payload[key]
-    )
-
-
 class CapabilityBoundaryMiddleware(AgentMiddleware):
     """Apply bounded recovery without stopping the whole agent run."""
 
@@ -435,8 +415,10 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 "tool": tool_name,
                 "source": source,
                 "request_sha256": request_sha256,
-                "coverage_complete": not (
-                    tool_name.endswith("_activity_summary") and _incomplete_activity_coverage(payload)
+                "coverage_complete": (
+                    payload["_evidence"].get("complete")
+                    if isinstance(payload, dict) and isinstance(payload.get("_evidence"), dict)
+                    else None
                 ),
             }
         )

@@ -187,6 +187,59 @@ metadata.capability = <Tool.capability>
 路由、能力恢复和执行审计只能读取这些显式元数据，不能通过 `github_*`、`jira_*`
 等名称前缀猜测能力类型。
 
+### 5.1 Agent 扩展协议
+
+安装的 Runtime 可以通过以下可选导出向助手的 Agent 注册行为；这些导出仍属于
+Plugin Protocol V1。旧 Plugin 不声明扩展时维持原有 Tool 行为：
+
+```python
+TOOL_METADATA = {"query_events": {"workflow_role": "source"}}
+
+
+def agent_extensions():
+    return (("workflow-key", prepare_workflow),)
+
+
+def project_tool_result(tool_key, result, max_bytes):
+    return result
+```
+
+`TOOL_METADATA` 最多包含 100 个合法 Tool key 对应的字典。宿主仅透传为
+`metadata.plugin_metadata`，不解释业务角色；factory 接收到的 `bound_tools` 是声明
+与本次 Run 冻结、面向模型可见 Tool 的交集。未绑定或 `internal` Tool 不会成为模型能力。
+扩展声明最多 16 项，以稳定 key 识别；相同 key 和 factory 只准备一次，冲突实现拒绝加载。
+
+factory 接收 `AgentExtensionContext`，返回 `AgentExtension` 或 `None`。上下文包含
+任务问题、历史、运行模式、Run ID、已绑定工具及其元数据、Skill 内容、工具名称、
+私有状态路径和事件回调。它不包含服务客户端、Token、Lease、Secret 或原始 runtime state。
+接口定义位于 `lensnode/plugin_agent.py`，生命周期为：
+
+| 阶段 | Plugin 返回的能力 | 宿主负责的边界 |
+| --- | --- | --- |
+| 准备 | `guidance`、本地辅助 `tools`、可选 `preferred_route` | 助手绑定、工具名冲突、核心保留工具名 |
+| 路由后约束 | `execution_policy(route, tools)` 返回 `AgentExecutionPolicy` | 规范化路由；工具集合只能缩小；恢复时重新应用 |
+| 执行 | `wrap_executor(binding, definition, executor)` | 原有快照、授权、凭证租约、网络、预算和调用追踪 |
+| 证据 | `evidence()` 返回通用证据信封 | 完成判定、审核缓存、状态清理 |
+
+`AgentExecutionPolicy` 包含路由、可选允许工具名称集合、是否允许 subagent，以及
+`required_sources`。扩展不能恢复未绑定工具，也不能替换核心工具。
+`project_tool_result` 在成功执行后、结果缓存与证据保存前运行，拥有领域结果压缩和
+覆盖率解释。来源结果通过 `_evidence.complete` 声明 `true` / `false`；缺少声明是
+未验证，不能满足显式要求的来源完整性。核心不解析仓库、项目或事件字段。
+
+`evidence()` 只接受 `plugin_evidence`（按扩展 key 隔离的领域材料）和
+`evidence_completeness`（`complete` / `incomplete` / `unverified`），不能覆盖交付记录、
+工具成功记录或其他宿主执行事实。任一扩展声明不完整，Run 保留部分完成状态。
+可变的扩展证据通过 `refresh_evidence` 要求恢复时重新审核。
+
+私有状态位于 `.sourcelens/plugin-state/<Run hash>/<extension key>/`，终态和过期检查点
+由宿主统一清理，拒绝符号链接逃逸。报告扩展由 `plugins/_shared/activity_reports.py`
+实现，GitHub、GitLab、Jira 通过同一 factory 注册；报告识别、查询边界、交付契约、
+账本、记录归一化及覆盖率解释都由 Plugin 拥有。恢复旧报告时，Plugin 迁移该 Run 的
+旧 `activity-evidence` 目录并复用已有来源快照。尚未恢复的旧目录保留原有证据。
+共享支持模块从受控 `_shared` 目录加载，拒绝符号链接和超限文件，并按内容哈希缓存；
+`_shared` 不作为 Connection Plugin 发现。上下文压缩属于核心 token 管理，继续由 runtime 负责。
+
 ## 6. 执行与凭证边界
 
 ```text

@@ -4,11 +4,9 @@ import json
 import threading
 import time
 import uuid
-from contextlib import nullcontext
 
 import httpx
 
-from .activity_reports import ACTIVITY_TOOLS, bound_activity_result
 from .plugin_package_loader import (
     PluginPackageLoadError,
     load_runtime_contract,
@@ -36,7 +34,7 @@ def build_plugin_tools(
     http_client,
     emit_event=None,
     plugin_http_pool=None,
-    activity_ledger=None,
+    agent_extensions=None,
 ):
     """Build tools from installed runtimes in frozen Plugin bindings."""
 
@@ -90,38 +88,32 @@ def build_plugin_tools(
                 _connection_uuid=connection_uuid,
                 _plugin_key=plugin_key,
                 _plugin_version=plugin_version,
+                _bound_key=tool_key,
             ):
-                scope = (
-                    activity_ledger.request_lock(
-                        _plugin_key,
-                        _connection_uuid,
-                        _plugin_version,
-                        selected_tool_key,
-                        arguments,
-                    )
-                    if activity_ledger is not None and selected_tool_key in ACTIVITY_TOOLS
-                    else nullcontext()
+                if selected_tool_key != _bound_key:
+                    raise PluginToolError("PLUGIN_TOOL_BINDING_MISMATCH")
+                return _execute_plugin_tool(
+                    command,
+                    config,
+                    http_client,
+                    _connection_uuid,
+                    _plugin_key,
+                    _plugin_version,
+                    selected_tool_key,
+                    runtime,
+                    arguments,
+                    _contract.execute_tool,
+                    emit_event,
+                    plugin_http_pool=plugin_http_pool,
+                    http_origins=_contract.http_origins,
+                    http_post_paths=_contract.http_post_paths,
+                    result_cache=result_cache,
+                    result_cache_lock=result_cache_lock,
+                    project_tool_result=_contract.project_tool_result,
                 )
-                with scope:
-                    return _execute_plugin_tool(
-                        command,
-                        config,
-                        http_client,
-                        _connection_uuid,
-                        _plugin_key,
-                        _plugin_version,
-                        selected_tool_key,
-                        runtime,
-                        arguments,
-                        _contract.execute_tool,
-                        emit_event,
-                        plugin_http_pool=plugin_http_pool,
-                        http_origins=_contract.http_origins,
-                        http_post_paths=_contract.http_post_paths,
-                        result_cache=result_cache,
-                        result_cache_lock=result_cache_lock,
-                        activity_ledger=activity_ledger,
-                    )
+
+            if agent_extensions is not None:
+                executor = agent_extensions.wrap_executor(binding, definition, executor)
 
             if not callable(contract.build_tool):
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
@@ -136,6 +128,7 @@ def build_plugin_tools(
                 "capability_family": capability_family,
                 "plugin_key": plugin_key,
                 "plugin_version": plugin_version,
+                "plugin_metadata": (contract.tool_metadata or {}).get(tool_key, {}),
                 "capability": str(
                     definition.get("capability") or ""
                 ),
@@ -164,7 +157,7 @@ def _execute_plugin_tool(
     result_cache_lock=None,
     source="model_tool",
     trace_call_id=None,
-    activity_ledger=None,
+    project_tool_result=None,
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
@@ -178,13 +171,6 @@ def _execute_plugin_tool(
         tool_key,
         arguments,
     )
-    if activity_ledger is not None and tool_key in ACTIVITY_TOOLS:
-        cached = activity_ledger.cached(plugin_key, connection_uuid, plugin_version, tool_key, arguments)
-        if cached is not None:
-            _emit(
-                emit_event, "tool.plugin.cache_hit", {"plugin": plugin_key, "tool": tool_key, "parent_call_id": call_id}
-            )
-            return cached
     if result_cache is not None and result_cache_lock is not None:
         with result_cache_lock:
             cached = result_cache.get(cache_key)
@@ -283,6 +269,8 @@ def _execute_plugin_tool(
             endpoint,
             connection_config,
         )
+        if callable(project_tool_result) and isinstance(result, dict) and result.get("ok") is not False:
+            result = project_tool_result(tool_key, result, RESULT_MAX_BYTES)
         if isinstance(result, dict) and result.get("ok") is False:
             error = str(result.get("error") or "PLUGIN_EXECUTION_FAILED")
     except PluginRuntimeError as exc:
@@ -316,11 +304,6 @@ def _execute_plugin_tool(
                 "duration_ms": int((time.monotonic() - started) * 1000),
             },
         )
-    if tool_key in ACTIVITY_TOOLS and not error:
-        result = bound_activity_result(result, RESULT_MAX_BYTES)
-    if activity_ledger is not None and tool_key in ACTIVITY_TOOLS and not error:
-        activity_ledger.record(plugin_key, connection_uuid, plugin_version, tool_key, arguments, result)
-        _emit(emit_event, "tool.activity_evidence.saved", {"tool": tool_key, "parent_call_id": call_id})
     encoded = _json(result)
     if (
         error == ""

@@ -59,6 +59,8 @@ def _finalize_runtime_outcome(
     runtime_evidence = runtime_evidence or {}
     if runtime_evidence.get("artifact_required") and not runtime_evidence.get("_deliverables"):
         return "partial", _evidence_termination_detail("artifact")
+    if runtime_evidence.get("evidence_completeness") == "incomplete":
+        return "partial", {"reason": "evidence_insufficient", "error_type": "verification"}
     if runtime_evidence.get("convergence_exhausted"):
         return "partial", {"reason": "evidence_convergence_limit", "error_type": "execution_limit"}
     required_sources = set(runtime_evidence.get("required_sources") or [])
@@ -66,7 +68,7 @@ def _finalize_runtime_outcome(
         evidence = getattr(capability_middleware, "successful_evidence", []) or []
         latest_requests = {(item.get("source"), item.get("request_sha256")): item for item in evidence}
         completed_sources = {
-            item.get("source") for item in latest_requests.values() if item.get("coverage_complete") is not False
+            item.get("source") for item in latest_requests.values() if item.get("coverage_complete") is True
         }
         incomplete_sources = {
             item.get("source") for item in latest_requests.values() if item.get("coverage_complete") is False

@@ -631,6 +631,9 @@ def test_runtime_contract_allows_a_decision_only_runtime(tmp_path):
 
 def test_build_plugin_tools_requires_build_tool_for_exposed_tools(monkeypatch):
     contract = SimpleNamespace(
+        agent_extensions=None,
+        project_tool_result=None,
+        tool_metadata={},
         build_tool=None,
         execute_tool=lambda *args, **kwargs: {"ok": True},
         http_origins=None,

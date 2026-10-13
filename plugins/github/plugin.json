@@ -34,7 +34,7 @@
       {
         "key": "issues_and_pull_requests",
         "summary": "Inspect activity, issue and pull request metadata, comments, files, and reviews.",
-        "details": "For a time-bounded activity report across one or more repositories, call github_activity_summary once with every approved repository instead of calling list tools per repository. Use list tools before requesting a specific item for other tasks. Fetch pull request or issue details, comments, files, and reviews only for the few matching records whose summary lacks a required report field. Never repeat the same repository, tool, and arguments.",
+        "details": "For a time-bounded activity report, call github_activity_summary once with explicit owner/repository names, owner/* for one owner, or * for all Connection-authorized repositories. The Plugin expands selectors, discovers accessible repositories when the Connection allows all, and handles pagination and batches. Anonymous all-scope queries require an owner; anonymous owner/* discovers public repositories. Inspect coverage and source_coverage_complete for limits or failures. TOOL_ARGUMENTS_INVALID is not completed retrieval: correct the selector and retry once. Use list tools before requesting a specific item for other tasks. Never repeat the same successful repository, tool, and arguments.",
         "tool_keys": [
           "github_activity_summary",
           "github_issue_list",
@@ -217,7 +217,7 @@
     },
     {
       "key": "github_activity_summary",
-      "description": "Get compact commits, pull requests, and issues updated in one ISO-8601 time window across approved GitHub repositories. Use this once for activity reports instead of separate list calls per repository. Results use safe resource-specific candidate limits and omit bodies, comments, reviews, files, and patches.",
+      "description": "Get compact commits, pull requests, and issues in one ISO-8601 time window. Accepts owner/repository, owner/*, or *; expands within Connection authorization and accessible repositories, with discovery pagination and internal batches. Anonymous access with an all-repositories Connection requires an owner instead of *. Use once for activity reports; a rejected argument request may be corrected and retried. Returns coverage, resolved repositories, source_coverage_complete, resource limits and per-repository errors. Omits bodies, comments, reviews, files, and patches. Commits come from each repository's default branch. Omit per_page to use the server default. A returned summary is the GitHub retrieval boundary for this report; do not follow it with GitHub list or detail calls.",
       "capability": "repository.read",
       "side_effect": "none",
       "input_schema": {
@@ -225,7 +225,7 @@
         "properties": {
           "repositories": {
             "type": "array",
-            "description": "Approved repositories in owner/repository form.",
+            "description": "Repository selectors: owner/repository, owner/*, or * for all Connection-authorized repositories. Overlapping selectors are deduplicated after expansion. Anonymous * needs a finite Connection scope; otherwise specify owner/*.",
             "minItems": 1,
             "maxItems": 50,
             "uniqueItems": true,

@@ -35,8 +35,8 @@ def _agent_middleware(
                 allow_task_tool=allow_task_tool,
             )
         )
-        if capability_middleware is not None:
-            middleware.append(capability_middleware)
+    if capability_middleware is not None:
+        middleware.append(capability_middleware)
     if evidence_middleware is not None:
         middleware.append(evidence_middleware)
     if trace_middleware is not None:
