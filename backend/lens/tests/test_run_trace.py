@@ -369,8 +369,17 @@ class AdminRunTrajectoryAPITests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(second_page.status_code, 200, second_page.data)
         self.assertEqual(
             [event["sequence"] for event in second_page.data["results"]],
-            [3],
+            [1],
         )
+        self.assertEqual(
+            [event["ingest_sequence"] for event in first_page.data["results"]],
+            [1, 2],
+        )
+        self.assertEqual(
+            second_page.data["results"][0]["ingest_sequence"],
+            3,
+        )
+        self.assertEqual(second_page.data["next_after_sequence"], 3)
         self.assertEqual(
             second_page.data["results"][0]["trace_run_role"],
             "child",

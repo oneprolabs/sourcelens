@@ -41,9 +41,9 @@ def migrate_typesafe_bindings(apps, schema_editor):
             continue
         if not secret.strip():
             continue
-        model = connection.config.get("model") or "jev-1.13"
-        if model == "jev-1.13.0":
-            model = "jev-1.13"
+        model = connection.config.get("model")
+        if not isinstance(model, str) or not model.strip():
+            continue
         config, _ = Config.objects.using(database).get_or_create(
             uuid=uuid.uuid5(connection.uuid, "sourcelens.builtin.decision"),
             defaults={

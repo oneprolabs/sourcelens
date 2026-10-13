@@ -71,6 +71,56 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     assert json.loads(rebound)["evidence_completeness"] == "complete"
 
 
+def test_complete_tool_results_respect_the_configured_review_budget():
+    """The collector must not truncate evidence below the selected gate budget."""
+
+    reviewed = []
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            reviewed.append(json.loads(question))
+            return "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {"max_state_chars": 6000}})
+    content = "Evidence details. " * 150 + "The incident remains open."
+    middleware = EvidenceGateMiddleware(policy, "Was it resolved?")
+    middleware.after_model({"messages": [
+        ToolMessage(name="incident_search", tool_call_id="source", content=content),
+        AIMessage(content="The incident remains open."),
+    ]}, None)
+
+    assert len(reviewed) == 1
+    assert reviewed[0]["runtime_evidence"]["retrieved_evidence"][0]["content"] == content
+    assert reviewed[0]["evidence_completeness"] == "complete"
+
+
+def test_score_results_are_judgments_not_retrieval_evidence():
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Was it completed?")
+    middleware.after_model({"messages": [
+        ToolMessage(name="decision_score", tool_call_id="score", content='{"ok":true,"score":1.9}'),
+        AIMessage(content="Completion could not be verified."),
+    ]}, None)
+    assert not (policy.materials[0] or {}).get("retrieved_evidence")
+
+
+def test_skill_instructions_do_not_make_complete_source_evidence_inconclusive():
+    """Resource instructions are not facts retrieved for the user's question."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Was it completed?")
+    middleware.after_model({"messages": [
+        AIMessage(content="", tool_calls=[{
+            "id": "instructions", "name": "read_file", "args": {"file_path": "/skills/report/OUTPUT_FORMAT.md"},
+        }]),
+        ToolMessage(name="read_file", tool_call_id="instructions", content="Output format instructions. " * 200),
+        ToolMessage(name="incident_search", tool_call_id="source", content="MR 42 remains open."),
+        AIMessage(content="MR 42 remains open."),
+    ]}, None)
+    assert policy.materials[0]["evidence_completeness"] == "complete"
+    assert [item["tool"] for item in policy.materials[0]["retrieved_evidence"]] == ["incident_search"]
+
+
 @pytest.mark.parametrize(
     "completeness,expected,requirement",
     [

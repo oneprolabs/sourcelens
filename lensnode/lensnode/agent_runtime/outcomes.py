@@ -60,7 +60,7 @@ def _finalize_runtime_outcome(
     if runtime_evidence.get("artifact_required") and not runtime_evidence.get("_deliverables"):
         return "partial", _evidence_termination_detail("artifact")
     if runtime_evidence.get("evidence_completeness") == "incomplete":
-        return "partial", {"reason": "evidence_insufficient", "error_type": "verification"}
+        return "partial", {"reason": "evidence_incomplete", "error_type": "verification"}
     if runtime_evidence.get("convergence_exhausted"):
         return "partial", {"reason": "evidence_convergence_limit", "error_type": "execution_limit"}
     required_sources = set(runtime_evidence.get("required_sources") or [])

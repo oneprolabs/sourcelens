@@ -86,6 +86,7 @@ PUBLIC_TERMINATION_REASONS = {
     "execution_failed",
     "evidence_unavailable",
     "evidence_insufficient",
+    "evidence_incomplete",
     "execution_limit",
     "turn_limit",
     "soft_deadline",
@@ -404,6 +405,8 @@ def sanitize_termination_detail(detail):
     if error_type in PUBLIC_ERROR_TYPES:
         output["error_type"] = error_type
         output["recovery"] = RECOVERY_MESSAGES[error_type]
+        if reason == "evidence_incomplete" and error_type == "verification":
+            output["recovery"] = "Review the missing or truncated source evidence and retry with complete coverage."
     code = detail.get("code")
     if code in PUBLIC_RUNTIME_CODES:
         output["code"] = code

@@ -1,0 +1,12 @@
+type: fix
+audience: user
+en: >-
+  Assistants can explicitly score supplied facts with their selected decision
+  model and ordered rubric. Concurrent assessments avoid shared usage lock
+  conflicts, unavailable scores are disclosed, and scores never substitute for
+  source evidence. Answer review respects configured evidence limits and excludes
+  skill instructions; incomplete source coverage remains a partial result.
+zh-CN: >-
+  助手可使用所选决策模型和有序评分标准，对已提供的事实进行评分。
+  并发评分避免争用用量锁，评分不可用时明确提示，分数不替代来源证据。
+  回答复核遵循配置的证据长度限制并排除技能指令；来源覆盖不完整时仍保留部分完成状态。

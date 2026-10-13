@@ -5,9 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode import agent_runtime
+from lensnode.agent_runtime.deliverable import AppendWriteDeduplicationMiddleware
 from lensnode.agent_tools import (
     _build_append_file_tool,
     _build_save_deliverable_tool,
@@ -101,6 +102,48 @@ def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
     assert b"<h1>ok</h1>" in captured["body"]
     assert ("tool.save_deliverable.done", None) not in events
     assert any(name == "tool.save_deliverable.done" for name, _ in events)
+
+
+def test_identical_write_after_append_is_deduplicated(tmp_path):
+    resources = _resources(tmp_path)
+    append = _build_append_file_tool(resources, None)
+    content = "section one\nsection two\n"
+    assert json.loads(
+        append.invoke(
+            {
+                "path": "report.md",
+                "chunk_id": "translation-001",
+                "content": content,
+            }
+        )
+    )["ok"] is True
+
+    events = []
+    middleware = AppendWriteDeduplicationMiddleware(
+        tmp_path,
+        lambda name, detail: events.append((name, detail)),
+    )
+    request = SimpleNamespace(
+        tool_call={
+            "name": "write_file",
+            "id": "write-1",
+            "args": {"file_path": "report.md", "content": content},
+        }
+    )
+    called = []
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda _request: called.append(True)
+        or ToolMessage(content="written", tool_call_id="write-1"),
+    )
+
+    assert result.status == "success"
+    assert "deduplicated" in result.content
+    assert called == []
+    assert any(
+        name == "deepagents.agent.write_deduplicated" for name, _ in events
+    )
 
 
 def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypatch, tmp_path):

@@ -248,6 +248,14 @@ def test_unconfigured_builtin_decisions_preserve_the_original_chain(monkeypatch,
     assert unconfigured.events == baseline.events
 
 
+def test_frozen_score_is_available_without_bound_ranking(monkeypatch, tmp_path):
+    run = _run_answer(monkeypatch, tmp_path, decision_model={
+        "model_ref": "selected-model", "score": {"kind": "score", "timeout_seconds": 10},
+    })
+    assert "decision_score" in run.tool_names
+    assert "decision_rank" not in run.tool_names
+
+
 def test_bound_but_falling_back_gates_match_the_baseline(monkeypatch, tmp_path):
     baseline = _run_answer(monkeypatch, tmp_path)
     monkeypatch.setattr(

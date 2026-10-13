@@ -2,9 +2,10 @@
 
 from django.test import TestCase
 
-from lens.models import RunStep
+from lens.models import Run, RunStep
 from lens.run_trace import append_run_trace_events
 from lens.runtime_events import sanitize_termination_detail
+from lens.services import finish_lensnode_run
 from lens.tests.test_run_trace import RunTraceFixtureMixin
 from lens.views.admin_runs import _admin_run_failure_summary
 
@@ -25,6 +26,26 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         )
         self.assertEqual(detail["code"], "MODEL_TOOL_PROTOCOL_ERROR")
         self.assertNotIn("private content", str(detail))
+
+    def test_incomplete_evidence_reason_survives_public_sanitization(self):
+        detail = sanitize_termination_detail(
+            {"reason": "evidence_incomplete", "error_type": "verification", "raw": "private content"}
+        )
+        self.assertEqual(detail["reason"], "evidence_incomplete")
+        self.assertNotIn("private content", str(detail))
+
+    def test_partial_run_persists_incomplete_evidence_reason(self):
+        finish_lensnode_run(
+            self.run.uuid,
+            Run.Status.DONE,
+            outcome=Run.Outcome.PARTIAL,
+            termination_detail={"reason": "evidence_incomplete", "error_type": "verification"},
+            final_content="Report delivered; source coverage is incomplete.",
+        )
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.outcome, Run.Outcome.PARTIAL)
+        self.assertEqual(self.run.termination_detail["reason"], "evidence_incomplete")
+        self.assertIn("complete coverage", self.run.termination_detail["recovery"])
 
     def test_runtime_tracked_plugin_failure_is_not_counted_twice(self):
         RunStep.objects.create(
