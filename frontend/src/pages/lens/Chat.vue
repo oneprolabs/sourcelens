@@ -544,7 +544,7 @@
                       delegatedTaskGroups(message._runtimeState).length
                     "
                     :groups="delegatedTaskGroups(message._runtimeState)"
-                    :live="false"
+                    :live="!isTerminalRunStatus(message.thinking.status)"
                   />
                   <div
                     v-if="
@@ -651,7 +651,7 @@
                         structuredProgress(message._runtimeState).items
                       )
                     "
-                    :live="false"
+                    :live="!isTerminalRunStatus(message.thinking.status)"
                   />
                   <div
                     v-else
@@ -689,7 +689,9 @@
                         :key="activity.id"
                         class="runtime-node-activity"
                       >
-                        <span class="runtime-activity-indicator">✓</span>
+                        <span class="runtime-activity-indicator">{{
+                          progressStatusIcon(activity.status || 'completed')
+                        }}</span>
                         <span
                           v-if="activity.assistantName"
                           class="runtime-activity-assistant"
@@ -1960,6 +1962,7 @@ import {
 import { promptSuggestionKeys } from '@/pages/lens/chatPromptSuggestions'
 import { resolveChatViewport } from '@/pages/lens/chatViewport'
 import { createStreamTextBuffer } from '@/pages/lens/streamBuffer'
+import { recoverRunStream } from '@/pages/lens/chatRunStream'
 import { compactFilename } from '@/pages/lens/filenameDisplay'
 import {
   DOCUMENT_EXTENSIONS,
@@ -2364,6 +2367,9 @@ const hasAssistant = computed(() =>
 const canCompose = computed(
   () =>
     booted.value &&
+    !messageLoading.value &&
+    (!selectedSessionUuid.value ||
+      runStatusResolvingSessionUuid.value !== selectedSessionUuid.value) &&
     !isAnonymous.value &&
     !assistantError.value &&
     hasAssistant.value &&
@@ -3079,6 +3085,7 @@ function authHeaders() {
 
 function resetStreamState() {
   streamController.value?.abort()
+  streamController.value = null
   streamTextBuffer.clear()
   partialAnswer.value = ''
   streamError.value = ''
@@ -3223,18 +3230,37 @@ async function waitForRunTerminal(runUuid) {
   return run
 }
 
-async function finishSubmittedRun(runUuid, sessionUuid) {
-  currentRun.value = await getRun(runUuid)
-  messages.value = await listMessages(sessionUuid)
+async function finishSubmittedRun(
+  runUuid,
+  sessionUuid,
+  isCurrentView,
+  notifyFailure = true
+) {
+  let run
+  let loadedMessages
+  while (isCurrentView()) {
+    try {
+      const result = await Promise.all([
+        getRun(runUuid),
+        listMessages(sessionUuid)
+      ])
+      run = result[0]
+      loadedMessages = result[1]
+      break
+    } catch {
+      if (!isCurrentView()) return
+      await sleep(RUN_POLL_INTERVAL_MS)
+    }
+  }
+  if (!isCurrentView()) return
+  currentRun.value = run
+  messages.value = loadedMessages
+  resetStreamState()
 
   if (currentRun.value?.status === 'failed') {
     const errorCode = currentRun.value.error || 'RUN_FAILED'
-    resetStreamState()
     failedRunError.value = errorCode
-    showError(mapRunError(errorCode))
-  } else {
-    await nextTick()
-    resetStreamState()
+    if (notifyFailure) showError(mapRunError(errorCode))
   }
   answerAutoScroller.request()
 }
@@ -3278,6 +3304,7 @@ function syncMobileViewport() {
 }
 
 async function bootstrap() {
+  sessionLoadGeneration += 1
   // Reset transient chat state up front so the previous assistant's draft,
   // active-run/stream state, or messages cannot leak across an assistant
   // switch (this runs on every slug change, before the async session load
@@ -3946,6 +3973,8 @@ async function selectSession(session, updateRoute = true) {
   mySharesOpen.value = false
   clearAttachments()
   selectedSessionUuid.value = session.uuid
+  currentRun.value = null
+  resetStreamState()
   runStatusResolvingSessionUuid.value = session.uuid
   messageLoading.value = true
   messageError.value = false
@@ -3983,8 +4012,6 @@ async function selectSession(session, updateRoute = true) {
     retryDraft.value = null
     if (composerRef.value) composerRef.value.style.height = 'auto'
   }
-  currentRun.value = null
-  resetStreamState()
   if (updateRoute) {
     router.replace({
       path: route.path,
@@ -4018,85 +4045,76 @@ async function maybeResumeActiveRun(sessionUuid, isCurrentLoad) {
     runStatusResolvingSessionUuid.value = ''
     return
   }
-  const resolution = await resolveRunStatus(getRun, withRun.run)
+  let resolution = await resolveRunStatus(getRun, withRun.run)
+  while (!resolution.resolved && isCurrentLoad()) {
+    await sleep(RUN_POLL_INTERVAL_MS)
+    if (!isCurrentLoad()) return
+    resolution = await resolveRunStatus(getRun, withRun.run)
+  }
   if (!isCurrentLoad()) return
-  if (!resolution.resolved) return
   const run = resolution.run
   runStatusResolvingSessionUuid.value = ''
   if (!['queued', 'running', 'streaming'].includes(run?.status)) {
-    // A historically-failed turn keeps its retry hint with the right
-    // (blame-clarifying) message after a reload, not just live.
-    if (run?.status === 'failed') {
-      failedRunError.value = run.error || 'RUN_FAILED'
-    }
+    await finishSubmittedRun(run.uuid, sessionUuid, isCurrentLoad, false)
     return
   }
   startCompletionTracking(run, sessionUuid)
   // hand the trailing in-progress assistant placeholder to the live row to
-  // avoid showing it twice; the SSE sync replays its content and steps
+  // avoid showing it twice. Preserve the snapshot until SSE sync arrives.
   const last = messages.value[messages.value.length - 1]
-  if (last && last.role === 'assistant') {
+  if (last?.role === 'assistant' && (!last.run || last.run === run.uuid)) {
+    partialAnswer.value = last.content || ''
+    runtimeState.value = runtimeStateFor({
+      ...last.thinking,
+      status: run.status
+    })
     messages.value = messages.value.slice(0, -1)
   }
   currentRun.value = run
   try {
-    await readSse(run.uuid)
-    const restoredRun = await getRun(run.uuid)
+    await readSse(run.uuid, isCurrentLoad)
     if (!isCurrentLoad()) return
-    currentRun.value = restoredRun
+    await finishSubmittedRun(run.uuid, sessionUuid, isCurrentLoad, false)
   } catch {
-    // stream aborted (e.g. the user switched sessions) — fall through
+    // A superseded subscription must leave the current view untouched.
   }
-  if (!isCurrentLoad()) return
-  const restoredMessages = await listMessages(sessionUuid)
-  if (!isCurrentLoad()) return
-  messages.value = restoredMessages
-  resetStreamState()
 }
 
-async function readSse(runUuid) {
+async function readSse(runUuid, isCurrentView) {
   streamController.value?.abort()
   const controller = new AbortController()
   streamController.value = controller
-
-  const response = await fetch(
-    `${apiConfig.apiBaseUrl}/lens/runs/${runUuid}/stream/`,
-    {
-      headers: { Accept: 'text/event-stream', ...authHeaders() },
-      signal: controller.signal
+  const isCurrent = () =>
+    isCurrentView() && streamController.value === controller
+  const run = await recoverRunStream({
+    runUuid,
+    signal: controller.signal,
+    isCurrent,
+    openStream: (signal) =>
+      fetch(`${apiConfig.apiBaseUrl}/lens/runs/${runUuid}/stream/`, {
+        headers: { Accept: 'text/event-stream', ...authHeaders() },
+        signal
+      }),
+    getRun,
+    onEvent: handleEvent,
+    onRun: (restoredRun) => {
+      currentRun.value = restoredRun
     }
-  )
-  if (!response.ok || !response.body) {
-    throw new Error('SSE failed')
+  })
+  if (!isCurrent()) {
+    throw new DOMException('Stream superseded', 'AbortError')
   }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let streamDone = false
-
-  while (!streamDone) {
-    const { done, value } = await reader.read()
-    if (done) {
-      streamDone = true
-      continue
-    }
-    buffer += decoder.decode(value, { stream: true })
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary !== -1) {
-      const raw = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      boundary = buffer.indexOf('\n\n')
-      const dataLine = raw.split('\n').find((line) => line.startsWith('data: '))
-      if (dataLine) {
-        handleEvent(JSON.parse(dataLine.slice(6)))
-      }
-    }
-  }
+  currentRun.value = run
   streamTextBuffer.flush()
 }
 
 function handleEvent(event) {
+  if (event.type === 'sync') {
+    streamTextBuffer.clear()
+    partialAnswer.value = event.content || ''
+    runtimeState.value = createRuntimeState()
+    seenStepEventCounts.clear()
+  }
   runtimeState.value = applyRuntimeEvent(runtimeState.value, event)
   if (
     event.type === 'sync' ||
@@ -4121,10 +4139,6 @@ function handleEvent(event) {
     queuePosition.value = event.position
     if (currentRun.value)
       currentRun.value.datasource_waiting = !!event.datasource_waiting
-  }
-  if (event.type === 'sync' && event.content) {
-    streamTextBuffer.flush()
-    partialAnswer.value = event.content
   }
   if (event.type === 'step') {
     handleStepEvent(event, event.ts)
@@ -4200,6 +4214,10 @@ async function submitClarification(message) {
     runUuid
   ])
   const sessionAtSubmit = selectedSessionUuid.value
+  const viewGeneration = ++sessionLoadGeneration
+  const isCurrentView = () =>
+    viewGeneration === sessionLoadGeneration &&
+    selectedSessionUuid.value === sessionAtSubmit
   setSessionSubmitting(sessionAtSubmit, true)
   try {
     const continuation = await answerRunClarification(
@@ -4207,7 +4225,7 @@ async function submitClarification(message) {
       request.request_id,
       answer
     )
-    if (selectedSessionUuid.value !== sessionAtSubmit) return
+    if (!isCurrentView()) return
     clarificationAnswers.value = {
       ...clarificationAnswers.value,
       [runUuid]: answer
@@ -4218,13 +4236,16 @@ async function submitClarification(message) {
     resetStreamState()
     currentRun.value = continuation
     startCompletionTracking(continuation, sessionAtSubmit)
-    messages.value = await listMessages(sessionAtSubmit)
+    const loadedMessages = await listMessages(sessionAtSubmit)
+    if (!isCurrentView()) return
+    messages.value = loadedMessages
     await nextTick(scrollToBottom)
-    await readSse(continuation.uuid)
-    if (selectedSessionUuid.value !== sessionAtSubmit) return
-    await finishSubmittedRun(continuation.uuid, sessionAtSubmit)
+    if (!isCurrentView()) return
+    await readSse(continuation.uuid, isCurrentView)
+    if (!isCurrentView()) return
+    await finishSubmittedRun(continuation.uuid, sessionAtSubmit, isCurrentView)
   } catch (error) {
-    if (error?.name !== 'AbortError') {
+    if (error?.name !== 'AbortError' && isCurrentView()) {
       clarificationErrors.value = {
         ...clarificationErrors.value,
         [runUuid]: t('lens.chat.runtime.clarificationFailed')
@@ -4299,6 +4320,10 @@ async function submit() {
   // not a failure, so we must not restore the draft, alarm the user, or write
   // into the now-current assistant's state.
   const sessionAtSubmit = selectedSessionUuid.value
+  const viewGeneration = ++sessionLoadGeneration
+  const isCurrentView = () =>
+    viewGeneration === sessionLoadGeneration &&
+    selectedSessionUuid.value === sessionAtSubmit
   setSessionSubmitting(sessionAtSubmit, true)
   if (isSmartCollaborationConversation.value && mentionToken.value) {
     showWarning(t('lens.chat.mentionAssistantRequired'))
@@ -4309,7 +4334,7 @@ async function submit() {
   let oversizedAttachment = null
   if (oversizedFile) {
     const uploaded = await addAttachment(oversizedFile)
-    if (!uploaded || selectedSessionUuid.value !== sessionAtSubmit) {
+    if (!uploaded || !isCurrentView()) {
       setSessionSubmitting(sessionAtSubmit, false)
       return
     }
@@ -4368,6 +4393,13 @@ async function submit() {
     }
   ]
   await nextTick(scrollToBottom)
+  if (!isCurrentView()) {
+    setSessionSubmitting(sessionAtSubmit, false)
+    pendingAttachments.forEach(
+      (item) => item.localUrl && URL.revokeObjectURL(item.localUrl)
+    )
+    return
+  }
 
   // Show the backend's first-question fallback immediately. The run creation
   // request persists the same value without treating it as a manual rename.
@@ -4394,16 +4426,17 @@ async function submit() {
     ) {
       pendingRunSubmission.value = null
     }
-    retryDraft.value = null
     startCompletionTracking(run, sessionAtSubmit)
     // switched away between createRun and here — don't bind this run's live
     // state onto the now-current assistant
-    if (selectedSessionUuid.value !== sessionAtSubmit) return
+    if (!isCurrentView()) return
+    retryDraft.value = null
     currentRun.value = run
-    await readSse(run.uuid)
+    await readSse(run.uuid, isCurrentView)
     // switched away while streaming — leave the new assistant untouched
-    if (selectedSessionUuid.value !== sessionAtSubmit) return
-    await finishSubmittedRun(run.uuid, sessionAtSubmit)
+    if (!isCurrentView()) return
+    await finishSubmittedRun(run.uuid, sessionAtSubmit, isCurrentView)
+    if (!isCurrentView()) return
     if (
       pendingRunSubmission.value?.idempotencyKey ===
       preparedSubmission.submission.idempotencyKey
@@ -4414,19 +4447,17 @@ async function submit() {
   } catch (err) {
     // a deliberate stream abort (switch/navigate) or a switch away is not a
     // submit failure — bail silently without touching the current state
-    if (
-      err?.name === 'AbortError' ||
-      selectedSessionUuid.value !== sessionAtSubmit
-    ) {
+    if (err?.name === 'AbortError' || !isCurrentView()) {
       return
     }
     const runUuid = submittedRunUuid
     if (runUuid) {
       try {
         const run = await waitForRunTerminal(runUuid)
-        if (selectedSessionUuid.value !== sessionAtSubmit) return
+        if (!isCurrentView()) return
         currentRun.value = run
-        await finishSubmittedRun(runUuid, sessionAtSubmit)
+        await finishSubmittedRun(runUuid, sessionAtSubmit, isCurrentView)
+        if (!isCurrentView()) return
         if (
           pendingRunSubmission.value?.idempotencyKey ===
           preparedSubmission.submission.idempotencyKey
@@ -4439,6 +4470,7 @@ async function submit() {
         // Fall through to the true submit-failure recovery path.
       }
     }
+    if (!isCurrentView()) return
     messages.value = messages.value.filter((m) => m.uuid !== '__optimistic__')
     question.value = draftTextAtSubmit
     agentRounds.value = agentRoundsAtSubmit
@@ -4479,8 +4511,19 @@ async function cancel() {
   if (!currentRun.value) {
     return
   }
+  const runUuid = currentRun.value.uuid
+  const sessionUuid = selectedSessionUuid.value
+  const viewGeneration = sessionLoadGeneration
+  const isCurrentView = () =>
+    viewGeneration === sessionLoadGeneration &&
+    selectedSessionUuid.value === sessionUuid &&
+    currentRun.value?.uuid === runUuid
+  const run = await cancelRun(runUuid)
+  if (!isCurrentView()) return
   streamController.value?.abort()
-  currentRun.value = await cancelRun(currentRun.value.uuid)
+  currentRun.value = run
+  await finishSubmittedRun(runUuid, sessionUuid, isCurrentView, false)
+  if (!isCurrentView()) return
   showWarning(t('lens.chat.runStopped'))
 }
 
@@ -4922,6 +4965,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  sessionLoadGeneration += 1
   window.removeEventListener('storage', handleCompletionStorage)
   window.removeEventListener('focus', handleCompletionVisibility)
   window.visualViewport?.removeEventListener('resize', syncMobileViewport)
