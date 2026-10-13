@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from lensnode.activity_reports import ActivityLedger, bound_activity_result, build_activity_evidence_tool
+from lensnode.plugin_package_loader import load_plugin_support
+
+_report_support = load_plugin_support("activity_reports")
+ActivityLedger = _report_support.ActivityLedger
+bound_activity_result = _report_support.bound_activity_result
+build_activity_evidence_tool = _report_support.build_activity_evidence_tool
 
 
 def _result():
@@ -84,6 +89,33 @@ def test_partial_and_missing_sources_remain_visible_and_closed_mr_is_not_merged(
     assert report["records"][0]["event"] == "updated"
     assert "jira_activity_summary" in str(report["limitations"])
     assert "merged" not in report["records"][0]["event"]
+
+
+def test_repository_discovery_gaps_remain_partial_in_saved_evidence(tmp_path):
+    """An empty wildcard result after failed discovery is not evidence of no work."""
+
+    from lensnode.agent_runtime.evidence_gate import _source_coverage_incomplete
+
+    result = {
+        "ok": True,
+        "since": "2026-10-07T16:00:00Z",
+        "until": "2026-10-08T16:00:00Z",
+        "repositories": [],
+        "repositories_truncated": True,
+        "source_coverage_complete": False,
+        "coverage": {"discovery_complete": False, "reasons": ["discovery_failed"]},
+    }
+    ledger = ActivityLedger(tmp_path / "private")
+    ledger.record(
+        "github", "connection", "1.0.0", "github_activity_summary", {"repositories": ["oneprolabs/*"]}, result
+    )
+
+    projected = _report_support.project_activity_result(
+        "summary", result, 900_000, {"summary": {"activity_report": True}}
+    )
+    assert projected["_evidence"]["complete"] is False
+    assert _source_coverage_incomplete(json.dumps(projected)) is True
+    assert ledger.report({"github_activity_summary"})["complete"] is False
 
 
 def test_exact_commit_duplicates_are_grouped_but_display_names_do_not_merge_providers(tmp_path):
@@ -179,22 +211,30 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
 
 
 @pytest.mark.parametrize("coverage", ["missing", "complete", "partial"])
-def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, monkeypatch, coverage):
+@pytest.mark.parametrize("host_incomplete", [False, True])
+def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, monkeypatch, coverage, host_incomplete):
     from datetime import datetime, timezone
 
     from lensnode.agent_runtime import runtime as runtime_module
 
-    ledger = ActivityLedger(tmp_path / "private")
     evidence = _result()
     evidence["possibly_truncated"] = coverage == "partial"
-    if coverage != "missing":
-        ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
     command = {
         "question": "总结 10/8，每个人的工作内容",
         "task": "general_chat",
-        "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
+        "run_uuid": "run-report",
+        "loaded_plugins": [{
+            "plugin_key": "jira", "plugin_version": "1.0.0", "connection_uuid": "connection",
+            "tools": [{"key": "jira_activity_summary"}],
+        }],
         "_deliverables": {"business-report.html": "business-candidate"},
     }
+    from lensnode.plugin_agent import prepare_agent_extensions
+
+    extensions = prepare_agent_extensions(command, tmp_path)
+    extensions.apply_policy(extensions.preferred_route, extensions.tools)
+    if coverage != "missing":
+        extensions.extensions[0].ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
     monkeypatch.setattr(
         runtime_module,
         "_run_agent_with_turn_limit",
@@ -205,7 +245,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
         command=command,
         question=command["question"],
         max_turns=0,
-        activity_ledger=ledger,
+        agent_extensions=extensions,
         runtime_mode=SimpleNamespace(execution_gates=False, general_chat=False),
         initial_messages=[],
         resume_state=None,
@@ -226,7 +266,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
         exit_span=lambda *args: None,
         emit_agent_event=lambda *args: None,
         emit_output=lambda text, **kwargs: outputs.append((text, kwargs)),
-        runtime_evidence={},
+        runtime_evidence={"evidence_completeness": "incomplete"} if host_incomplete else {},
         evidence_requirement="artifact",
         required_capabilities=[],
         capability_middleware=None,
@@ -237,8 +277,8 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
     assert result["answer"] == "Business summary based on retrieved evidence"
     assert not outputs
     assert command["_deliverables"] == {"business-report.html": "business-candidate"}
-    assert result["outcome"] == ("partial" if coverage == "partial" else "completed")
-    if coverage == "partial":
+    assert result["outcome"] == ("partial" if coverage == "partial" or host_incomplete else "completed")
+    if coverage == "partial" or host_incomplete:
         assert result["termination_detail"]["error_type"] == "verification"
 
 
@@ -256,7 +296,7 @@ def test_resumed_report_does_not_reuse_the_rejected_model_drafts_verdict(tmp_pat
 
     calls = []
     state = SimpleNamespace(
-        activity_ledger=ActivityLedger(tmp_path / "private"),
+        agent_extensions=SimpleNamespace(refresh_evidence=True),
         resume_state=SimpleNamespace(decision_gates={"answer_supported": "unsupported"}),
         decision_policy=SimpleNamespace(
             post_run_checks=lambda *args: calls.append(args) or {"answer_supported": "supported"}
@@ -270,7 +310,7 @@ def test_resumed_report_does_not_reuse_the_rejected_model_drafts_verdict(tmp_pat
 
 
 def test_private_source_evidence_is_removed_with_terminal_checkpoint_cleanup(tmp_path, monkeypatch):
-    from lensnode.activity_reports import activity_ledger_root
+    activity_ledger_root = _report_support.activity_ledger_root
     from lensnode.checkpoint import cleanup_run_checkpoint
 
     ledger = ActivityLedger(activity_ledger_root(tmp_path, "run-report"))

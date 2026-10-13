@@ -7,7 +7,16 @@ from langchain_core.messages import AIMessage, ToolMessage
 from lensnode.agent_runtime.capabilities import CapabilityBoundaryMiddleware
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.outcomes import _finalize_runtime_outcome
-from lensnode.agent_runtime.routing import _apply_delivery_contract
+from lensnode.plugin_package_loader import load_plugin_support
+
+_report_support = load_plugin_support("activity_reports")
+def _apply_delivery_contract(decision, question, history, skills, tools):
+    """Exercise the Plugin contract with an actual bound source."""
+
+    command = {"loaded_plugins": [{"plugin_key": "github", "plugin_version": "1.0.0",
+                                   "tools": [{"key": "github_activity_summary"}]}]}
+    return _report_support._apply_delivery_contract(decision, question, history, skills, tools, command)
+
 
 
 def test_report_skill_requires_artifact_even_when_classifier_only_requires_data():
@@ -99,7 +108,7 @@ def test_partial_activity_coverage_survives_checkpoint_and_marks_report_partial(
     middleware._record_result(
         request,
         ToolMessage(
-            content='{"ok":true,"projects_truncated":true,"projects":[]}',
+            content='{"ok":true,"projects_truncated":true,"projects":[],"_evidence":{"complete":false}}',
             tool_call_id="call-1",
         ),
     )
@@ -127,6 +136,7 @@ def test_one_successful_source_does_not_hide_another_missing_required_source():
                 "tool": "gitlab_activity_summary",
                 "source": "plugin:gitlab_activity_summary",
                 "request_sha256": "hash",
+                "coverage_complete": True,
             }
         ]
     )

@@ -1580,7 +1580,7 @@ def test_route_selection_uses_classifier_for_external_synthesis():
     model = Model()
     decision = agent_runtime._select_general_chat_route(
         model,
-        "汇总昨天的研发工作并生成报告",
+        "对比昨天与今天的研发进展",
         context_skill_contents=[],
         available_tools=[
             SimpleNamespace(
@@ -2239,7 +2239,7 @@ def test_route_selection_fallback_keeps_evidence_for_synthesis_request():
     model = Model()
     decision = agent_runtime._select_general_chat_route(
         model,
-        "帮我总结，每个人的上周五工作内容",
+        "对比这两个数据源的差异",
         history=[
             {"role": "user", "content": "帮我总结，每个人的昨天工作内容"},
             {"role": "assistant", "content": "统计周期：日（昨日）……"},
@@ -2248,7 +2248,7 @@ def test_route_selection_fallback_keeps_evidence_for_synthesis_request():
         ],
         available_tools=[
             SimpleNamespace(
-                name="github_activity_summary",
+                name="compare_remote_changes",
                 metadata={"capability_family": "plugin"},
             )
         ],
@@ -6793,153 +6793,6 @@ def test_general_chat_prompt_adds_subagent_guidance_for_plan_execute():
 
     assert "task subagent is available" in prompt
     assert "multiple task calls in one message" in prompt
-
-
-def test_general_chat_prompt_prefers_batch_activity_tool_for_reports():
-    prompt = agent_runtime._general_chat_system_prompt(
-        {
-            "question": "获取昨天的工作报告",
-            "runtime_route": "plan_execute",
-            "loaded_plugins": [
-                {"tools": [{"key": "github_activity_summary"}]}
-            ],
-        },
-        ["Produce an engineering activity report."],
-    )
-
-    assert "github_activity_summary" in prompt
-    assert "each requested period" in prompt
-    assert "Apply requested person and resource filters" in prompt
-
-
-def test_report_execution_contract_includes_every_available_batch_source():
-    prompt = agent_runtime._general_chat_system_prompt(
-        {
-            "question": "生成昨天的工程报告",
-            "runtime_route": "plan_execute",
-            "loaded_plugins": [
-                {"tools": [{"key": "jira_activity_summary"}]},
-                {"tools": [{"key": "gitlab_activity_summary"}]},
-            ],
-        },
-        ["Produce an engineering activity report."],
-    )
-
-    assert "jira_activity_summary" in prompt
-    assert "gitlab_activity_summary" in prompt
-    assert "each requested period" in prompt
-
-
-def test_explicit_activity_report_uses_high_confidence_plan_route():
-    decision = agent_runtime._high_confidence_report_route(
-        {
-            "question": "获取昨天的工作报告",
-            "loaded_plugins": [
-                {"tools": [{"key": "github_activity_summary"}]}
-            ],
-        }
-    )
-
-    assert decision == {
-        "intent": "action",
-        "complexity": "complex",
-        "route": "plan_execute",
-        "required_capabilities": ["plugin"],
-        "evidence_requirement": "tool_result",
-    }
-
-
-def test_jira_or_gitlab_batch_tool_enables_high_confidence_report_route():
-    for tool_key in ("jira_activity_summary", "gitlab_activity_summary"):
-        decision = agent_runtime._high_confidence_report_route(
-            {
-                "question": "生成昨天的工作报告",
-                "loaded_plugins": [{"tools": [{"key": tool_key}]}],
-            }
-        )
-
-        assert decision["route"] == "plan_execute"
-
-
-def test_activity_report_hides_non_batch_github_tools():
-    builtin = SimpleNamespace(name="save_deliverable", metadata={})
-    batch = SimpleNamespace(
-        name="github_activity_summary",
-        metadata={"plugin_key": "github"},
-    )
-    detail = SimpleNamespace(
-        name="github_pull_request_get",
-        metadata={"plugin_key": "github"},
-    )
-    jira = SimpleNamespace(
-        name="jira_issue_list",
-        metadata={"plugin_key": "jira"},
-    )
-
-    tools = agent_runtime._report_scoped_tools(
-        {
-            "question": "获取昨天的工作报告",
-            "runtime_route": "plan_execute",
-            "loaded_plugins": [
-                {"tools": [{"key": "github_activity_summary"}]}
-            ],
-        },
-        [builtin, batch, detail, jira],
-    )
-
-    assert tools == [builtin, batch, jira]
-
-
-def test_activity_report_hides_non_batch_tools_for_each_batch_source():
-    builtin = SimpleNamespace(name="save_deliverable", metadata={})
-    jira_batch = SimpleNamespace(
-        name="jira_activity_summary",
-        metadata={"plugin_key": "jira"},
-    )
-    jira_detail = SimpleNamespace(
-        name="jira_get_issue",
-        metadata={"plugin_key": "jira"},
-    )
-    gitlab_batch = SimpleNamespace(
-        name="gitlab_activity_summary",
-        metadata={"plugin_key": "gitlab"},
-    )
-    gitlab_detail = SimpleNamespace(
-        name="gitlab_search_code",
-        metadata={"plugin_key": "gitlab"},
-    )
-
-    tools = agent_runtime._report_scoped_tools(
-        {
-            "question": "获取昨天的工作报告",
-            "runtime_route": "plan_execute",
-            "loaded_plugins": [
-                {"tools": [{"key": "jira_activity_summary"}]},
-                {"tools": [{"key": "gitlab_activity_summary"}]},
-            ],
-        },
-        [builtin, jira_batch, jira_detail, gitlab_batch, gitlab_detail],
-    )
-
-    assert tools == [builtin, jira_batch, gitlab_batch]
-
-
-def test_activity_report_disables_repository_subagents():
-    runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
-    state = SimpleNamespace(
-        command={
-            "task": "general_chat",
-            "question": "获取昨天的工作报告",
-            "runtime_route": "plan_execute",
-            "loaded_plugins": [
-                {"tools": [{"key": "github_activity_summary"}]}
-            ],
-        },
-        runtime_mode=SimpleNamespace(general_chat=True),
-        route_decision={"route": "plan_execute"},
-    )
-
-    assert runtime._subagents_enabled(state) is False
 
 
 def test_general_chat_prompt_omits_subagent_guidance_for_simple_routes():

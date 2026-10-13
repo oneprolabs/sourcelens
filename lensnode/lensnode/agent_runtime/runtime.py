@@ -24,11 +24,6 @@ from ..agent_tools import (
     build_agent_tools,
     build_general_chat_tools,
 )
-from ..activity_reports import (
-    ActivityLedger,
-    activity_ledger_root,
-    build_activity_evidence_tool,
-)
 from ..checkpoint import (
     checkpoint_enabled,
     get_checkpoint_saver,
@@ -57,6 +52,7 @@ from ..planned_evidence import (
     validate_citations,
     validate_evidence_sufficiency,
 )
+from ..plugin_agent import AgentExtensions, prepare_agent_extensions
 from ..plugin_tools import (
     build_plugin_tools,
 )
@@ -118,7 +114,6 @@ from .resume import (
 )
 from .restrictions import NoTaskMiddleware as _NoTaskMiddleware
 from .routing import (
-    _apply_delivery_contract,
     _message_needs_retrieval,
     _parse_route_decision,
     _parse_route_decision_or_none,
@@ -134,9 +129,6 @@ from .system_prompts import (
     _context_guidance,
     _general_chat_guidance,
     _general_chat_system_prompt,
-    _activity_report_batch_tools,
-    _activity_report_expected_tools,
-    _is_activity_report,
     _is_general_chat,
     _knowledge_system_prompt,
     _subagent_guidance,
@@ -174,6 +166,16 @@ def _decision_attempt(state):
     )
 
 
+def _update_extension_evidence(state):
+    """Merge Plugin snapshots without discarding host-observed evidence gaps."""
+
+    extensions = getattr(state, "agent_extensions", AgentExtensions())
+    extension_evidence = extensions.evidence()
+    if state.runtime_evidence.get("evidence_completeness") == "incomplete":
+        extension_evidence.pop("evidence_completeness", None)
+    state.runtime_evidence.update(extension_evidence)
+
+
 def _post_run_decision_gates(state, answer):
     """Return advisory post-run gate verdicts, replaying resume metadata.
 
@@ -182,7 +184,11 @@ def _post_run_decision_gates(state, answer):
     """
 
     resume_state = getattr(state, "resume_state", None)
-    if resume_state is not None and resume_state.decision_gates and getattr(state, "activity_ledger", None) is None:
+    if (
+        resume_state is not None
+        and resume_state.decision_gates
+        and not getattr(getattr(state, "agent_extensions", None), "refresh_evidence", False)
+    ):
         return dict(resume_state.decision_gates)
     policy = getattr(state, "decision_policy", None)
     if policy is None:
@@ -245,45 +251,6 @@ def _build_evidence_middleware(state):
     )
 
 
-def _high_confidence_report_route(command):
-    """Route an explicit batch-capable report without a classifier call."""
-
-    if not _is_activity_report(command):
-        return None
-    return {
-        "intent": "action",
-        "complexity": "complex",
-        "route": "plan_execute",
-        "required_capabilities": ["plugin"],
-        "evidence_requirement": "tool_result",
-    }
-
-
-def _report_scoped_tools(command, tools):
-    """Expose only batch Tools for each available report source."""
-
-    if (
-        command.get("runtime_route") != "plan_execute"
-        or not _is_activity_report(command)
-    ):
-        return list(tools)
-    batch_tools = _activity_report_batch_tools(command)
-    batch_by_plugin = {
-        key.split("_", 1)[0]: key
-        for key in batch_tools
-    }
-    return [
-        tool
-        for tool in tools
-        if (
-            (getattr(tool, "metadata", None) or {}).get("plugin_key")
-            not in batch_by_plugin
-            or getattr(tool, "name", "")
-            == batch_by_plugin.get(
-                (getattr(tool, "metadata", None) or {}).get("plugin_key")
-            )
-        )
-    ]
 MAX_CONFIGURED_SUBAGENTS = 8
 
 _MAX_PRESENTED_CITATIONS = 5
@@ -554,6 +521,8 @@ class LensDeepAgentRuntime:
         normal agent loop.
         """
 
+        if getattr(getattr(state, "agent_extensions", None), "extensions", ()):
+            return None
         runtime_mode = getattr(state, "runtime_mode", None)
         if runtime_mode is None or getattr(
             runtime_mode, "general_chat", False
@@ -635,12 +604,12 @@ class LensDeepAgentRuntime:
         Smart Collaboration uses the configured local subagents.
         """
 
+        if not getattr(getattr(state, "agent_extensions", None), "subagents_allowed", True):
+            return False
         if self._is_smart_collaboration(state.command):
             return state.command.get("task") != "code_analysis"
         if not state.runtime_mode.general_chat:
             return state.command.get("task") != "code_analysis"
-        if _is_activity_report(state.command):
-            return False
         route_decision = getattr(state, "route_decision", None) or {}
         return route_decision.get("route") == "plan_execute"
 
@@ -1175,22 +1144,23 @@ class LensDeepAgentRuntime:
                 source_recorder=state.consulted_sources,
                 evidence_reranker=state.decision_ranker,
             )
-        state.activity_ledger = None
-        if state.runtime_mode.general_chat and _is_activity_report(state.command):
-            state.activity_ledger = ActivityLedger(activity_ledger_root(self.config.workspace_path, state.run_uuid))
+        state.agent_extensions = prepare_agent_extensions(
+            state.command,
+            getattr(self.config, "workspace_path", state.resources.root),
+            skills=state.resources.context_skill_contents,
+            tools=state.tools,
+            emit_event=state.emit_agent_event,
+        )
         state.plugin_tools = build_plugin_tools(
             state.command,
             self.config,
             self.http_client,
             emit_event=state.emit_agent_event,
             plugin_http_pool=self.plugin_http_pool,
-            activity_ledger=state.activity_ledger,
+            agent_extensions=state.agent_extensions,
         )
         state.tools.extend(state.plugin_tools)
-        if state.activity_ledger is not None:
-            state.tools.append(
-                build_activity_evidence_tool(state.activity_ledger, _activity_report_expected_tools(state.command))
-            )
+        state.tools.extend(state.agent_extensions.tools)
         state.decision_policy = build_decision_policy(
             state.command,
             self.config,
@@ -1240,7 +1210,7 @@ class LensDeepAgentRuntime:
             contribution.prompt_guidance
             for contribution in runtime_contributions
             if contribution.prompt_guidance
-        )
+        ) + state.agent_extensions.guidance
         always_visible_tool_prefixes = tuple(
             prefix
             for contribution in runtime_contributions
@@ -1258,6 +1228,8 @@ class LensDeepAgentRuntime:
             )
         )
         state.tools.extend(state.registered_mcp_tools)
+        if state.agent_extensions.extensions:
+            state.agent_extensions.validate_tool_names(state.tools)
         if state.resume_state is not None:
             _reject_unsafe_resume_tool_replay(
                 state.resume_state.messages,
@@ -1268,13 +1240,39 @@ class LensDeepAgentRuntime:
         state.required_capabilities = []
         state.route_decision = None
 
+    def _apply_execution_extensions(self, state, decision):
+        """Apply the same Plugin protocol constraints in every runtime mode."""
+
+        extensions = getattr(state, "agent_extensions", AgentExtensions())
+        policy = extensions.apply_policy(
+            decision,
+            [*getattr(state, "tools", []), *getattr(state, "mcp_tools", [])],
+        )
+        decision = dict(policy.route)
+        if policy.required_sources and decision.get("evidence_requirement", "none") == "none":
+            decision["evidence_requirement"] = "tool_result"
+        if extensions.extensions:
+            normalized = _parse_route_decision_or_none(json.dumps(decision))
+            if normalized is None:
+                raise RuntimeError("PLUGIN_AGENT_ROUTE_INVALID")
+            decision = {**decision, **normalized}
+        state.runtime_evidence["required_sources"] = list(policy.required_sources)
+        state.tools = extensions.filter_tools(getattr(state, "tools", []))
+        state.plugin_tools = extensions.filter_tools(getattr(state, "plugin_tools", []))
+        state.mcp_tools = extensions.filter_tools(getattr(state, "mcp_tools", []))
+        middleware = getattr(state, "mcp_middleware", None)
+        if extensions.extensions and middleware is not None:
+            middleware.restrict_tools(extensions.allowed_tool_names)
+        return decision
+
     def _route_runtime(self, state):
         """Select and handle the general-chat execution route."""
 
-        if self._is_smart_collaboration(state.command):
-            state.route_decision = {"route": "plan_execute"}
-            return None
-        if not state.runtime_mode.execution_gates:
+        extensions = getattr(state, "agent_extensions", AgentExtensions())
+        implicit_route = self._is_smart_collaboration(state.command) or not state.runtime_mode.execution_gates
+        if implicit_route and not extensions.extensions:
+            if self._is_smart_collaboration(state.command):
+                state.route_decision = {"route": "plan_execute"}
             return None
 
         routing_started_at = time.monotonic()
@@ -1296,9 +1294,19 @@ class LensDeepAgentRuntime:
                     self._seed_run_checkpoint(state)
                 except Exception:
                     LOGGER.exception("Failed to enable route checkpoint")
-            state.route_decision = _high_confidence_report_route(
-                state.command
-            ) or self._decision_policy(state).select_route(
+            default_route = (
+                {
+                    "intent": "informational",
+                    "complexity": "complex",
+                    "route": "plan_execute",
+                    "required_capabilities": [],
+                    "evidence_requirement": "none",
+                }
+                if implicit_route
+                else None
+            )
+            preferred_route = extensions.preferred_route or default_route
+            state.route_decision = preferred_route or self._decision_policy(state).select_route(
                 state.model,
                 state.question,
                 history=state.command.get("history"),
@@ -1312,21 +1320,15 @@ class LensDeepAgentRuntime:
                 has_bound_skills=bool(state.resources.skill_paths),
                 image_data_urls=state.command.get("image_data_urls"),
             )
-            state.route_decision = _apply_delivery_contract(
-                state.route_decision,
-                state.question,
-                state.command.get("history"),
-                state.resources.context_skill_contents,
-                [*state.tools, *state.mcp_tools],
+        state.route_decision = self._apply_execution_extensions(state, state.route_decision)
+        if not route_was_resumed and state.checkpoint_ready:
+            save_resume_metadata(
+                state.run_uuid,
+                self.config.workspace_path,
+                route_decision=state.route_decision,
+                history_assistant_turns=state.history_assistant_turns,
             )
-            if state.checkpoint_ready:
-                save_resume_metadata(
-                    state.run_uuid,
-                    self.config.workspace_path,
-                    route_decision=state.route_decision,
-                    history_assistant_turns=state.history_assistant_turns,
-                )
-                state.persist_execution_state()
+            state.persist_execution_state()
         state.emit_agent_event(
             "deepagents.runtime.stage.done",
             {
@@ -1342,22 +1344,6 @@ class LensDeepAgentRuntime:
             **state.command,
             "runtime_route": state.route_decision["route"],
         }
-        state_tools = getattr(state, "tools", [])
-        original_tool_count = len(state_tools)
-        state.tools = _report_scoped_tools(state.command, state_tools)
-        state.plugin_tools = _report_scoped_tools(
-            state.command,
-            getattr(state, "plugin_tools", []),
-        )
-        removed_tool_count = original_tool_count - len(state.tools)
-        if removed_tool_count:
-            state.emit_agent_event(
-                "deepagents.report.tools_scoped",
-                {
-                    "removed_tool_count": removed_tool_count,
-                    "remaining_tool_count": len(state.tools),
-                },
-            )
         state.emit_user_event(
             "route.resumed" if route_was_resumed else "route.selected",
             state.route_decision,
@@ -1366,12 +1352,6 @@ class LensDeepAgentRuntime:
             "evidence_requirement"
         ]
         state.runtime_evidence["artifact_required"] = state.evidence_requirement == "artifact"
-        if state.route_decision.get("intent") == "action" and (
-            _is_activity_report(state.command) or state.route_decision.get("delivery_contract") == "activity_report"
-        ):
-            state.runtime_evidence["required_sources"] = [
-                f"plugin:{key}" for key in sorted(_activity_report_expected_tools(state.command))
-            ]
         state.required_capabilities = state.route_decision[
             "required_capabilities"
         ]
@@ -1439,6 +1419,7 @@ class LensDeepAgentRuntime:
                         workspace_guide=state.command.get(
                             "workspace_guide", ""
                         ),
+                        runtime_guidance=getattr(state, "runtime_guidance", ()),
                     ),
                     messages=(
                         state.resume_state.messages
@@ -1474,19 +1455,31 @@ class LensDeepAgentRuntime:
             # The helper already published the answer when it streamed; a
             # run without an emitter has nothing to publish to either way.
             answer = _normalize_code_analysis_paths(answer, state.command)
+            outcome, termination_detail = "completed", {}
+            if extensions.extensions:
+                _update_extension_evidence(state)
+                outcome, termination_detail = _finalize_runtime_outcome(
+                    capability_middleware=None,
+                    evidence_requirement=state.evidence_requirement,
+                    required_capabilities=state.required_capabilities,
+                    truncated=False,
+                    stop_reason=state.model.stop_reason,
+                    execution_gate_enabled=False,
+                    runtime_evidence=state.runtime_evidence,
+                )
             return {
                 "answer": answer,
                 "samples": [],
                 "stop_reason": state.model.stop_reason,
                 "token_usage": state.model.token_usage,
-                "outcome": "completed",
-                "termination_detail": {},
+                "outcome": outcome,
+                "termination_detail": termination_detail,
             }
         state.capability_middleware = CapabilityBoundaryMiddleware(
             emit_event=state.emit_agent_event,
             required_capabilities=state.required_capabilities,
             require_initial_plan=(
-                state.route_decision["route"] == "plan_execute"
+                state.route_decision["route"] == "plan_execute" and state.runtime_mode.general_chat
             ),
             planning_reasoning_effort=getattr(
                 self.config,
@@ -1525,7 +1518,7 @@ class LensDeepAgentRuntime:
             else None
         )
         use_subagents = self._subagents_enabled(state)
-        dynamic_subagents = self._build_configured_subagents(state)
+        dynamic_subagents = self._build_configured_subagents(state) if use_subagents else []
         backend = _build_execution_backend(
             self.config,
             state.resources.root,
@@ -1856,15 +1849,7 @@ class LensDeepAgentRuntime:
             },
         )
         state.exit_span(loop_span)
-        activity_evidence = None
-        if getattr(state, "activity_ledger", None) is not None and state.activity_ledger.has_evidence():
-            activity_evidence = state.activity_ledger.report(_activity_report_expected_tools(state.command))
-            state.runtime_evidence["activity_report"] = {
-                "records": activity_evidence["records"],
-                "limitations": activity_evidence["limitations"],
-            }
-            if not activity_evidence["complete"]:
-                state.runtime_evidence["evidence_completeness"] = "incomplete"
+        _update_extension_evidence(state)
         state.emit_agent_event(
             "deepagents.runtime.done",
             {
@@ -1886,9 +1871,6 @@ class LensDeepAgentRuntime:
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
-        if activity_evidence is not None and not activity_evidence["complete"] and outcome == "completed":
-            outcome = "partial"
-            termination_detail = {"reason": "evidence_insufficient", "error_type": "verification"}
         if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
             outcome = "partial"
             termination_detail = _evidence_termination_detail("artifact")

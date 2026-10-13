@@ -111,9 +111,28 @@ def create_tool_execution_snapshot(
             connection.plugin_key,
             frozen_plugin.get("plugin_version"),
         )
+        allowed_scope = connection.allowed_scope
+        if connection.plugin_key == "github" and tool_key == "github_activity_summary":
+            frozen_scope = frozen_plugin.get("allowed_scope")
+            provider.validate_request(connection.endpoint, frozen_scope, tool_key, arguments)
+            provider.validate_request(connection.endpoint, allowed_scope, tool_key, arguments)
+            frozen_repositories = frozen_scope["repositories"]
+            current_repositories = allowed_scope["repositories"]
+            if frozen_repositories == ["*"]:
+                repositories = current_repositories
+            elif current_repositories == ["*"]:
+                repositories = frozen_repositories
+            else:
+                current_identities = {repository.casefold() for repository in current_repositories}
+                repositories = [
+                    repository for repository in frozen_repositories if repository.casefold() in current_identities
+                ]
+            if not repositories:
+                raise ToolProviderError("repository is outside connection scope")
+            allowed_scope = {"repositories": repositories}
         endpoint, normalized_arguments = provider.validate_request(
             connection.endpoint,
-            connection.allowed_scope,
+            allowed_scope,
             tool_key,
             arguments,
         )
@@ -129,7 +148,7 @@ def create_tool_execution_snapshot(
     resolved_config = {
         "endpoint": endpoint,
         "connection_config": deepcopy(connection.config),
-        "allowed_scope": deepcopy(connection.allowed_scope),
+        "allowed_scope": deepcopy(allowed_scope),
         "tool": {
             "key": tool_key,
             "capability": frozen_tool.get("capability"),

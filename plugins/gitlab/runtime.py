@@ -18,6 +18,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "gitlab"
 PLUGIN_VERSION = "1.0.0"
+TOOL_METADATA = {"gitlab_activity_summary": {"activity_report": True}}
 READ_MAX_BYTES = 200_000
 SEARCH_MAX_BYTES = 1_000_000
 ACTIVITY_DEFAULT_MAX_RESULTS = 500
@@ -647,3 +648,20 @@ def _get(client, url, token, params, max_bytes, truncate):
 def _status(status):
     if status < 400: return
     raise PluginRuntimeError({404: "GITLAB_NOT_FOUND", 401: "GITLAB_ACCESS_DENIED", 403: "GITLAB_ACCESS_DENIED", 429: "GITLAB_RATE_LIMITED"}.get(status, "GITLAB_REQUEST_FAILED"))
+
+
+def agent_extensions():
+    """Register Plugin-owned agent behavior through the generic host protocol."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    support = load_plugin_support("activity_reports")
+    return (("activity-report", support.prepare_activity_report),)
+
+
+def project_tool_result(tool_key, result, max_bytes):
+    """Declare source evidence coverage without host-side provider knowledge."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    return load_plugin_support("activity_reports").project_activity_result(tool_key, result, max_bytes, TOOL_METADATA)

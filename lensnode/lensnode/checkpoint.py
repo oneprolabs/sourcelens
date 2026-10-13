@@ -625,9 +625,9 @@ def _cleanup_expired_checkpoints(saver, active_run_uuids=(), workspace_path=None
         for run_uuid in run_uuids:
             saver.delete_thread(run_uuid)
             if workspace_path is not None:
-                from .activity_reports import cleanup_activity_evidence
+                from .plugin_agent import cleanup_plugin_state
 
-                cleanup_activity_evidence(workspace_path, run_uuid)
+                cleanup_plugin_state(workspace_path, run_uuid)
         if run_uuids:
             saver.conn.executemany(
                 "DELETE FROM lensnode_run_metadata WHERE run_uuid = ?",
@@ -654,12 +654,12 @@ def cleanup_run_checkpoint(run_uuid, workspace_path=None):
     """Delete the checkpoint thread for a terminal run, if any."""
 
     if workspace_path is not None:
-        from .activity_reports import cleanup_activity_evidence
+        from .plugin_agent import cleanup_plugin_state
 
         try:
-            cleanup_activity_evidence(workspace_path, run_uuid)
-        except OSError:
-            LOGGER.exception("Failed to clean up activity evidence for run %s", run_uuid)
+            cleanup_plugin_state(workspace_path, run_uuid)
+        except (OSError, RuntimeError):
+            LOGGER.exception("Failed to clean up Plugin state for run %s", run_uuid)
     if not checkpoint_enabled():
         return
     if workspace_path is None:

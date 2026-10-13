@@ -114,6 +114,13 @@ class DeferredMCPToolMiddleware(AgentMiddleware):
             ),
         )
 
+    def restrict_tools(self, allowed_tool_names):
+        """Remove disallowed tools from deferred discovery and promotion."""
+
+        with self._lock:
+            self._mcp_tools = {key: tool for key, tool in self._mcp_tools.items() if key in allowed_tool_names}
+            self._promoted.intersection_update(allowed_tool_names)
+
     def _search(self, query: str):
         """Promote remote tools whose names or descriptions match a query."""
 

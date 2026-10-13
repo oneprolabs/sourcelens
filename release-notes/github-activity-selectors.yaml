@@ -1,0 +1,16 @@
+type: improvement
+audience: user
+en: >-
+  GitHub activity reports now accept owner-wide and all-authorized repository
+  selectors. The Plugin expands them within Connection permissions, handles
+  repository discovery and batches, and reports incomplete coverage or request
+  failures instead of silently omitting GitHub activity. Report capabilities and
+  source-specific instructions are registered dynamically from bound Plugins.
+  Report workflows now communicate with the core runtime through a generic
+  extension protocol, keeping routing, evidence normalization, and delivery
+  policies in Plugins.
+zh-CN: >-
+  GitHub 活动报告支持按组织或全部授权范围查询仓库。插件在连接授权范围内自动展开仓库、
+  处理发现分页和批量查询，并明确报告覆盖不足或请求失败，避免静默遗漏 GitHub 活动。
+  报告能力与数据源使用规则随助手绑定的插件动态注册；报告路由、证据归一化和交付规则
+  移入插件，通过通用扩展协议与核心运行时协作。

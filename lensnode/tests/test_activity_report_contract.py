@@ -2,11 +2,29 @@
 
 import pytest
 
-from lensnode.agent_runtime.system_prompts import (
-    _activity_report_expected_tools,
-    _general_chat_system_prompt,
-    _is_activity_report,
-)
+from lensnode.plugin_package_loader import load_plugin_support
+
+_report_support = load_plugin_support("activity_reports")
+_activity_report_expected_tools = _report_support._activity_report_expected_tools
+_is_activity_report = _report_support._is_activity_report
+
+def _general_chat_system_prompt(command, skills):
+    """Assemble the host prompt with a registered Plugin contribution."""
+
+    from lensnode.agent_runtime.system_prompts import _system_prompt
+
+    return _system_prompt({}, {**command, "task": "general_chat"}, skills,
+                          runtime_guidance=(_report_support._report_execution_guidance(command),))
+
+
+def _activity_binding(source):
+    """Represent the identity and tools present in an actual frozen binding."""
+
+    return {
+        "plugin_key": source,
+        "plugin_version": "1.0.0",
+        "tools": [{"key": f"{source}_activity_summary"}],
+    }
 
 
 @pytest.mark.parametrize(
@@ -21,7 +39,7 @@ def test_work_summaries_receive_batch_contract_without_a_planned_route(question)
     command = {
         "question": question,
         "runtime_route": "direct_execute",
-        "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
+        "loaded_plugins": [_activity_binding("jira")],
     }
     assert _is_activity_report(command)
     prompt = _general_chat_system_prompt(command, [])
@@ -37,7 +55,7 @@ def test_code_summary_does_not_trigger_activity_report_routing():
     assert not _is_activity_report(
         {
             "question": "总结这个类的设计",
-            "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}],
+            "loaded_plugins": [_activity_binding("jira")],
         }
     )
 
@@ -45,7 +63,7 @@ def test_code_summary_does_not_trigger_activity_report_routing():
 @pytest.mark.parametrize("question", ["生成这个故障的根因报告", "Report a bug in this class", "分析测试报告"])
 def test_unrelated_reports_do_not_trigger_activity_report_routing(question):
     assert not _is_activity_report(
-        {"question": question, "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}]}
+        {"question": question, "loaded_plugins": [_activity_binding("jira")]}
     )
 
 
@@ -62,7 +80,7 @@ def test_unrelated_reports_do_not_trigger_activity_report_routing(question):
     ],
 )
 def test_filtered_or_multiple_period_reports_keep_the_model_completion_flow(question):
-    command = {"question": question, "loaded_plugins": [{"tools": [{"key": "jira_activity_summary"}]}]}
+    command = {"question": question, "loaded_plugins": [_activity_binding("jira")]}
     assert _is_activity_report(command)
     prompt = _general_chat_system_prompt(command, [])
     assert "each requested period" in prompt
@@ -74,16 +92,7 @@ def test_named_source_reports_do_not_require_unrequested_bound_sources():
     command = {
         "question": "总结昨天 GitHub 每个人的工作内容",
         "loaded_plugins": [
-            {
-                "tools": [
-                    {"key": key}
-                    for key in (
-                        "github_activity_summary",
-                        "gitlab_activity_summary",
-                        "jira_activity_summary",
-                    )
-                ]
-            }
+            _activity_binding(source) for source in ("github", "gitlab", "jira")
         ],
     }
     assert _activity_report_expected_tools(command) == {"github_activity_summary"}

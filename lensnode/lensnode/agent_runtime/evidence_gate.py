@@ -19,7 +19,7 @@ _RECHECK_GUIDANCE = (
     "fully supported by the evidence you retrieved. Do not answer from "
     "memory. Reuse retrieved source results and any saved evidence ledger "
     "first; correct unsupported claims using that evidence. Do not repeat "
-    "the same batch activity requests or treat truncated results as complete. "
+    "the same retrieval requests or treat truncated results as complete. "
     "If specific missing facts can be retrieved with available tools, batch "
     'alternative keywords with "|" in ONE search_workspace call (for '
     'example "昇腾|Ascend|910B") and read the most relevant matched files '
@@ -49,8 +49,8 @@ _CONVERGENCE_GUIDANCE = (
 )
 _DELIVERY_GUIDANCE = (
     "Stop broad searches and finish the required deliverable from the evidence already collected. "
-    "Write the final report file and call save_deliverable before the final answer. "
-    "Disclose missing or truncated sources in the report. A text answer or a promise to create a file "
+    "Write the requested final artifact and call save_deliverable before the final answer. "
+    "Disclose missing or truncated sources in the artifact. A text answer or a promise to create a file "
     "does not fulfill artifact delivery."
 )
 
@@ -311,7 +311,7 @@ def _message_text(message):
 
 
 def _source_coverage_incomplete(content):
-    """Recognize explicit coverage limits in activity summary contracts."""
+    """Read only the generic Plugin evidence envelope."""
 
     try:
         payload = json.loads(content)
@@ -319,24 +319,8 @@ def _source_coverage_incomplete(content):
         return False
     if not isinstance(payload, dict):
         return False
-    sources = [payload]
-    for key in ("projects", "repositories"):
-        items = payload.get(key)
-        if isinstance(items, list):
-            sources.extend(item for item in items if isinstance(item, dict))
-    for source in sources:
-        truncated = source.get("possibly_truncated")
-        if (
-            source.get("ok") is False
-            or source.get("source_coverage_complete") is False
-            or source.get("projects_truncated") is True
-            or source.get("truncated") is True
-            or truncated is True
-            or (isinstance(truncated, dict) and any(value is True for value in truncated.values()))
-            or bool(source.get("errors"))
-        ):
-            return True
-    return False
+    metadata = payload.get("_evidence")
+    return payload.get("ok") is False or (isinstance(metadata, dict) and metadata.get("complete") is False)
 
 
 def _tool_evidence(state):

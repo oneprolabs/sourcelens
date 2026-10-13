@@ -16,6 +16,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "github"
 PLUGIN_VERSION = "1.0.0"
+TOOL_METADATA = {"github_activity_summary": {"activity_report": True}}
 API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 READ_MAX_BYTES = 200_000
@@ -26,6 +27,10 @@ GET_MAX_ATTEMPTS = 3
 GET_RETRY_DELAY_SECONDS = 0.25
 ACTIVITY_DEFAULT_PER_PAGE = 50
 ACTIVITY_MAX_PAGES = 10
+ACTIVITY_MAX_REPOSITORIES = 500
+ACTIVITY_REPOSITORY_BATCH_SIZE = 50
+ACTIVITY_DISCOVERY_MAX_PAGES = 20
+ACTIVITY_DISCOVERY_PAGE_SIZE = 100
 ACTIVITY_RESOURCE_MAX = {
     "commits": 500,
     "pull_requests": 500,
@@ -86,7 +91,7 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
         raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
     _validate_runtime_arguments(key, arguments, config)
     if key == "github_activity_summary":
-        return _activity_summary(client, arguments, secret)
+        return _activity_summary(client, arguments, secret, config)
     if key == "github_read_file":
         return _read_file(client, arguments, secret)
     if key == "github_search_code":
@@ -270,10 +275,10 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
     raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
 
 
-def _activity_summary(client, arguments, secret):
+def _activity_summary(client, arguments, secret, config):
     """Return compact activity from approved repositories in one Tool call."""
 
-    repositories = arguments["repositories"]
+    repositories, coverage = _resolve_activity_repositories(client, arguments["repositories"], secret, config)
     since = arguments["since"]
     until = arguments["until"]
     per_page = _page_value(
@@ -293,55 +298,186 @@ def _activity_summary(client, arguments, secret):
         }
         for repository in repositories
     }
-    requests = [
-        (repository, resource)
-        for repository in repositories
-        for resource in ("commits", "pull_requests", "issues")
-    ]
-    workers = min(8, len(requests))
-    successful_resources = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                _activity_resource,
-                client,
-                repository,
-                resource,
-                since,
-                until,
-                per_page,
-                secret,
-            ): (repository, resource)
-            for repository, resource in requests
-        }
-        for future in as_completed(futures):
-            repository, resource = futures[future]
-            try:
-                items, possibly_truncated = future.result()
-            except PluginRuntimeError as exc:
-                results[repository].setdefault("errors", {})[resource] = str(
-                    exc
+    for offset in range(0, len(repositories), ACTIVITY_REPOSITORY_BATCH_SIZE):
+        batch = repositories[offset : offset + ACTIVITY_REPOSITORY_BATCH_SIZE]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_activity_resource, client, repository, resource, since, until, per_page, secret): (
+                    repository,
+                    resource,
                 )
-                continue
-            except httpx.HTTPError:
-                results[repository].setdefault("errors", {})[
-                    resource
-                ] = "GITHUB_REQUEST_FAILED"
-                continue
-            results[repository][resource] = items
-            results[repository]["possibly_truncated"][resource] = (
-                possibly_truncated
-            )
-            successful_resources += 1
-    if not successful_resources:
-        raise PluginRuntimeError("GITHUB_REQUEST_FAILED")
+                for repository in batch
+                for resource in ("commits", "pull_requests", "issues")
+            }
+            for future in as_completed(futures):
+                repository, resource = futures[future]
+                try:
+                    items, possibly_truncated = future.result()
+                except (PluginRuntimeError, httpx.HTTPError) as exc:
+                    error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
+                    results[repository].setdefault("errors", {})[resource] = error
+                    continue
+                results[repository][resource] = items
+                results[repository]["possibly_truncated"][resource] = possibly_truncated
+    source_complete = not coverage["repositories_truncated"] and all(
+        not result.get("errors") and not any(result["possibly_truncated"].values()) for result in results.values()
+    )
     return {
         "ok": True,
         "since": since,
         "until": until,
         "limits": {resource: maximum for resource, maximum in ACTIVITY_RESOURCE_MAX.items()},
         "repositories": [results[repository] for repository in repositories],
+        "repositories_truncated": coverage["repositories_truncated"],
+        "source_coverage_complete": source_complete,
+        "coverage": coverage,
     }
+
+
+def _activity_selector(value):
+    """Normalize one exact, owner-wide or connection-wide repository selector."""
+
+    if isinstance(value, str):
+        value = value.strip().strip("/")
+        if value == "*":
+            return value
+        if value.endswith("/*") and _repository_identity(f"{value[:-2]}/selector"):
+            return value
+    repository = _repository_identity(value)
+    if repository is None:
+        raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
+    return repository
+
+
+def _selector_matches(selector, repository):
+    """Match only a whole owner or exact repository, case-insensitively."""
+
+    return (
+        selector == "*"
+        or selector.casefold() == repository.casefold()
+        or (selector.endswith("/*") and selector[:-2].casefold() == repository.split("/")[0].casefold())
+    )
+
+
+def _discover_activity_pages(client, selector, secret):
+    """Yield validated repository pages within a shared per-selector budget."""
+
+    owner = quote(selector[:-2], safe="")
+    org_path = f"/orgs/{owner}/repos"
+    paths = ["/user/repos" if selector == "*" else org_path]
+    pages_read = 0
+    for path in paths:
+        seen = set()
+        page = 1
+        while True:
+            if pages_read >= ACTIVITY_DISCOVERY_MAX_PAGES:
+                raise PluginRuntimeError("GITHUB_DISCOVERY_PAGE_LIMIT")
+            params = {"per_page": ACTIVITY_DISCOVERY_PAGE_SIZE, "page": page, "sort": "full_name"}
+            if path == "/user/repos":
+                params["affiliation"] = "owner,collaborator,organization_member"
+            try:
+                payload = _json_get(client, path, secret, params)
+            except PluginRuntimeError as exc:
+                if path == org_path and page == 1 and str(exc) == "GITHUB_NOT_FOUND":
+                    paths.append(f"/users/{owner}/repos")
+                    if secret:
+                        paths.append("/user/repos")
+                    break
+                raise
+            pages_read += 1
+            items = _items(payload)
+            repositories = [_repository_identity(item.get("full_name")) for item in items]
+            if any(repository is None for repository in repositories):
+                raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
+            yield repositories
+            if len(items) < ACTIVITY_DISCOVERY_PAGE_SIZE:
+                break
+            identities = {repository.casefold() for repository in repositories}
+            if not identities.difference(seen):
+                raise PluginRuntimeError("GITHUB_DISCOVERY_STALLED")
+            seen.update(identities)
+            page += 1
+
+
+def _resolve_activity_repositories(client, selectors, secret, config):
+    """Expand selectors inside the frozen scope and disclose bounded discovery."""
+
+    selectors = [_activity_selector(value) for value in selectors]
+    scope = _runtime_scope(config).get("repositories")
+    if not isinstance(scope, list) or not scope:
+        raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
+    unrestricted = scope == ["*"]
+    if not unrestricted and any(_repository_identity(value) is None for value in scope):
+        raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
+    if unrestricted and "*" in selectors and not secret:
+        raise PluginRuntimeError(
+            "GITHUB_AUTHENTICATION_REQUIRED",
+            reason="OWNER_SELECTOR_REQUIRED",
+            hint="Anonymous access with an all-repositories Connection requires owner/* or explicit repositories.",
+        )
+    coverage = {
+        "requested_selectors": selectors,
+        "resolved_repositories": [],
+        "discovery_complete": True,
+        "repositories_truncated": False,
+        "reasons": [],
+        "discovery_errors": [],
+        "limits": {
+            "repositories": ACTIVITY_MAX_REPOSITORIES,
+            "discovery_pages_per_selector": ACTIVITY_DISCOVERY_MAX_PAGES,
+        },
+    }
+    repositories = {}
+
+    def add(repository):
+        """Keep a bounded, deterministic set of approved repository identities."""
+
+        _validate_repository_scope(repository, _runtime_scope(config))
+        identity = repository.casefold()
+        if identity not in repositories:
+            if len(repositories) >= ACTIVITY_MAX_REPOSITORIES:
+                coverage["repositories_truncated"] = True
+                if "repository_limit" not in coverage["reasons"]:
+                    coverage["reasons"].append("repository_limit")
+                return False
+            repositories[identity] = repository
+        return True
+
+    for selector in selectors:
+        if "*" not in selector:
+            add(selector)
+    if not unrestricted:
+        for repository in scope:
+            repository = _repository_identity(repository)
+            if any(_selector_matches(selector, repository) for selector in selectors):
+                add(repository)
+    else:
+        discovery_selectors = list(dict.fromkeys(selector for selector in selectors if "*" in selector))
+        for selector in discovery_selectors:
+            try:
+                for discovered in _discover_activity_pages(client, selector, secret):
+                    for repository in discovered:
+                        if _selector_matches(selector, repository) and not add(repository):
+                            break
+                    if "repository_limit" in coverage["reasons"]:
+                        coverage["discovery_complete"] = False
+                        break
+            except (PluginRuntimeError, httpx.HTTPError) as exc:
+                error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
+                reason = {
+                    "GITHUB_DISCOVERY_PAGE_LIMIT": "discovery_page_limit",
+                    "GITHUB_DISCOVERY_STALLED": "discovery_stalled",
+                }.get(error, "discovery_failed")
+                coverage["reasons"].append(reason)
+                coverage["discovery_complete"] = False
+                if reason == "discovery_failed":
+                    coverage["discovery_errors"].append({"selector": selector, "error": error})
+            if "repository_limit" in coverage["reasons"]:
+                break
+    coverage["repositories_truncated"] |= not coverage["discovery_complete"]
+    coverage["reasons"] = list(dict.fromkeys(coverage["reasons"]))
+    coverage["resolved_repositories"] = list(repositories.values())
+    return coverage["resolved_repositories"], coverage
 
 
 def _activity_resource(
@@ -1015,11 +1151,10 @@ def _validate_runtime_arguments(key, arguments, config):
             raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
         scope = _runtime_scope(config)
         for repository in repositories:
-            _validate_repository_scope(repository, scope)
-        identities = {
-            _repository_identity(repository).casefold()
-            for repository in repositories
-        }
+            selector = _activity_selector(repository)
+            if "*" not in selector:
+                _validate_repository_scope(selector, scope)
+        identities = {_activity_selector(repository).casefold() for repository in repositories}
         if len(identities) != len(repositories):
             raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
         since = _timestamp(arguments.get("since"))
@@ -1379,3 +1514,20 @@ def _status(status):
     errors = {404: "GITHUB_NOT_FOUND", 401: "GITHUB_ACCESS_DENIED",
               403: "GITHUB_ACCESS_DENIED", 429: "GITHUB_RATE_LIMITED"}
     raise PluginRuntimeError(errors.get(status, "GITHUB_REQUEST_FAILED"))
+
+
+def agent_extensions():
+    """Register Plugin-owned agent behavior through the generic host protocol."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    support = load_plugin_support("activity_reports")
+    return (("activity-report", support.prepare_activity_report),)
+
+
+def project_tool_result(tool_key, result, max_bytes):
+    """Declare source evidence coverage without host-side provider knowledge."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    return load_plugin_support("activity_reports").project_activity_result(tool_key, result, max_bytes, TOOL_METADATA)

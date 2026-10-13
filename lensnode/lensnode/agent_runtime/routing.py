@@ -24,8 +24,8 @@ ROUTE_LENGTH_FINISH_REASONS = {
 }
 EXTERNAL_EVIDENCE_PATTERN = re.compile(
     r"\b(current|fetch|latest|query|status|today|yesterday)\b|"
-    r"今天|动态|工作情况|日报|周报|月报|季报|年报|昨天|"
-    r"最新|查询|获取|统计|进展|工作报告",
+    r"今天|动态|昨天|"
+    r"最新|查询|获取|统计|进展",
     re.IGNORECASE,
 )
 ARTIFACT_REQUEST_PATTERN = re.compile(
@@ -33,19 +33,9 @@ ARTIFACT_REQUEST_PATTERN = re.compile(
     r"交付|仪表盘|导出|文件|看板",
     re.IGNORECASE,
 )
-ACTIVITY_REPORT_PATTERN = re.compile(
-    r"工作内容|工作情况|工作汇总|日报|周报|月报|activity report|engineering report",
-    re.IGNORECASE,
-)
-DELIVERY_FOLLOWUP_PATTERN = re.compile(
-    r"^(?:继续|重新生成.*|继续.*生成.*|补.*html.*)$|"
-    r"(?:为什么|为何|怎么).*(?:没有|没|未).*(?:html|文件|附件)|"
-    r"\b(?:continue|regenerate|missing html|missing file)\b",
-    re.IGNORECASE,
-)
 COMPLEX_SYNTHESIS_PATTERN = re.compile(
-    r"\b(report|summary|summarize|compare|comparison|audit)\b|"
-    r"报告|汇总|总结|归纳|对比|审计",
+    r"\b(compare|comparison|audit)\b|"
+    r"对比|审计",
     re.IGNORECASE,
 )
 PROTECTED_DISCLOSURE_PATTERN = re.compile(
@@ -283,51 +273,6 @@ def _enforce_route_evidence_invariants(decision):
             else "tool_result"
         )
     return decision
-
-
-def _apply_delivery_contract(decision, question, history, skills, tools):
-    """Keep a report Skill's required artifact in execution and completion checks."""
-
-    text = str(question or "")
-    if PROTECTED_DISCLOSURE_PATTERN.search(text) or re.search(
-        r"不要.*(?:工具|文件|html)|仅.*文字|只.*文字|什么是|是什么意思|\b(?:no tools|text only|what is)\b",
-        text,
-        re.IGNORECASE,
-    ):
-        return decision
-    if decision.get("evidence_requirement") == "user_input" or decision.get("route") == "capability_unavailable":
-        return decision
-    tool_names = {getattr(tool, "name", "") for tool in tools or []}
-    has_report_tools = any(name.endswith("_activity_summary") for name in tool_names)
-    skill_delivers = any("save_deliverable" in str(skill) for skill in skills or [])
-    prior_reports = False
-    for turn in reversed((history or [])[-8:]):
-        if not isinstance(turn, dict) or turn.get("role") != "user":
-            continue
-        prior_text = str(turn.get("content") or "")
-        if ACTIVITY_REPORT_PATTERN.search(prior_text):
-            prior_reports = True
-            break
-        if not DELIVERY_FOLLOWUP_PATTERN.search(prior_text):
-            break
-    report_request = bool(ACTIVITY_REPORT_PATTERN.search(text)) or bool(
-        prior_reports and DELIVERY_FOLLOWUP_PATTERN.search(text)
-    )
-    if not (has_report_tools and "save_deliverable" in tool_names and skill_delivers and report_request):
-        return decision
-    capabilities = list(decision.get("required_capabilities") or [])
-    for capability in ("skill", "plugin", "artifact_delivery"):
-        if capability not in capabilities:
-            capabilities.append(capability)
-    return {
-        **decision,
-        "route": "plan_execute",
-        "intent": "action",
-        "complexity": "complex",
-        "evidence_requirement": "artifact",
-        "required_capabilities": capabilities,
-        "delivery_contract": "activity_report",
-    }
 
 
 def _select_general_chat_route(
@@ -652,10 +597,8 @@ def _fallback_route_decision(
             )
         )
     )
-    # A synthesis request with evidence capabilities is treated as needing
-    # evidence even without an explicit external-evidence keyword, so a
-    # "总结…工作内容" style request is never silently downgraded to a
-    # tool-free answer when the classifier is unusable.
+    # Comparisons with available sources require evidence even when
+    # the request does not explicitly ask for external retrieval.
     requires_evidence = external_evidence or (
         complex_synthesis and bool(evidence_capabilities)
     )
