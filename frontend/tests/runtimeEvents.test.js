@@ -25,9 +25,63 @@ import {
   summarizePlanProgress,
   terminalSyncEvent,
   runtimeOutcomeNotice,
+  runtimeStateFor,
   workflowProgressSource
 } from '../src/pages/lens/runtimeEvents.js'
 import { createStreamTextBuffer } from '../src/pages/lens/streamBuffer.js'
+
+test('restores active history without closing unfinished plans or Skill activity', () => {
+  for (const status of ['queued', 'running', 'streaming', undefined]) {
+    const state = runtimeStateFor({
+      status,
+      steps: [
+        {
+          visibility: 'user',
+          event_type: 'plan.updated',
+          payload: {
+            revision: 1,
+            steps: [
+              { id: 'query', title: 'Query invoices', status: 'in_progress' },
+              { id: 'summary', title: 'Summarize invoices', status: 'pending' }
+            ]
+          }
+        },
+        {
+          visibility: 'user',
+          event_type: 'activity.recorded',
+          payload: {
+            id: 'skill', kind: 'querying_data', stage_kind: 'data_query', status: 'in_progress',
+            plan_step_id: 'query'
+          }
+        }
+      ]
+    })
+    assert.deepEqual(state.plan.map((item) => item.status), ['in_progress', 'pending'])
+    assert.equal(state.activities[0].status, 'in_progress')
+    assert.equal(summarizePlanProgress(state.plan).isTerminal, false)
+  }
+})
+
+test('restores genuine partial, failed, cancelled and clarification outcomes', () => {
+  for (const status of ['done', 'failed', 'cancelled', 'awaiting_user_input']) {
+    const state = runtimeStateFor({
+      status,
+      outcome: 'partial',
+      termination_detail: { reason: 'execution_failed' },
+      steps: [{
+        visibility: 'user',
+        event_type: 'plan.updated',
+        payload: { revision: 1, steps: [
+          { id: 'query', title: 'Query invoices', status: 'in_progress' },
+          { id: 'summary', title: 'Summarize invoices', status: 'pending' }
+        ] }
+      }]
+    })
+    assert.equal(state.outcome, 'partial')
+    assert.equal(state.terminationDetail.reason, 'execution_failed')
+    assert.equal(state.plan[0].status, status === 'awaiting_user_input' ? 'awaiting_user_input' : 'failed')
+  }
+})
 
 test('batches streamed answer deltas into one render frame', () => {
   const frames = []

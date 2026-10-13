@@ -529,7 +529,7 @@
                         structuredProgressText(
                           message._runtimeState,
                           message.thinking.duration_seconds,
-                          true
+                          isTerminalRunStatus(message.thinking.status)
                         )
                       }}
                     </span>
@@ -1997,6 +1997,7 @@ import {
   summarizeStageProgress,
   terminalSyncEvent,
   runtimeOutcomeNotice,
+  runtimeStateFor,
   workflowProgressSource
 } from '@/pages/lens/runtimeEvents'
 import {
@@ -2906,23 +2907,6 @@ const liveProgressText = computed(() => {
     fallbackText: liveStatusText.value
   })
 })
-
-function runtimeStateFor(thinking) {
-  let state = createRuntimeState()
-  for (const event of thinking?.steps || []) {
-    state = applyRuntimeEvent(state, event)
-  }
-  return applyRuntimeEvent(state, {
-    type:
-      thinking?.status === 'awaiting_user_input'
-        ? 'awaiting_user_input'
-        : 'done',
-    status: thinking?.status,
-    outcome: thinking?.outcome,
-    clarification_answered_at: thinking?.clarification_answered_at,
-    termination_detail: thinking?.termination_detail
-  })
-}
 
 function clarificationRequestFor(message) {
   const request = message?._runtimeState?.clarificationRequest
