@@ -1,5 +1,9 @@
 # TypeSafe AI Plugin
 
+This Plugin is retired from management and new Runs. Configure TypeSafe as a
+decision model in model management instead. The package remains available only
+for previously frozen Runs during the transition to agentcore-metering 0.4.0.
+
 This built-in SourceLens Plugin exposes TypeSafe AI System One as a bounded,
 read-only decision capability. The primary Agent model still owns prose,
 reasoning, and the workflow; this Plugin only supplies typed judgments that

@@ -813,6 +813,8 @@ def _trajectory_runtime_event_type(agent_event):
     """Project internal runtime names onto the trajectory vocabulary."""
 
     name = str(agent_event)
+    if name in {"model.started", "model.completed", "model.failed"}:
+        return name
     if "summarization.compacted" in name:
         return "compaction.completed"
     if "summarization" in name:

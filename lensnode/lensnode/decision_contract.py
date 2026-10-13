@@ -42,6 +42,8 @@ def rank_score(result, target_option=None):
             return None
         return float(probability)
     if result.kind != "score" or not isinstance(result.value, dict):
+        if result.kind == "score" and type(result.value) in (int, float):
+            return float(result.value)
         return None
     total = 0.0
     for key, probability in result.value.items():

@@ -126,7 +126,7 @@
                 {{ t('lensAdmin.placeholders.selectModel') }}
               </option>
               <option
-                v-for="c in llmConfigOptions"
+                v-for="c in chatModelOptions"
                 :key="c.uuid"
                 :value="c.uuid"
               >
@@ -140,6 +140,149 @@
                 )
               }}
             </p>
+          </FormRow>
+          <FormRow :label="t('lensAdmin.fields.decisionModel')">
+            <BaseSelect v-model="form.decision_model_ref">
+              <option value="">
+                {{ t('lensAdmin.wizard.noDecisionModel') }}
+              </option>
+              <option
+                v-for="config in decisionModelOptions"
+                :key="config.uuid"
+                :value="config.uuid"
+              >
+                {{ formatLLMConfigLabel(config) }}
+              </option>
+            </BaseSelect>
+            <p class="mt-1 text-xs text-ink-500">
+              {{ t('lensAdmin.wizard.decisionModelHint') }}
+            </p>
+            <router-link
+              v-if="isAdmin && !decisionModelOptions.length"
+              to="/management/llm/config"
+              class="mt-1 block text-xs text-brand-700 underline"
+            >
+              {{ t('lensAdmin.wizard.configureDecisionModel') }}
+            </router-link>
+            <div
+              v-if="form.decision_model_ref"
+              class="mt-3 space-y-3 rounded-lg border border-line p-3"
+            >
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label
+                  class="flex cursor-pointer items-center gap-2 text-xs text-ink-700"
+                >
+                  <input
+                    type="radio"
+                    name="builtin-decision-mode"
+                    class="h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
+                    :checked="form.decision_auto !== false"
+                    @change="setBuiltinDecisionAuto(true)"
+                  />
+                  {{ t('lensAdmin.wizard.decisionAutomatic') }}
+                </label>
+                <label
+                  class="flex cursor-pointer items-center gap-2 text-xs text-ink-700"
+                >
+                  <input
+                    type="radio"
+                    name="builtin-decision-mode"
+                    class="h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
+                    :checked="form.decision_auto === false"
+                    @change="setBuiltinDecisionAuto(false)"
+                  />
+                  {{ t('lensAdmin.wizard.decisionModeAdvanced') }}
+                </label>
+              </div>
+              <div v-if="form.decision_auto === false" class="space-y-3">
+                <div
+                  v-for="gate in builtinGates"
+                  :key="gate.key"
+                  class="space-y-2 rounded-md bg-surface-sunken p-3"
+                >
+                  <label
+                    class="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-800"
+                  >
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                      :checked="Boolean(form.decision_gates?.[gate.key])"
+                      @change="
+                        toggleBuiltinDecision(
+                          'decision_gates',
+                          gate,
+                          $event.target.checked
+                        )
+                      "
+                    />
+                    {{ decisionTitle('', gate) }}
+                  </label>
+                  <p class="pl-6 text-xs leading-5 text-ink-500">
+                    {{ decisionDescription('', gate) }}
+                  </p>
+                  <div
+                    v-if="
+                      form.decision_gates?.[gate.key] && gate.kind === 'noul'
+                    "
+                    class="grid grid-cols-1 gap-3 pl-6 sm:grid-cols-2"
+                  >
+                    <label class="text-xs text-ink-500"
+                      >{{ t('lensAdmin.wizard.decisionGateThreshold') }}
+                      <input
+                        v-model.number="form.decision_gates[gate.key].threshold"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="form-input mt-1"
+                      />
+                    </label>
+                    <label class="text-xs text-ink-500"
+                      >{{ t('lensAdmin.wizard.decisionGateMargin') }}
+                      <input
+                        v-model.number="form.decision_gates[gate.key].margin"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="form-input mt-1"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div class="space-y-2 border-t border-line pt-3">
+                <p class="text-xs font-medium text-ink-700">
+                  {{ t('lensAdmin.wizard.decisionAnalyses') }}
+                </p>
+                <label
+                  v-for="analysis in builtinAnalyses"
+                  :key="analysis.key"
+                  class="flex cursor-pointer items-start gap-2 rounded-md bg-surface-sunken p-3"
+                >
+                  <input
+                    type="checkbox"
+                    class="mt-0.5 h-4 w-4 rounded border-line text-brand-600 focus:ring-brand-500"
+                    :checked="Boolean(form.decision_analyses?.[analysis.key])"
+                    @change="
+                      toggleBuiltinDecision(
+                        'decision_analyses',
+                        analysis,
+                        $event.target.checked
+                      )
+                    "
+                  />
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-xs font-medium text-ink-800">
+                      {{ decisionTitle('', analysis) }}
+                    </span>
+                    <span class="mt-0.5 block text-xs leading-5 text-ink-500">
+                      {{ decisionDescription('', analysis) }}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
           </FormRow>
           <FormRow
             v-if="!isSmartMode"
@@ -1062,7 +1205,9 @@
                       {{ t('lensAdmin.wizard.decisionGatesHint') }}
                     </p>
                     <div class="flex items-center gap-4">
-                      <label class="flex items-center gap-1 text-xs text-ink-700">
+                      <label
+                        class="flex items-center gap-1 text-xs text-ink-700"
+                      >
                         <input
                           type="radio"
                           name="decision-mode"
@@ -1072,7 +1217,9 @@
                         />
                         {{ t('lensAdmin.wizard.decisionModeAuto') }}
                       </label>
-                      <label class="flex items-center gap-1 text-xs text-ink-700">
+                      <label
+                        class="flex items-center gap-1 text-xs text-ink-700"
+                      >
                         <input
                           type="radio"
                           name="decision-mode"
@@ -1631,6 +1778,7 @@ const props = defineProps({
   pluginManifests: { type: Object, default: () => ({}) },
   pluginIconUrls: { type: Object, default: () => ({}) },
   llmConfigOptions: { type: Array, default: () => [] },
+  decisionCatalog: { type: Object, default: () => ({ decisions: [] }) },
   datasourceOptions: { type: Array, default: () => [] },
   saving: Boolean,
   formError: { type: String, default: '' }
@@ -1654,6 +1802,7 @@ const collaborationMemberOptions = computed(() =>
 const activePluginConnections = computed(() =>
   props.pluginConnections.filter((connection) => {
     if (connection.status !== 'active') return false
+    if (connection.plugin_key === 'typesafe') return false
     const manifest = props.pluginManifests?.[connection.plugin_key]
     if (manifest?.plugin_type === 'decision') return true
     const tools = Array.isArray(manifest?.tools) ? manifest.tools : []
@@ -2076,6 +2225,58 @@ const compatibleLensnodes = computed(() =>
   )
 )
 
+const chatModelOptions = computed(() =>
+  props.llmConfigOptions.filter(
+    (config) => !config.model_type || config.model_type === 'llm'
+  )
+)
+const decisionModelOptions = computed(() =>
+  props.llmConfigOptions.filter(
+    (config) => config.model_type === 'decision' && config.is_active !== false
+  )
+)
+const builtinGates = computed(() =>
+  (props.decisionCatalog.decisions || []).filter(
+    (decision) =>
+      decision.mode === 'control' &&
+      decision.applies_to.includes(props.form.capability)
+  )
+)
+const builtinAnalyses = computed(() =>
+  (props.decisionCatalog.decisions || []).filter(
+    (decision) => decision.mode === 'analysis'
+  )
+)
+
+function setBuiltinDecisionAuto(enabled) {
+  props.form.decision_auto = enabled
+  props.form.decision_gates = enabled
+    ? {}
+    : Object.fromEntries(
+        builtinGates.value.map((gate) => [gate.key, { ...gate.defaults }])
+      )
+}
+
+function toggleBuiltinDecision(field, decision, enabled) {
+  const values = { ...(props.form[field] || {}) }
+  if (enabled) values[decision.key] = { ...(decision.defaults || {}) }
+  else delete values[decision.key]
+  props.form[field] = values
+}
+
+watch(
+  () => props.form.capability,
+  () => {
+    if (!props.decisionCatalog.decisions?.length) return
+    const keys = new Set(builtinGates.value.map((gate) => gate.key))
+    props.form.decision_gates = Object.fromEntries(
+      Object.entries(props.form.decision_gates || {}).filter(([key]) =>
+        keys.has(key)
+      )
+    )
+  }
+)
+
 const DEFAULT_GATE_THRESHOLD = 0.5
 const DEFAULT_GATE_MARGIN = 0.1
 
@@ -2168,8 +2369,7 @@ function selectedDecisionConnectionUuid() {
     (binding) => binding.connection_uuid
   )
   const selected = activePluginConnections.value.find(
-    (conn) =>
-      isDecisionConnection(conn) && boundUuids.includes(conn.uuid)
+    (conn) => isDecisionConnection(conn) && boundUuids.includes(conn.uuid)
   )
   return selected?.uuid || ''
 }
@@ -2257,12 +2457,18 @@ function pluginDisplayName(pluginKey) {
 }
 
 function decisionTitle(pluginKey, decision) {
-  const key = `lensAdmin.plugins.${pluginKey}.decisions.${decision?.key}.title`
+  const prefix = pluginKey
+    ? `lensAdmin.plugins.${pluginKey}`
+    : 'lensAdmin.decisionSettings'
+  const key = `${prefix}.decisions.${decision?.key}.title`
   return te(key) ? t(key) : humanizeDecisionKey(decision?.key)
 }
 
 function decisionDescription(pluginKey, decision) {
-  const key = `lensAdmin.plugins.${pluginKey}.decisions.${decision?.key}.description`
+  const prefix = pluginKey
+    ? `lensAdmin.plugins.${pluginKey}`
+    : 'lensAdmin.decisionSettings'
+  const key = `${prefix}.decisions.${decision?.key}.description`
   if (te(key)) return t(key)
   return decision?.summary || ''
 }

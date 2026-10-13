@@ -1,0 +1,5 @@
+type: feature
+audience: user
+en: Configure optional decision models alongside chat models, and select them on assistants for evidence checks and candidate ranking. Unconfigured assistants keep their existing processing flow. TypeSafe Plugin is retired and usable existing configurations are migrated automatically.
+zh-CN: 支持在模型管理中配置可选的决策模型，并在助手中选用以执行证据校验和候选排序。未配置时沿用原有处理链路。TypeSafe 插件下线，可用的已有配置自动迁移。
+es: Configure modelos de decisión opcionales junto a los modelos de chat y selecciónelos en asistentes para comprobar evidencias y ordenar candidatos. Los asistentes sin configurar mantienen su flujo existente. El Plugin de TypeSafe se retira y sus configuraciones existentes utilizables se migran automáticamente.

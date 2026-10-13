@@ -16,6 +16,7 @@ CONNECTION_WRITE_TARGET_PATTERN = re.compile(
     r"allowed_scope\.[a-z][a-z0-9_-]{0,63})$"
 )
 SUPPORTED_PROTOCOL_VERSION = 1
+RETIRED_PLUGIN_KEYS = frozenset({"typesafe"})
 SUPPORTED_CAPABILITY_FAMILIES = frozenset({"plugin", "decision"})
 PLUGIN_TYPES = frozenset({"integration", "decision"})
 DECISION_MODES = frozenset({"control", "analysis"})

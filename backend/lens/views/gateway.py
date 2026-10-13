@@ -309,7 +309,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         return Response(data)
 
     @staticmethod
-    def _acquire_parent_budget_lock(run, allow_overage=False):
+    def _acquire_parent_budget_lock(run, allow_overage=False, wait_timeout_s=RUN_BUDGET_WAIT_TIMEOUT_S):
         """Serialize metered calls for one Run tree at its budget boundary."""
 
         if run is None:
@@ -329,7 +329,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             return "disabled"
         token = uuid.uuid4().hex
         key = f"lens:run-budget-lock:{root.uuid}"
-        deadline = time.monotonic() + RUN_BUDGET_WAIT_TIMEOUT_S
+        deadline = time.monotonic() + wait_timeout_s
         while time.monotonic() < deadline:
             if cache.add(key, token, RUN_BUDGET_LOCK_TIMEOUT_S):
                 usage_ids = [str(root.uuid)]

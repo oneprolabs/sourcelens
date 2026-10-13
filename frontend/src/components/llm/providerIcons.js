@@ -1,5 +1,8 @@
 const LOCAL_PROVIDER_ICON_MODULES = import.meta.glob(
-  '/src/assets/provider-icons/lobehub/*.svg',
+  [
+    '/src/assets/provider-icons/*.svg',
+    '/src/assets/provider-icons/lobehub/*.svg'
+  ],
   { eager: true, import: 'default' }
 )
 

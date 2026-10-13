@@ -195,7 +195,7 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
 
 | 包 | 最低版本 | INSTALLED_APPS | 路由前缀 | 功能 |
 |---|---|---|---|---|
-| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 用量追踪 |
+| `agentcore-metering` | `0.4.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 和决策模型管理、调用及用量追踪 |
 | `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` | 统一任务管理 |
 | `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` | 飞书通知 |
 

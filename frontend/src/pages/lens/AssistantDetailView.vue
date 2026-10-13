@@ -118,6 +118,17 @@
                 <dd>{{ agentRoundsLabel }}</dd>
               </div>
               <div>
+                <dt>{{ t('lensAdmin.fields.decisionModel') }}</dt>
+                <dd>
+                  {{
+                    modelLabel(
+                      assistant.decision_model_name,
+                      assistant.decision_model_ref
+                    )
+                  }}
+                </dd>
+              </div>
+              <div>
                 <dt>{{ t('lensAdmin.fields.multimodalModel') }}</dt>
                 <dd>
                   {{

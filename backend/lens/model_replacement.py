@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
+from .decisions import validate_assistant_decisions
 from .model_checks import MODEL_REF_FIELDS, build_model_check_settings
 from .models import Assistant
 from .vision_capabilities import validate_vision_model_ref
@@ -46,18 +47,19 @@ class ModelReplacementConflict(APIException):
 def replace_assistant_models(*, user, model_field, target_model_ref, assistant_models, preview):
     """Validate the complete batch before writing any assistant."""
 
+    model_type = LLMConfig.MODEL_TYPE_DECISION if model_field == "decision_model_ref" else LLMConfig.MODEL_TYPE_LLM
     target = (
         LLMConfig.objects.select_for_update()
         .filter(
             uuid=target_model_ref,
             scope=LLMConfig.Scope.GLOBAL,
-            model_type=LLMConfig.MODEL_TYPE_LLM,
+            model_type=model_type,
             is_active=True,
         )
         .first()
     )
     if target is None:
-        raise serializers.ValidationError({"target_model_ref": "Select an active global LLM configuration."})
+        raise serializers.ValidationError({"target_model_ref": f"Select an active global {model_type} configuration."})
     if model_field == "multimodal_model_ref":
         reason = validate_vision_model_ref(target.uuid)
         if reason:
@@ -77,6 +79,11 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
             raise ModelReplacementConflict()
         if model_field == "multimodal_model_ref" and assistant.routing_mode == Assistant.RoutingMode.SMART:
             raise serializers.ValidationError({"assistant_models": "Smart assistants do not use a multimodal model."})
+        if model_field == "decision_model_ref":
+            attrs = {"decision_model_ref": target.uuid}
+            validate_assistant_decisions(attrs, assistant, assistant.capability)
+            assistant.decision_gates = attrs["decision_gates"]
+            assistant.decision_analyses = attrs["decision_analyses"]
 
     changed = sorted(assistants, key=lambda assistant: (assistant.name, str(assistant.uuid)))
     result = {
@@ -97,5 +104,8 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
                 checks[model_refs] = build_model_check_settings(assistant)
             assistant.settings = {**(assistant.settings or {}), "_model_check": checks[model_refs]}
             assistant.updated_at = now
-        Assistant.objects.bulk_update(changed, [model_field, "settings", "updated_at"])
+        fields = [model_field, "settings", "updated_at"]
+        if model_field == "decision_model_ref":
+            fields.extend(["decision_gates", "decision_analyses"])
+        Assistant.objects.bulk_update(changed, fields)
     return result

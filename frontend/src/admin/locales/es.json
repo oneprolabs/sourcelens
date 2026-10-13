@@ -567,7 +567,7 @@
     "config": {
       "title": "Configuraciones",
       "subtitle": "Configuración de modelos a nivel global y de usuario",
-      "subtitleList": "Gestionar configuraciones globales y a nivel de usuario.",
+      "subtitleList": "Gestionar configuraciones de modelos.",
       "globalTitle": "Configuración global",
       "perUserTitle": "Anulaciones por usuario",
       "perUserDesc": "Las configuraciones específicas del usuario anulan las globales. Lista a continuación.",
@@ -654,7 +654,20 @@
         "network_error": "No se puede alcanzar el servicio. Por favor, verifique la URL base de la API y la red.",
         "permission_denied": "Acceso denegado. Por favor, verifica la clave API y los permisos de la cuenta.",
         "unknown": "Falló la prueba de conexión. Por favor, revise su configuración y vuelva a intentarlo."
-      }
+      },
+      "modelType": "Tipo de modelo",
+      "chatModel": "Modelo de chat",
+      "decisionModel": "Modelo de decisión",
+      "decisionTestQuestion": "Pregunta de decisión (sí/no)",
+      "decisionTestQuestionDefault": "¿La entrada es una prueba de conexión?",
+      "accountId": "ID de cuenta de Cloudflare",
+      "accountIdPlaceholder": "ID de cuenta de Cloudflare de 32 caracteres",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "Introduzca la clave API o el token del proveedor",
+      "bearerCredentialHint": "Introduzca solo la credencial, sin el prefijo Bearer.",
+      "numRetries": "Reintentos",
+      "metadataLoadError": "No se pudieron cargar los proveedores y modelos. Actualice para reintentar.",
+      "decisionApiBasePlaceholder": "Introduzca la URL base de la API del servicio (obligatorio)"
     },
     "dataSettings": {
       "title": "Tareas programadas",
@@ -1447,6 +1460,54 @@
       "failed": "Error",
       "remove": "Quitar {name}"
     },
+    "decisionSettings": {
+      "decisions": {
+        "search_needed": {
+          "title": "¿Se necesita búsqueda?",
+          "description": "Decide si responder al último mensaje requiere buscar en el espacio de trabajo o en los documentos proporcionados."
+        },
+        "evidence_requirement": {
+          "title": "¿Se requiere evidencia?",
+          "description": "Decide si la respuesta necesita evidencia de herramientas, documentos o del usuario en lugar de responder directamente."
+        },
+        "evidence_sufficient": {
+          "title": "¿Evidencia suficiente?",
+          "description": "Comprueba si la respuesta se apoya solo en evidencia realmente recuperada o proporcionada."
+        },
+        "answer_supported": {
+          "title": "¿Respuesta respaldada?",
+          "description": "Comprueba si la respuesta está respaldada por la evidencia recuperada."
+        },
+        "evidence_strength": {
+          "title": "Solidez de la evidencia",
+          "description": "Clasifica el nivel de evidencia más débil de las afirmaciones fácticas importantes."
+        },
+        "plan_quality": {
+          "title": "Calidad del plan",
+          "description": "Puntúa un plan candidato según la rúbrica ordenada compartida."
+        },
+        "evidence_relevance": {
+          "title": "Relevancia de la evidencia",
+          "description": "Puntúa un fragmento recuperado según cuánto ayuda a responder la pregunta."
+        }
+      },
+      "rubric": {
+        "weak": "Débil",
+        "acceptable": "Aceptable",
+        "strong": "Sólido",
+        "irrelevant": "Irrelevante",
+        "related": "Relacionado",
+        "helpful": "Útil",
+        "direct_answer": "Respuesta directa",
+        "direct": "Evidencia directa",
+        "derived": "Evidencia derivada",
+        "adapted_only": "Solo adaptación o compatibilidad",
+        "example_only": "Solo ejemplo",
+        "planned": "Trabajo planificado o futuro",
+        "unsupported": "Sin respaldo",
+        "contradicted": "Contradicha"
+      }
+    },
     "plugins": {
       "file_upload": {
         "displayName": "Carga manual",
@@ -2020,7 +2081,8 @@
       "feishuAppId": "ID de la App de Feishu",
       "feishuAppSecret": "Secreto de la App de Feishu",
       "visibility": "Visibilidad",
-      "routingMode": "Modo del asistente"
+      "routingMode": "Modo del asistente",
+      "decisionModel": "Modelo de decisión"
     },
     "placeholders": {
       "assistantDescription": "Describe qué ayuda este asistente a los usuarios a hacer.",
@@ -2504,7 +2566,11 @@
       "mcpEnvironmentConfigurationHint": "Este servidor MCP necesita {count} variables de entorno. Elija un conjunto de variables existente o cree uno nuevo.",
       "noSkills": "No hay Skills disponibles — cree uno primero en la Biblioteca de Skills",
       "noMcp": "No hay servidores MCP disponibles — cree uno primero en la Biblioteca de Servidores MCP",
-      "visibilityHint": "Los administradores siempre pueden acceder a todos los asistentes."
+      "visibilityHint": "Los administradores siempre pueden acceder a todos los asistentes.",
+      "noDecisionModel": "Ninguno (mantener el flujo existente)",
+      "decisionAutomatic": "Automático (según la capacidad del asistente)",
+      "decisionModelHint": "Opcional. Configure un modelo dedicado para comprobar evidencias y ordenar candidatos, o déjelo sin configurar para mantener el flujo existente.",
+      "configureDecisionModel": "Configurar un modelo de decisión"
     },
     "agentRounds": {
       "flash": "Flash",
