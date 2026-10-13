@@ -111,8 +111,11 @@ def build_assistant_decision_model(assistant):
     gates = (
         default_control_gates(DEFINITION, assistant.capability) if assistant.decision_auto else assistant.decision_gates
     )
+    config = LLMConfig.objects.filter(uuid=assistant.decision_model_ref).values_list("config", flat=True).first() or {}
+    timeout = min(max(int(config.get("request_timeout_seconds") or 3), 1), 30)
     return {
         "model_ref": str(assistant.decision_model_ref),
         "gates": resolve_decision_gates(DEFINITION, gates),
         "analyses": resolve_decision_analyses(DEFINITION, assistant.decision_analyses),
+        "score": {"kind": "score", "timeout_seconds": timeout},
     }

@@ -2,11 +2,68 @@
 
 import json
 import math
+import threading
 import time
+import uuid
 
 import httpx
+from langchain.tools import tool
+from pydantic import BaseModel, Field, field_validator
 
 from ..decision_contract import DecisionResult
+
+
+class _ScoreArguments(BaseModel):
+    """A bounded assessment with a user-supplied ordered rubric."""
+
+    state: str = Field(min_length=1, max_length=100000, description="Facts to assess; disclose missing evidence.")
+    instructions: str = Field(min_length=1, max_length=2000, description="What to assess from these facts.")
+    criteria: list[str] = Field(min_length=2, max_length=10, description="Ordered rubric labels, worst to best.")
+
+    @field_validator("criteria")
+    @classmethod
+    def validate_labels(cls, labels):
+        """Reject empty or oversized rubric levels."""
+
+        if any(not label.strip() or len(label) > 1000 for label in labels):
+            raise ValueError("Rubric labels must be non-empty and at most 1000 characters.")
+        return labels
+
+
+def build_decision_score_tool(command, config, client, emit_event=None, runtime_state=None):
+    """Expose explicit scoring only when the frozen Run authorizes it."""
+
+    selected = command.get("decision_model") or {}
+    if not selected.get("model_ref") or (selected.get("score") or {}).get("kind") != "score":
+        return None
+    binding = {**selected["score"], "model_ref": selected["model_ref"]}
+    score_state = runtime_state if runtime_state is not None else {}
+    lock = threading.Lock()
+
+    @tool("decision_score", args_schema=_ScoreArguments)
+    def decision_score(state: str, instructions: str, criteria: list[str]):
+        """Score supplied facts using the selected decision model and a 2–10 level ordered rubric.
+
+        The score is a zero-based rubric position, not proof of completion or confidence.
+        On failure disclose that scoring is unavailable; never invent a replacement score.
+        """
+
+        with lock:
+            used = int(score_state.get("used") or 0)
+            if used >= 16:
+                return json.dumps({"ok": False, "error": "DECISION_SCORE_UNAVAILABLE", "reason": "budget_exceeded"})
+            score_state["used"] = used + 1
+            result, reason = call_builtin_decision(
+                command, config, client, binding, "score",
+                {"state": state, "instructions": instructions, "criteria": json.dumps(criteria, ensure_ascii=False)},
+                f"score:{uuid.uuid4().hex}", "decision_score", binding.get("timeout_seconds", 3) + 1, emit=emit_event,
+            )
+        if result is None:
+            return json.dumps({"ok": False, "error": "DECISION_SCORE_UNAVAILABLE", "reason": reason})
+        return json.dumps({"ok": True, "score": result.value, "legend": result.legend, "usage": result.usage})
+
+    decision_score.metadata = {"capability": "decision.score", "decision_source": "decision_score"}
+    return decision_score
 
 
 def call_builtin_decision(command, config, client, binding, name, arguments, call_id, source, timeout, emit=None):

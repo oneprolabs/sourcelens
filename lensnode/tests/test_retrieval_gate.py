@@ -48,6 +48,7 @@ def _state(question, *, model=None, command_extra=None, general_chat=False):
         question=question,
         resources=SimpleNamespace(context_skill_contents=[]),
         emit_agent_event=lambda *_args, **_kwargs: None,
+        exit_span=lambda _span: None,
         emit_user_event=lambda *_args, **_kwargs: None,
         emit_output=None,
     )

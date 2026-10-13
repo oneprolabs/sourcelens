@@ -58,6 +58,7 @@ from ..plugin_tools import (
 )
 from ..runtime_modes import runtime_mode_for
 from .assembly import _agent_middleware, _fast_subagent
+from .builtin_decisions import build_decision_score_tool
 from .capabilities import CapabilityBoundaryMiddleware
 from .capability_protocol import CAPABILITY_FAMILIES
 from .decision_policy import (
@@ -65,6 +66,7 @@ from .decision_policy import (
     build_decision_policy,
     build_decision_ranker,
 )
+from .deliverable import AppendWriteDeduplicationMiddleware
 from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
@@ -1172,6 +1174,15 @@ class LensDeepAgentRuntime:
             attempt=_decision_attempt(state),
         )
         state.tools.extend(state.decision_ranker.as_tools())
+        score_tool = build_decision_score_tool(
+            state.command,
+            self.config,
+            self.http_client,
+            emit_event=state.emit_agent_event,
+            runtime_state=state.runtime_evidence.setdefault("_decision_score", {}),
+        )
+        if score_tool is not None:
+            state.tools.append(score_tool)
         state.mcp_tools = load_mcp_tools(
             state.resources.mcp_configs,
             discovery_timeout_s=getattr(
@@ -1196,10 +1207,16 @@ class LensDeepAgentRuntime:
             state.command,
             state.mcp_tools,
         )
-        state.runtime_middleware = tuple(
-            item
-            for contribution in runtime_contributions
-            for item in contribution.middleware
+        state.runtime_middleware = (
+            AppendWriteDeduplicationMiddleware(
+                state.resources.root,
+                state.emit_agent_event,
+            ),
+            *(
+                item
+                for contribution in runtime_contributions
+                for item in contribution.middleware
+            ),
         )
         state.subagent_middleware = tuple(
             item
@@ -1981,7 +1998,34 @@ def _normalize_code_analysis_paths(answer, command):
                 ".",
                 normalized,
             )
-    return _sanitize_user_facing_answer(normalized)
+    return _sanitize_deliverable_links(
+        _sanitize_user_facing_answer(normalized),
+        command,
+    )
+
+
+def _sanitize_deliverable_links(answer, command):
+    """Keep final download claims consistent with staged deliverables."""
+
+    text = str(answer or "")
+    if "sandbox:" not in text:
+        return text
+    delivered = bool((command.get("_deliverables") or {}).values())
+    answer_language = _command_answer_language(command)
+    replacement = _pick_text(
+        "（文件已作为本条回复附件提供）"
+        if delivered
+        else "（文件尚未成功发布为可下载附件）",
+        "(The file is attached to this reply.)"
+        if delivered
+        else "(The file was not successfully published as a downloadable attachment.)",
+        answer_language,
+    )
+    return re.sub(
+        r"\[[^\]]+\]\(sandbox:[^)]+\)|sandbox:[^\s)]+",
+        replacement,
+        text,
+    )
 
 
 def _sanitize_user_facing_answer(answer):

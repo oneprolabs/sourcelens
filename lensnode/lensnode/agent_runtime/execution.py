@@ -136,6 +136,7 @@ def _run_agent_with_turn_limit(
         plan_state,
     )
     budget_exhausted = False
+    delivery_grace_used = False
 
     def _iterate_states():
         nonlocal budget_exhausted
@@ -201,6 +202,14 @@ def _run_agent_with_turn_limit(
             token_budget_wrapup_event is not None
             and token_budget_wrapup_event.is_set()
         ):
+            if (
+                not delivery_grace_used
+                and _has_pending_tool_call(current, "save_deliverable")
+            ):
+                delivery_grace_used = True
+                if emit_event is not None:
+                    emit_event("deepagents.agent.delivery_grace", {})
+                continue
             truncated = True
             truncation_reason = "token_budget_wrapup"
             if emit_event is not None:
@@ -283,6 +292,18 @@ def _run_agent_with_turn_limit(
         }:
             termination_reason = model_reason
     return answer, truncated, termination_reason
+
+
+def _has_pending_tool_call(messages, tool_name):
+    """Return whether the latest streamed agent state requests one tool."""
+
+    if not messages:
+        return False
+    calls = getattr(messages[-1], "tool_calls", None) or []
+    return any(
+        isinstance(call, dict) and call.get("name") == tool_name
+        for call in calls
+    )
 
 
 def _stream_agent_states_with_invalid_tool_recovery(

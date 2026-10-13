@@ -192,6 +192,20 @@ class GateDecisionPolicy(ControlDecisionPolicy):
             )
         return verdicts
 
+    def review_evidence_limit(self):
+        """Use the smallest configured grounding budget when collecting evidence."""
+
+        return min(
+            (
+                config.get("max_state_chars", 4000)
+                for key, config in self.gates.items()
+                if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
+                and type(config.get("max_state_chars", 4000)) is int
+                and config.get("max_state_chars", 4000) > 0
+            ),
+            default=4000,
+        )
+
     def has_evidence_gates(self):
         """Return whether an answer-grounding gate is bound."""
 

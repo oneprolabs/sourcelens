@@ -57,8 +57,15 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
         if not isinstance(text, str) or not text.strip() or len(text) > 100000:
             return Response({"detail": "Decision input must be bounded non-empty text."}, status=400)
         source = request.data.get("source")
-        definitions = frozen.get("gates" if source == "decision_gate" else "analyses") or {}
-        if source not in {"decision_gate", "decision_rank"} or not isinstance(questions, list) or len(questions) != 1:
+        if source == "decision_score":
+            definitions = {"score": frozen["score"]} if frozen.get("score") else {}
+        else:
+            definitions = frozen.get("gates" if source == "decision_gate" else "analyses") or {}
+        if (
+            source not in {"decision_gate", "decision_rank", "decision_score"}
+            or not isinstance(questions, list)
+            or len(questions) != 1
+        ):
             return Response({"detail": "Invalid decision request."}, status=400)
         if not isinstance(questions[0], dict) or questions[0].get("name") not in definitions:
             return Response({"detail": "Decision is not configured for this Run."}, status=403)
@@ -66,6 +73,20 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
         expected_type = "predicate" if definition.get("kind") == "noul" else definition.get("kind")
         if questions[0].get("type") != expected_type:
             return Response({"detail": "Decision type does not match this Run."}, status=400)
+        if source == "decision_score":
+            levels = questions[0].get("levels")
+            if (
+                not isinstance(levels, list)
+                or not 2 <= len(levels) <= 10
+                or any(
+                    not isinstance(level, dict)
+                    or not isinstance(level.get("label"), str)
+                    or not level["label"].strip()
+                    or len(level["label"]) > 1000
+                    for level in levels
+                )
+            ):
+                return Response({"detail": "Score requires 2 to 10 non-empty ordered labels."}, status=400)
         call_id = request.data.get("call_id")
         if not isinstance(call_id, str) or not call_id or len(call_id) > 160:
             return Response({"detail": "Invalid decision call identity."}, status=400)
@@ -74,7 +95,11 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
             return Response({"detail": "Run token budget is unavailable."}, status=429)
         try:
             config = dict(model.config)
-            config["request_timeout_seconds"] = min(int(config.get("request_timeout_seconds") or 2), 2)
+            config["request_timeout_seconds"] = (
+                definition["timeout_seconds"]
+                if source == "decision_score"
+                else min(int(config.get("request_timeout_seconds") or 2), 2)
+            )
             config["num_retries"] = 0
             answers, usage = DecisionTracker.call_with_config(
                 provider=model.provider,

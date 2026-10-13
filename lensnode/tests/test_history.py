@@ -25,6 +25,7 @@ from lensnode.agent_runtime import (
     _finalize_runtime_outcome,
     _general_chat_system_prompt,
     _knowledge_system_prompt,
+    _normalize_code_analysis_paths,
     _normalize_plan_steps,
     _parse_route_decision,
     _pick_text,
@@ -6421,6 +6422,73 @@ def test_token_budget_forces_tool_free_wrapup_from_current_evidence():
         "runtime_final_synthesis": True,
         "reasoning_effort": "none",
     }
+
+
+def test_token_budget_allows_one_pending_delivery_tool_call():
+    class _BudgetedDeliveryAgent:
+        """Request a deliverable exactly as the budget reserve is reached."""
+
+        def stream(self, inp, stream_mode=None, config=None):
+            del inp, stream_mode, config
+            yield {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "save_deliverable",
+                                "args": {"path": "report.md"},
+                                "id": "save-1",
+                            }
+                        ],
+                    )
+                ]
+            }
+            yield {
+                "messages": [
+                    ToolMessage(
+                        content='{"ok": true}',
+                        name="save_deliverable",
+                        tool_call_id="save-1",
+                    ),
+                    AIMessage(content="Delivered."),
+                ]
+            }
+
+    budget_event = threading.Event()
+    budget_event.set()
+
+    answer, truncated, reason = _run_agent_with_turn_limit(
+        _BudgetedDeliveryAgent(),
+        [{"role": "user", "content": "create report"}],
+        max_turns=3,
+        token_budget_wrapup_event=budget_event,
+    )
+
+    assert answer == "Delivered."
+    assert truncated is True
+    assert reason == "token_budget_wrapup"
+
+
+def test_unpublished_sandbox_link_is_not_claimed_as_download():
+    answer = "[Download](sandbox:/report.md) sandbox:/report.md"
+
+    normalized = _normalize_code_analysis_paths(answer, {})
+
+    assert "sandbox:" not in normalized
+    assert "not successfully published" in normalized
+
+
+def test_published_sandbox_link_points_to_attachment():
+    answer = "[Download](sandbox:/report.md)"
+
+    normalized = _normalize_code_analysis_paths(
+        answer,
+        {"_deliverables": {"report.md": "output-1"}},
+    )
+
+    assert "sandbox:" not in normalized
+    assert "attached" in normalized
 
 
 def test_gateway_budget_exhaustion_forces_tool_free_wrapup():

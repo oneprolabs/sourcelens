@@ -95,6 +95,52 @@ class BuiltinDecisionTests(TestCase):
         self.assertEqual(response.status_code, 403)
         tracker.assert_not_called()
 
+    def test_configured_model_exposes_scoring_without_enabling_ranking(self):
+        snapshot = build_assistant_decision_model(self.assistant)
+        self.assertEqual(snapshot["analyses"], {})
+        self.assertEqual(snapshot["score"]["kind"], "score")
+
+    def test_explicit_score_uses_the_frozen_model_and_user_rubric(self):
+        self.payload.update(
+            source="decision_score",
+            call_id="score:daily:1",
+            questions=[
+                {
+                    "type": "score",
+                    "name": "score",
+                    "instructions": "Judge completion from the supplied facts.",
+                    "levels": [{"label": "in progress"}, {"label": "completed with evidence"}],
+                }
+            ],
+        )
+        with patch(
+            "lens.views.decisions.DecisionTracker.call_with_config",
+            return_value=([{"type": "score", "name": "score", "score": 0.75}], {"total_tokens": 4}),
+        ) as tracker:
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["answers"][0]["score"], 0.75)
+        self.assertEqual(tracker.call_args.kwargs["config"]["model"], "jev-latest")
+        self.assertEqual(tracker.call_args.kwargs["questions"], self.payload["questions"])
+
+    def test_score_is_not_authorized_for_legacy_snapshots(self):
+        self.execution.runtime_snapshot["decision_model"].pop("score", None)
+        self.execution.save(update_fields=["runtime_snapshot"])
+        self.payload.update(source="decision_score", questions=[{"type": "score", "name": "score"}])
+        with patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+        self.assertEqual(response.status_code, 403)
+        tracker.assert_not_called()
+
+    def test_score_rejects_invalid_rubrics_before_spending(self):
+        self.payload.update(source="decision_score")
+        for levels in ([{"label": "one"}], [{"label": ""}, {"label": "complete"}], [{"label": "x"}] * 11):
+            with self.subTest(levels=levels), patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+                self.payload["questions"] = [{"type": "score", "name": "score", "levels": levels}]
+                response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+                self.assertEqual(response.status_code, 400)
+                tracker.assert_not_called()
+
     def test_gateway_rejects_another_nodes_run(self):
         self.run.lensnode = LensNode.objects.create(name="Other node")
         self.run.save(update_fields=["lensnode"])
@@ -242,10 +288,42 @@ class BuiltinDecisionTests(TestCase):
         migration.migrate_typesafe_bindings(apps, editor)
         self.assistant.refresh_from_db()
         row = LLMConfig.objects.get(uuid=self.assistant.decision_model_ref)
-        self.assertEqual(row.config["model"], "jev-1.13")
+        self.assertEqual(row.config["model"], "jev-1.13.0")
         self.assertEqual(row.config["api_key"], "legacy-test-secret")
         self.assertFalse(self.assistant.decision_auto)
         self.assertEqual(self.assistant.decision_gates, binding.decision_gates)
         self.assertEqual(self.assistant.decision_analyses, binding.decision_analyses)
         self.assertTrue(AssistantPluginBinding.objects.get(pk=binding.pk).enabled)
         self.assertEqual(LLMConfig.objects.filter(uuid=row.uuid).count(), 1)
+
+    def test_legacy_migration_preserves_configured_models_and_skips_missing_models(self):
+        """User-selected model IDs survive migration without provider defaults."""
+
+        from django.db import connection as database_connection
+
+        migration = importlib.import_module("lens.migrations.0064_builtin_decisions")
+        editor = SimpleNamespace(connection=database_connection)
+        material = SecretMaterial.objects.create(name="Legacy model selection")
+        version = SecretVersion(material=material)
+        version.set_value("legacy-test-secret")
+        version.save()
+        for model in ("jev-latest", "jev-preview", "jev-1.13", "custom-model-id", None, ""):
+            with self.subTest(model=model):
+                self.assistant.decision_model_ref = None
+                self.assistant.save(update_fields=["decision_model_ref"])
+                connection = Connection.objects.create(
+                    name="Legacy model selection",
+                    plugin_key="typesafe",
+                    endpoint="https://api.typesafe.ai",
+                    config={"model": model} if model is not None else {},
+                    secret_version=version,
+                )
+                binding = AssistantPluginBinding.objects.create(assistant=self.assistant, connection=connection)
+                migration.migrate_typesafe_bindings(apps, editor)
+                self.assistant.refresh_from_db()
+                if model:
+                    row = LLMConfig.objects.get(uuid=self.assistant.decision_model_ref)
+                    self.assertEqual(row.config["model"], model)
+                else:
+                    self.assertIsNone(self.assistant.decision_model_ref)
+                binding.delete()

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import posixpath
 
 from contextlib import nullcontext
 
@@ -125,7 +126,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def _verify(self, answer, state=None):
         evidence = self.evidence
         base_signature = _evidence_signature(evidence)
-        message_evidence = _tool_evidence(state)
+        review_limit = getattr(self.policy, "review_evidence_limit", None)
+        message_evidence = _tool_evidence(state, limit=review_limit() if callable(review_limit) else 1200)
         if message_evidence:
             evidence = {
                 **(evidence if isinstance(evidence, dict) else {}),
@@ -323,7 +325,7 @@ def _source_coverage_incomplete(content):
     return payload.get("ok") is False or (isinstance(metadata, dict) and metadata.get("complete") is False)
 
 
-def _tool_evidence(state):
+def _tool_evidence(state, limit=1200):
     """Return a bounded view of retrieved tool output for post-run review."""
 
     if not isinstance(state, dict):
@@ -342,6 +344,8 @@ def _tool_evidence(state):
         "glob",
         "delete_file",
         "mkdir",
+        "decision_score",
+        "decision_rank",
     }
     for message in state.get("messages") or []:
         if isinstance(message, AIMessage):
@@ -360,21 +364,26 @@ def _tool_evidence(state):
         name = str(getattr(message, "name", "") or "tool")[:80]
         if name in excluded:
             continue
+        operation = operations.get(getattr(message, "tool_call_id", None))
+        if name == "read_file" and operation is not None and operation[0] == name:
+            arguments = json.loads(operation[1])
+            path = posixpath.normpath("/" + str(arguments.get("file_path") or "").lstrip("/"))
+            if path.startswith(("/skills/", "/mcp/")):
+                continue
         if name == "execute" and ("drwx" in content or content.startswith("total ")):
             continue
         item = {
             "tool": name,
-            "content": content[:1200],
+            "content": content[:limit],
             "incomplete": getattr(message, "status", None) == "error"
             or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
             "truncated": (
-                len(content) > 1200
+                len(content) > limit
                 or content.startswith("Tool result too large,")
                 or "[Output was truncated due to size limits." in content
                 or "[Output exceeded the capture size limit" in content
             ),
         }
-        operation = operations.get(getattr(message, "tool_call_id", None))
         if operation is not None and operation[0] == name:
             if item["incomplete"]:
                 failures.setdefault(operation, []).append(item)

@@ -25,6 +25,18 @@ The gateway uses `DecisionTracker`, shares the parent Run's token budget,
 and correlates metered usage with the Run and decision call. Decision model
 events distinguish this usage from agent model calls. Refusals retain usage
 without being treated as successful decisions.
+New Runs with a selected decision model also authorize the explicit
+`decision_score` tool. It accepts supplied facts, assessment instructions and
+2–10 ordered rubric labels, and returns a zero-based numeric rubric position.
+It uses the selected model verbatim, requires no ranking configuration, and
+does not count as retrieved evidence or proof of completion. Unavailable or
+refused scores are reported without inventing a rating. The tool permits at
+most 16 attempts per Run and retains that counter in checkpoint state.
+The Run freezes a scoring timeout from the model configuration, bounded to
+1–30 seconds; legacy Run snapshots do not gain scoring authorization.
+Skills and workspace guides should request `decision_score` rather than the
+retired provider-specific `typesafe_score` tool. Source coverage gaps still
+produce a partial outcome even when a report file was delivered successfully.
 Built-in ranking scores candidates sequentially to respect the gateway's
 shared budget lock. Each candidate retains its own timeout, so a full ranking
 window can take longer than one decision call.
