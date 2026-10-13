@@ -128,6 +128,23 @@ export function terminalSyncEvent(event) {
   }
 }
 
+export function runtimeStateFor(thinking) {
+  let state = createRuntimeState()
+  for (const event of thinking?.steps || []) {
+    state = applyRuntimeEvent(state, event)
+  }
+  const snapshot = {
+    type: 'sync',
+    status: thinking?.status,
+    outcome: thinking?.outcome,
+    clarification_answered_at: thinking?.clarification_answered_at,
+    termination_detail: thinking?.termination_detail
+  }
+  state = applyRuntimeEvent(state, snapshot)
+  const terminal = terminalSyncEvent(snapshot)
+  return terminal ? applyRuntimeEvent(state, terminal) : state
+}
+
 export async function scrollConversationToBottomAfterRender(
   getElement,
   waitForRender

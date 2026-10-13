@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Keep chat progress accurate when switching conversations and automatically recover interrupted live updates.
+zh-CN: 修复切换对话时执行进度误显示结束的问题，并在实时连接中断后自动恢复更新。

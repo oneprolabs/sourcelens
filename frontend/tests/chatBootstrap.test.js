@@ -490,7 +490,10 @@ test('renders delegated assistants as bounded progressive-disclosure cards', asy
 
   assert.match(source, /<AssistantActivityGroups/)
   assert.match(source, /:live="true"/)
-  assert.match(source, /:live="false"/)
+  assert.match(
+    source,
+    /:live="!isTerminalRunStatus\(message\.thinking\.status\)"/
+  )
   assert.match(component, /<details[\s\S]*?:open="live"/)
   assert.match(component, /class="runtime-assistant-task-summary"/)
   assert.match(component, /class="runtime-assistant-full-task"/)
