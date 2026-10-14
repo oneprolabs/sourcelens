@@ -2091,6 +2091,7 @@
       "selectType": "请选择类型",
       "selectDir": "请选择目录",
       "selectModel": "请选择模型",
+      "loadingModels": "正在加载模型…",
       "noModel": "默认",
       "docIds": "多个 ID 用逗号分隔",
       "includePaths": "每行一个路径规则，如 src/**",

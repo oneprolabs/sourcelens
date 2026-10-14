@@ -47,6 +47,12 @@ test('assistant multi-select searches names and slugs across the full active lis
     ),
     ['a', 'b']
   )
+  assert.deepEqual(
+    selectableReplacementAssistants(rows, 'decision_model_ref', '').map(
+      (r) => r.uuid
+    ),
+    ['a', 'b', 'e']
+  )
 })
 
 test('select-all adds search matches while keeping selections outside the search', () => {
@@ -132,5 +138,27 @@ test('target models must be active global LLMs with vision support for multimoda
       'multimodal_model_ref'
     ),
     true
+  )
+})
+
+test('decision replacement targets only active global decision models', () => {
+  const decision = { scope: 'global', model_type: 'decision', is_active: true }
+  const llm = { scope: 'global', model_type: 'llm', is_active: true }
+  assert.equal(eligibleReplacementModel(decision, 'decision_model_ref'), true)
+  assert.equal(eligibleReplacementModel(llm, 'decision_model_ref'), false)
+  assert.equal(eligibleReplacementModel(decision, 'agent_model_ref'), false)
+  assert.equal(
+    eligibleReplacementModel(
+      { ...decision, is_active: false },
+      'decision_model_ref'
+    ),
+    false
+  )
+  assert.equal(
+    eligibleReplacementModel(
+      { ...decision, scope: 'user' },
+      'decision_model_ref'
+    ),
+    false
   )
 })

@@ -240,6 +240,9 @@
           <option value="agent_model_ref">
             {{ t('lensAdmin.fields.agentModel') }}
           </option>
+          <option value="decision_model_ref">
+            {{ t('lensAdmin.fields.decisionModel') }}
+          </option>
           <option value="multimodal_model_ref">
             {{ t('lensAdmin.fields.multimodalModel') }}
           </option>
@@ -249,6 +252,7 @@
           :label="t(`${prefix}.target`)"
           :aria-label="t(`${prefix}.target`)"
           :disabled="busy"
+          :title="selectedTargetLabel"
         >
           <option value="">
             {{ t('lensAdmin.placeholders.selectModel') }}
@@ -260,6 +264,11 @@
           >
             {{ formatLLMConfigLabel(model) }}
           </option>
+          <template #option="{ option }">
+            <span class="whitespace-normal break-words">{{
+              option.label
+            }}</span>
+          </template>
         </BaseSelect>
         <p v-if="!targetModels.length" class="text-sm text-amber-700">
           {{ t(`${prefix}.noModels`) }}
@@ -425,6 +434,10 @@ function toggleAllAssistants(checked) {
 const targetModels = computed(() =>
   models.value.filter((model) => eligibleReplacementModel(model, field.value))
 )
+const selectedTargetLabel = computed(() => {
+  const model = targetModels.value.find((item) => item.uuid === target.value)
+  return model ? formatLLMConfigLabel(model) : ''
+})
 const canSubmit = computed(
   () =>
     !loading.value &&
@@ -483,7 +496,7 @@ async function submit() {
 onMounted(async () => {
   try {
     models.value = normalizeList(
-      await llmAdminApi.getLLMConfigAll({ scope: 'global' })
+      await llmAdminApi.getLLMConfigAll({ scope: 'global', model_type: 'all' })
     )
   } catch (err) {
     error.value = extractErrorMessage(err, t('lensAdmin.messages.loadFailed'))

@@ -427,6 +427,7 @@
       :llm-config-options="llmConfigOptions"
       :decision-catalog="decisionCatalog"
       :datasource-options="datasourceOptions"
+      :form-resources-loading="formResourcesLoading"
       :saving="saving"
       :form-error="formError"
       @close="closeDrawer"
@@ -581,6 +582,7 @@ const globalSettings = ref([])
 const llmConfigOptions = ref([])
 const decisionCatalog = ref({ decisions: [] })
 const datasourceOptions = ref([])
+const formResourcesLoading = ref(false)
 let formResourcesPromise = null
 let globalSettingsPromise = null
 
@@ -783,6 +785,7 @@ async function loadFormResources() {
     return
   }
 
+  formResourcesLoading.value = true
   formResourcesPromise = Promise.all([
     listLensNodes(),
     listDataSources({ page_size: 1000 }),
@@ -840,6 +843,7 @@ async function loadFormResources() {
     )
     .finally(() => {
       formResourcesPromise = null
+      formResourcesLoading.value = false
     })
   await formResourcesPromise
 }

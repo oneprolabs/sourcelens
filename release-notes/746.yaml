@@ -1,0 +1,4 @@
+type: fix
+audience: admin
+en: Bulk assistant model replacement can now target decision models. The Agent and Decision model pickers also show a loading state instead of an empty dropdown while model options are still loading.
+zh-CN: 批量替换助手模型现在可以选择决策模型。在模型选项加载期间，Agent 与决策模型下拉框会显示加载状态，而不是空白下拉框。
