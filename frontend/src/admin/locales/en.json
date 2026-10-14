@@ -2091,6 +2091,7 @@
       "selectType": "Select a type",
       "selectDir": "Select a directory",
       "selectModel": "Select a model",
+      "loadingModels": "Loading models…",
       "noModel": "Default",
       "docIds": "Separate multiple IDs with commas",
       "includePaths": "One path rule per line, e.g. src/**",

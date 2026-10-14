@@ -2091,6 +2091,7 @@
       "selectType": "Seleccionar un tipo",
       "selectDir": "Seleccionar un directorio",
       "selectModel": "Seleccionar un modelo",
+      "loadingModels": "Cargando modelos…",
       "noModel": "Predeterminado",
       "docIds": "Separe múltiples ID con comas",
       "includePaths": "Una regla de ruta por línea, por ejemplo src/**",

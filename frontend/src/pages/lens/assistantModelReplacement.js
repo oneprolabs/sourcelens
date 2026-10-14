@@ -46,12 +46,9 @@ export function replacementPickerPosition(rect, viewport, menuHeight) {
 }
 
 export function eligibleReplacementModel(model, field) {
-  if (
-    model.is_active === false ||
-    model.scope !== 'global' ||
-    model.model_type !== 'llm'
-  )
-    return false
+  if (model.is_active === false || model.scope !== 'global') return false
+  if (field === 'decision_model_ref') return model.model_type === 'decision'
+  if (model.model_type !== 'llm') return false
   if (field === 'agent_model_ref') return true
   const declared = model.config?.supports_vision ?? model.config?.vision
   return (

@@ -121,7 +121,11 @@
             </p>
           </FormRow>
           <FormRow :label="t('lensAdmin.fields.agentModel') + ' *'">
-            <BaseSelect v-model="form.agent_model_ref" required>
+            <BaseSelect
+              v-model="form.agent_model_ref"
+              required
+              :disabled="formResourcesLoading"
+            >
               <option value="">
                 {{ t('lensAdmin.placeholders.selectModel') }}
               </option>
@@ -132,6 +136,13 @@
               >
                 {{ formatLLMConfigLabel(c) }}
               </option>
+              <template #selected="{ option }">
+                <span :class="formResourcesLoading ? 'text-ink-400' : ''">{{
+                  formResourcesLoading
+                    ? t('lensAdmin.placeholders.loadingModels')
+                    : option?.label || ''
+                }}</span>
+              </template>
             </BaseSelect>
             <p class="mt-1 text-xs text-ink-500">
               {{
@@ -142,7 +153,10 @@
             </p>
           </FormRow>
           <FormRow :label="t('lensAdmin.fields.decisionModel')">
-            <BaseSelect v-model="form.decision_model_ref">
+            <BaseSelect
+              v-model="form.decision_model_ref"
+              :disabled="formResourcesLoading"
+            >
               <option value="">
                 {{ t('lensAdmin.wizard.noDecisionModel') }}
               </option>
@@ -153,12 +167,21 @@
               >
                 {{ formatLLMConfigLabel(config) }}
               </option>
+              <template #selected="{ option }">
+                <span :class="formResourcesLoading ? 'text-ink-400' : ''">{{
+                  formResourcesLoading
+                    ? t('lensAdmin.placeholders.loadingModels')
+                    : option?.label || ''
+                }}</span>
+              </template>
             </BaseSelect>
             <p class="mt-1 text-xs text-ink-500">
               {{ t('lensAdmin.wizard.decisionModelHint') }}
             </p>
             <router-link
-              v-if="isAdmin && !decisionModelOptions.length"
+              v-if="
+                isAdmin && !formResourcesLoading && !decisionModelOptions.length
+              "
               to="/management/llm/config"
               class="mt-1 block text-xs text-brand-700 underline"
             >
@@ -1780,6 +1803,7 @@ const props = defineProps({
   llmConfigOptions: { type: Array, default: () => [] },
   decisionCatalog: { type: Object, default: () => ({ decisions: [] }) },
   datasourceOptions: { type: Array, default: () => [] },
+  formResourcesLoading: Boolean,
   saving: Boolean,
   formError: { type: String, default: '' }
 })
