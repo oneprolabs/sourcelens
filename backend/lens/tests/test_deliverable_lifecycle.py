@@ -95,6 +95,20 @@ class DeliverableLifecycleTests(TestCase):
         response = self.client.get(f"/api/lens/output-files/{draft.uuid}/")
         self.assertEqual(response.status_code, 404)
 
+    def test_deleting_session_purges_deliverable_bytes(self):
+        """Session deletion removes deliverable bytes through the post_delete signal."""
+
+        output = self._upload("report.txt")
+        storage = output.file.storage
+        name = output.file.name
+        self.assertTrue(storage.exists(name))
+
+        response = self.client.delete(f"/api/lens/sessions/{self.session.uuid}/")
+
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(RunOutputFile.objects.filter(pk=output.pk).exists())
+        self.assertFalse(storage.exists(name))
+
     def test_regenerated_renamed_draft_is_superseded_and_bytes_retained(self):
         """A rejected first filename must not survive as a visible extra file."""
 

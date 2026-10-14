@@ -74,7 +74,7 @@ def session_workspace_cleanup_task():
     ).exclude(run__status__in=[Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING])
     for session in sessions:
         node_ids = LensNode.objects.filter(
-            run__session=session
+            runs__session=session
         ).values_list("uuid", flat=True).distinct()
         for node_uuid in node_ids:
             SessionCleanupOperation.objects.get_or_create(

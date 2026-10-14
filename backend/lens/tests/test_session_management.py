@@ -1,9 +1,10 @@
 import io
 import uuid
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
@@ -21,9 +22,11 @@ from lens.models import (
     SecretMaterial,
     SecretVersion,
     Session,
+    SessionCleanupOperation,
     SharedQA,
 )
 from lens.services import create_execution_run
+from lens.tasks import session_workspace_cleanup_task
 
 
 class SessionManagementTests(TestCase):
@@ -301,6 +304,35 @@ class SessionManagementTests(TestCase):
             PluginInvocation.objects.filter(pk=invocation.pk).exists()
         )
         self.assertFalse(CredentialLease.objects.filter(pk=lease.pk).exists())
+
+    @override_settings(
+        CHANNEL_LAYERS={
+            "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+        }
+    )
+    def test_cleanup_dispatch_targets_lensnode_runs(self):
+        run = create_execution_run(
+            self.first,
+            "Cleanup question",
+            enqueue=False,
+            user=self.user,
+        )
+        run.status = Run.Status.DONE
+        run.lensnode = self.node
+        run.save(update_fields=["status", "lensnode"])
+        Session.objects.filter(pk=self.first.pk).update(
+            status=Session.Status.ARCHIVED,
+            updated_at=timezone.now() - timedelta(days=8),
+        )
+
+        session_workspace_cleanup_task()
+
+        self.assertTrue(
+            SessionCleanupOperation.objects.filter(
+                session_uuid=self.first.uuid,
+                lensnode_uuid=self.node.uuid,
+            ).exists()
+        )
 
     def test_other_users_cannot_manage_sessions_they_do_not_own(self):
         self.client.force_authenticate(self.other)

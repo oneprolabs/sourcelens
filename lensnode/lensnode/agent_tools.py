@@ -112,6 +112,28 @@ class _GitLogArgs(BaseModel):
     )
 
 
+def _tolerate_tool_validation_errors(tools):
+    """Return malformed tool arguments to the model instead of failing the Run.
+
+    A model that calls a tool with missing or invalid arguments (for example
+    ``call_skill_api`` without ``skill``/``base_url_env``) would otherwise raise
+    a pydantic ``ValidationError`` and abort the whole Run. Feeding the
+    validation error back as the tool result lets the model retry with valid
+    arguments.
+    """
+
+    def handle(error):
+        return (
+            "Tool input validation error: "
+            f"{error}. Re-issue the call with arguments that match the schema."
+        )
+
+    for tool_item in tools:
+        if getattr(tool_item, "args_schema", None) is not None:
+            tool_item.handle_validation_error = handle
+    return tools
+
+
 def build_agent_tools(
     command,
     resources=None,
@@ -611,7 +633,7 @@ def build_agent_tools(
         tools.append(
             _build_save_deliverable_tool(command, resources, config, emit_event)
         )
-    return tools
+    return _tolerate_tool_validation_errors(tools)
 
 
 class _RunSkillScriptArgs(BaseModel):
@@ -2176,7 +2198,7 @@ def build_general_chat_tools(
         tools.append(
             _build_save_deliverable_tool(command, resources, config, emit_event)
         )
-    return tools
+    return _tolerate_tool_validation_errors(tools)
 
 
 def _resolve_large_tool_result_ref(root, value):
