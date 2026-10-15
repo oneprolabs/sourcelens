@@ -111,6 +111,21 @@ def test_analyze_structured_output_groups_json_and_records_trace(tmp_path):
     assert events[-1][1]["result_count"] == 2
 
 
+def test_project_supports_root_and_nested_object_metadata(tmp_path):
+    """Object metadata can be projected without treating it as a record collection."""
+
+    resources = _resources(tmp_path)
+    ref, _path = _write_result(resources, {"ok": True, "coverage": {"complete": True}, "items": [1, 2]})
+    tool = _tool(resources, "analyze_structured_output")
+
+    root = json.loads(tool.invoke({"ref": ref, "operation": "project", "fields": ["ok", "coverage.complete"]}))
+    nested = json.loads(tool.invoke({"ref": ref, "operation": "project", "path": "coverage", "fields": ["complete"]}))
+
+    assert root["ok"] is True
+    assert root["result"] == {"ok": True, "coverage.complete": True}
+    assert nested["result"] == {"complete": True}
+
+
 def test_analyze_structured_output_supports_bounded_operations(tmp_path):
     resources = _resources(tmp_path)
     ref, _path = _write_result(

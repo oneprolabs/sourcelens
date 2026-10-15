@@ -17,9 +17,10 @@ from lensnode.agent_runtime.evidence_material import bound_review_state, review_
 class _ReviewPolicy:
     """Record the materials submitted to an external answer reviewer."""
 
-    def __init__(self, verdict="supported", completeness=None):
+    def __init__(self, verdict="supported", completeness=None, review_completeness=None):
         self.verdict = verdict
         self.completeness = completeness
+        self.review_completeness = review_completeness
         self.materials = []
 
     def has_evidence_gates(self):
@@ -30,6 +31,8 @@ class _ReviewPolicy:
         result = {"answer_supported": self.verdict}
         if self.completeness is not None:
             result["evidence_completeness"] = self.completeness
+        if self.review_completeness is not None:
+            result["review_completeness"] = self.review_completeness
         return result
 
 
@@ -59,7 +62,8 @@ def test_configured_budget_is_applied_before_material_is_truncated(budget, expec
         assert calls[0]["runtime_evidence"]["source"] == "Evidence"
         assert calls[0]["evidence_completeness"] == "complete"
     else:
-        assert verdicts["evidence_completeness"] == "incomplete"
+        assert verdicts["review_completeness"] == "incomplete"
+        assert verdicts.get("evidence_completeness") != "incomplete"
 
 
 def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
@@ -122,15 +126,16 @@ def test_skill_instructions_do_not_make_complete_source_evidence_inconclusive():
 
 
 @pytest.mark.parametrize(
-    "completeness,expected,requirement",
+    "completeness,expected,requirement,review_completeness",
     [
-        ("complete", "partial", "none"),
-        ("incomplete", "partial", "none"),
-        ("incomplete", "partial", "artifact"),
+        ("complete", "partial", "none", None),
+        ("incomplete", "partial", "none", None),
+        ("incomplete", "partial", "artifact", None),
+        ("complete", "partial", "none", "incomplete"),
     ],
 )
 def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
-    monkeypatch, completeness, expected, requirement
+    monkeypatch, completeness, expected, requirement, review_completeness
 ):
     """A negative full review must not report the business outcome as completed."""
 
@@ -164,7 +169,11 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
         required_capabilities=[],
         runtime_evidence={"source": "INC-42 remains open."},
         question="Was it resolved?",
-        decision_policy=_ReviewPolicy(verdict="unsupported", completeness=completeness),
+        decision_policy=_ReviewPolicy(
+            verdict="supported" if review_completeness else "unsupported",
+            completeness=completeness,
+            review_completeness=review_completeness,
+        ),
         consulted_sources=SimpleNamespace(citations=lambda *args: []),
     )
     result = runtime_module.LensDeepAgentRuntime(SimpleNamespace())._execute_agent(state)
@@ -176,6 +185,9 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
     elif completeness == "incomplete" and requirement == "none":
         assert result["termination_detail"]["reason"] == "evidence_incomplete"
         assert result["termination_detail"]["error_type"] == "verification"
+    elif review_completeness == "incomplete":
+        assert result["termination_detail"]["reason"] == "review_material_incomplete"
+        assert result["termination_detail"]["decision_gates"]["evidence_completeness"] == "complete"
     elif expected == "partial":
         assert result["termination_detail"]["reason"] == "evidence_insufficient"
         assert result["termination_detail"]["error_type"] == "verification"
@@ -244,7 +256,8 @@ def test_bounded_review_input_remains_valid_json_and_keeps_all_providers():
     payload = json.loads(arguments["state"])
 
     assert len(arguments["state"]) <= 4000
-    assert payload["evidence_completeness"] == "incomplete"
+    assert payload["evidence_completeness"] == "complete"
+    assert payload["review_completeness"] == "incomplete"
     for provider in ["github", "gitlab", "jira"]:
         assert f"{provider}: INC-42" in arguments["state"]
 
@@ -300,7 +313,7 @@ def test_reading_a_document_with_error_fields_does_not_change_coverage():
     assert policy.materials[0]["evidence_completeness"] == "complete"
 
 
-def test_truncated_tool_evidence_is_explicitly_incomplete():
+def test_review_excerpt_does_not_mark_complete_source_evidence_as_missing():
     policy = _ReviewPolicy()
     middleware = EvidenceGateMiddleware(policy, "What caused the incident?")
     state = {
@@ -316,10 +329,43 @@ def test_truncated_tool_evidence_is_explicitly_incomplete():
 
     middleware.after_model(state, None)
 
-    assert policy.materials[0]["evidence_completeness"] == "incomplete"
+    assert policy.materials[0]["evidence_completeness"] == "complete"
+    assert policy.materials[0]["review_completeness"] == "incomplete"
     review_input = _post_run_state("What caused the incident?", state["messages"][-1].content, policy.materials[0])
     arguments = _gate_arguments("answer_supported", review_input, None, None, 4000)
     assert "incomplete" in arguments["state"].lower()
+
+
+def test_review_compression_preserves_real_source_gaps_and_does_not_mutate_evidence():
+    """Review size limits must preserve source coverage independently of review coverage."""
+
+    evidence = {"evidence_completeness": "incomplete", "source": "Evidence. " * 1000}
+    original = json.dumps(evidence)
+    payload = json.loads(review_material("Question", "Answer", evidence, 1000))
+
+    assert payload["evidence_completeness"] == "incomplete"
+    assert payload["review_completeness"] == "incomplete"
+    assert json.dumps(evidence) == original
+    assert len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))) <= 1000
+
+
+def test_incomplete_review_never_accepts_a_claim_or_triggers_futile_rechecks():
+    """A complete source with a short review excerpt is still an unverified answer."""
+
+    policy = _ReviewPolicy(verdict="supported")
+    events = []
+    middleware = EvidenceGateMiddleware(policy, "What happened?", emit_event=lambda name, detail: events.append(detail))
+    state = {
+        "messages": [
+            ToolMessage(name="search", tool_call_id="source", content="Evidence. " * 1000),
+            AIMessage(content="An incident happened."),
+        ]
+    }
+
+    assert middleware.after_model(state, None) is None
+    assert middleware.answer_nudges == 0
+    assert events[-1]["action"] == "inconclusive"
+    assert events[-1]["fallback_reason"] == "review_material_truncated"
 
 
 def test_incomplete_review_material_does_not_regenerate_an_unsupported_answer():

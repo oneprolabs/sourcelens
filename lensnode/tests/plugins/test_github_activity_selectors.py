@@ -432,5 +432,60 @@ def test_all_activity_failures_retain_repository_error_details():
     assert result["repositories"][0]["errors"] == {
         "commits": "GITHUB_ACCESS_DENIED",
         "pull_requests": "GITHUB_ACCESS_DENIED",
-        "issues": "GITHUB_ACCESS_DENIED",
     }
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("denied_field", ["updated", "created", "closed"])
+def test_issue_access_denied_is_ignored_without_discarding_collected_activity(status, denied_field):
+    """Inaccessible issue searches do not mark otherwise readable activity as incomplete."""
+
+    permitted = ["oneprolabs/devify-home"]
+
+    def handler(request):
+        if request.url.path != "/search/issues":
+            return _empty_activity(request, permitted)
+        query = parse_qs(request.url.query.decode())["q"][0]
+        if f" {denied_field}:" in query:
+            return httpx.Response(status, json={"message": "denied"})
+        return httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "incomplete_results": False,
+                "items": [{"number": 10, "title": "Visible issue", "updated_at": "2026-09-02T08:00:00Z"}],
+            },
+        )
+
+    result = _execute(permitted, permitted, handler)
+
+    repository = result["repositories"][0]
+    assert "errors" not in repository
+    assert [item["number"] for item in repository["issues"]] == ([] if denied_field == "updated" else [10])
+    assert repository["possibly_truncated"]["issues"] is False
+    assert result["source_coverage_complete"] is True
+
+
+@pytest.mark.parametrize(
+    "status,headers,error",
+    [
+        (429, {}, "GITHUB_RATE_LIMITED"),
+        (403, {"X-RateLimit-Remaining": "0"}, "GITHUB_RATE_LIMITED"),
+        (403, {"Retry-After": "60"}, "GITHUB_RATE_LIMITED"),
+        (500, {}, "GITHUB_REQUEST_FAILED"),
+    ],
+)
+def test_issue_errors_other_than_access_denied_remain_coverage_gaps(status, headers, error):
+    """Skipping issue permissions must not conceal rate limits or provider failures."""
+
+    permitted = ["oneprolabs/devify-deploy"]
+
+    def handler(request):
+        if request.url.path == "/search/issues":
+            return httpx.Response(status, headers=headers, json={"message": "unavailable"})
+        return _empty_activity(request, permitted)
+
+    result = _execute(permitted, permitted, handler)
+
+    assert result["repositories"][0]["errors"] == {"issues": error}
+    assert result["source_coverage_complete"] is False

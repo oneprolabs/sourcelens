@@ -17,6 +17,7 @@
     "trajectorySource_plugin_model": "Modelo del complemento",
     "trajectoryState_completed": "Finalizado",
     "trajectoryState_running": "En ejecución",
+    "trajectoryState_unloaded": "Evento final sin cargar",
     "trajectoryState_failed": "Fallido",
     "trajectoryState_cancelled": "Cancelado",
     "trajectoryState_interrupted": "Interrumpido",

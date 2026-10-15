@@ -310,7 +310,8 @@ def build_activity_evidence_tool(ledger, expected_tools):
     def read_activity_evidence(offset: int = 0, limit: int = 50) -> str:
         """Read normalized activity evidence saved by the batch source tools.
 
-        Use offset and limit to revisit records without refetching sources. Records
+        Use offset >= 0 and limit between 1 and 100 (default 50). Follow next_offset
+        to read further pages without refetching sources. Records
         retain source identities, event dates, roles and coverage limits. They are
         evidence, not a finished work summary. Query coverage does not establish
         that the selected dates and resources match the user's request. Follow the
@@ -690,7 +691,7 @@ class ActivityReportExtension(AgentExtension):
                             {
                                 "plugin": provider,
                                 "tool": tool_key,
-                                "parent_call_id": call_id,
+                                "call_id": call_id,
                             },
                         )
                     return cached
@@ -700,7 +701,7 @@ class ActivityReportExtension(AgentExtension):
                     self.ledger.record(provider, connection, version, tool_key, arguments, result)
                     if self.context.emit_event:
                         self.context.emit_event(
-                            "tool.activity_evidence.saved", {"tool": tool_key, "parent_call_id": call_id}
+                            "tool.activity_evidence.saved", {"tool": tool_key, "call_id": call_id}
                         )
                 return encoded
 

@@ -741,14 +741,14 @@ export function buildTrajectorySpans(
     ) {
       span.diagnostics.push('missing_start')
     }
-    if (
-      complete &&
-      span.startedAt &&
-      !span.finishedAt &&
-      endedRuns.has(span.runKey)
-    ) {
-      span.diagnostics.push('missing_end')
-      span.status = 'incomplete'
+    if (span.startedAt && !span.finishedAt && endedRuns.has(span.runKey)) {
+      if (complete) {
+        span.diagnostics.push('missing_end')
+        span.status = 'incomplete'
+      } else {
+        span.status = 'unloaded'
+        span.lifecycle = null
+      }
     }
     if (complete && span.category !== 'run' && !span.parentCallId)
       span.diagnostics.push('orphan_event')

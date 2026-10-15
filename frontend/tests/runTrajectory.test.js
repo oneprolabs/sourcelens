@@ -617,6 +617,43 @@ test('trajectory spans group explicit lifecycle and internal progress IDs', () =
   )
 })
 
+test('terminal runs do not show unloaded call endings as still running', () => {
+  const events = [
+    {
+      event_id: 'loop-start',
+      sequence: 19,
+      trace_run_uuid: 'report',
+      call_id: 'loop',
+      event_type: 'step.event',
+      timestamp: at(0),
+      payload: { name: 'deepagents.agent.invoke', max_agent_turns: 100 }
+    }
+  ]
+  const options = { complete: false, runStatuses: { report: 'done' } }
+  const pending = buildTrajectorySpans(events, options)[0]
+  assert.equal(pending.status, 'unloaded')
+  assert.equal(pending.lifecycle, null)
+  assert.equal(pending.durationMs, null)
+  assert.ok(!pending.diagnostics.includes('missing_end'))
+
+  const ended = buildTrajectorySpans(
+    [
+      ...events,
+      {
+        ...events[0],
+        event_id: 'loop-end',
+        sequence: 243,
+        timestamp: at(1000),
+        payload: { name: 'deepagents.agent.invoke.done' }
+      }
+    ],
+    options
+  )[0]
+  assert.equal(ended.status, 'completed')
+  assert.equal(ended.lifecycle, 'completed')
+  assert.equal(ended.durationMs, 1000)
+})
+
 test('open call spans are marked as running', () => {
   const rows = buildTrajectoryRows(
     [

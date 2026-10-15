@@ -17,6 +17,7 @@
     "trajectorySource_plugin_model": "Plugin model",
     "trajectoryState_completed": "Completed",
     "trajectoryState_running": "Running",
+    "trajectoryState_unloaded": "End event not loaded",
     "trajectoryState_failed": "Failed",
     "trajectoryState_cancelled": "Cancelled",
     "trajectoryState_interrupted": "Interrupted",

@@ -27,6 +27,8 @@ GET_MAX_ATTEMPTS = 3
 GET_RETRY_DELAY_SECONDS = 0.25
 ACTIVITY_DEFAULT_PER_PAGE = 50
 ACTIVITY_MAX_PAGES = 10
+ACTIVITY_PULL_REQUEST_PER_PAGE = 10
+ACTIVITY_PULL_REQUEST_MAX_PAGES = 50
 ACTIVITY_MAX_REPOSITORIES = 500
 ACTIVITY_REPOSITORY_BATCH_SIZE = 50
 ACTIVITY_DISCOVERY_MAX_PAGES = 20
@@ -493,6 +495,10 @@ def _activity_resource(
 
     repository_path = quote(repository, safe="/")
     page_size = min(per_page, ACTIVITY_RESOURCE_MAX[resource])
+    max_pages = ACTIVITY_MAX_PAGES
+    if resource == "pull_requests":
+        page_size = min(page_size, ACTIVITY_PULL_REQUEST_PER_PAGE)
+        max_pages = ACTIVITY_PULL_REQUEST_MAX_PAGES
     if resource == "issues":
         return _activity_issues(
             client,
@@ -520,7 +526,7 @@ def _activity_resource(
     items = []
     seen = set()
     result_limit = ACTIVITY_RESOURCE_MAX[resource]
-    for page in range(1, ACTIVITY_MAX_PAGES + 1):
+    for page in range(1, max_pages + 1):
         params["page"] = page
         try:
             raw_payload = _items(_json_get(client, path, secret, params))
@@ -584,7 +590,9 @@ def _activity_issues(
                     {"q": query, "sort": "updated", "direction": "desc", "page": page, "per_page": page_size},
                     max_bytes=SEARCH_MAX_BYTES,
                 )
-            except (PluginRuntimeError, httpx.HTTPError):
+            except (PluginRuntimeError, httpx.HTTPError) as exc:
+                if isinstance(exc, PluginRuntimeError) and str(exc) == "GITHUB_ACCESS_DENIED":
+                    return items[:result_limit], incomplete
                 if field == "updated" and page == 1:
                     raise
                 return items[:result_limit], True
@@ -1488,6 +1496,10 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
             ) as response:
                 if response.is_redirect:
                     raise PluginRuntimeError("GITHUB_REDIRECT_REJECTED")
+                if response.status_code == 403 and (
+                    response.headers.get("X-RateLimit-Remaining") == "0" or response.headers.get("Retry-After")
+                ):
+                    raise PluginRuntimeError("GITHUB_RATE_LIMITED")
                 if response.status_code >= 400:
                     return response.status_code, b"", False
                 body = bytearray()

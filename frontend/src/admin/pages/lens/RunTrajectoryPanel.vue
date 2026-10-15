@@ -1691,7 +1691,7 @@ function eventLifecycleLabel(event) {
   const span = event?.span
   if (span?.recordType !== 'call')
     return t('lensRuns.trajectoryDetailInstantEvent')
-  if (span.finishedAt || span.status === 'incomplete')
+  if (span.finishedAt || ['incomplete', 'unloaded'].includes(span.status))
     return rowStatusLabel({ span })
   return t(
     `lensRuns.${ACTIVE_RUN_STATUSES.has(props.runStatus) ? 'statusRunning' : 'trajectoryDetailEndMissing'}`
