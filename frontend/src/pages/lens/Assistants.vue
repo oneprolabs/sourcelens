@@ -789,7 +789,7 @@ async function loadFormResources() {
   formResourcesPromise = Promise.all([
     listLensNodes(),
     listDataSources({ page_size: 1000 }),
-    listSkills(),
+    listSkills({ compact: true }),
     listEnvironmentVariableSets(),
     listMcpServers(),
     listConnections({ status: 'active' }),

@@ -816,6 +816,7 @@ import {
   downloadSkill,
   forceDeleteSkill,
   getSkillDeleteImpact,
+  getSkill,
   importSkillFromGithub,
   listSkills,
   previewSkillFile,
@@ -870,6 +871,7 @@ const showModal = ref(false)
 const showDetail = ref(false)
 const showDeleteModal = ref(false)
 const detailRow = ref(null)
+let skillRequestId = 0
 const selectedDetailFile = ref('SKILL.md')
 const detailFilePreview = ref('')
 const detailFilePreviewError = ref('')
@@ -1202,9 +1204,9 @@ async function load() {
   loading.value = true
   formError.value = ''
   try {
-    skills.value = normalizeList(await listSkills())
+    skills.value = normalizeList(await listSkills({ compact: true }))
     if (skills.value.some((skill) => skill.source_type === 'github')) {
-      skills.value = normalizeList(await checkSkillUpdates())
+      skills.value = normalizeList(await checkSkillUpdates({ compact: true }))
     }
   } catch (error) {
     showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
@@ -1250,6 +1252,7 @@ function clearPackageFile() {
 }
 
 function startCreate() {
+  skillRequestId += 1
   mode.value = 'create'
   createMethod.value = 'manual'
   editSourceType.value = 'manual'
@@ -1261,7 +1264,15 @@ function startCreate() {
   showModal.value = true
 }
 
-function startEdit(row) {
+async function startEdit(row) {
+  const currentRequest = ++skillRequestId
+  try {
+    row = await getSkill(row.uuid)
+    if (currentRequest !== skillRequestId) return
+  } catch (error) {
+    showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
+    return
+  }
   mode.value = 'edit'
   editSourceType.value = row?.source_type || 'manual'
   createMethod.value = editSourceType.value
@@ -1274,6 +1285,7 @@ function startEdit(row) {
 }
 
 function closeModal() {
+  skillRequestId += 1
   showModal.value = false
   form.value = {}
   formError.value = ''
@@ -1283,7 +1295,15 @@ function closeModal() {
   environmentChanged.value = false
 }
 
-function openDetail(row) {
+async function openDetail(row) {
+  const currentRequest = ++skillRequestId
+  try {
+    row = await getSkill(row.uuid)
+    if (currentRequest !== skillRequestId) return
+  } catch (error) {
+    showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
+    return
+  }
   detailRow.value = row
   selectedDetailFile.value = 'SKILL.md'
   detailFilePreview.value = ''
@@ -1292,6 +1312,7 @@ function openDetail(row) {
 }
 
 function closeDetail() {
+  skillRequestId += 1
   showDetail.value = false
   detailRow.value = null
   detailFilePreview.value = ''

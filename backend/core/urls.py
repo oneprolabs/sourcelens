@@ -11,6 +11,7 @@ from core.views.admin_bulk import (
     LLMConfigBulkView,
     NotificationChannelBulkDeleteView,
 )
+from core.views.tasks import TaskExecutionListViewSet
 from .swagger import schema_view, swagger_view, redoc_view
 
 
@@ -113,6 +114,11 @@ urlpatterns = [
     path('', include('accounts.urls')),
 
     # Task management routes (agentcore-task)
+    path(
+        'api/v1/tasks/executions/',
+        TaskExecutionListViewSet.as_view({'get': 'list'}),
+        name='task-execution-list',
+    ),
     path('api/v1/tasks/', include('agentcore_task.adapters.django.urls')),
 
     # Lens MVP API

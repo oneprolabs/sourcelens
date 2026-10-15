@@ -2035,7 +2035,7 @@ async function fetchTrajectory(
   try {
     const afterSequence = append ? nextAfterSequence.value : 0
     const data = await getAdminRunTrajectory(props.runUuid, {
-      page_size: 500,
+      page_size: 100,
       after_sequence: afterSequence,
       q: query.value.trim() || undefined,
       category: category.value === 'all' ? undefined : category.value

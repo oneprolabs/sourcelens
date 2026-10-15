@@ -868,13 +868,18 @@ export async function cancelDataSourceSync(uuid) {
   return unwrapResponse(response)
 }
 
-export async function listSkills() {
+export async function listSkills(params = {}) {
   return collectPaginatedResults(async (page) => {
     const response = await api.get('/lens/admin/skills/', {
-      params: { page_size: 1000, page }
+      params: { ...params, page_size: 1000, page }
     })
     return unwrapResponse(response)
   })
+}
+
+export async function getSkill(uuid) {
+  const response = await api.get(`/lens/admin/skills/${uuid}/`)
+  return unwrapResponse(response)
 }
 
 export async function createSkill(payload) {
@@ -944,8 +949,12 @@ export async function updateGithubSkill(uuid, url) {
   return unwrapResponse(response)
 }
 
-export async function checkSkillUpdates() {
-  const response = await api.post('/lens/admin/skills/check-updates/')
+export async function checkSkillUpdates(params = {}) {
+  const response = await api.post(
+    '/lens/admin/skills/check-updates/',
+    undefined,
+    { params }
+  )
   return unwrapResponse(response)
 }
 
