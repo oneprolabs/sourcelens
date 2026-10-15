@@ -563,15 +563,10 @@ class LensGatewayChatModel(BaseChatModel):
         # wants the user to see a control answer (the direct-answer route) can
         # opt in and have its tokens published like a normal answer turn.
         stream_control = bool(kwargs.get("runtime_stream_control"))
-        gateway_messages = [
-            _message_to_gateway(
-                message,
-                include_recovery_metadata=(
-                    self.general_chat_execution_gates
-                ),
-            )
-            for message in messages
-        ]
+        gateway_messages = _messages_to_gateway(
+            messages,
+            include_recovery_metadata=self.general_chat_execution_gates,
+        )
         warnings = [] if control_call else self._consume_runtime_warnings()
         if warnings:
             gateway_messages.append(
@@ -1423,6 +1418,40 @@ class LensGatewayChatModel(BaseChatModel):
             "Tool-call loop safety limit reached",
             updates,
         )
+
+
+def _messages_to_gateway(messages, *, include_recovery_metadata=False):
+    """Keep suppressed-call feedback without inventing tool protocol pairs."""
+
+    output = []
+    recovery_feedback = []
+    invalid_ids = set()
+    for message in messages:
+        if message.type != "tool":
+            output.extend(recovery_feedback)
+            recovery_feedback.clear()
+        if message.type == "ai":
+            valid_ids = {call.get("id") for call in message.tool_calls}
+            invalid_ids = {
+                call.get("id")
+                for call in message.invalid_tool_calls
+                if call.get("id") and call.get("id") not in valid_ids
+            }
+        payload = _message_to_gateway(message, include_recovery_metadata=include_recovery_metadata)
+        if message.type == "tool" and message.tool_call_id in invalid_ids:
+            payload = {
+                "role": "user",
+                "content": (
+                    "Tool-call recovery feedback (the tool was not executed):\n"
+                    + neutralize_untrusted_text(str(payload["content"]), neutralize_boundaries=True)
+                ),
+            }
+            # Keep all valid tool results adjacent to their assistant message.
+            recovery_feedback.append(payload)
+            continue
+        output.append(payload)
+    output.extend(recovery_feedback)
+    return output
 
 
 def _message_to_gateway(message, *, include_recovery_metadata=False):

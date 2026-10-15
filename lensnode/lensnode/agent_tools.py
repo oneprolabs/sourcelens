@@ -667,7 +667,10 @@ class _AnalyzeStructuredOutputArgs(BaseModel):
     path: str = Field(
         default="",
         max_length=512,
-        description="Optional dotted path to the target JSON value.",
+        description=(
+            "Dotted object path or numeric array indices; empty selects the root. "
+            "Arrays are not traversed implicitly: select a collection, then project its fields."
+        ),
     )
     field: str = Field(
         default="",
@@ -683,7 +686,7 @@ class _AnalyzeStructuredOutputArgs(BaseModel):
         default_factory=list,
         max_length=32,
         description=(
-            "Optional dotted fields returned by project, sort, sample, "
+            "Dotted fields returned by project (an object or each array item), sort, sample, "
             "or paginate; required fields for validate_records."
         ),
     )
@@ -1369,7 +1372,12 @@ def build_general_chat_tools(
         result. ``ref`` must be a file returned as a tool ``stdout_ref``
         below ``/large_tool_results/``. No Python, SQL, shell expression, or
         arbitrary code is accepted. Results are bounded and large analysis
-        output is preserved by reference.
+        output is preserved by reference. ``project`` accepts an object or
+        an array; use an empty ``path`` to select root metadata fields.
+        Dotted paths require numeric indices inside arrays. For nested
+        collections, project the complete collection field first, rather
+        than guessing paths through its items. Inspect the saved output's
+        synopsis before selecting unfamiliar fields.
         """
 
         started = time.monotonic()
@@ -2460,8 +2468,10 @@ def _apply_structured_operation(
             required_fields=fields,
         )
     if operation == "project":
-        if not isinstance(target, list) or not fields:
+        if not isinstance(target, (dict, list)) or not fields:
             raise ValueError("OPERATION_INPUT_INVALID")
+        if isinstance(target, dict):
+            return _project_structured_items([target], fields)[0]
         return _project_structured_items(
             target[offset : offset + limit],
             fields,

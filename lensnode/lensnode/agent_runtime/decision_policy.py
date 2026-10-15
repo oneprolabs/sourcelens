@@ -155,9 +155,11 @@ class GateDecisionPolicy(ControlDecisionPolicy):
             if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
         ]
         state_text = _post_run_state(question, answer, evidence, limit=min(limits, default=4000))
-        completeness = json.loads(state_text)["evidence_completeness"]
-        if completeness == "incomplete":
+        material = json.loads(state_text)
+        if material["evidence_completeness"] == "incomplete":
             return {"evidence_completeness": "incomplete", "answer_supported": "inconclusive"}
+        if material.get("review_completeness") == "incomplete":
+            return {"review_completeness": "incomplete", "answer_supported": "inconclusive"}
         if "evidence_sufficient" in self.gates:
             threshold = (self.gates.get("evidence_sufficient") or {}).get(
                 "threshold"

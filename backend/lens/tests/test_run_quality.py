@@ -47,6 +47,25 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(self.run.termination_detail["reason"], "evidence_incomplete")
         self.assertIn("complete coverage", self.run.termination_detail["recovery"])
 
+    def test_review_budget_failure_does_not_claim_source_evidence_is_missing(self):
+        """A bounded review has its own public reason and actionable recovery."""
+
+        finish_lensnode_run(
+            self.run.uuid,
+            Run.Status.DONE,
+            outcome=Run.Outcome.PARTIAL,
+            termination_detail={
+                "reason": "review_material_incomplete",
+                "error_type": "verification",
+                "raw": "private content",
+            },
+            final_content="Report delivered; answer verification could not finish.",
+        )
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.termination_detail["reason"], "review_material_incomplete")
+        self.assertIn("review budget", self.run.termination_detail["recovery"])
+        self.assertNotIn("private content", str(self.run.termination_detail))
+
     def test_runtime_tracked_plugin_failure_is_not_counted_twice(self):
         RunStep.objects.create(
             run=self.run,

@@ -9,6 +9,7 @@ import pytest
 
 from lensnode.plugin_agent import prepare_agent_extensions
 from lensnode.plugin_package_loader import load_plugin_support, load_runtime_contract
+from lensnode.trajectory import RunTrajectory
 
 support = load_plugin_support("activity_reports")
 
@@ -90,6 +91,50 @@ def test_rejected_request_is_not_cached_and_can_be_corrected(tmp_path):
     assert json.loads(invoke("github_activity_summary", {}, runtime))["ok"] is True
     assert json.loads(invoke("github_activity_summary", {}, runtime))["ok"] is True
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("provider", ["github", "gitlab", "jira"])
+def test_activity_progress_preserves_the_tool_parent_for_saved_and_cached_evidence(tmp_path, provider):
+    """Successful source snapshots and cache hits must not degrade trace health."""
+
+    frames = []
+    trajectory = RunTrajectory("run-extension", frames.append)
+    model_id = trajectory.start_call("model", "agent", call_id="model")
+
+    def emit_event(name, detail):
+        detail = trajectory.tool_event_detail(detail)
+        trajectory.record(
+            "step.event",
+            {"name": name, **detail},
+            call_id=detail.get("call_id"),
+            parent_call_id=detail.get("parent_call_id"),
+        )
+
+    cmd = command(provider)
+    extensions = prepare_agent_extensions(cmd, tmp_path, emit_event=emit_event)
+    binding = cmd["loaded_plugins"][0]
+    tool_name = f"{provider}_activity_summary"
+    calls = []
+    invoke = extensions.wrap_executor(
+        binding,
+        binding["tools"][0],
+        lambda *args: calls.append(args) or json.dumps({**result(), "_evidence": {"complete": True}}),
+    )
+    for call_id in ("fetch", "cached"):
+        trajectory.start_call("tool", tool_name, call_id=call_id, parent_call_id=model_id)
+        with trajectory.tool_call_scope(call_id):
+            assert json.loads(invoke(tool_name, {}, SimpleNamespace(tool_call_id=call_id)))["ok"] is True
+        trajectory.finish_call(call_id, "completed")
+
+    progress = [frame["events"][0] for frame in frames if frame["events"][0]["event_type"] == "step.event"]
+    assert [event["payload"]["name"] for event in progress] == [
+        "tool.activity_evidence.saved", "tool.plugin.cache_hit",
+    ]
+    assert [event["call_id"] for event in progress] == ["fetch", "cached"]
+    assert all(event["parent_call_id"] == model_id for event in progress)
+    assert all("diagnostics" not in event["payload"] for event in progress)
+    assert trajectory.health == "healthy"
+    assert len(calls) == 1
 
 
 def test_identical_parallel_requests_share_a_single_source_snapshot(tmp_path):

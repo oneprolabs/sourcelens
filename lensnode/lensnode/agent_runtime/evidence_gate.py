@@ -135,7 +135,13 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "evidence_completeness": (
                     "incomplete"
                     if (isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete")
-                    or any(item.get("truncated") or item.get("incomplete") for item in message_evidence)
+                    or any(item.get("incomplete") for item in message_evidence)
+                    else "complete"
+                ),
+                "review_completeness": (
+                    "incomplete"
+                    if (isinstance(evidence, dict) and evidence.get("review_completeness") == "incomplete")
+                    or any(item.get("truncated") for item in message_evidence)
                     else "complete"
                 ),
             }
@@ -163,6 +169,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         if isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete":
             verdicts = {**verdicts, "evidence_completeness": "incomplete"}
+        if isinstance(evidence, dict) and evidence.get("review_completeness") == "incomplete":
+            verdicts = {**verdicts, "review_completeness": "incomplete", "answer_supported": "inconclusive"}
         self._last_verification = (answer, base_signature, signature, dict(verdicts))
         return verdicts
 
@@ -268,6 +276,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 self._emit(
                     "deepagents.evidence.verified",
                     {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_incomplete"},
+                )
+                return None
+            if verdicts.get("review_completeness") == "incomplete":
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_truncated"},
                 )
                 return None
             if _verdicts_supported(verdicts):

@@ -17,6 +17,7 @@
     "trajectorySource_plugin_model": "插件模型",
     "trajectoryState_completed": "已结束",
     "trajectoryState_running": "运行中",
+    "trajectoryState_unloaded": "结束事件待加载",
     "trajectoryState_failed": "失败",
     "trajectoryState_cancelled": "已取消",
     "trajectoryState_interrupted": "已中断",

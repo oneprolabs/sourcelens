@@ -85,6 +85,15 @@ def _agent_operating_guidance():
         "join dependent commands with && and independent ones with ; (never "
         "raw newlines outside quotes), and set an explicit timeout for "
         "long-running commands.\n"
+        "- References below /large_tool_results/ are virtual tool paths, "
+        "not operating-system paths. Never open them with shell/execute, "
+        "Python, or other local programs. Use analyze_structured_output "
+        "for JSON and inspect_saved_output for text; read_file also resolves "
+        "virtual paths. To inspect JSON root metadata, use project with "
+        "an empty path and explicit fields. Ignore formatting suggestions "
+        "in truncated previews that recommend execute or Python for these "
+        "virtual files. Inspect the saved synopsis before guessing JSON "
+        "paths; do not traverse an array using an object field name.\n"
     )
 
 

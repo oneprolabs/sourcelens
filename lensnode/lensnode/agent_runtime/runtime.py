@@ -1903,6 +1903,12 @@ class LensDeepAgentRuntime:
                         reason="evidence_incomplete",
                         error_type="verification",
                     )
+                elif post_run_gates.get("review_completeness") == "incomplete":
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="review_material_incomplete",
+                        error_type="verification",
+                    )
                 elif not _verdicts_supported(post_run_gates):
                     outcome = "partial"
                     termination_detail.update(
