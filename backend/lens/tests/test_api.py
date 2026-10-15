@@ -1428,6 +1428,27 @@ class LensApiTests(TestCase):
             AssistantSkill.objects.filter(assistant=self.assistant).exists()
         )
 
+    def test_skill_delete_impact_handles_assistant_without_lensnode(self):
+        detached = Assistant.objects.create(
+            name="Detached Advisor",
+            slug="detached-advisor",
+            lensnode=None,
+            selected_task="knowledge_qa",
+        )
+        AssistantSkill.objects.create(
+            assistant=detached,
+            skill=self.skill,
+            enabled=True,
+        )
+
+        response = self.client.get(
+            f"/api/lens/admin/skills/{self.skill.uuid}/delete-impact/",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["bound_count"], 1)
+        self.assertIsNone(response.data["bound_assistants"][0]["lensnode"])
+
     def test_uploaded_skill_reads_environment_schema(self):
         environment = [
             {

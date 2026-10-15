@@ -1567,6 +1567,24 @@ def test_git_log_accepts_non_integer_max_count(tmp_path):
     assert json.loads(payload)["ok"] is True
 
 
+def test_tool_argument_validation_errors_are_returned_to_the_model(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {
+                "target_dirs": [{"path": str(repo)}],
+                "settings": {},
+            }
+        )
+    }
+
+    result = tools["search_workspace"].invoke({})
+
+    assert "validation error" in result.lower()
+
+
 def test_recent_changes_returns_no_match_instead_of_fallback_repo(tmp_path):
     root = tmp_path / "workspace"
     repo = root / "unrelated"

@@ -261,7 +261,7 @@ class SkillViewSet(BaseAdminViewSet):
                 "slug": binding.assistant.slug,
                 "status": binding.assistant.status,
                 "visibility": binding.assistant.visibility,
-                "lensnode": binding.assistant.lensnode.name,
+                "lensnode": getattr(binding.assistant.lensnode, "name", None),
             }
             for binding in bindings
         ]

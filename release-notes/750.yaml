@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Keep Runs alive when a model calls a tool with malformed arguments by returning the validation error for a retry, purge delivered files reliably when a session is deleted, and stop reporting shutdown noise from the LensNode connection.
+zh-CN: 当模型以非法参数调用工具时改为回传校验错误让其重试，避免整条 Run 中断；删除会话时可靠清除已交付文件；不再把 LensNode 连接关闭时的噪声上报为错误。

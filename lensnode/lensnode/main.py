@@ -2340,6 +2340,13 @@ class LensNodeClient:
                 payload = self._outbox.popleft()
                 try:
                     await websocket.send(json.dumps(payload, ensure_ascii=False))
+                except (RuntimeError, AttributeError):
+                    # The event loop is being torn down (container restart or
+                    # deploy). Requeue the frame and stop quietly instead of
+                    # surfacing an asyncio teardown artifact as an error.
+                    self._outbox.appendleft(payload)
+                    self._outbox_ready.set()
+                    return
                 except Exception:
                     self._outbox.appendleft(payload)
                     self._outbox_ready.set()
