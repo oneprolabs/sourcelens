@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path, PurePosixPath
 
 from django.db import transaction
+from django.db.models import F
 from django.http import FileResponse
 from rest_framework import status
 from rest_framework.decorators import action
@@ -15,7 +16,7 @@ from rest_framework.response import Response
 
 from lens.environment_variables import validate_environment_schema
 from lens.models import AssistantSkill, MCPServer, Skill
-from lens.serializers import MCPServerSerializer, SkillSerializer
+from lens.serializers import CompactSkillSerializer, MCPServerSerializer, SkillSerializer
 from lens.skill_generation import (
     SkillGeneratorNotConfigured,
     beautify_skill_content,
@@ -38,6 +39,37 @@ class SkillViewSet(BaseAdminViewSet):
 
     queryset = Skill.objects.all()
     serializer_class = SkillSerializer
+
+    def _compact_requested(self):
+        """Limit compact serialization to explicitly requested list responses."""
+
+        return (
+            self.action in {"list", "check_updates"}
+            and self.request.query_params.get("compact", "").lower() in {"1", "true", "yes", "on"}
+        )
+
+    def _compact_queryset(self, queryset):
+        """Project only the JSON keys required by Skill lists and selectors."""
+
+        return queryset.defer("definition", "package_manifest").annotate(
+            summary_description=F("definition__description"),
+            summary_description_zh=F("definition__description_zh"),
+            summary_environment=F("definition__environment"),
+            summary_file_count=F("package_manifest__file_count"),
+        )
+
+    def get_queryset(self):
+        """Keep full definitions for detail and write actions."""
+
+        queryset = super().get_queryset()
+        if self.action == "list" and self._compact_requested():
+            return self._compact_queryset(queryset)
+        return queryset
+
+    def get_serializer_class(self):
+        """Preserve the default contract unless compact lists were requested."""
+
+        return CompactSkillSerializer if self._compact_requested() else SkillSerializer
 
     def destroy(self, request, *args, **kwargs):
         skill = self.get_object()
@@ -242,9 +274,10 @@ class SkillViewSet(BaseAdminViewSet):
                 check_skill_github_update(skill)
             except SkillPackageError:
                 continue
-        return Response(
-            self.get_serializer(self.get_queryset(), many=True).data
-        )
+        queryset = self.get_queryset()
+        if self._compact_requested():
+            queryset = self._compact_queryset(queryset)
+        return Response(self.get_serializer(queryset, many=True).data)
 
     def _bound_assistants(self, skill):
         """Return compact assistant data for delete confirmation."""

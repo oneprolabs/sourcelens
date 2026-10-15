@@ -205,7 +205,10 @@ class LensNodeSerializer(serializers.ModelSerializer):
     def get_datasources(self, obj):
         """Return the active datasources already assigned to this node."""
         result = []
-        for datasource in obj.datasources.filter(status="active"):
+        datasources = getattr(obj, "active_storage_datasources", None)
+        if datasources is None:
+            datasources = obj.datasources.filter(status="active")
+        for datasource in datasources:
             usage = {
                 "raw_bytes": 0,
                 "derived_bytes": 0,
@@ -213,7 +216,10 @@ class LensNodeSerializer(serializers.ModelSerializer):
                 "status": "complete",
             }
             measured = False
-            for item in datasource.items.filter(status="active"):
+            items = getattr(datasource, "active_storage_items", None)
+            if items is None:
+                items = datasource.items.filter(status="active")
+            for item in items:
                 item_usage = item.storage_usage or {}
                 if not item_usage:
                     continue
@@ -3602,6 +3608,27 @@ class EnvironmentVariableSetSerializer(serializers.ModelSerializer):
             instance.set_values(values)
         instance.save()
         return instance
+
+
+class CompactSkillSerializer(SkillSerializer):
+    """Expose selector metadata from SQL-projected JSON keys."""
+
+    definition = serializers.SerializerMethodField()
+    package_manifest = serializers.SerializerMethodField()
+
+    def get_definition(self, obj):
+        """Retain descriptions and environment declarations for list consumers."""
+
+        return {
+            key: getattr(obj, f"summary_{key}")
+            for key in ("description", "description_zh", "environment")
+            if getattr(obj, f"summary_{key}") is not None
+        }
+
+    def get_package_manifest(self, obj):
+        """Return the file count without transferring package file entries."""
+
+        return {"file_count": obj.summary_file_count or 0}
 
 
 class MCPServerSerializer(serializers.ModelSerializer):

@@ -417,7 +417,7 @@ function openGroupHistory(assistant) {
 async function loadUsers() {
   userOptionsLoaded.value = false
   try {
-    userOptions.value = await managementApi.getAllUsers()
+    userOptions.value = await managementApi.getAllUsers({ compact: true })
     userOptionsLoaded.value = true
   } catch {
     userOptions.value = []

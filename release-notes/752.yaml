@@ -1,0 +1,4 @@
+type: improvement
+audience: admin
+en: Speed up admin Run, trajectory, LensNode, task, and Skill lists by paginating and aggregating in the database, deferring unused fields, and offering compact list payloads; the trajectory panel now loads 100 events per batch while full export still walks every event.
+zh-CN: 通过数据库分页与聚合、延迟读取未用字段，并为列表提供紧凑载荷，加快管理台 Run、轨迹、LensNode、任务和 Skill 列表；轨迹面板每批加载 100 条事件，完整导出仍会遍历全部事件。
