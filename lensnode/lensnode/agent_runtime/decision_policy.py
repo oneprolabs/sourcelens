@@ -15,7 +15,7 @@ from ..plugin_package_loader import (
 )
 from .builtin_decisions import call_builtin_decision
 from .decision_gates import DecisionRunner, gate_bindings, run_decision_tool
-from .evidence_material import review_material
+from .evidence_material import DEFAULT_REVIEW_STATE_CHARS, review_material
 from .routing import (
     _enforce_route_evidence_invariants,
     _message_needs_retrieval,
@@ -150,7 +150,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         limits = [
             config["max_state_chars"]
             if type(config.get("max_state_chars")) is int and config["max_state_chars"] > 0
-            else 4000
+            else DEFAULT_REVIEW_STATE_CHARS
             for key, config in self.gates.items()
             if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
         ]
@@ -158,7 +158,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
             question,
             answer,
             evidence,
-            limit=min(limits, default=4000),
+            limit=min(limits, default=DEFAULT_REVIEW_STATE_CHARS),
         )
         material = json.loads(state_text)
         if material["evidence_completeness"] == "incomplete":
@@ -204,13 +204,13 @@ class GateDecisionPolicy(ControlDecisionPolicy):
 
         return min(
             (
-                config.get("max_state_chars", 4000)
+                config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS)
                 for key, config in self.gates.items()
                 if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
-                and type(config.get("max_state_chars", 4000)) is int
-                and config.get("max_state_chars", 4000) > 0
+                and type(config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS)) is int
+                and config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS) > 0
             ),
-            default=4000,
+            default=DEFAULT_REVIEW_STATE_CHARS,
         )
 
     def has_evidence_gates(self):

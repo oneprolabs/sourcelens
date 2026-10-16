@@ -2,6 +2,8 @@
 
 import json
 
+DEFAULT_REVIEW_STATE_CHARS = 80000
+
 
 def review_material(question, answer, evidence=None, limit=4000):
     """Reserve space for evidence and emit valid JSON with explicit coverage."""

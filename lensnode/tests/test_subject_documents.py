@@ -1,6 +1,8 @@
 import hashlib
 import multiprocessing
 import os
+import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -492,6 +494,53 @@ def test_conversion_process_is_terminated_at_run_deadline(
     child_pid = int(pid_file.read_text(encoding="utf-8"))
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_attachment_stop_reaps_the_nested_parser(monkeypatch, tmp_path, stop):
+    """The conversion owner must let the parser clean up before force termination."""
+
+    from lensnode import document_convert
+
+    try:
+        fork_context = multiprocessing.get_context("fork")
+    except ValueError:
+        pytest.skip("fork context is required for this process test")
+    monkeypatch.setattr(runtime_resources.multiprocessing, "get_context", lambda _method: fork_context)
+    monkeypatch.setattr(runtime_resources, "RUNTIME_CONVERSION_POLL_S", 0.01)
+    monkeypatch.setattr(runtime_resources, "RUNTIME_ACTIVITY_INTERVAL_S", 0.01)
+    pid_file = tmp_path / "parser.pid"
+    monkeypatch.setattr(document_convert, "_markitdown_worker_command", lambda path: [
+        sys.executable, "-c",
+        "import os, pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(10)",
+        str(pid_file),
+    ])
+    monkeypatch.setattr(runtime_resources, "convert_one", lambda target, path, item, context: {
+        "chars": len(document_convert._parse_document(path, context)),
+    })
+    cancel_event = threading.Event()
+
+    def stop_when_parsing():
+        if stop == "cancel" and pid_file.exists():
+            cancel_event.set()
+
+    try:
+        with pytest.raises(RunCancelledError if stop == "cancel" else TimeoutError):
+            runtime_resources._run_document_conversion(
+                tmp_path, tmp_path / "document.docx", {}, {},
+                cancel_event=cancel_event,
+                on_activity=stop_when_parsing,
+                deadline_at=time.monotonic() + (5 if stop == "cancel" else 0.5),
+            )
+        parser_pid = int(pid_file.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(parser_pid, 0)
+    finally:
+        if pid_file.exists():
+            try:
+                os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_cleanup_stale_runtime_resources_keeps_recent_runs(tmp_path):

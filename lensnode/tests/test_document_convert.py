@@ -449,18 +449,7 @@ def test_post_process_document_recognizes_embedded_office_image(
     with zipfile.ZipFile(doc, "w") as archive:
         archive.writestr("word/media/image1.png", image_bytes())
 
-    class FakeMarkItDown:
-        """Minimal MarkItDown test double."""
-
-        def convert(self, path):
-            del path
-            return types.SimpleNamespace(text_content="Document text.")
-
-    fake_module = types.SimpleNamespace(
-        MarkItDown=FakeMarkItDown,
-        __version__="test",
-    )
-    monkeypatch.setitem(sys.modules, "markitdown", fake_module)
+    install_fake_markitdown(monkeypatch)
 
     def describe_image_bytes(image_bytes_value, mime_type, context):
         del image_bytes_value, mime_type, context
@@ -758,17 +747,14 @@ def test_post_process_pdf_renders_scanned_page_when_enabled(
 def install_fake_markitdown(monkeypatch):
     """Install a minimal MarkItDown test double."""
 
-    class FakeMarkItDown:
-        """Minimal MarkItDown test double."""
+    def parse_document(path, context):
+        """Return document text at the parser process boundary."""
 
-        def convert(self, path):
-            del path
-            return types.SimpleNamespace(text_content="Document text.")
+        del path, context
+        return "Document text."
 
-    fake_module = types.SimpleNamespace(
-        MarkItDown=FakeMarkItDown,
-        __version__="test",
-    )
+    monkeypatch.setattr("lensnode.document_convert._parse_document", parse_document)
+    fake_module = types.SimpleNamespace(__version__="test")
     monkeypatch.setitem(sys.modules, "markitdown", fake_module)
 
 
