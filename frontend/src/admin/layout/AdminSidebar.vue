@@ -1011,6 +1011,58 @@
                 }}</span>
               </router-link>
               <router-link
+                to="/management/alerts/rules"
+                class="admin-nav-item admin-nav-item-child"
+                :class="
+                  isActive('/management/alerts/rules')
+                    ? 'admin-nav-item-active'
+                    : ''
+                "
+                @click="isMobile && $emit('close')"
+                @mouseenter="preloadRoute('/management/alerts/rules')"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span>{{ t('alertManagement.rules.menuTitle') }}</span>
+              </router-link>
+              <router-link
+                to="/management/alerts/events"
+                class="admin-nav-item admin-nav-item-child"
+                :class="
+                  isActive('/management/alerts/events')
+                    ? 'admin-nav-item-active'
+                    : ''
+                "
+                @click="isMobile && $emit('close')"
+                @mouseenter="preloadRoute('/management/alerts/events')"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                  />
+                </svg>
+                <span>{{ t('alertManagement.events.menuTitle') }}</span>
+              </router-link>
+              <router-link
                 to="/management/notifier/settings"
                 class="admin-nav-item admin-nav-item-child"
                 :class="

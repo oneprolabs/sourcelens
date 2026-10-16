@@ -3734,6 +3734,9 @@ def confirm_reconcile_orphan(run_uuid):
         if run_id:
             fail_running_steps_for_runs([run_id])
         if resume_by <= now:
+            from .alerts import schedule_run_alert_evaluation
+
+            schedule_run_alert_evaluation(run_uuid)
             RunExecution.objects.filter(
                 run_id=run_id,
                 status__in=[
@@ -3809,6 +3812,9 @@ def expire_awaiting_run(run_uuid):
     from .services import fail_running_steps_for_runs
 
     fail_running_steps_for_runs([run["id"]])
+    from .alerts import schedule_run_alert_evaluation
+
+    schedule_run_alert_evaluation(run_uuid)
     RunExecution.objects.filter(
         run_id=run["id"],
         status__in=[
@@ -4097,7 +4103,8 @@ def lensnode_cleanup_task():
         | Q(last_activity_at__isnull=True, started_at__lt=idle_cutoff)
         | Q(started_at__lt=abs_cutoff)
     )
-    stale_ids = list(stale.values_list("id", flat=True))
+    stale_runs = list(stale.values_list("id", "uuid"))
+    stale_ids = [run_id for run_id, _run_uuid in stale_runs]
     count = len(stale_ids)
     if count:
         from .services import fail_running_steps_for_runs
@@ -4109,13 +4116,19 @@ def lensnode_cleanup_task():
         finished_at=now,
         updated_at=now,
     )
+    if stale_runs:
+        from .alerts import schedule_run_alert_evaluation
+
+        for _run_id, run_uuid in stale_runs:
+            schedule_run_alert_evaluation(run_uuid)
     # Fail awaiting-resume runs whose node never came back before the resume
     # deadline (see services.get_awaiting_resume_ttl_hours).
     expired_resume = Run.objects.filter(
         status__in=[Run.Status.RUNNING, Run.Status.STREAMING],
         resume_by__lt=now,
     )
-    expired_resume_ids = list(expired_resume.values_list("id", flat=True))
+    expired_resume_runs = list(expired_resume.values_list("id", "uuid"))
+    expired_resume_ids = [run_id for run_id, _run_uuid in expired_resume_runs]
     expired_count = len(expired_resume_ids)
     if expired_count:
         from .services import fail_running_steps_for_runs
@@ -4128,6 +4141,11 @@ def lensnode_cleanup_task():
         finished_at=now,
         updated_at=now,
     )
+    if expired_resume_runs:
+        from .alerts import schedule_run_alert_evaluation
+
+        for _run_id, run_uuid in expired_resume_runs:
+            schedule_run_alert_evaluation(run_uuid)
     RunExecution.objects.filter(
         run__status=Run.Status.FAILED,
         status__in=[

@@ -167,5 +167,21 @@ export const adminRoutes = [
   {
     path: '/management/notifier/config',
     redirect: '/management/notifier/settings'
+  },
+  {
+    path: '/management/alerts',
+    redirect: '/management/alerts/rules'
+  },
+  {
+    path: '/management/alerts/rules',
+    name: 'AdminAlertRules',
+    component: () => import('@/admin/pages/Alerts/Rules.vue'),
+    meta: { requiresAuth: true, requiredFeature: 'admin_console' }
+  },
+  {
+    path: '/management/alerts/events',
+    name: 'AdminAlertEvents',
+    component: () => import('@/admin/pages/Alerts/Events.vue'),
+    meta: { requiresAuth: true, requiredFeature: 'admin_console' }
   }
 ]
