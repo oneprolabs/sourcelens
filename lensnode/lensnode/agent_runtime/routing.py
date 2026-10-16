@@ -24,8 +24,8 @@ ROUTE_LENGTH_FINISH_REASONS = {
 }
 EXTERNAL_EVIDENCE_PATTERN = re.compile(
     r"\b(current|fetch|latest|query|status|today|yesterday)\b|"
-    r"今天|动态|工作情况|日报|周报|月报|季报|年报|昨天|"
-    r"最新|查询|获取|统计|进展|工作报告",
+    r"今天|动态|昨天|"
+    r"最新|查询|获取|统计|进展",
     re.IGNORECASE,
 )
 ARTIFACT_REQUEST_PATTERN = re.compile(
@@ -34,8 +34,8 @@ ARTIFACT_REQUEST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 COMPLEX_SYNTHESIS_PATTERN = re.compile(
-    r"\b(report|summary|summarize|compare|comparison|audit)\b|"
-    r"报告|汇总|总结|归纳|对比|审计",
+    r"\b(compare|comparison|audit)\b|"
+    r"对比|审计",
     re.IGNORECASE,
 )
 PROTECTED_DISCLOSURE_PATTERN = re.compile(
@@ -597,10 +597,8 @@ def _fallback_route_decision(
             )
         )
     )
-    # A synthesis request with evidence capabilities is treated as needing
-    # evidence even without an explicit external-evidence keyword, so a
-    # "总结…工作内容" style request is never silently downgraded to a
-    # tool-free answer when the classifier is unusable.
+    # Comparisons with available sources require evidence even when
+    # the request does not explicitly ask for external retrieval.
     requires_evidence = external_evidence or (
         complex_synthesis and bool(evidence_capabilities)
     )

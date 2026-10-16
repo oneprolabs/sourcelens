@@ -93,6 +93,7 @@ import EmailCodeLogin from '@/components/auth/EmailCodeLogin.vue'
 import ForgotPasswordForm from '@/components/auth/ForgotPasswordForm.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { getPasswordManagementText } from '@/locales/passwordManagement'
+import { getVerificationErrorMessage } from '@/utils/verificationError'
 
 const emit = defineEmits(['success'])
 
@@ -138,23 +139,22 @@ const handleLogin = async () => {
   if (!validateLogin()) {
     return
   }
-  if (!pwTurnstilePassed.value) {
-    errorMessage.value = t('auth.codeLogin.turnstileRequired')
-    return
-  }
-
   loading.value = true
   errorMessage.value = ''
   try {
     await userStore.login({
       email: formData.email,
       password: formData.password,
-      turnstileToken: pwTurnstileToken.value
+      turnstile_token: pwTurnstileToken.value
     })
     emit('success')
   } catch (error) {
     console.error('Login error:', error)
-    errorMessage.value = t('auth.loginError')
+    errorMessage.value = getVerificationErrorMessage(
+      error,
+      t,
+      'auth.loginError'
+    )
     pwTurnstilePassed.value = false
     pwTurnstileRef.value?.reset?.()
     loading.value = false

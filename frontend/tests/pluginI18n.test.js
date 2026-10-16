@@ -53,7 +53,12 @@ test('English remains the default UI language and fallback', async () => {
 })
 
 test('built-in Plugin configuration copy is complete in every locale', async () => {
-  const pluginDirectories = await readdir(new URL('plugins/', root))
+  const pluginEntries = await readdir(new URL('plugins/', root), {
+    withFileTypes: true
+  })
+  const pluginDirectories = pluginEntries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_'))
+    .map((entry) => entry.name)
   const manifests = await Promise.all(pluginDirectories.map(readPluginManifest))
   const locales = await Promise.all(
     ['en', 'zh-CN', 'es'].map((locale) =>

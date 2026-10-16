@@ -84,7 +84,9 @@ from .plugins.decisions import (
     validate_decision_analyses,
     validate_decision_gates,
 )
+from .plugins.public_connections import is_anonymous_connection, persist_public_connection, public_datasource_connection
 from .plugins.registry import (
+    RETIRED_PLUGIN_KEYS,
     PluginRegistryError,
     connection_secret_is_available,
     installed_plugin,
@@ -205,7 +207,10 @@ class LensNodeSerializer(serializers.ModelSerializer):
     def get_datasources(self, obj):
         """Return the active datasources already assigned to this node."""
         result = []
-        for datasource in obj.datasources.filter(status="active"):
+        datasources = getattr(obj, "active_storage_datasources", None)
+        if datasources is None:
+            datasources = obj.datasources.filter(status="active")
+        for datasource in datasources:
             usage = {
                 "raw_bytes": 0,
                 "derived_bytes": 0,
@@ -213,7 +218,10 @@ class LensNodeSerializer(serializers.ModelSerializer):
                 "status": "complete",
             }
             measured = False
-            for item in datasource.items.filter(status="active"):
+            items = getattr(datasource, "active_storage_items", None)
+            if items is None:
+                items = datasource.items.filter(status="active")
+            for item in items:
                 item_usage = item.storage_usage or {}
                 if not item_usage:
                     continue
@@ -524,6 +532,7 @@ class PluginBindingsField(serializers.Field):
                 "decision_auto": binding.decision_auto,
             }
             for binding in bindings.select_related("connection").all()
+            if binding.connection.plugin_key not in RETIRED_PLUGIN_KEYS
         ]
 
     def to_internal_value(self, data):
@@ -553,6 +562,8 @@ class PluginBindingsField(serializers.Field):
                 raise serializers.ValidationError(
                     "Plugin Connection does not exist."
                 )
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                raise serializers.ValidationError("This Plugin has been retired. Configure a decision model.")
             if connection.pk in seen:
                 raise serializers.ValidationError(
                     "Plugin Connection bindings must be unique."
@@ -728,6 +739,12 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "capability",
             "agent_rounds",
             "slug",
+            "agent_model_ref",
+            "decision_model_ref",
+            "decision_auto",
+            "decision_gates",
+            "decision_analyses",
+            "multimodal_model_ref",
             "lensnode",
             "lensnode_name",
             "mode",
@@ -899,6 +916,10 @@ class AssistantSerializer(serializers.ModelSerializer):
             "collaboration_members",
             "multimodal_model_ref",
             "agent_model_ref",
+            "decision_model_ref",
+            "decision_auto",
+            "decision_gates",
+            "decision_analyses",
             "agent_rounds",
             "token_budget_profile",
             "max_concurrency",
@@ -1189,7 +1210,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                         ).filter(
                             enabled=True,
                             connection__status=Connection.Status.ACTIVE,
-                        )
+                        ).exclude(connection__plugin_key__in=RETIRED_PLUGIN_KEYS)
                     )
                 else:
                     has_enabled_plugin = any(
@@ -1212,6 +1233,9 @@ class AssistantSerializer(serializers.ModelSerializer):
         self._validate_skill_plugin_requirements(attrs)
         self._validate_plugin_tool_uniqueness(attrs)
         self._validate_decision_bindings(attrs, capability)
+        from lens.decisions import validate_assistant_decisions
+
+        validate_assistant_decisions(attrs, self.instance, capability)
         settings = attrs.get(
             "settings",
             getattr(self.instance, "settings", {}),
@@ -1290,6 +1314,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             if not binding.get("enabled", True):
                 continue
             connection = binding["connection"]
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                continue
             plugin = installed_plugin(connection.plugin_key)
             capabilities_by_plugin.setdefault(plugin.key, set()).update(
                 tool.capability
@@ -1361,6 +1387,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             connection = binding.get("connection")
             if connection is None:
                 continue
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
+                continue
             plugin = installed_plugin(connection.plugin_key)
             tool_keys.extend(tool.key for tool in plugin.tools)
         tool_keys.extend(
@@ -1408,6 +1436,8 @@ class AssistantSerializer(serializers.ModelSerializer):
             if not gates and not analyses:
                 continue
             if connection is None:
+                continue
+            if connection.plugin_key in RETIRED_PLUGIN_KEYS:
                 continue
             plugin = installed_plugin(connection.plugin_key)
             for key in gates:
@@ -1932,6 +1962,8 @@ class ConnectionSerializer(serializers.ModelSerializer):
             "plugin_key",
             getattr(self.instance, "plugin_key", ""),
         )
+        if plugin_key in RETIRED_PLUGIN_KEYS:
+            raise serializers.ValidationError({"plugin_key": "This Plugin has been retired. Configure a decision model."})
         config = attrs.get(
             "config",
             getattr(self.instance, "config", {}),
@@ -2144,6 +2176,8 @@ class DataSourceSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     connection = serializers.UUIDField(source="connection.uuid", read_only=True)
+    public_endpoint = serializers.URLField(write_only=True, required=False, allow_blank=True)
+    connection_is_public = serializers.SerializerMethodField()
     connection_name = serializers.CharField(
         source="connection.name",
         read_only=True,
@@ -2166,6 +2200,11 @@ class DataSourceSerializer(serializers.ModelSerializer):
     sync_state = serializers.SerializerMethodField()
     storage_usage = serializers.SerializerMethodField()
     deployments = serializers.SerializerMethodField()
+
+    def get_connection_is_public(self, datasource):
+        """Return whether authentication is managed anonymously by the system."""
+
+        return bool(datasource.connection_id and is_anonymous_connection(datasource.connection))
 
     def get_deployments(self, obj):
         """Serialize every runtime copy of the datasource."""
@@ -2280,6 +2319,18 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "plugin_key",
             getattr(self.instance, "plugin_key", ""),
         )
+        public_endpoint = attrs.pop("public_endpoint", "")
+        if plugin_key in {"github", "gitlab"} and (connection is None or is_anonymous_connection(connection)):
+            try:
+                connection, datasource_config = public_datasource_connection(
+                    plugin_key,
+                    datasource_config,
+                    public_endpoint or getattr(connection, "endpoint", ""),
+                )
+            except DatasourceProviderError as exc:
+                raise serializers.ValidationError({"datasource_config": str(exc)}) from exc
+            attrs["connection"] = connection
+            attrs["datasource_config"] = datasource_config
         _validate_datasource_config_secret_fields(datasource_config)
         if (
             connection is None
@@ -2628,6 +2679,7 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a datasource and pin its unified storage directory."""
 
+        self._persist_public_connection(validated_data)
         datasource = DataSource.objects.create(**validated_data)
         self._apply_default_target_path(datasource)
         return datasource
@@ -2635,9 +2687,18 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Update datasource metadata and repin its storage directory."""
 
+        self._persist_public_connection(validated_data)
         datasource = super().update(instance, validated_data)
         self._apply_default_target_path(datasource)
         return datasource
+
+    @staticmethod
+    def _persist_public_connection(validated_data):
+        """Save anonymous infrastructure only after resource validation succeeds."""
+
+        connection = validated_data.get("connection")
+        if connection is not None and connection._state.adding:
+            validated_data["connection"] = persist_public_connection(connection)
 
     @staticmethod
     def _apply_default_target_path(datasource):
@@ -2673,6 +2734,8 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "connection_uuid",
             "connection_name",
             "connection_endpoint",
+            "connection_is_public",
+            "public_endpoint",
             "plugin_key",
             "datasource_config",
             "config",
@@ -3547,6 +3610,27 @@ class EnvironmentVariableSetSerializer(serializers.ModelSerializer):
             instance.set_values(values)
         instance.save()
         return instance
+
+
+class CompactSkillSerializer(SkillSerializer):
+    """Expose selector metadata from SQL-projected JSON keys."""
+
+    definition = serializers.SerializerMethodField()
+    package_manifest = serializers.SerializerMethodField()
+
+    def get_definition(self, obj):
+        """Retain descriptions and environment declarations for list consumers."""
+
+        return {
+            key: getattr(obj, f"summary_{key}")
+            for key in ("description", "description_zh", "environment")
+            if getattr(obj, f"summary_{key}") is not None
+        }
+
+    def get_package_manifest(self, obj):
+        """Return the file count without transferring package file entries."""
+
+        return {"file_count": obj.summary_file_count or 0}
 
 
 class MCPServerSerializer(serializers.ModelSerializer):

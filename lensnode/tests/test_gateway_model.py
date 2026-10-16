@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -54,6 +55,52 @@ def _install_transport(monkeypatch, handler, client_options=None):
     monkeypatch.setattr(
         "lensnode.gateway_model.httpx.Client", fake_client
     )
+
+
+@pytest.mark.parametrize("streaming,final", [(False, False), (True, False), (True, True)])
+def test_dsml_text_without_structured_calls_is_rejected_before_publication(monkeypatch, streaming, final):
+    """A provider's unparsed tool request must never become a final answer."""
+
+    content = '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_file">\n</｜｜DSML｜｜ calls>'
+    outputs = []
+    frames = []
+    observations = []
+    if streaming:
+        chunks = [content[:2], content[2:12], content[12:]]
+        body = "".join(
+            "data: " + json.dumps({"type": "token", "kind": "content", "content": chunk}) + "\n\n" for chunk in chunks
+        )
+        body += 'data: {"type":"done","usage":{},"tool_calls":[],"finish_reason":"stop"}\n\n'
+        response = httpx.Response(200, content=body.encode())
+    else:
+        response = httpx.Response(200, json={"message": {"content": content, "finish_reason": "stop"}})
+    _install_transport(monkeypatch, lambda request: response)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=outputs.append if streaming else None,
+        emit_observation=observations.append,
+        trace_context={"root_observation_id": "root"},
+        trajectory=RunTrajectory("run-protocol", frames.append),
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        model._generate([HumanMessage(content="Summarize yesterday")], runtime_final_synthesis=final)
+
+    assert raised.value.code == "MODEL_TOOL_PROTOCOL_ERROR"
+    assert outputs == []
+    events = [frame["events"][0] for frame in frames]
+    assert any(event["event_type"] == "model.failed" for event in events)
+    assert observations[-1]["action"] == "end"
+    assert observations[-1]["status"] == "failed"
+
+
+def test_dsml_discussion_is_not_treated_as_a_tool_request():
+    """Quoted protocol examples in an explanation remain ordinary content."""
+
+    content = "The DSML example is:\n```xml\n<｜｜DSML｜｜ calls>\n```"
+    assert _message_from_gateway({"content": content}).content == content
 
 
 def test_streaming_touches_activity_on_every_event(monkeypatch):
@@ -729,6 +776,110 @@ def test_malformed_tool_arguments_are_not_executable():
     assert len(message.invalid_tool_calls) == 1
     assert message.invalid_tool_calls[0]["id"] == "call_1"
     assert "tool_calls" not in message.additional_kwargs
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_suppressed_tool_recovery_feedback_keeps_gateway_history_valid(monkeypatch, streaming):
+    """Recovery feedback must not reference tool calls omitted from the request."""
+
+    capped = _message_from_gateway(
+        {
+            "content": "Preparing the report.",
+            "finish_reason": "length",
+            "tool_calls": [
+                {"id": "write", "function": {"name": "write_file", "arguments": '{"content":'}},
+                {"id": "plan", "function": {"name": "write_todos", "arguments": '{"todos":[]}'}},
+            ],
+        }
+    )
+    messages = [
+        HumanMessage(content="Create the report."),
+        AIMessage(content="", tool_calls=[{"id": "fetch", "name": "search", "args": {}}]),
+        ToolMessage(content="source evidence", tool_call_id="fetch"),
+        capped,
+        ToolMessage(content="write_file was not executed: truncated arguments", tool_call_id="write"),
+        ToolMessage(content="write_todos was not executed: output length limit", tool_call_id="plan"),
+        HumanMessage(content="Finish the deliverable."),
+    ]
+
+    def handler(request):
+        history = json.loads(request.content)["messages"]
+        assert history[2] == {"role": "tool", "content": "source evidence", "tool_call_id": "fetch"}
+        assert "tool_calls" not in history[3]
+        assert [item["role"] for item in history[4:6]] == ["user", "user"]
+        assert "write_file was not executed" in history[4]["content"]
+        assert "write_todos was not executed" in history[5]["content"]
+        assert all("tool_call_id" not in item for item in history[4:6])
+        if streaming:
+            return httpx.Response(
+                200,
+                content=b'data: {"type":"token","content":"Recovered"}\n\n'
+                b'data: {"type":"done","finish_reason":"stop"}\n\n',
+            )
+        return httpx.Response(200, json={"message": {"content": "Recovered", "finish_reason": "stop"}})
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=(lambda _: None) if streaming else None,
+    )
+    response = model._generate(messages)
+    assert response.generations[0].message.content == "Recovered"
+    assert len(capped.invalid_tool_calls) == 2
+    assert capped.tool_calls == []
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_mixed_tool_recovery_feedback_follows_valid_tool_results(monkeypatch, streaming):
+    """Recovery hints must not interrupt the assistant/tool-result protocol pair."""
+
+    mixed = _message_from_gateway(
+        {
+            "content": "",
+            "finish_reason": "tool_calls",
+            "tool_calls": [
+                {"id": "fetch", "function": {"name": "search", "arguments": "{}"}},
+                {"id": "write", "function": {"name": "write_file", "arguments": '{"content":'}},
+            ],
+        }
+    )
+    messages = [
+        HumanMessage(content="Create the report."),
+        mixed,
+        ToolMessage(content="source evidence", name="search", tool_call_id="fetch"),
+        HumanMessage(content="Finish the deliverable."),
+    ]
+    patched = PatchToolCallsMiddleware().before_agent({"messages": messages}, None)["messages"][1:]
+    assert patched[2].tool_call_id == "write"
+
+    def handler(request):
+        history = json.loads(request.content)["messages"]
+        assert [item["role"] for item in history] == ["user", "assistant", "tool", "user", "user"]
+        assert history[1]["tool_calls"][0]["id"] == history[2]["tool_call_id"] == "fetch"
+        assert history[2]["content"] == "source evidence"
+        assert "write_file" in history[3]["content"]
+        assert "could not be executed" in history[3]["content"]
+        assert "tool_call_id" not in history[3]
+        if streaming:
+            return httpx.Response(
+                200,
+                content=b'data: {"type":"token","content":"Recovered"}\n\n'
+                b'data: {"type":"done","finish_reason":"stop"}\n\n',
+            )
+        return httpx.Response(200, json={"message": {"content": "Recovered", "finish_reason": "stop"}})
+
+    _install_transport(monkeypatch, handler)
+    model = LensGatewayChatModel(
+        model_ref="model-ref",
+        ai_gateway_url="http://gateway/ai/",
+        token="token",
+        emit_output=(lambda _: None) if streaming else None,
+    )
+    assert model._generate(patched).generations[0].message.content == "Recovered"
+    assert patched[2].type == "tool"
+    assert len(mixed.invalid_tool_calls) == len(mixed.tool_calls) == 1
 
 
 def test_safety_finish_reason_suppresses_tool_calls():

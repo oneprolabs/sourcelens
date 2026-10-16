@@ -1310,7 +1310,7 @@ def test_system_prompt_includes_assistant_workspace_guide():
         workspace_guide="Use the configured engineering scope.",
     )
 
-    assert "Assistant Workspace Guide" in prompt
+    assert "<workspace_context>" in prompt
     assert "Use the configured engineering scope." in prompt
 
 
@@ -1565,6 +1565,24 @@ def test_git_log_accepts_non_integer_max_count(tmp_path):
     )
 
     assert json.loads(payload)["ok"] is True
+
+
+def test_tool_argument_validation_errors_are_returned_to_the_model(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {
+                "target_dirs": [{"path": str(repo)}],
+                "settings": {},
+            }
+        )
+    }
+
+    result = tools["search_workspace"].invoke({})
+
+    assert "validation error" in result.lower()
 
 
 def test_recent_changes_returns_no_match_instead_of_fallback_repo(tmp_path):
@@ -1975,6 +1993,7 @@ def test_lensnode_run_cancel_cancels_running_task():
 
 def test_lensnode_datasource_conversion_reports_safe_cancellation(
     monkeypatch,
+    tmp_path,
 ):
     """Managed conversion cancellation stops at a cooperative boundary."""
 
@@ -2000,7 +2019,7 @@ def test_lensnode_datasource_conversion_reports_safe_cancellation(
                 "name": "test-node",
                 "request_timeout_s": 240,
                 "max_concurrent_runs": 1,
-                "workspace_path": "/workspace",
+                "workspace_path": str(tmp_path),
                 "ai_gateway_url": "http://gateway",
                 "token": "node-token",
             },

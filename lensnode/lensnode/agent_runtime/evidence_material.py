@@ -12,8 +12,11 @@ def review_material(question, answer, evidence=None, limit=4000):
         "question": str(question or ""),
         "answer": str(answer or ""),
         "evidence_completeness": evidence.get("evidence_completeness", "complete"),
+        "review_completeness": evidence.get("review_completeness", "complete"),
         "runtime_evidence": {
-            key: value for key, value in evidence.items() if not key.startswith("_") and key != "evidence_completeness"
+            key: value
+            for key, value in evidence.items()
+            if not key.startswith("_") and key not in {"evidence_completeness", "review_completeness"}
         },
     }
     if not payload["runtime_evidence"]:
@@ -25,7 +28,12 @@ def review_material(question, answer, evidence=None, limit=4000):
     def strings(value):
         if isinstance(value, dict):
             for key, item in value.items():
-                if isinstance(item, str) and key not in {"tool", "evidence_completeness", "review_type"}:
+                if isinstance(item, str) and key not in {
+                    "tool",
+                    "evidence_completeness",
+                    "review_completeness",
+                    "review_type",
+                }:
                     yield value, key, item
                 elif isinstance(item, (dict, list)):
                     yield from strings(item)
@@ -36,7 +44,7 @@ def review_material(question, answer, evidence=None, limit=4000):
     # Copy nested evidence before shrinking so runtime/checkpoint state stays intact.
     payload = json.loads(encode())
     while len(encode()) > limit:
-        payload["evidence_completeness"] = "incomplete"
+        payload["review_completeness"] = "incomplete"
         entries = sorted(strings(payload), key=lambda entry: len(entry[2]), reverse=True)
         if entries and len(entries[0][2]) > 80:
             parent, key, value = entries[0]
@@ -50,7 +58,13 @@ def review_material(question, answer, evidence=None, limit=4000):
             payload["runtime_evidence"].pop(next(reversed(payload["runtime_evidence"])))
             continue
         # Tiny custom limits cannot carry a useful review; the caller must skip it.
-        return json.dumps({"evidence_completeness": "incomplete"}, separators=(",", ":"))
+        return json.dumps(
+            {
+                "evidence_completeness": payload["evidence_completeness"],
+                "review_completeness": "incomplete",
+            },
+            separators=(",", ":"),
+        )
     return encode()
 
 
@@ -65,4 +79,5 @@ def bound_review_state(text, limit):
         return None
     evidence = dict(payload.get("runtime_evidence") or {})
     evidence["evidence_completeness"] = payload.get("evidence_completeness", "incomplete")
+    evidence["review_completeness"] = payload.get("review_completeness", "complete")
     return review_material(payload.get("question"), payload.get("answer"), evidence, limit)

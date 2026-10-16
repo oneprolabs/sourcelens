@@ -778,7 +778,7 @@ class DecisionGateBindingTests(TestCase):
         version.save()
         self.connection = Connection.objects.create(
             name="TypeSafe",
-            plugin_key="typesafe",
+            plugin_key="test_decider",
             endpoint="https://api.typesafe.ai",
             allowed_scope={},
             secret_version=version,
@@ -805,7 +805,7 @@ class DecisionGateBindingTests(TestCase):
         if tool_exposure != "model":
             tool["exposure"] = tool_exposure
         manifest = {
-            "key": "typesafe",
+            "key": "test_decider",
             "version": "1.4.0",
             "protocol_version": 1,
             "plugin_type": "decision",
@@ -836,7 +836,7 @@ class DecisionGateBindingTests(TestCase):
             ),
         }
         with tempfile.TemporaryDirectory() as root:
-            path = Path(root) / "typesafe"
+            path = Path(root) / "test_decider"
             path.mkdir(parents=True)
             (path / "plugin.json").write_text(json.dumps(manifest))
             (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
@@ -910,7 +910,7 @@ class DecisionGateBindingTests(TestCase):
             gates = build_decision_gates(loaded)
 
         self.assertEqual(len(gates), 1)
-        self.assertEqual(gates[0]["plugin_key"], "typesafe")
+        self.assertEqual(gates[0]["plugin_key"], "test_decider")
         self.assertEqual(gates[0]["plugin_version"], "1.4.0")
         self.assertEqual(
             gates[0]["connection_uuid"],
@@ -1038,7 +1038,7 @@ class DecisionGateBindingTests(TestCase):
     def test_rejects_a_second_decision_plugin_binding(self):
         second = Connection.objects.create(
             name="TypeSafe 2",
-            plugin_key="typesafe",
+            plugin_key="test_decider",
             endpoint="https://api.typesafe.ai",
             allowed_scope={},
             secret_version=self.connection.secret_version,
@@ -1059,7 +1059,7 @@ class DecisionGateBindingTests(TestCase):
     def test_decision_plugin_binds_without_a_secret(self):
         secretless = Connection.objects.create(
             name="Laya",
-            plugin_key="typesafe",
+            plugin_key="test_decider",
             endpoint="http://laya:8000",
             allowed_scope={},
         )
@@ -1110,7 +1110,7 @@ class DecisionGateBindingTests(TestCase):
     def test_rejects_gates_from_two_bindings_of_one_plugin(self):
         second = Connection.objects.create(
             name="TypeSafe two",
-            plugin_key="typesafe",
+            plugin_key="test_decider",
             endpoint="https://api.typesafe.ai",
             allowed_scope={},
             secret_version=self.connection.secret_version,
@@ -1135,7 +1135,7 @@ class DecisionGateBindingTests(TestCase):
 
     def test_rejects_gates_for_an_integration_plugin(self):
         manifest = {
-            "key": "typesafe",
+            "key": "test_decider",
             "version": "1.4.0",
             "protocol_version": 1,
             "handlers": {
@@ -1145,13 +1145,13 @@ class DecisionGateBindingTests(TestCase):
             "tools": [],
         }
         with tempfile.TemporaryDirectory() as root:
-            path = Path(root) / "typesafe"
+            path = Path(root) / "test_decider"
             path.mkdir(parents=True)
             (path / "plugin.json").write_text(json.dumps(manifest))
             (path / "control.py").write_text("PLUGIN_API_VERSION = 1\n")
             (path / "runtime.py").write_text("PLUGIN_API_VERSION = 1\n")
             with override_settings(LENS_PLUGIN_ROOTS=[root]):
-                plugin = installed_plugin("typesafe")
+                plugin = installed_plugin("test_decider")
 
         self.assertEqual(plugin.plugin_type, "integration")
         with self.assertRaises(PluginRegistryError):
@@ -1209,7 +1209,7 @@ class DecisionGateBindingTests(TestCase):
             }
         ]
         with self.decision_plugin_root(decisions=decisions):
-            plugin = installed_plugin("typesafe")
+            plugin = installed_plugin("test_decider")
             resolved = resolve_decision_gates(
                 plugin,
                 {
@@ -1238,7 +1238,7 @@ class DecisionGateBindingTests(TestCase):
             }
         ]
         with self.decision_plugin_root(decisions=decisions):
-            plugin = installed_plugin("typesafe")
+            plugin = installed_plugin("test_decider")
             inherited = validate_decision_gates(
                 plugin, {"search_needed": {}}
             )
@@ -1296,7 +1296,7 @@ class DecisionGateBindingTests(TestCase):
     def test_rejects_gates_and_analyses_from_two_bindings(self):
         second = Connection.objects.create(
             name="TypeSafe three",
-            plugin_key="typesafe",
+            plugin_key="test_decider",
             endpoint="https://api.typesafe.ai",
             allowed_scope={},
             secret_version=self.connection.secret_version,

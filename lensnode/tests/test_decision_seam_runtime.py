@@ -71,6 +71,7 @@ def _run_answer(
     gates=None,
     analyses=None,
     routing_mode=None,
+    decision_model=None,
 ):
     """Run one knowledge_qa answer through the real prepare and seam."""
 
@@ -172,6 +173,8 @@ def _run_answer(
         command["decision_analyses"] = analyses
     if routing_mode is not None:
         command["routing_mode"] = routing_mode
+    if decision_model is not None:
+        command["decision_model"] = decision_model
 
     def collect(_message, detail):
         events.append((detail.get("agent_event"), detail))
@@ -231,6 +234,26 @@ def test_unbound_runs_keep_the_model_policy(monkeypatch, tmp_path):
         for name in run.events
         if name.startswith("deepagents.decision.")
     ]
+
+
+def test_unconfigured_builtin_decisions_preserve_the_original_chain(monkeypatch, tmp_path):
+    baseline = _run_answer(monkeypatch, tmp_path)
+    unconfigured = _run_answer(monkeypatch, tmp_path, decision_model={})
+
+    assert isinstance(unconfigured.state.decision_policy, decision_policy.ModelDecisionPolicy)
+    assert isinstance(unconfigured.state.decision_ranker, decision_policy.NullDecisionRanker)
+    assert unconfigured.model_calls == baseline.model_calls
+    assert unconfigured.tool_names == baseline.tool_names
+    assert unconfigured.result == baseline.result
+    assert unconfigured.events == baseline.events
+
+
+def test_frozen_score_is_available_without_bound_ranking(monkeypatch, tmp_path):
+    run = _run_answer(monkeypatch, tmp_path, decision_model={
+        "model_ref": "selected-model", "score": {"kind": "score", "timeout_seconds": 10},
+    })
+    assert "decision_score" in run.tool_names
+    assert "decision_rank" not in run.tool_names
 
 
 def test_bound_but_falling_back_gates_match_the_baseline(monkeypatch, tmp_path):

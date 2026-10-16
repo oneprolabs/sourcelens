@@ -1,0 +1,17 @@
+type: fix
+audience: user
+en: >-
+  Large GitHub activity reports keep every pull-request page even when PR
+  bodies are long, skip inaccessible issue searches without discarding the
+  activity already collected, and report rate limits instead of fabricating
+  coverage gaps. Answers whose review excerpt is truncated are reported as an
+  incomplete review rather than missing source evidence, suppressed tool-call
+  recovery feedback no longer produces invalid model history, structured
+  output can project object or root metadata, and terminal runs no longer show
+  call spans as still running when their end event is not loaded.
+zh-CN: >-
+  大型 GitHub 活动报告即使 PR 正文很长也不会丢失后续分页；问题检索无权限时
+  跳过而不丢弃已采集的活动，并把限流如实上报而非伪造覆盖缺口。复核摘录被
+  截断的回答按“复核不完整”而非“来源证据缺失”上报；被抑制的工具调用恢复
+  提示不再生成非法的模型历史；结构化输出可对对象或根元数据执行投影；终态
+  Run 在结束事件尚未加载时不再把调用片段显示为运行中。

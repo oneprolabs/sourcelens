@@ -68,7 +68,7 @@ class DeliverableLifecycleTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.node_token}",
         )
         self.assertEqual(response.status_code, 201, response.data)
-        output = RunOutputFile.objects.get(uuid=response.data["uuid"])
+        output = RunOutputFile.objects.get(uuid=response.json()["data"]["uuid"])
         self.addCleanup(output.file.delete, save=False)
         return output
 
@@ -94,6 +94,20 @@ class DeliverableLifecycleTests(TestCase):
         self.assertEqual(self._visible_files(), [])
         response = self.client.get(f"/api/lens/output-files/{draft.uuid}/")
         self.assertEqual(response.status_code, 404)
+
+    def test_deleting_session_purges_deliverable_bytes(self):
+        """Session deletion removes deliverable bytes through the post_delete signal."""
+
+        output = self._upload("report.txt")
+        storage = output.file.storage
+        name = output.file.name
+        self.assertTrue(storage.exists(name))
+
+        response = self.client.delete(f"/api/lens/sessions/{self.session.uuid}/")
+
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(RunOutputFile.objects.filter(pk=output.pk).exists())
+        self.assertFalse(storage.exists(name))
 
     def test_regenerated_renamed_draft_is_superseded_and_bytes_retained(self):
         """A rejected first filename must not survive as a visible extra file."""

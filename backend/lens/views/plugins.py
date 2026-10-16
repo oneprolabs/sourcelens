@@ -32,7 +32,9 @@ from lens.plugins.decisions import (
     GATE_PHASES,
     gate_is_active,
 )
+from lens.plugins.public_connections import ANONYMOUS_CONNECTION_FILTER, public_datasource_connection
 from lens.plugins.registry import (
+    RETIRED_PLUGIN_KEYS,
     PluginNotFoundError,
     discover_plugins,
     installed_plugin,
@@ -274,6 +276,8 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
         del request
         plugins = []
         for key in sorted({plugin.key for plugin in discover_plugins()}):
+            if key in RETIRED_PLUGIN_KEYS:
+                continue
             try:
                 plugins.append(installed_plugin(key))
             except PluginNotFoundError:
@@ -428,7 +432,8 @@ class ConnectionViewSet(BaseAdminViewSet):
     """Admin CRUD for reusable Plugin connections."""
 
     queryset = (
-        Connection.objects.all()
+        Connection.objects.exclude(ANONYMOUS_CONNECTION_FILTER)
+        .exclude(plugin_key__in=RETIRED_PLUGIN_KEYS)
         .select_related("secret_version")
         .annotate(
             assistant_usage_count=Count(
@@ -442,6 +447,37 @@ class ConnectionViewSet(BaseAdminViewSet):
         )
     )
     serializer_class = ConnectionSerializer
+
+    @action(detail=False, methods=["post"], url_path="validate-public-datasource")
+    def validate_public_datasource(self, request):
+        """Check anonymous repository access without persisting a connection."""
+
+        if not isinstance(request.data, dict):
+            return Response({"detail": "REQUEST_INVALID"}, status=400)
+        try:
+            connection, config = public_datasource_connection(
+                request.data.get("plugin_key"),
+                request.data.get("datasource_config"),
+                request.data.get("public_endpoint", ""),
+            )
+            resource = request.data.get("resource")
+            if resource:
+                provider = get_datasource_provider(connection.plugin_key)
+                result = provider.discover_resource_options(
+                    connection.allowed_scope,
+                    "",
+                    resource,
+                    config,
+                    endpoint=connection.endpoint,
+                    client=_connection_http_client(provider, connection),
+                )
+            else:
+                result = validate_connection_datasource_access(connection, config)
+        except (DatasourceProviderError, PluginHttpClientError) as exc:
+            return Response({"detail": str(exc)}, status=400)
+        response = Response({**result, "endpoint": connection.endpoint})
+        response["Cache-Control"] = "no-store"
+        return response
 
     @action(detail=False, methods=["post"], url_path="resource-preview")
     def resource_preview(self, request, *args, **kwargs):
@@ -685,8 +721,11 @@ class PluginToolExecutionSnapshotView(
                 source=request.data.get("source"),
             )
         except ToolSnapshotError as exc:
+            detail = {"detail": exc.code}
+            if exc.reason:
+                detail["reason"] = exc.reason
             return Response(
-                {"detail": exc.code},
+                detail,
                 status=exc.status_code,
             )
         response = Response(

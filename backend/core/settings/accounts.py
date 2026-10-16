@@ -181,6 +181,13 @@ TURNSTILE_ENABLED = os.getenv(
     'true',
 ).strip().lower() != 'false'
 
+# Comma-separated IP addresses or CIDR networks allowed to skip Turnstile.
+TURNSTILE_BYPASS_IPS = tuple(
+    ip.strip()
+    for ip in os.getenv('TURNSTILE_BYPASS_IPS', '').split(',')
+    if ip.strip()
+)
+
 TURNSTILE_VERIFY_URL = (
     'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 )

@@ -21,6 +21,26 @@ test('password login submits an email credential', async () => {
   assert.match(baseInput, /name:\s*\{\s*type: String/)
 })
 
+test('login relies on the backend for IP-aware Turnstile enforcement', async () => {
+  const [passwordLogin, codeLogin] = await Promise.all([
+    source('components/auth/LoginForm.vue'),
+    source('components/auth/EmailCodeLogin.vue')
+  ])
+
+  assert.doesNotMatch(passwordLogin, /if \(!pwTurnstilePassed\.value\)/)
+  assert.doesNotMatch(codeLogin, /if \(!turnstilePassed\.value\)/)
+})
+
+test('both login forms submit the backend Turnstile token field', async () => {
+  const [passwordLogin, codeLogin] = await Promise.all([
+    source('components/auth/LoginForm.vue'),
+    source('components/auth/EmailCodeLogin.vue')
+  ])
+
+  assert.match(passwordLogin, /turnstile_token: pwTurnstileToken\.value/)
+  assert.match(codeLogin, /turnstile_token: turnstileToken\.value/)
+})
+
 test('password login is the default mode', async () => {
   const component = await source('components/auth/LoginForm.vue')
 

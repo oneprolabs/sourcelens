@@ -34,6 +34,7 @@ from .datasource.services import (
     get_datasource_sync_timeout_s,
     get_datasource_upload_timeout_s,
 )
+from .datasource.stop_confirmation import conversion_stop_evidence
 from .datasource.versions import record_datasource_versions
 from .models import (
     CredentialLease,
@@ -73,7 +74,7 @@ def session_workspace_cleanup_task():
     ).exclude(run__status__in=[Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING])
     for session in sessions:
         node_ids = LensNode.objects.filter(
-            run__session=session
+            runs__session=session
         ).values_list("uuid", flat=True).distinct()
         for node_uuid in node_ids:
             SessionCleanupOperation.objects.get_or_create(
@@ -1178,6 +1179,7 @@ def datasource_conversion_task(
     """Dispatch managed workspace conversion to its LensNode."""
 
     from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
     del self
@@ -1194,6 +1196,34 @@ def datasource_conversion_task(
         conversion,
         force=force,
     )
+    try:
+        return _dispatch_datasource_conversion_task(datasource, task_execution.pk, task_id, conversion, force)
+    except Exception:
+        release_datasource_lock(datasource.uuid, token=task_id)
+        with transaction.atomic():
+            task_execution = TaskExecution.objects.select_for_update().get(pk=task_execution.pk)
+            if task_execution.status not in TaskStatus.get_completed_statuses():
+                datasource.last_conversion_status = TaskStatus.FAILURE
+                datasource.last_conversion_at = timezone.now()
+                datasource.save(update_fields=["last_conversion_status", "last_conversion_at", "updated_at"])
+                TaskTracker.update_task_status(
+                    task_id,
+                    TaskStatus.FAILURE,
+                    error="DATASOURCE_CONVERSION_FAILED",
+                    metadata=_datasource_step_metadata(task_id, "failed", "failed", "DATASOURCE_CONVERSION_FAILED"),
+                )
+        raise
+
+
+@transaction.atomic
+def _dispatch_datasource_conversion_task(datasource, task_pk, task_id, conversion, force):
+    """Serialize dispatch with cancellation; let failure recording survive rollback."""
+
+    from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    task_execution = TaskExecution.objects.select_for_update().get(pk=task_pk)
     if task_execution.status in TaskStatus.get_completed_statuses():
         return 0
     if task_execution.status == DATASOURCE_CANCELLING_STATUS:
@@ -1344,29 +1374,6 @@ def datasource_conversion_task(
         if not _queue_datasource_task(task_id, str(exc)):
             release_datasource_lock(datasource.uuid, token=task_id)
         return 0
-    except Exception:
-        release_datasource_lock(datasource.uuid, token=task_id)
-        datasource.last_conversion_status = TaskStatus.FAILURE
-        datasource.last_conversion_at = timezone.now()
-        datasource.save(
-            update_fields=[
-                "last_conversion_status",
-                "last_conversion_at",
-                "updated_at",
-            ]
-        )
-        TaskTracker.update_task_status(
-            task_id,
-            TaskStatus.FAILURE,
-            error="DATASOURCE_CONVERSION_FAILED",
-            metadata=_datasource_step_metadata(
-                task_id,
-                "failed",
-                "failed",
-                "DATASOURCE_CONVERSION_FAILED",
-            ),
-        )
-        raise
     return 0
 
 
@@ -1796,10 +1803,13 @@ def datasource_upload_task(
     return 0
 
 
+@transaction.atomic
 def complete_datasource_conversion_task(
     task_id,
     result,
     connection_id=None,
+    lensnode_uuid=None,
+    stop_only=False,
 ):
     """Complete managed workspace conversion from LensNode callback."""
 
@@ -1807,19 +1817,43 @@ def complete_datasource_conversion_task(
     from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
 
-    task = TaskExecution.objects.filter(task_id=task_id).first()
+    task = (
+        TaskExecution.objects.select_for_update().filter(task_id=task_id, module="lens_datasource_conversion").first()
+    )
     if task is None:
         return None
     metadata = task.metadata or {}
+    if lensnode_uuid:
+        if str(metadata.get("lensnode_uuid") or "") != str(lensnode_uuid):
+            return None
+        if not connection_id or not LensNode.objects.filter(uuid=lensnode_uuid, connection_id=connection_id).exists():
+            return None
     owner_connection_id = metadata.get("lensnode_connection_id") or ""
-    if (
-        connection_id
-        and owner_connection_id
-        and owner_connection_id != connection_id
-        and task.status not in TaskStatus.get_completed_statuses()
-    ):
-        return task
+    rebound_terminal = False
+    if connection_id and owner_connection_id and owner_connection_id != connection_id:
+        rebound_terminal = task.status in TaskStatus.get_completed_statuses() and bool(lensnode_uuid)
+        if not rebound_terminal:
+            return None
     datasource_uuid = metadata.get("datasource_uuid")
+    if result.get("datasource_uuid") and str(result["datasource_uuid"]) != str(datasource_uuid):
+        return None
+    if result.get("task_id") and str(result["task_id"]) != str(task_id):
+        return None
+    if rebound_terminal and metadata.get("stop_confirmation_state") != "confirmed":
+        metadata = {**metadata, "lensnode_connection_id": str(connection_id)}
+        task.metadata = metadata
+    stop_metadata = conversion_stop_evidence(task, result, connection_id, lensnode_uuid)
+    if stop_only or task.status in TaskStatus.get_completed_statuses():
+        if stop_only and not stop_metadata and metadata.get("stop_confirmation_state") != "confirmed":
+            return None
+        if not stop_only and result.get("conversion_summary") and "conversion_summary" not in metadata:
+            stop_metadata["conversion_summary"] = result["conversion_summary"]
+        if stop_metadata:
+            task.metadata = {**metadata, **stop_metadata}
+            task.save(update_fields=["metadata"])
+        if not stop_only and datasource_uuid:
+            release_datasource_lock(datasource_uuid, token=metadata.get("lock_token") or task_id)
+        return task
     datasource = DataSource.objects.filter(uuid=datasource_uuid).first()
     status_value = str(result.get("status") or "failed").lower()
     status_map = {
@@ -1842,22 +1876,16 @@ def complete_datasource_conversion_task(
     error = str(result.get("error") or default_error)
     completion_reason = str(result.get("completion_reason") or error or status_value)
     conversion_summary = result.get("conversion_summary") or {}
-    if task.status in TaskStatus.get_completed_statuses():
-        if datasource_uuid:
-            release_datasource_lock(
-                datasource_uuid,
-                token=metadata.get("lock_token") or task_id,
-            )
-        return TaskTracker.update_task_status(
-            task_id,
-            task.status,
-            metadata={"conversion_summary": conversion_summary},
-        )
     task_result = {
         "overall_status": overall_status,
         "conversion_summary": conversion_summary,
     }
-    if datasource is not None:
+    newer_conversion_exists = TaskExecution.objects.filter(
+        module="lens_datasource_conversion",
+        metadata__datasource_uuid=str(datasource_uuid),
+        created_at__gt=task.created_at,
+    ).exists()
+    if datasource is not None and not newer_conversion_exists:
         datasource.last_conversion_status = task_status
         datasource.last_conversion_at = timezone.now()
         datasource.save(
@@ -1886,6 +1914,9 @@ def complete_datasource_conversion_task(
     )
     completion_metadata["conversion_summary"] = conversion_summary
     completion_metadata["completion_reason"] = completion_reason
+    completion_metadata.update(stop_metadata)
+    if not stop_metadata and metadata.get("stop_confirmation_state") != "confirmed":
+        completion_metadata["stop_confirmation_state"] = "unconfirmed"
     if task_status == TaskStatus.SUCCESS:
         completion_metadata.update(
             {
@@ -1912,7 +1943,7 @@ def complete_datasource_conversion_task(
                 "last_substantive_progress_at": timezone.now().isoformat(),
             }
         )
-    if task_status == TaskStatus.REVOKED:
+    if task_status == TaskStatus.REVOKED and not stop_metadata:
         completion_metadata["stop_confirmation_source"] = str(
             result.get("stop_confirmation_source") or "lensnode_callback"
         )
@@ -2159,6 +2190,17 @@ def resolve_datasource_conversion_task_id(request_id, content):
 
     task_id = content.get("task_id") or ""
     if task_id:
+        if request_id:
+            expected_task_id = cache.get(f"lens:datasource_conversion_request:{request_id}")
+            if expected_task_id and str(expected_task_id) != str(task_id):
+                return ""
+            from agentcore_task.adapters.django.models import TaskExecution
+
+            owner = TaskExecution.objects.filter(
+                module="lens_datasource_conversion", metadata__datasource_conversion_request_id=request_id
+            ).first()
+            if owner is not None and owner.task_id != task_id:
+                return ""
         return task_id
     cached_task_id = cache.get(f"lens:datasource_conversion_request:{request_id}")
     if cached_task_id:
@@ -2482,9 +2524,8 @@ def reconcile_orphaned_datasource_conversions(
     active_statuses = _datasource_active_statuses(TaskStatus)
     tasks = TaskExecution.objects.filter(
         module__in=DATASOURCE_OPERATION_MODULES,
-        status__in=active_statuses,
         metadata__lensnode_uuid=str(lensnode_uuid),
-    )
+    ).filter(Q(status__in=active_statuses) | Q(module="lens_datasource_conversion", status=TaskStatus.REVOKED))
     legacy_node = active_operations is None
     operations = {
         str(item.get("task_id")): item
@@ -2494,6 +2535,9 @@ def reconcile_orphaned_datasource_conversions(
     rebound_count = 0
     for task in tasks:
         metadata = dict(task.metadata or {})
+        if task.module == "lens_datasource_conversion" and task.status == TaskStatus.REVOKED:
+            _retry_conversion_stop(task.pk, connection_id=connection_id)
+            continue
         # A task already bound to this connection needs no rebinding. Do this
         # in Python rather than an ``.exclude`` filter: a JSON key that is
         # absent (older tasks that never recorded a connection id) is dropped
@@ -2543,6 +2587,58 @@ def reconcile_orphaned_datasource_conversions(
                 connection_id,
             )
     return rebound_count
+
+
+@transaction.atomic
+def _retry_conversion_stop(task_pk, connection_id=None, now=None):
+    """Rebind and retry one revoked task without inferring shutdown from absence."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    from .services import cancel_datasource_conversion_on_lensnode
+
+    task = TaskExecution.objects.select_for_update().get(pk=task_pk)
+    metadata = dict(task.metadata or {})
+    if task.status != TaskStatus.REVOKED or metadata.get("stop_confirmation_state") == "confirmed":
+        return False
+    lensnode_uuid = metadata.get("lensnode_uuid")
+    if not lensnode_uuid:
+        return False
+    node = LensNode.objects.filter(uuid=lensnode_uuid).first()
+    if node is None:
+        return False
+    if connection_id is None:
+        if node.status != LensNode.Status.ONLINE or not node.connection_id:
+            return False
+        requested_at = _parse_iso_datetime(metadata.get("stop_confirmation_requested_at"))
+        now = now or timezone.now()
+        if requested_at and (now - requested_at).total_seconds() < 30:
+            return False
+        connection_id = node.connection_id
+    metadata.update(
+        {
+            "lensnode_connection_id": str(connection_id),
+            "stop_confirmation_state": "unconfirmed",
+            "stop_confirmation_requested_at": (now or timezone.now()).isoformat(),
+        }
+    )
+    task.metadata = metadata
+    task.save(update_fields=["metadata"])
+    cancel_datasource_conversion_on_lensnode(node, task.task_id)
+    return True
+
+
+def reconcile_cancelled_conversion_stops(now=None):
+    """Periodically resend lost stop requests, including after a worker restart."""
+
+    from agentcore_task.adapters.django.models import TaskExecution
+    from agentcore_task.constants import TaskStatus
+
+    pending = TaskExecution.objects.filter(module="lens_datasource_conversion", status=TaskStatus.REVOKED).filter(
+        Q(metadata__stop_confirmation_state__isnull=True) | Q(metadata__stop_confirmation_state="unconfirmed")
+    )
+    return sum(_retry_conversion_stop(pk, now=now) for pk in pending.values_list("pk", flat=True))
 
 
 def _schedule_datasource_orphan_confirmation(task_id, connection_id):
@@ -2925,10 +3021,9 @@ def resume_datasource_conversion(datasource, task, created_by=None):
     active_statuses = _datasource_active_statuses(TaskStatus)
     try:
         with transaction.atomic():
-            datasource = DataSource.objects.select_for_update().get(
-                pk=datasource.pk
-            )
+            # Match conversion dispatch, completion and cancellation lock order.
             task = TaskExecution.objects.select_for_update().get(pk=task.pk)
+            datasource = DataSource.objects.select_for_update().get(pk=datasource.pk)
             metadata = dict(task.metadata or {})
             if task.status == TaskStatus.SUCCESS:
                 return _conversion_resume_response(
@@ -3074,6 +3169,7 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
     )
 
     now = timezone.now()
+    reconcile_cancelled_conversion_stops(now)
     orphaned_count = 0
     timeout_s = get_datasource_sync_timeout_s()
     conversion_cutoff = now - timedelta(seconds=get_datasource_conversion_timeout_s())
@@ -3290,6 +3386,7 @@ def cleanup_stale_datasource_sync_tasks(startup=False):
     }
 
 
+@transaction.atomic
 def _finalize_stale_cancelling_datasource_tasks(now):
     """Force-finish cancels whose LensNode stop confirmation never arrives.
 
@@ -3310,7 +3407,7 @@ def _finalize_stale_cancelling_datasource_tasks(now):
     )
 
     grace = get_reconcile_confirm_grace_seconds()
-    tasks = TaskExecution.objects.filter(
+    tasks = TaskExecution.objects.select_for_update().filter(
         module__in=DATASOURCE_OPERATION_MODULES,
         status=DATASOURCE_CANCELLING_STATUS,
     )
@@ -3361,7 +3458,10 @@ def _finalize_stale_cancelling_datasource_tasks(now):
             token=metadata.get("lock_token") or task.task_id,
         )
         metadata["completion_reason"] = error
-        metadata["stop_confirmation_source"] = "cancel_grace_expired"
+        if not is_conversion or metadata.get("stop_confirmation_state") != "confirmed":
+            metadata["stop_confirmation_source"] = "cancel_grace_expired"
+            if is_conversion:
+                metadata["stop_confirmation_state"] = "unconfirmed"
         task.status = TaskStatus.REVOKED
         task.finished_at = now
         task.error = error

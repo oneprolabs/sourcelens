@@ -9,8 +9,8 @@ import uuid as uuid_lib
 from agentcore_metering.adapters.django.models import LLMUsage
 from asgiref.sync import sync_to_async
 from django.db import transaction
-from django.db.models import Count, Max, Min, Q, TextField
-from django.db.models.functions import Cast
+from django.db.models import Case, Count, F, IntegerField, Max, Min, Q, TextField, Value, When, Window
+from django.db.models.functions import Cast, RowNumber
 from django.http import HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -281,6 +281,59 @@ def _admin_run_model_usage(run):
     }
 
 
+def _admin_run_trace_diagnostics(run):
+    """Read quality verdicts and untracked tool failures from immutable events."""
+
+    names = {}
+    operations = {}
+    tool_failures = []
+    review = None
+    gate_fallbacks = {}
+    for event in (
+        RunTraceEvent.objects.filter(
+            run=run, event_type__in=["tool.started", "tool.completed", "tool.failed", "step.event"]
+        )
+        .order_by("sequence")
+        .values("event_type", "call_id", "payload")
+    ):
+        payload = event["payload"]
+        if not isinstance(payload, dict) or payload.get("late_event") or payload.get("after_run_finished"):
+            continue
+        kind = event["event_type"]
+        call_id = event["call_id"]
+        if kind == "tool.started":
+            names[call_id] = payload.get("name")
+            arguments = payload.get("arguments")
+            operations[call_id] = (
+                hashlib.sha256(json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if isinstance(arguments, dict)
+                else None
+            )
+        elif kind in {"tool.completed", "tool.failed"}:
+            name = names.get(call_id)
+            if not isinstance(name, str):
+                continue
+            if kind == "tool.failed":
+                tool_failures.append(
+                    {"source": f"tool:{name}", "scope": "unresolved", "operation": operations.get(call_id)}
+                )
+            else:
+                for failure in tool_failures:
+                    if (
+                        failure["source"] == f"tool:{name}"
+                        and failure["operation"] is not None
+                        and failure["operation"] == operations.get(call_id)
+                    ):
+                        failure["scope"] = "recovered"
+        elif payload.get("agent_event") == "deepagents.evidence.verified":
+            review = payload
+        elif payload.get("agent_event") == "deepagents.decision.gate.done":
+            gate = payload.get("gate")
+            if isinstance(gate, str) and gate in {"evidence_sufficient", "answer_supported", "evidence_strength"}:
+                gate_fallbacks[gate] = payload.get("verdict") == "fallback"
+    return tool_failures, review, any(gate_fallbacks.values())
+
+
 def _admin_run_failure_summary(run):
     """Return safe terminal failure-scope diagnostics from Run events."""
 
@@ -308,13 +361,15 @@ def _admin_run_failure_summary(run):
     }
     allowed_scopes = {"recovered", "unresolved", "warning"}
     outcome_event = None
+    review_event = None
     for step in run.steps.all():
         _detail, events = _admin_step_detail(step)
         for event in events:
             if event.get("agent_event") == "deepagents.runtime.outcome":
                 outcome_event = event
-    if outcome_event is None:
-        return empty
+            elif event.get("agent_event") == "deepagents.evidence.verified":
+                review_event = event
+    outcome_event = outcome_event or empty
 
     summary = {}
     for key in (
@@ -354,6 +409,43 @@ def _admin_run_failure_summary(run):
             }
         )
     summary["failures"] = failures
+    tool_failures, trace_review, gate_fallback = _admin_run_trace_diagnostics(run)
+    tracked_sources = {
+        item["source"] for item in failure_items if isinstance(item, dict) and isinstance(item.get("source"), str)
+    }
+    tracked_sources.update(
+        f"tool:{item['tool']}" for item in failure_items if isinstance(item, dict) and isinstance(item.get("tool"), str)
+    )
+    for item in tool_failures:
+        if item["source"] in tracked_sources:
+            continue
+        scope = item["scope"]
+        summary[f"{scope}_failure_count"] += 1
+        failures.append(
+            {
+                "capability": "tool",
+                "error_type": "tool",
+                "scope": scope,
+                "required": False,
+                "affects_required_evidence": False,
+            }
+        )
+    review_event = trace_review or review_event or {}
+    action = review_event.get("action")
+    if (isinstance(action, str) and action in {"accept_best_effort", "inconclusive"}) or gate_fallback:
+        scope = "unresolved" if action == "accept_best_effort" else "warning"
+        count_key = "unresolved_failure_count" if scope == "unresolved" else "warning_count"
+        summary[count_key] += 1
+        failures.append(
+            {
+                "capability": "tool",
+                "error_type": "verification",
+                "scope": scope,
+                "required": True,
+                "affects_required_evidence": scope == "unresolved",
+            }
+        )
+    summary["failures"] = failures[:12]
     return summary
 
 
@@ -1050,26 +1142,37 @@ class AdminRunListView(APIView):
             else:
                 qs = qs.filter(status=run_status)
 
-        qs = qs.annotate(
-            tool_call_count=Count(
-                "trace_events__call_id",
-                filter=(
-                    Q(trace_events__event_type__startswith="tool.")
-                    | Q(trace_events__event_type__startswith="subtool.")
-                    | Q(
-                        trace_events__event_type="step.event",
-                        trace_events__payload__name="tool.plugin.start",
-                    )
-                )
-                & ~Q(trace_events__call_id=""),
-                distinct=True,
-            ),
-            retry_count=Count("retry_runs", distinct=True),
-        )
-
         total = qs.count()
         start = (page - 1) * page_size
         page_runs = list(qs[start : start + page_size])
+        page_ids = [run.pk for run in page_runs]
+        tool_counts = {
+            row["run_id"]: row["count"]
+            for row in RunTraceEvent.objects.filter(run_id__in=page_ids)
+            .order_by()
+            .values("run_id")
+            .annotate(
+                count=Count(
+                    "call_id",
+                    filter=(
+                        Q(event_type__startswith="tool.")
+                        | Q(event_type__startswith="subtool.")
+                        | Q(event_type="step.event", payload__name="tool.plugin.start")
+                    ) & ~Q(call_id=""),
+                    distinct=True,
+                )
+            )
+        }
+        retry_counts = {
+            row["retry_of_run_id"]: row["count"]
+            for row in Run.objects.filter(retry_of_run_id__in=page_ids)
+            .order_by()
+            .values("retry_of_run_id")
+            .annotate(count=Count("pk"))
+        }
+        for run in page_runs:
+            run.tool_call_count = tool_counts.get(run.pk, 0)
+            run.retry_count = retry_counts.get(run.pk, 0)
         run_ids = [str(run.uuid) for run in page_runs]
         child_pairs = []
         frontier = run_ids
@@ -1082,7 +1185,10 @@ class AdminRunListView(APIView):
             child_pairs.extend(rows)
             frontier = [str(child) for child, _parent in rows]
         usage_ids = run_ids + [str(child) for child, _parent in child_pairs]
-        usages = LLMUsage.objects.filter(metadata__run_uuid__in=usage_ids)
+        usages = LLMUsage.objects.filter(metadata__run_uuid__in=usage_ids).only(
+            "metadata", "total_tokens", "prompt_tokens", "completion_tokens",
+            "cached_tokens", "reasoning_tokens", "cost",
+        )
         parent_by_child = {
             str(child): str(parent) for child, parent in child_pairs
         }
@@ -1549,7 +1655,7 @@ def _run_trace_summary(
     metered = list(
         LLMUsage.objects.filter(
             metadata__run_uuid__in=[str(item.uuid) for item in progress_runs]
-        )
+        ).only("metadata", "total_tokens")
     )
     if not aggregate["event_count"]:
         summary = {
@@ -2009,57 +2115,76 @@ class AdminRunTrajectoryView(APIView):
         trace_runs_by_id = {
             trace_run.id: trace_run for trace_run in trace_runs
         }
-        ordered_events = list(
-            RunTraceEvent.objects.filter(
-                run__in=trace_runs,
-            ).order_by("created_at", "uuid")
-        )
-        trace_events = [
-            (sequence, event, trace_runs_by_id[event.run_id])
-            for sequence, event in enumerate(ordered_events, start=1)
-            if sequence > after_sequence
-        ]
+        events = RunTraceEvent.objects.filter(run__in=trace_runs).order_by("created_at", "uuid")
+        latest_event = events.only("uuid", "created_at").last()
+        # Bound all page queries to the same cursor while new events are ingested.
+        if latest_event:
+            events = events.filter(
+                Q(created_at__lt=latest_event.created_at)
+                | Q(created_at=latest_event.created_at, uuid__lte=latest_event.uuid)
+            )
+        else:
+            events = events.none()
+        stream_sequence = events.count()
         event_type = (params.get("event_type") or "").strip()[:128]
-        if event_type:
-            trace_events = [
-                item
-                for item in trace_events
-                if item[1].event_type == event_type
-            ]
         category = (params.get("category") or "").strip().lower()[:128]
-        if category:
-            trace_events = [
-                item
-                for item in trace_events
-                if item[1].event_type.startswith(f"{category}.")
-            ]
         call_id = (params.get("call_id") or "").strip()[:128]
-        if call_id:
-            trace_events = [
-                item
-                for item in trace_events
-                if item[1].call_id == call_id
-                or item[1].parent_call_id == call_id
-            ]
         keyword = (params.get("q") or "").strip()[:256]
-        if keyword:
-            trace_events = [
-                item
-                for item in trace_events
-                if keyword.lower()
-                in " ".join(
-                    [
-                        item[1].event_type or "",
-                        item[1].call_id or "",
-                        item[1].parent_call_id or "",
-                        str(item[1].payload or ""),
-                    ]
-                ).lower()
+        matches = Q()
+        if event_type:
+            matches &= Q(event_type=event_type)
+        if category:
+            matches &= Q(event_type__startswith=f"{category}.")
+        if call_id:
+            matches &= Q(call_id=call_id) | Q(parent_call_id=call_id)
+        if matches or keyword:
+            # Window predicates keep filters outside the global sequence calculation.
+            candidates = events.annotate(
+                ingest_sequence=Window(
+                    RowNumber(), order_by=[F("created_at").asc(), F("uuid").asc()]
+                ),
+                matches_filter=Window(
+                    Max(
+                        Case(When(matches, then=Value(1)), default=Value(0), output_field=IntegerField())
+                        if matches else Value(1)
+                    ),
+                    partition_by=[F("pk")],
+                ),
+            ).filter(ingest_sequence__gt=after_sequence, matches_filter=1)
+            if keyword:
+                # Preserve legacy Python repr search, including None, True and single quotes.
+                needle = keyword.lower()
+                found = []
+                total = 0
+                for event in candidates.iterator(chunk_size=100):
+                    haystack = " ".join([
+                        event.event_type or "", event.call_id or "",
+                        event.parent_call_id or "", str(event.payload or ""),
+                    ]).lower()
+                    if needle in haystack:
+                        total += 1
+                        if len(found) < page_size:
+                            found.append(event)
+                page_events = found
+            else:
+                references = candidates.values_list("pk", "ingest_sequence")
+                total = references.count()
+                page_references = list(references[:page_size])
+                page_by_id = RunTraceEvent.objects.in_bulk([pk for pk, _sequence in page_references])
+                page_events = []
+                for pk, sequence in page_references:
+                    event = page_by_id[pk]
+                    event.ingest_sequence = sequence
+                    page_events.append(event)
+            rows = [(event.ingest_sequence, event, trace_runs_by_id[event.run_id]) for event in page_events]
+        else:
+            total = max(stream_sequence - after_sequence, 0)
+            page_events = events[after_sequence : after_sequence + page_size]
+            rows = [
+                (sequence, event, trace_runs_by_id[event.run_id])
+                for sequence, event in enumerate(page_events, start=after_sequence + 1)
             ]
-        total = len(trace_events)
-        rows = trace_events[:page_size]
         next_after_sequence = rows[-1][0] if rows else None
-        latest_event = ordered_events[-1] if ordered_events else None
         stream_cursor = _encode_trajectory_cursor(latest_event)
         return Response(
             {
@@ -2078,7 +2203,7 @@ class AdminRunTrajectoryView(APIView):
                 "next_after_sequence": next_after_sequence,
                 "has_more": total > len(rows),
                 "stream_cursor": stream_cursor,
-                "stream_sequence": len(ordered_events),
+                "stream_sequence": stream_sequence,
                 "revision": _trajectory_revision(
                     run,
                     sorted(

@@ -2,8 +2,10 @@
 
 from pathlib import PurePosixPath
 
-from django.db.models import Count, Max, Q
-from django.db.models.functions import Now
+from django.db import connection
+from django.db.models import BigIntegerField, BooleanField, Case, Count, Max, Prefetch, Q, Sum, Value, When
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Cast, Greatest, Now
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,7 +18,7 @@ from lens.datasource.services import (
     test_datasource_connection,
 )
 from lens.lensnode_auth import issue_lensnode_token
-from lens.models import DataSource, LensNode, Run, RunTraceEvent
+from lens.models import DataSource, DataSourceItem, LensNode, Run, RunTraceEvent
 from lens.serializers import LensNodeSerializer
 from .base import BaseAdminViewSet
 
@@ -66,6 +68,17 @@ class LensNodeViewSet(BaseAdminViewSet):
     ).order_by("name")
     serializer_class = LensNodeSerializer
 
+    def get_queryset(self):
+        """Fetch active storage summaries in two bounded related queries."""
+
+        items = DataSourceItem.objects.filter(status="active").only("datasource_id", "storage_usage")
+        datasources = DataSource.objects.filter(status="active").only(
+            "lensnode_id", "uuid", "name", "source_type", "status", "storage_usage"
+        ).prefetch_related(Prefetch("items", queryset=items, to_attr="active_storage_items"))
+        return super().get_queryset().prefetch_related(
+            Prefetch("datasources", queryset=datasources, to_attr="active_storage_datasources")
+        )
+
     def list(self, request, *args, **kwargs):
         """Return paginated nodes with fleet-wide health and workload."""
 
@@ -77,14 +90,40 @@ class LensNodeViewSet(BaseAdminViewSet):
         events = RunTraceEvent.objects.filter(
             run__lensnode__uuid__in=node_ids,
             event_type="model.completed",
-        ).values("run__lensnode__uuid", "payload")
-        for event in events:
-            usage = (event.get("payload") or {}).get("usage") or {}
+        ).order_by().annotate(
+            token_text=KeyTextTransform.from_lookup("payload__usage__total_tokens"),
+        ).annotate(
+            regular_token=Case(
+                When(token_text__regex=r"^-?[0-9]{1,18}$", then=Value(True)),
+                default=Value(False),
+                output_field=BooleanField(),
+            ),
+        )
+        if connection.vendor == "postgresql":
+            # PostgreSQL SUM(bigint) preserves totals beyond the signed 64-bit range.
+            regular_totals = events.values("run__lensnode__uuid").annotate(
+                tokens=Sum(
+                    Greatest(
+                        Case(
+                            When(regular_token=True, then=Cast("token_text", BigIntegerField())),
+                            default=Value(0),
+                            output_field=BigIntegerField(),
+                        ),
+                        Value(0),
+                        output_field=BigIntegerField(),
+                    )
+                )
+            )
+            for row in regular_totals:
+                token_totals[str(row["run__lensnode__uuid"])] = int(row["tokens"] or 0)
+            events = events.filter(regular_token=False)
+        unusual_tokens = events.values_list("run__lensnode__uuid", "payload__usage__total_tokens")
+        for node_uuid, value in unusual_tokens.iterator(chunk_size=1000):
             try:
-                tokens = max(int(usage.get("total_tokens") or 0), 0)
+                tokens = max(int(value or 0), 0)
             except (TypeError, ValueError):
                 tokens = 0
-            node_id = str(event["run__lensnode__uuid"])
+            node_id = str(node_uuid)
             token_totals[node_id] = token_totals.get(node_id, 0) + tokens
         for row in response.data.get("results", []):
             row["total_tokens"] = token_totals.get(str(row["uuid"]), 0)

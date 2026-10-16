@@ -52,11 +52,13 @@ from ..planned_evidence import (
     validate_citations,
     validate_evidence_sufficiency,
 )
+from ..plugin_agent import AgentExtensions, prepare_agent_extensions
 from ..plugin_tools import (
     build_plugin_tools,
 )
 from ..runtime_modes import runtime_mode_for
 from .assembly import _agent_middleware, _fast_subagent
+from .builtin_decisions import build_decision_score_tool
 from .capabilities import CapabilityBoundaryMiddleware
 from .capability_protocol import CAPABILITY_FAMILIES
 from .decision_policy import (
@@ -64,6 +66,7 @@ from .decision_policy import (
     build_decision_policy,
     build_decision_ranker,
 )
+from .deliverable import AppendWriteDeduplicationMiddleware
 from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
@@ -128,8 +131,6 @@ from .system_prompts import (
     _context_guidance,
     _general_chat_guidance,
     _general_chat_system_prompt,
-    _activity_report_batch_tools,
-    _is_activity_report,
     _is_general_chat,
     _knowledge_system_prompt,
     _subagent_guidance,
@@ -167,6 +168,16 @@ def _decision_attempt(state):
     )
 
 
+def _update_extension_evidence(state):
+    """Merge Plugin snapshots without discarding host-observed evidence gaps."""
+
+    extensions = getattr(state, "agent_extensions", AgentExtensions())
+    extension_evidence = extensions.evidence()
+    if state.runtime_evidence.get("evidence_completeness") == "incomplete":
+        extension_evidence.pop("evidence_completeness", None)
+    state.runtime_evidence.update(extension_evidence)
+
+
 def _post_run_decision_gates(state, answer):
     """Return advisory post-run gate verdicts, replaying resume metadata.
 
@@ -175,7 +186,11 @@ def _post_run_decision_gates(state, answer):
     """
 
     resume_state = getattr(state, "resume_state", None)
-    if resume_state is not None and resume_state.decision_gates:
+    if (
+        resume_state is not None
+        and resume_state.decision_gates
+        and not getattr(getattr(state, "agent_extensions", None), "refresh_evidence", False)
+    ):
         return dict(resume_state.decision_gates)
     policy = getattr(state, "decision_policy", None)
     if policy is None:
@@ -210,7 +225,8 @@ def _build_evidence_middleware(state):
 
     policy = getattr(state, "decision_policy", None)
     checker = getattr(policy, "has_evidence_gates", None)
-    if checker is None or not checker():
+    extensions = getattr(state, "agent_extensions", AgentExtensions())
+    if not (checker is not None and checker()) and not extensions.extensions:
         return None
     command = getattr(state, "command", None) or {}
     question = str(
@@ -227,6 +243,12 @@ def _build_evidence_middleware(state):
         if persist is not None:
             persist()
 
+    def completion_checks(answer):
+        """Refresh extension evidence before accepting the current candidate."""
+
+        _update_extension_evidence(state)
+        return extensions.completion_checks(answer)
+
     return EvidenceGateMiddleware(
         policy,
         question,
@@ -235,48 +257,10 @@ def _build_evidence_middleware(state):
         review_scope=getattr(state, "evidence_review_scope", None),
         on_recheck=discard_rejected_deliverables,
         review_state=review_state,
+        completion_check=completion_checks if extensions.extensions else None,
     )
 
 
-def _high_confidence_report_route(command):
-    """Route an explicit batch-capable report without a classifier call."""
-
-    if not _is_activity_report(command):
-        return None
-    return {
-        "intent": "action",
-        "complexity": "complex",
-        "route": "plan_execute",
-        "required_capabilities": ["plugin"],
-        "evidence_requirement": "tool_result",
-    }
-
-
-def _report_scoped_tools(command, tools):
-    """Expose only batch Tools for each available report source."""
-
-    if (
-        command.get("runtime_route") != "plan_execute"
-        or not _is_activity_report(command)
-    ):
-        return list(tools)
-    batch_tools = _activity_report_batch_tools(command)
-    batch_by_plugin = {
-        key.split("_", 1)[0]: key
-        for key in batch_tools
-    }
-    return [
-        tool
-        for tool in tools
-        if (
-            (getattr(tool, "metadata", None) or {}).get("plugin_key")
-            not in batch_by_plugin
-            or getattr(tool, "name", "")
-            == batch_by_plugin.get(
-                (getattr(tool, "metadata", None) or {}).get("plugin_key")
-            )
-        )
-    ]
 MAX_CONFIGURED_SUBAGENTS = 8
 
 _MAX_PRESENTED_CITATIONS = 5
@@ -547,6 +531,8 @@ class LensDeepAgentRuntime:
         normal agent loop.
         """
 
+        if getattr(getattr(state, "agent_extensions", None), "extensions", ()):
+            return None
         runtime_mode = getattr(state, "runtime_mode", None)
         if runtime_mode is None or getattr(
             runtime_mode, "general_chat", False
@@ -628,12 +614,12 @@ class LensDeepAgentRuntime:
         Smart Collaboration uses the configured local subagents.
         """
 
+        if not getattr(getattr(state, "agent_extensions", None), "subagents_allowed", True):
+            return False
         if self._is_smart_collaboration(state.command):
             return state.command.get("task") != "code_analysis"
         if not state.runtime_mode.general_chat:
             return state.command.get("task") != "code_analysis"
-        if _is_activity_report(state.command):
-            return False
         route_decision = getattr(state, "route_decision", None) or {}
         return route_decision.get("route") == "plan_execute"
 
@@ -789,9 +775,11 @@ class LensDeepAgentRuntime:
         def emit_agent_event(event, detail=None):
             if event == "deepagents.summarization.compacted":
                 state.runtime_evidence["evidence_completeness"] = "incomplete"
-            if event in {"tool.save_deliverable.done", "deepagents.evidence.verified"} and hasattr(
-                state, "persist_execution_state"
-            ):
+            if event in {
+                "tool.save_deliverable.done",
+                "deepagents.evidence.verified",
+                "deepagents.evidence.convergence",
+            } and hasattr(state, "persist_execution_state"):
                 state.persist_execution_state()
             if trajectory is not None and event.startswith("tool."):
                 detail = trajectory.tool_event_detail(detail)
@@ -1166,14 +1154,25 @@ class LensDeepAgentRuntime:
                 source_recorder=state.consulted_sources,
                 evidence_reranker=state.decision_ranker,
             )
+        state.agent_extensions = prepare_agent_extensions(
+            state.command,
+            getattr(self.config, "workspace_path", state.resources.root),
+            skills=state.resources.context_skill_contents,
+            tools=state.tools,
+            emit_event=state.emit_agent_event,
+        )
+        if state.agent_extensions.extensions:
+            state.command["_validate_deliverable"] = state.agent_extensions.completion_checks
         state.plugin_tools = build_plugin_tools(
             state.command,
             self.config,
             self.http_client,
             emit_event=state.emit_agent_event,
             plugin_http_pool=self.plugin_http_pool,
+            agent_extensions=state.agent_extensions,
         )
         state.tools.extend(state.plugin_tools)
+        state.tools.extend(state.agent_extensions.tools)
         state.decision_policy = build_decision_policy(
             state.command,
             self.config,
@@ -1185,6 +1184,15 @@ class LensDeepAgentRuntime:
             attempt=_decision_attempt(state),
         )
         state.tools.extend(state.decision_ranker.as_tools())
+        score_tool = build_decision_score_tool(
+            state.command,
+            self.config,
+            self.http_client,
+            emit_event=state.emit_agent_event,
+            runtime_state=state.runtime_evidence.setdefault("_decision_score", {}),
+        )
+        if score_tool is not None:
+            state.tools.append(score_tool)
         state.mcp_tools = load_mcp_tools(
             state.resources.mcp_configs,
             discovery_timeout_s=getattr(
@@ -1209,10 +1217,16 @@ class LensDeepAgentRuntime:
             state.command,
             state.mcp_tools,
         )
-        state.runtime_middleware = tuple(
-            item
-            for contribution in runtime_contributions
-            for item in contribution.middleware
+        state.runtime_middleware = (
+            AppendWriteDeduplicationMiddleware(
+                state.resources.root,
+                state.emit_agent_event,
+            ),
+            *(
+                item
+                for contribution in runtime_contributions
+                for item in contribution.middleware
+            ),
         )
         state.subagent_middleware = tuple(
             item
@@ -1223,7 +1237,7 @@ class LensDeepAgentRuntime:
             contribution.prompt_guidance
             for contribution in runtime_contributions
             if contribution.prompt_guidance
-        )
+        ) + state.agent_extensions.guidance
         always_visible_tool_prefixes = tuple(
             prefix
             for contribution in runtime_contributions
@@ -1241,6 +1255,8 @@ class LensDeepAgentRuntime:
             )
         )
         state.tools.extend(state.registered_mcp_tools)
+        if state.agent_extensions.extensions:
+            state.agent_extensions.validate_tool_names(state.tools)
         if state.resume_state is not None:
             _reject_unsafe_resume_tool_replay(
                 state.resume_state.messages,
@@ -1251,13 +1267,39 @@ class LensDeepAgentRuntime:
         state.required_capabilities = []
         state.route_decision = None
 
+    def _apply_execution_extensions(self, state, decision):
+        """Apply the same Plugin protocol constraints in every runtime mode."""
+
+        extensions = getattr(state, "agent_extensions", AgentExtensions())
+        policy = extensions.apply_policy(
+            decision,
+            [*getattr(state, "tools", []), *getattr(state, "mcp_tools", [])],
+        )
+        decision = dict(policy.route)
+        if policy.required_sources and decision.get("evidence_requirement", "none") == "none":
+            decision["evidence_requirement"] = "tool_result"
+        if extensions.extensions:
+            normalized = _parse_route_decision_or_none(json.dumps(decision))
+            if normalized is None:
+                raise RuntimeError("PLUGIN_AGENT_ROUTE_INVALID")
+            decision = {**decision, **normalized}
+        state.runtime_evidence["required_sources"] = list(policy.required_sources)
+        state.tools = extensions.filter_tools(getattr(state, "tools", []))
+        state.plugin_tools = extensions.filter_tools(getattr(state, "plugin_tools", []))
+        state.mcp_tools = extensions.filter_tools(getattr(state, "mcp_tools", []))
+        middleware = getattr(state, "mcp_middleware", None)
+        if extensions.extensions and middleware is not None:
+            middleware.restrict_tools(extensions.allowed_tool_names)
+        return decision
+
     def _route_runtime(self, state):
         """Select and handle the general-chat execution route."""
 
-        if self._is_smart_collaboration(state.command):
-            state.route_decision = {"route": "plan_execute"}
-            return None
-        if not state.runtime_mode.execution_gates:
+        extensions = getattr(state, "agent_extensions", AgentExtensions())
+        implicit_route = self._is_smart_collaboration(state.command) or not state.runtime_mode.execution_gates
+        if implicit_route and not extensions.extensions:
+            if self._is_smart_collaboration(state.command):
+                state.route_decision = {"route": "plan_execute"}
             return None
 
         routing_started_at = time.monotonic()
@@ -1279,9 +1321,19 @@ class LensDeepAgentRuntime:
                     self._seed_run_checkpoint(state)
                 except Exception:
                     LOGGER.exception("Failed to enable route checkpoint")
-            state.route_decision = _high_confidence_report_route(
-                state.command
-            ) or self._decision_policy(state).select_route(
+            default_route = (
+                {
+                    "intent": "informational",
+                    "complexity": "complex",
+                    "route": "plan_execute",
+                    "required_capabilities": [],
+                    "evidence_requirement": "none",
+                }
+                if implicit_route
+                else None
+            )
+            preferred_route = extensions.preferred_route or default_route
+            state.route_decision = preferred_route or self._decision_policy(state).select_route(
                 state.model,
                 state.question,
                 history=state.command.get("history"),
@@ -1295,14 +1347,15 @@ class LensDeepAgentRuntime:
                 has_bound_skills=bool(state.resources.skill_paths),
                 image_data_urls=state.command.get("image_data_urls"),
             )
-            if state.checkpoint_ready:
-                save_resume_metadata(
-                    state.run_uuid,
-                    self.config.workspace_path,
-                    route_decision=state.route_decision,
-                    history_assistant_turns=state.history_assistant_turns,
-                )
-                state.persist_execution_state()
+        state.route_decision = self._apply_execution_extensions(state, state.route_decision)
+        if not route_was_resumed and state.checkpoint_ready:
+            save_resume_metadata(
+                state.run_uuid,
+                self.config.workspace_path,
+                route_decision=state.route_decision,
+                history_assistant_turns=state.history_assistant_turns,
+            )
+            state.persist_execution_state()
         state.emit_agent_event(
             "deepagents.runtime.stage.done",
             {
@@ -1318,22 +1371,6 @@ class LensDeepAgentRuntime:
             **state.command,
             "runtime_route": state.route_decision["route"],
         }
-        state_tools = getattr(state, "tools", [])
-        original_tool_count = len(state_tools)
-        state.tools = _report_scoped_tools(state.command, state_tools)
-        state.plugin_tools = _report_scoped_tools(
-            state.command,
-            getattr(state, "plugin_tools", []),
-        )
-        removed_tool_count = original_tool_count - len(state.tools)
-        if removed_tool_count:
-            state.emit_agent_event(
-                "deepagents.report.tools_scoped",
-                {
-                    "removed_tool_count": removed_tool_count,
-                    "remaining_tool_count": len(state.tools),
-                },
-            )
         state.emit_user_event(
             "route.resumed" if route_was_resumed else "route.selected",
             state.route_decision,
@@ -1341,6 +1378,7 @@ class LensDeepAgentRuntime:
         state.evidence_requirement = state.route_decision[
             "evidence_requirement"
         ]
+        state.runtime_evidence["artifact_required"] = state.evidence_requirement == "artifact"
         state.required_capabilities = state.route_decision[
             "required_capabilities"
         ]
@@ -1408,6 +1446,7 @@ class LensDeepAgentRuntime:
                         workspace_guide=state.command.get(
                             "workspace_guide", ""
                         ),
+                        runtime_guidance=getattr(state, "runtime_guidance", ()),
                     ),
                     messages=(
                         state.resume_state.messages
@@ -1443,19 +1482,31 @@ class LensDeepAgentRuntime:
             # The helper already published the answer when it streamed; a
             # run without an emitter has nothing to publish to either way.
             answer = _normalize_code_analysis_paths(answer, state.command)
+            outcome, termination_detail = "completed", {}
+            if extensions.extensions:
+                _update_extension_evidence(state)
+                outcome, termination_detail = _finalize_runtime_outcome(
+                    capability_middleware=None,
+                    evidence_requirement=state.evidence_requirement,
+                    required_capabilities=state.required_capabilities,
+                    truncated=False,
+                    stop_reason=state.model.stop_reason,
+                    execution_gate_enabled=False,
+                    runtime_evidence=state.runtime_evidence,
+                )
             return {
                 "answer": answer,
                 "samples": [],
                 "stop_reason": state.model.stop_reason,
                 "token_usage": state.model.token_usage,
-                "outcome": "completed",
-                "termination_detail": {},
+                "outcome": outcome,
+                "termination_detail": termination_detail,
             }
         state.capability_middleware = CapabilityBoundaryMiddleware(
             emit_event=state.emit_agent_event,
             required_capabilities=state.required_capabilities,
             require_initial_plan=(
-                state.route_decision["route"] == "plan_execute"
+                state.route_decision["route"] == "plan_execute" and state.runtime_mode.general_chat
             ),
             planning_reasoning_effort=getattr(
                 self.config,
@@ -1494,7 +1545,7 @@ class LensDeepAgentRuntime:
             else None
         )
         use_subagents = self._subagents_enabled(state)
-        dynamic_subagents = self._build_configured_subagents(state)
+        dynamic_subagents = self._build_configured_subagents(state) if use_subagents else []
         backend = _build_execution_backend(
             self.config,
             state.resources.root,
@@ -1803,6 +1854,9 @@ class LensDeepAgentRuntime:
                     "subagent_display_names",
                     None,
                 ),
+                current_question=state.question,
+                system_prompt=state.kwargs.get("system_prompt"),
+                execution_evidence=state.runtime_evidence,
             )
         except BaseException as exc:
             state.emit_agent_event(
@@ -1825,13 +1879,24 @@ class LensDeepAgentRuntime:
             },
         )
         state.exit_span(loop_span)
+        _update_extension_evidence(state)
+        completion_issues = getattr(state, "agent_extensions", AgentExtensions()).completion_checks(answer)
+        if completion_issues:
+            state.runtime_evidence["completion_issues"] = completion_issues
+            state.command.get("_deliverables", {}).clear()
+            answer = _enforce_completion_status(answer, state.command, completion_issues)
+        else:
+            answer = _enforce_delivery_status(answer, state.command, state.evidence_requirement)
+        stop_reason = state.model.stop_reason
+        if not truncated and termination_reason is None and stop_reason == "token_budget_wrapup":
+            stop_reason = None
         state.emit_agent_event(
             "deepagents.runtime.done",
             {
                 "call_id": state.run_span,
                 "actual_duration": elapsed_since(state.started_at),
                 "answer_chars": len(answer),
-                "stop_reason": state.model.stop_reason,
+                "stop_reason": stop_reason,
                 "termination_reason": termination_reason,
                 "token_usage": state.model.token_usage,
             },
@@ -1841,12 +1906,16 @@ class LensDeepAgentRuntime:
             evidence_requirement=state.evidence_requirement,
             required_capabilities=state.required_capabilities,
             truncated=truncated or bool(termination_reason),
-            stop_reason=termination_reason or state.model.stop_reason,
+            stop_reason=termination_reason or stop_reason,
             execution_gate_enabled=state.runtime_mode.execution_gates,
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
-        if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
+        if (
+            outcome == "completed"
+            and state.evidence_requirement == "artifact"
+            and not state.command.get("_deliverables")
+        ):
             outcome = "partial"
             termination_detail = _evidence_termination_detail("artifact")
         if post_run_gates:
@@ -1854,13 +1923,25 @@ class LensDeepAgentRuntime:
                 **termination_detail,
                 "decision_gates": post_run_gates,
             }
-            if (
-                outcome == "completed"
-                and post_run_gates.get("evidence_completeness") != "incomplete"
-                and not _verdicts_supported(post_run_gates)
-            ):
-                outcome = "partial"
-                termination_detail.update(reason="evidence_insufficient", error_type="verification")
+            if outcome == "completed":
+                if post_run_gates.get("evidence_completeness") == "incomplete":
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="evidence_incomplete",
+                        error_type="verification",
+                    )
+                elif post_run_gates.get("review_completeness") == "incomplete":
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="review_material_incomplete",
+                        error_type="verification",
+                    )
+                elif not _verdicts_supported(post_run_gates):
+                    outcome = "partial"
+                    termination_detail.update(
+                        reason="evidence_insufficient",
+                        error_type="verification",
+                    )
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",
@@ -1902,7 +1983,7 @@ class LensDeepAgentRuntime:
         return {
             "answer": _normalize_code_analysis_paths(answer, state.command),
             "samples": [],
-            "stop_reason": state.model.stop_reason,
+            "stop_reason": stop_reason,
             "token_usage": state.model.token_usage,
             "outcome": outcome,
             "termination_detail": termination_detail,
@@ -1910,6 +1991,30 @@ class LensDeepAgentRuntime:
                 _command_answer_language(state.command)
             ),
         }
+
+
+def _enforce_completion_status(answer, command, checks):
+    """Withdraw an unsupported final assertion after bounded repair is exhausted."""
+
+    if not checks:
+        return answer
+    return _pick_text(
+        "结果核验未通过，本次结果不能视为已验证。请补齐证据或修正缺乏支持的结论后重试。",
+        "The result could not be verified. Complete the evidence review or correct unsupported conclusions and retry.",
+        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
+    )
+
+
+def _enforce_delivery_status(answer, command, evidence_requirement):
+    """Report an unfulfilled artifact request using the actual saved attachment state."""
+
+    if evidence_requirement != "artifact" or command.get("_deliverables"):
+        return answer
+    return _pick_text(
+        "文件交付未完成，本次没有可下载的附件。请重试生成。",
+        "File delivery is incomplete. No downloadable attachment was saved for this run. Please retry.",
+        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
+    )
 
 
 def _scenario_for_task(task):
@@ -1950,7 +2055,34 @@ def _normalize_code_analysis_paths(answer, command):
                 ".",
                 normalized,
             )
-    return _sanitize_user_facing_answer(normalized)
+    return _sanitize_deliverable_links(
+        _sanitize_user_facing_answer(normalized),
+        command,
+    )
+
+
+def _sanitize_deliverable_links(answer, command):
+    """Keep final download claims consistent with staged deliverables."""
+
+    text = str(answer or "")
+    if "sandbox:" not in text:
+        return text
+    delivered = bool((command.get("_deliverables") or {}).values())
+    answer_language = _command_answer_language(command)
+    replacement = _pick_text(
+        "（文件已作为本条回复附件提供）"
+        if delivered
+        else "（文件尚未成功发布为可下载附件）",
+        "(The file is attached to this reply.)"
+        if delivered
+        else "(The file was not successfully published as a downloadable attachment.)",
+        answer_language,
+    )
+    return re.sub(
+        r"\[[^\]]+\]\(sandbox:[^)]+\)|sandbox:[^\s)]+",
+        replacement,
+        text,
+    )
 
 
 def _sanitize_user_facing_answer(answer):

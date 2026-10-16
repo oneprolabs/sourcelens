@@ -34,6 +34,7 @@ def build_plugin_tools(
     http_client,
     emit_event=None,
     plugin_http_pool=None,
+    agent_extensions=None,
 ):
     """Build tools from installed runtimes in frozen Plugin bindings."""
 
@@ -77,6 +78,8 @@ def build_plugin_tools(
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
             if tool_key in seen_keys:
                 raise PluginToolError("PLUGIN_TOOL_NAME_CONFLICT")
+            if not callable(contract.build_tool):
+                raise PluginToolError("PLUGIN_TOOL_INVALID")
 
             def executor(
                 selected_tool_key,
@@ -87,7 +90,10 @@ def build_plugin_tools(
                 _connection_uuid=connection_uuid,
                 _plugin_key=plugin_key,
                 _plugin_version=plugin_version,
+                _bound_key=tool_key,
             ):
+                if selected_tool_key != _bound_key:
+                    raise PluginToolError("PLUGIN_TOOL_BINDING_MISMATCH")
                 return _execute_plugin_tool(
                     command,
                     config,
@@ -105,10 +111,14 @@ def build_plugin_tools(
                     http_post_paths=_contract.http_post_paths,
                     result_cache=result_cache,
                     result_cache_lock=result_cache_lock,
+                    project_tool_result=_contract.project_tool_result,
+                    runtime_identity=_contract.runtime_identity,
                 )
 
-            if not callable(contract.build_tool):
-                raise PluginToolError("PLUGIN_TOOL_INVALID")
+            executor._lens_runtime_identity = contract.runtime_identity
+            if agent_extensions is not None:
+                executor = agent_extensions.wrap_executor(binding, definition, executor)
+
             try:
                 registered = contract.build_tool(definition, executor)
             except Exception as exc:
@@ -120,6 +130,8 @@ def build_plugin_tools(
                 "capability_family": capability_family,
                 "plugin_key": plugin_key,
                 "plugin_version": plugin_version,
+                "runtime_identity": contract.runtime_identity,
+                "plugin_metadata": (contract.tool_metadata or {}).get(tool_key, {}),
                 "capability": str(
                     definition.get("capability") or ""
                 ),
@@ -148,6 +160,8 @@ def _execute_plugin_tool(
     result_cache_lock=None,
     source="model_tool",
     trace_call_id=None,
+    project_tool_result=None,
+    runtime_identity=None,
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
@@ -168,7 +182,13 @@ def _execute_plugin_tool(
             _emit(
                 emit_event,
                 "tool.plugin.cache_hit",
-                {"plugin": plugin_key, "tool": tool_key, "parent_call_id": call_id},
+                {
+                    "plugin": plugin_key,
+                    "plugin_version": plugin_version,
+                    "tool": tool_key,
+                    "parent_call_id": call_id,
+                    "runtime_identity": runtime_identity,
+                },
             )
             return cached
     started = time.monotonic()
@@ -177,6 +197,8 @@ def _execute_plugin_tool(
         "tool.plugin.start",
         {
             "plugin": plugin_key,
+            "plugin_version": plugin_version,
+            "runtime_identity": runtime_identity,
             "tool": tool_key,
             "invocation_id": call_id,
             "call_id": trace_call_id,
@@ -259,11 +281,17 @@ def _execute_plugin_tool(
             endpoint,
             connection_config,
         )
+        if callable(project_tool_result) and isinstance(result, dict) and result.get("ok") is not False:
+            result = project_tool_result(tool_key, result, RESULT_MAX_BYTES)
         if isinstance(result, dict) and result.get("ok") is False:
             error = str(result.get("error") or "PLUGIN_EXECUTION_FAILED")
     except PluginRuntimeError as exc:
         error = str(exc)
         result = {"ok": False, "error": error}
+        if error == "TOOL_ARGUMENTS_INVALID":
+            result["error_type"] = "request"
+        if exc.reason:
+            result.update(reason=exc.reason, hint=exc.hint)
     except (httpx.HTTPError, PluginHttpClientError):
         error = "PLUGIN_REQUEST_FAILED"
         result = {"ok": False, "error": error}
@@ -278,6 +306,8 @@ def _execute_plugin_tool(
             "tool.plugin.done",
             {
                 "plugin": plugin_key,
+                "plugin_version": plugin_version,
+                "runtime_identity": runtime_identity,
                 "tool": tool_key,
                 "invocation_id": call_id,
                 "call_id": trace_call_id,

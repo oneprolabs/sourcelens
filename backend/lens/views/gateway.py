@@ -35,6 +35,7 @@ from lens.llm_resilience import (
     call_and_track_with_fallback,
     is_transient_provider_error,
 )
+from lens.model_errors import model_error_code
 from lens.models import (
     DataSourceVersion,
     Run,
@@ -308,7 +309,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         return Response(data)
 
     @staticmethod
-    def _acquire_parent_budget_lock(run, allow_overage=False):
+    def _acquire_parent_budget_lock(run, allow_overage=False, wait_timeout_s=RUN_BUDGET_WAIT_TIMEOUT_S):
         """Serialize metered calls for one Run tree at its budget boundary."""
 
         if run is None:
@@ -328,7 +329,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             return "disabled"
         token = uuid.uuid4().hex
         key = f"lens:run-budget-lock:{root.uuid}"
-        deadline = time.monotonic() + RUN_BUDGET_WAIT_TIMEOUT_S
+        deadline = time.monotonic() + wait_timeout_s
         while time.monotonic() < deadline:
             if cache.add(key, token, RUN_BUDGET_LOCK_TIMEOUT_S):
                 usage_ids = [str(root.uuid)]
@@ -564,31 +565,11 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
     def _gateway_stream_error_code(self, exc):
         """Return a stable error code for a gateway stream exception."""
 
-        name = type(exc).__name__.upper()
-        message = str(exc).upper()
-        if "TIMEOUT" in name or "TIMEOUT" in message or "TIMED OUT" in message:
-            return "MODEL_TIMEOUT"
-        if (
-            "BADREQUEST" in name
-            or "INVALID REQUEST" in message
-            or "PROVIDER_INVALID_REQUEST" in message
-        ):
-            return "MODEL_INVALID_REQUEST"
+        code = model_error_code(exc)
+        if code:
+            return code
         if is_transient_provider_error(exc):
             return MODEL_UNAVAILABLE
-        stream_markers = [
-            "CHUNKED",
-            "INCOMPLETE",
-            "PEER CLOSED",
-            "REMOTE PROTOCOL",
-            "CONNECTION RESET",
-            "CONNECTION CLOSED",
-        ]
-        if any(
-            marker in name or marker in message
-            for marker in stream_markers
-        ):
-            return "MODEL_STREAM_ERROR"
         return "MODEL_STREAM_ERROR"
 
 

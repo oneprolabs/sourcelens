@@ -22,7 +22,6 @@ CELERY_LOG="/var/log/celery/celery.log"
 
 WORKERS=${WORKERS:-1}
 THREADS=${THREADS:-1}
-REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
 
 # --- Ensure log directories exist ---
 mkdir -p $LOG_BASE_DIR /var/log/celery
@@ -137,7 +136,7 @@ start_flower() {
     exec celery -A core flower \
         --port=${FLOWER_PORT:-5555} \
         --address=0.0.0.0 \
-        --broker="$REDIS_URL" \
+        --broker="${CELERY_BROKER_URL:-${REDIS_URL:-redis://redis:6379/0}}" \
         --loglevel=${CELERY_LOG_LEVEL:-INFO} \
         --logfile=/var/log/celery/flower.log
 }

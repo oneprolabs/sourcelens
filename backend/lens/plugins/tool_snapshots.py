@@ -39,10 +39,11 @@ TOOL_SOURCES = frozenset({
 class ToolSnapshotError(ValueError):
     """Raised with a stable code and HTTP status for Tool snapshot requests."""
 
-    def __init__(self, code, status_code):
+    def __init__(self, code, status_code, reason=None):
         super().__init__(code)
         self.code = code
         self.status_code = status_code
+        self.reason = reason
 
 
 @transaction.atomic
@@ -110,20 +111,44 @@ def create_tool_execution_snapshot(
             connection.plugin_key,
             frozen_plugin.get("plugin_version"),
         )
+        allowed_scope = connection.allowed_scope
+        if connection.plugin_key == "github" and tool_key == "github_activity_summary":
+            frozen_scope = frozen_plugin.get("allowed_scope")
+            provider.validate_request(connection.endpoint, frozen_scope, tool_key, arguments)
+            provider.validate_request(connection.endpoint, allowed_scope, tool_key, arguments)
+            frozen_repositories = frozen_scope["repositories"]
+            current_repositories = allowed_scope["repositories"]
+            if frozen_repositories == ["*"]:
+                repositories = current_repositories
+            elif current_repositories == ["*"]:
+                repositories = frozen_repositories
+            else:
+                current_identities = {repository.casefold() for repository in current_repositories}
+                repositories = [
+                    repository for repository in frozen_repositories if repository.casefold() in current_identities
+                ]
+            if not repositories:
+                raise ToolProviderError("repository is outside connection scope")
+            allowed_scope = {"repositories": repositories}
         endpoint, normalized_arguments = provider.validate_request(
             connection.endpoint,
-            connection.allowed_scope,
+            allowed_scope,
             tool_key,
             arguments,
         )
     except ToolProviderError as exc:
-        raise ToolSnapshotError("TOOL_ARGUMENTS_INVALID", 400) from exc
+        reason = {
+            "repository must use owner/repository": "REPOSITORY_FORMAT_INVALID",
+            "repositories must be unique": "REPOSITORIES_DUPLICATED",
+            "repository is outside connection scope": "REPOSITORY_OUTSIDE_SCOPE",
+        }.get(str(exc))
+        raise ToolSnapshotError("TOOL_ARGUMENTS_INVALID", 400, reason=reason) from exc
     _reject_sensitive_values(connection.config)
     _reject_sensitive_values(connection.allowed_scope)
     resolved_config = {
         "endpoint": endpoint,
         "connection_config": deepcopy(connection.config),
-        "allowed_scope": deepcopy(connection.allowed_scope),
+        "allowed_scope": deepcopy(allowed_scope),
         "tool": {
             "key": tool_key,
             "capability": frozen_tool.get("capability"),

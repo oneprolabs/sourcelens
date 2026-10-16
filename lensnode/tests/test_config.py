@@ -79,9 +79,38 @@ def test_load_config_reads_tls_ca_file(monkeypatch):
     assert config.tls_ca_file == "/etc/sourcelens/ca.crt"
 
 
+def test_load_config_derives_all_service_urls_from_server_url(monkeypatch):
+    monkeypatch.setenv("LENSNODE_SERVER_URL", "https://lens.example.test/")
+    monkeypatch.delenv("LENSNODE_CONTROL_WS_URL", raising=False)
+    monkeypatch.delenv("LENSNODE_AI_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LENSNODE_DELIVERABLE_UPLOAD_URL", raising=False)
+    monkeypatch.delenv("LENSNODE_DELEGATION_BASE_URL", raising=False)
+
+    config = load_config()
+
+    assert config.control_ws_url == "wss://lens.example.test/ws/lens/lensnodes/"
+    assert config.ai_gateway_url == "https://lens.example.test/api/lens/lensnode/ai-gateway/"
+    assert config.deliverable_upload_url == "https://lens.example.test/api/lens/lensnode/deliverables/"
+    assert config.delegation_base_url == "https://lens.example.test/api/lens/lensnode/runs"
+
+
+def test_load_config_keeps_explicit_endpoint_overrides(monkeypatch):
+    monkeypatch.setenv("LENSNODE_SERVER_URL", "https://lens.example.test")
+    monkeypatch.setenv("LENSNODE_CONTROL_WS_URL", "wss://legacy.example.test/ws")
+    monkeypatch.setenv("LENSNODE_AI_GATEWAY_URL", "https://legacy.example.test/ai")
+    monkeypatch.setenv("LENSNODE_DELIVERABLE_UPLOAD_URL", "https://legacy.example.test/upload")
+    monkeypatch.setenv("LENSNODE_DELEGATION_BASE_URL", "https://legacy.example.test/runs")
+
+    config = load_config()
+
+    assert config.control_ws_url == "wss://legacy.example.test/ws"
+    assert config.ai_gateway_url == "https://legacy.example.test/ai"
+    assert config.deliverable_upload_url == "https://legacy.example.test/upload"
+    assert config.delegation_base_url == "https://legacy.example.test/runs"
+
+
 def test_load_config_reads_run_token_budget(monkeypatch):
     monkeypatch.setenv("LENSNODE_TOKEN_BUDGET_MAX_TOKENS", "120000")
-    monkeypatch.setenv("LENSNODE_TOKEN_BUDGET_HARD_MAX_TOKENS", "600000")
     monkeypatch.setenv(
         "LENSNODE_TOKEN_BUDGET_FINAL_RESERVE_TOKENS",
         "50000",
@@ -91,7 +120,6 @@ def test_load_config_reads_run_token_budget(monkeypatch):
     config = load_config()
 
     assert config.token_budget_max_tokens == 120000
-    assert config.token_budget_hard_max_tokens == 600000
     assert config.token_budget_final_reserve_tokens == 50000
     assert config.token_budget_warn_ratio == 0.75
 
@@ -114,7 +142,6 @@ def test_resolve_token_budget_prefers_run_sent_budget():
         (),
         {
             "token_budget_max_tokens": 200000,
-            "token_budget_hard_max_tokens": 500000,
             "token_budget_final_reserve_tokens": 40000,
         },
     )()
@@ -143,7 +170,6 @@ def test_unlimited_profile_applies_no_ceiling():
         (),
         {
             "token_budget_max_tokens": 200000,
-            "token_budget_hard_max_tokens": 500000,
             "token_budget_final_reserve_tokens": 40000,
         },
     )()
@@ -172,7 +198,6 @@ def test_resolve_token_budget_falls_back_to_config_without_run_budget():
         (),
         {
             "token_budget_max_tokens": 200000,
-            "token_budget_hard_max_tokens": 500000,
             "token_budget_final_reserve_tokens": 40000,
         },
     )()

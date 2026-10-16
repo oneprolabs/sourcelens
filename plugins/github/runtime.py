@@ -16,6 +16,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "github"
 PLUGIN_VERSION = "1.0.0"
+TOOL_METADATA = {"github_activity_summary": {"activity_report": True}}
 API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 READ_MAX_BYTES = 200_000
@@ -25,10 +26,17 @@ BODY_MAX_CHARS = 12_000
 GET_MAX_ATTEMPTS = 3
 GET_RETRY_DELAY_SECONDS = 0.25
 ACTIVITY_DEFAULT_PER_PAGE = 50
+ACTIVITY_MAX_PAGES = 10
+ACTIVITY_PULL_REQUEST_PER_PAGE = 10
+ACTIVITY_PULL_REQUEST_MAX_PAGES = 50
+ACTIVITY_MAX_REPOSITORIES = 500
+ACTIVITY_REPOSITORY_BATCH_SIZE = 50
+ACTIVITY_DISCOVERY_MAX_PAGES = 20
+ACTIVITY_DISCOVERY_PAGE_SIZE = 100
 ACTIVITY_RESOURCE_MAX = {
-    "commits": 50,
-    "pull_requests": 10,
-    "issues": 10,
+    "commits": 500,
+    "pull_requests": 500,
+    "issues": 500,
 }
 TOOL_KEYS = frozenset(
     {
@@ -85,7 +93,7 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
         raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
     _validate_runtime_arguments(key, arguments, config)
     if key == "github_activity_summary":
-        return _activity_summary(client, arguments, secret)
+        return _activity_summary(client, arguments, secret, config)
     if key == "github_read_file":
         return _read_file(client, arguments, secret)
     if key == "github_search_code":
@@ -269,10 +277,10 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
     raise PluginRuntimeError("PLUGIN_TOOL_UNSUPPORTED")
 
 
-def _activity_summary(client, arguments, secret):
+def _activity_summary(client, arguments, secret, config):
     """Return compact activity from approved repositories in one Tool call."""
 
-    repositories = arguments["repositories"]
+    repositories, coverage = _resolve_activity_repositories(client, arguments["repositories"], secret, config)
     since = arguments["since"]
     until = arguments["until"]
     per_page = _page_value(
@@ -292,58 +300,186 @@ def _activity_summary(client, arguments, secret):
         }
         for repository in repositories
     }
-    requests = [
-        (repository, resource)
-        for repository in repositories
-        for resource in ("commits", "pull_requests", "issues")
-    ]
-    workers = min(8, len(requests))
-    successful_resources = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                _activity_resource,
-                client,
-                repository,
-                resource,
-                since,
-                until,
-                per_page,
-                secret,
-            ): (repository, resource)
-            for repository, resource in requests
-        }
-        for future in as_completed(futures):
-            repository, resource = futures[future]
-            try:
-                items, possibly_truncated = future.result()
-            except PluginRuntimeError as exc:
-                results[repository].setdefault("errors", {})[resource] = str(
-                    exc
+    for offset in range(0, len(repositories), ACTIVITY_REPOSITORY_BATCH_SIZE):
+        batch = repositories[offset : offset + ACTIVITY_REPOSITORY_BATCH_SIZE]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_activity_resource, client, repository, resource, since, until, per_page, secret): (
+                    repository,
+                    resource,
                 )
-                continue
-            except httpx.HTTPError:
-                results[repository].setdefault("errors", {})[
-                    resource
-                ] = "GITHUB_REQUEST_FAILED"
-                continue
-            results[repository][resource] = items
-            results[repository]["possibly_truncated"][resource] = (
-                possibly_truncated
-            )
-            successful_resources += 1
-    if not successful_resources:
-        raise PluginRuntimeError("GITHUB_REQUEST_FAILED")
+                for repository in batch
+                for resource in ("commits", "pull_requests", "issues")
+            }
+            for future in as_completed(futures):
+                repository, resource = futures[future]
+                try:
+                    items, possibly_truncated = future.result()
+                except (PluginRuntimeError, httpx.HTTPError) as exc:
+                    error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
+                    results[repository].setdefault("errors", {})[resource] = error
+                    continue
+                results[repository][resource] = items
+                results[repository]["possibly_truncated"][resource] = possibly_truncated
+    source_complete = not coverage["repositories_truncated"] and all(
+        not result.get("errors") and not any(result["possibly_truncated"].values()) for result in results.values()
+    )
     return {
         "ok": True,
         "since": since,
         "until": until,
-        "limits": {
-            resource: min(per_page, maximum)
-            for resource, maximum in ACTIVITY_RESOURCE_MAX.items()
-        },
+        "limits": {resource: maximum for resource, maximum in ACTIVITY_RESOURCE_MAX.items()},
         "repositories": [results[repository] for repository in repositories],
+        "repositories_truncated": coverage["repositories_truncated"],
+        "source_coverage_complete": source_complete,
+        "coverage": coverage,
     }
+
+
+def _activity_selector(value):
+    """Normalize one exact, owner-wide or connection-wide repository selector."""
+
+    if isinstance(value, str):
+        value = value.strip().strip("/")
+        if value == "*":
+            return value
+        if value.endswith("/*") and _repository_identity(f"{value[:-2]}/selector"):
+            return value
+    repository = _repository_identity(value)
+    if repository is None:
+        raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
+    return repository
+
+
+def _selector_matches(selector, repository):
+    """Match only a whole owner or exact repository, case-insensitively."""
+
+    return (
+        selector == "*"
+        or selector.casefold() == repository.casefold()
+        or (selector.endswith("/*") and selector[:-2].casefold() == repository.split("/")[0].casefold())
+    )
+
+
+def _discover_activity_pages(client, selector, secret):
+    """Yield validated repository pages within a shared per-selector budget."""
+
+    owner = quote(selector[:-2], safe="")
+    org_path = f"/orgs/{owner}/repos"
+    paths = ["/user/repos" if selector == "*" else org_path]
+    pages_read = 0
+    for path in paths:
+        seen = set()
+        page = 1
+        while True:
+            if pages_read >= ACTIVITY_DISCOVERY_MAX_PAGES:
+                raise PluginRuntimeError("GITHUB_DISCOVERY_PAGE_LIMIT")
+            params = {"per_page": ACTIVITY_DISCOVERY_PAGE_SIZE, "page": page, "sort": "full_name"}
+            if path == "/user/repos":
+                params["affiliation"] = "owner,collaborator,organization_member"
+            try:
+                payload = _json_get(client, path, secret, params)
+            except PluginRuntimeError as exc:
+                if path == org_path and page == 1 and str(exc) == "GITHUB_NOT_FOUND":
+                    paths.append(f"/users/{owner}/repos")
+                    if secret:
+                        paths.append("/user/repos")
+                    break
+                raise
+            pages_read += 1
+            items = _items(payload)
+            repositories = [_repository_identity(item.get("full_name")) for item in items]
+            if any(repository is None for repository in repositories):
+                raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
+            yield repositories
+            if len(items) < ACTIVITY_DISCOVERY_PAGE_SIZE:
+                break
+            identities = {repository.casefold() for repository in repositories}
+            if not identities.difference(seen):
+                raise PluginRuntimeError("GITHUB_DISCOVERY_STALLED")
+            seen.update(identities)
+            page += 1
+
+
+def _resolve_activity_repositories(client, selectors, secret, config):
+    """Expand selectors inside the frozen scope and disclose bounded discovery."""
+
+    selectors = [_activity_selector(value) for value in selectors]
+    scope = _runtime_scope(config).get("repositories")
+    if not isinstance(scope, list) or not scope:
+        raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
+    unrestricted = scope == ["*"]
+    if not unrestricted and any(_repository_identity(value) is None for value in scope):
+        raise PluginRuntimeError("PLUGIN_SCOPE_MISMATCH")
+    if unrestricted and "*" in selectors and not secret:
+        raise PluginRuntimeError(
+            "GITHUB_AUTHENTICATION_REQUIRED",
+            reason="OWNER_SELECTOR_REQUIRED",
+            hint="Anonymous access with an all-repositories Connection requires owner/* or explicit repositories.",
+        )
+    coverage = {
+        "requested_selectors": selectors,
+        "resolved_repositories": [],
+        "discovery_complete": True,
+        "repositories_truncated": False,
+        "reasons": [],
+        "discovery_errors": [],
+        "limits": {
+            "repositories": ACTIVITY_MAX_REPOSITORIES,
+            "discovery_pages_per_selector": ACTIVITY_DISCOVERY_MAX_PAGES,
+        },
+    }
+    repositories = {}
+
+    def add(repository):
+        """Keep a bounded, deterministic set of approved repository identities."""
+
+        _validate_repository_scope(repository, _runtime_scope(config))
+        identity = repository.casefold()
+        if identity not in repositories:
+            if len(repositories) >= ACTIVITY_MAX_REPOSITORIES:
+                coverage["repositories_truncated"] = True
+                if "repository_limit" not in coverage["reasons"]:
+                    coverage["reasons"].append("repository_limit")
+                return False
+            repositories[identity] = repository
+        return True
+
+    for selector in selectors:
+        if "*" not in selector:
+            add(selector)
+    if not unrestricted:
+        for repository in scope:
+            repository = _repository_identity(repository)
+            if any(_selector_matches(selector, repository) for selector in selectors):
+                add(repository)
+    else:
+        discovery_selectors = list(dict.fromkeys(selector for selector in selectors if "*" in selector))
+        for selector in discovery_selectors:
+            try:
+                for discovered in _discover_activity_pages(client, selector, secret):
+                    for repository in discovered:
+                        if _selector_matches(selector, repository) and not add(repository):
+                            break
+                    if "repository_limit" in coverage["reasons"]:
+                        coverage["discovery_complete"] = False
+                        break
+            except (PluginRuntimeError, httpx.HTTPError) as exc:
+                error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
+                reason = {
+                    "GITHUB_DISCOVERY_PAGE_LIMIT": "discovery_page_limit",
+                    "GITHUB_DISCOVERY_STALLED": "discovery_stalled",
+                }.get(error, "discovery_failed")
+                coverage["reasons"].append(reason)
+                coverage["discovery_complete"] = False
+                if reason == "discovery_failed":
+                    coverage["discovery_errors"].append({"selector": selector, "error": error})
+            if "repository_limit" in coverage["reasons"]:
+                break
+    coverage["repositories_truncated"] |= not coverage["discovery_complete"]
+    coverage["reasons"] = list(dict.fromkeys(coverage["reasons"]))
+    coverage["resolved_repositories"] = list(repositories.values())
+    return coverage["resolved_repositories"], coverage
 
 
 def _activity_resource(
@@ -359,6 +495,10 @@ def _activity_resource(
 
     repository_path = quote(repository, safe="/")
     page_size = min(per_page, ACTIVITY_RESOURCE_MAX[resource])
+    max_pages = ACTIVITY_MAX_PAGES
+    if resource == "pull_requests":
+        page_size = min(page_size, ACTIVITY_PULL_REQUEST_PER_PAGE)
+        max_pages = ACTIVITY_PULL_REQUEST_MAX_PAGES
     if resource == "issues":
         return _activity_issues(
             client,
@@ -383,27 +523,45 @@ def _activity_resource(
         )
         path = f"/repos/{repository_path}/pulls"
         projector = _activity_pull_request_summary
-    raw_payload = _items(_json_get(client, path, secret, params))
-    possibly_truncated = _activity_possibly_truncated(
-        raw_payload,
-        resource,
-        since,
-        page_size,
-    )
-    return (
-        [
-            projector(item)
-            for item in raw_payload
-            if _timestamp_in_window(
-                _nested(item, "commit", "author", "date")
-                if resource == "commits"
-                else item.get("updated_at"),
+    items = []
+    seen = set()
+    result_limit = ACTIVITY_RESOURCE_MAX[resource]
+    for page in range(1, max_pages + 1):
+        params["page"] = page
+        try:
+            raw_payload = _items(_json_get(client, path, secret, params))
+        except (PluginRuntimeError, httpx.HTTPError):
+            if page == 1:
+                raise
+            return items[:result_limit], True
+        new_count = 0
+        for item in raw_payload:
+            identity = item.get("sha") if resource == "commits" else item.get("number")
+            if identity in seen:
+                continue
+            seen.add(identity)
+            new_count += 1
+            in_window = _timestamp_in_window(
+                (
+                    (_nested(item, "commit", "committer", "date") or _nested(item, "commit", "author", "date"))
+                    if resource == "commits"
+                    else item.get("updated_at")
+                ),
                 since,
                 until,
             )
-        ],
-        possibly_truncated,
-    )
+            if resource == "pull_requests":
+                in_window = in_window or any(
+                    _timestamp_in_window(item.get(field), since, until)
+                    for field in ("created_at", "merged_at", "closed_at")
+                )
+            if in_window:
+                items.append(projector(item))
+        if not _activity_possibly_truncated(raw_payload, resource, since, page_size):
+            return items[:result_limit], len(items) > result_limit
+        if len(items) >= result_limit or not new_count:
+            return items[:result_limit], True
+    return items[:result_limit], True
 
 
 def _activity_issues(
@@ -416,41 +574,68 @@ def _activity_issues(
 ):
     """Search only issues so pull requests cannot consume the result limit."""
 
-    query = (
-        f"repo:{repository} is:issue "
-        f"updated:{since}..{until}"
-    )
-    payload = _json_get(
-        client,
-        "/search/issues",
-        secret,
-        {
-            "q": query,
-            "sort": "updated",
-            "direction": "desc",
-            "page": 1,
-            "per_page": page_size,
-        },
-        max_bytes=SEARCH_MAX_BYTES,
-    )
-    if (
-        not isinstance(payload, dict)
-        or isinstance(payload.get("total_count"), bool)
-        or not isinstance(payload.get("total_count"), int)
-        or not isinstance(payload.get("incomplete_results"), bool)
-    ):
-        raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
-    raw_items = _items(payload.get("items"))
-    items = [
-        _activity_issue_summary(item)
-        for item in raw_items
-        if _timestamp_in_window(item.get("updated_at"), since, until)
-    ]
-    possibly_truncated = (
-        payload["incomplete_results"]
-        or payload["total_count"] > len(raw_items)
-    )
-    return items[:page_size], possibly_truncated
+    items = []
+    seen = set()
+    incomplete = False
+    result_limit = ACTIVITY_RESOURCE_MAX["issues"]
+    for field in ("updated", "created", "closed"):
+        query_seen = set()
+        query = f"repo:{repository} is:issue {field}:{since}..{until}"
+        for page in range(1, ACTIVITY_MAX_PAGES + 1):
+            try:
+                payload = _json_get(
+                    client,
+                    "/search/issues",
+                    secret,
+                    {"q": query, "sort": "updated", "direction": "desc", "page": page, "per_page": page_size},
+                    max_bytes=SEARCH_MAX_BYTES,
+                )
+            except (PluginRuntimeError, httpx.HTTPError) as exc:
+                if isinstance(exc, PluginRuntimeError) and str(exc) == "GITHUB_ACCESS_DENIED":
+                    return items[:result_limit], incomplete
+                if field == "updated" and page == 1:
+                    raise
+                return items[:result_limit], True
+            if (
+                not isinstance(payload, dict)
+                or type(payload.get("total_count")) is not int
+                or payload["total_count"] < 0
+                or not isinstance(payload.get("incomplete_results"), bool)
+            ):
+                if field != "updated" or page > 1:
+                    return items[:result_limit], True
+                raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
+            try:
+                raw_items = _items(payload.get("items"))
+            except PluginRuntimeError:
+                if field == "updated" and page == 1:
+                    raise
+                return items[:result_limit], True
+            incomplete = incomplete or payload["incomplete_results"]
+            new_count = 0
+            for item in raw_items:
+                identity = item.get("number")
+                if identity not in query_seen:
+                    query_seen.add(identity)
+                    new_count += 1
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                if any(
+                    _timestamp_in_window(item.get(stamp), since, until)
+                    for stamp in ("updated_at", "created_at", "closed_at")
+                ):
+                    items.append(_activity_issue_summary(item))
+            if len(query_seen) >= payload["total_count"]:
+                break
+            if len(items) >= result_limit or not new_count:
+                incomplete = True
+                break
+        else:
+            incomplete = True
+        if len(items) >= result_limit:
+            return items[:result_limit], True
+    return items, incomplete
 
 
 def _activity_possibly_truncated(payload, resource, since, per_page):
@@ -474,6 +659,10 @@ def _activity_commit_summary(payload):
 
     item = _commit_summary(payload)
     item["message"] = _string(item["message"], 300)
+    item["committed_at"] = _string(
+        _nested(payload, "commit", "committer", "date") or _nested(payload, "commit", "author", "date"),
+        64,
+    )
     return item
 
 
@@ -487,10 +676,13 @@ def _activity_pull_request_summary(payload):
         "state": _string(payload.get("state"), 32),
         "draft": bool(payload.get("draft")),
         "author": _login(payload.get("user")),
+        "assignees": [{"login": _login(value)} for value in (payload.get("assignees") or [])[:20]
+                      if isinstance(value, dict)],
         "created_at": _string(payload.get("created_at"), 64),
         "updated_at": _string(payload.get("updated_at"), 64),
         "closed_at": _string(payload.get("closed_at"), 64),
         "merged_at": _string(payload.get("merged_at"), 64),
+        "merged_by": _login(payload.get("merged_by") or payload.get("merged_by_user")),
         "url": _string(payload.get("html_url"), 500),
     }
 
@@ -504,10 +696,13 @@ def _activity_issue_summary(payload):
         "title": _string(payload.get("title"), 300),
         "state": _string(payload.get("state"), 32),
         "author": _login(payload.get("user")),
+        "assignees": [{"login": _login(value)} for value in (payload.get("assignees") or [])[:20]
+                      if isinstance(value, dict)],
         "labels": _labels(payload.get("labels")),
         "created_at": _string(payload.get("created_at"), 64),
         "updated_at": _string(payload.get("updated_at"), 64),
         "closed_at": _string(payload.get("closed_at"), 64),
+        "closed_by": _login(payload.get("closed_by") or payload.get("closed_by_user")),
         "url": _string(payload.get("html_url"), 500),
     }
 
@@ -970,11 +1165,10 @@ def _validate_runtime_arguments(key, arguments, config):
             raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
         scope = _runtime_scope(config)
         for repository in repositories:
-            _validate_repository_scope(repository, scope)
-        identities = {
-            _repository_identity(repository).casefold()
-            for repository in repositories
-        }
+            selector = _activity_selector(repository)
+            if "*" not in selector:
+                _validate_repository_scope(selector, scope)
+        identities = {_activity_selector(repository).casefold() for repository in repositories}
         if len(identities) != len(repositories):
             raise PluginRuntimeError("PLUGIN_ARGUMENTS_INVALID")
         since = _timestamp(arguments.get("since"))
@@ -1308,6 +1502,10 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
             ) as response:
                 if response.is_redirect:
                     raise PluginRuntimeError("GITHUB_REDIRECT_REJECTED")
+                if response.status_code == 403 and (
+                    response.headers.get("X-RateLimit-Remaining") == "0" or response.headers.get("Retry-After")
+                ):
+                    raise PluginRuntimeError("GITHUB_RATE_LIMITED")
                 if response.status_code >= 400:
                     return response.status_code, b"", False
                 body = bytearray()
@@ -1334,3 +1532,20 @@ def _status(status):
     errors = {404: "GITHUB_NOT_FOUND", 401: "GITHUB_ACCESS_DENIED",
               403: "GITHUB_ACCESS_DENIED", 429: "GITHUB_RATE_LIMITED"}
     raise PluginRuntimeError(errors.get(status, "GITHUB_REQUEST_FAILED"))
+
+
+def agent_extensions():
+    """Register Plugin-owned agent behavior through the generic host protocol."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    support = load_plugin_support("activity_reports")
+    return (("activity-report", support.prepare_activity_report),)
+
+
+def project_tool_result(tool_key, result, max_bytes):
+    """Declare source evidence coverage without host-side provider knowledge."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    return load_plugin_support("activity_reports").project_activity_result(tool_key, result, max_bytes, TOOL_METADATA)

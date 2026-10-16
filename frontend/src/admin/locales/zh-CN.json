@@ -17,6 +17,7 @@
     "trajectorySource_plugin_model": "插件模型",
     "trajectoryState_completed": "已结束",
     "trajectoryState_running": "运行中",
+    "trajectoryState_unloaded": "结束事件待加载",
     "trajectoryState_failed": "失败",
     "trajectoryState_cancelled": "已取消",
     "trajectoryState_interrupted": "已中断",
@@ -567,7 +568,7 @@
     "config": {
       "title": "模型配置",
       "subtitle": "全局与按用户的大模型提供商配置",
-      "subtitleList": "以列表展示全局与按用户配置，支持增删改查。",
+      "subtitleList": "管理模型配置，支持增删改查。",
       "globalTitle": "全局配置",
       "perUserTitle": "按用户覆盖",
       "perUserDesc": "用户单独配置会覆盖全局配置。下列为已配置用户。",
@@ -654,7 +655,20 @@
         "network_error": "无法连接服务，请检查 API 地址与网络。",
         "permission_denied": "无访问权限，请检查 API Key 与账号权限。",
         "unknown": "连接测试失败，请检查配置后重试。"
-      }
+      },
+      "modelType": "模型类型",
+      "chatModel": "对话模型",
+      "decisionModel": "决策模型",
+      "decisionTestQuestion": "决策问题（是/否）",
+      "decisionTestQuestionDefault": "输入内容是否为连接测试？",
+      "accountId": "Cloudflare 账户 ID",
+      "accountIdPlaceholder": "32 位 Cloudflare 账户 ID",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "输入厂商提供的 API Key 或 Token",
+      "bearerCredentialHint": "只填写密钥或令牌，无需添加 Bearer 前缀。",
+      "numRetries": "重试次数",
+      "metadataLoadError": "厂商与模型目录加载失败，请刷新后重试。",
+      "decisionApiBasePlaceholder": "填写服务的 API Base URL（必填）"
     },
     "dataSettings": {
       "title": "定时任务",
@@ -1509,6 +1523,54 @@
       "failed": "失败",
       "remove": "移除 {name}"
     },
+    "decisionSettings": {
+      "decisions": {
+        "search_needed": {
+          "title": "是否需要检索",
+          "description": "判断回答最新消息是否需要检索工作区或已提供的文档。"
+        },
+        "evidence_requirement": {
+          "title": "是否需要证据",
+          "description": "判断回答是否需要工具、文档或用户提供的证据，而不是直接作答。"
+        },
+        "evidence_sufficient": {
+          "title": "证据是否充分",
+          "description": "检查回答是否只依赖实际检索到或用户提供的证据。"
+        },
+        "answer_supported": {
+          "title": "回答是否有依据",
+          "description": "检查回答是否得到已检索证据的支持。"
+        },
+        "evidence_strength": {
+          "title": "证据强度",
+          "description": "判断回答中重要事实声明所依赖的最弱证据等级。"
+        },
+        "plan_quality": {
+          "title": "计划质量",
+          "description": "按同一有序评分标准为候选计划打分。"
+        },
+        "evidence_relevance": {
+          "title": "证据相关性",
+          "description": "按对回答问题的帮助程度为检索到的片段打分。"
+        }
+      },
+      "rubric": {
+        "weak": "较弱",
+        "acceptable": "可接受",
+        "strong": "较强",
+        "irrelevant": "不相关",
+        "related": "相关",
+        "helpful": "有帮助",
+        "direct_answer": "直接回答",
+        "direct": "直接证据",
+        "derived": "推导证据",
+        "adapted_only": "仅适配或兼容性证据",
+        "example_only": "仅示例",
+        "planned": "计划或未来工作",
+        "unsupported": "没有证据支持",
+        "contradicted": "与证据冲突"
+      }
+    },
     "plugins": {
       "file_upload": {
         "displayName": "手动上传",
@@ -1579,7 +1641,7 @@
       },
       "gitlab": {
         "displayName": "GitLab",
-        "description": "使用个人访问令牌连接已授权的 GitLab.com 或私有部署项目；数据源同步仓库文件，助手可只读查看代码、提交、Merge Request 和 Issue。",
+        "description": "公开 GitLab.com 或自建 GitLab 项目可匿名访问，私有项目使用个人访问令牌；支持同步仓库文件，并通过只读助手工具查询代码、提交、合并请求和议题。",
         "connectionFields": {
           "endpoint": {
             "title": "GitLab 服务地址",
@@ -1587,7 +1649,7 @@
           },
           "secret_value": {
             "title": "个人访问令牌",
-            "description": "仅用于写入、且对已授权项目具有 read_api 和 read_repository 权限的令牌。"
+            "description": "公开项目可留空。私有项目使用具有 read_api 和 read_repository 权限的令牌；令牌仅可写入。"
           },
           "projects": {
             "title": "允许访问的项目",
@@ -2082,7 +2144,8 @@
       "feishuAppId": "飞书 App ID",
       "feishuAppSecret": "飞书 App Secret",
       "visibility": "可见性",
-      "routingMode": "助手模式"
+      "routingMode": "助手模式",
+      "decisionModel": "决策模型"
     },
     "placeholders": {
       "assistantDescription": "说明该助手可以帮助用户完成什么。",
@@ -2091,6 +2154,7 @@
       "selectType": "请选择类型",
       "selectDir": "请选择目录",
       "selectModel": "请选择模型",
+      "loadingModels": "正在加载模型…",
       "noModel": "默认",
       "docIds": "多个 ID 用逗号分隔",
       "includePaths": "每行一个路径规则，如 src/**",
@@ -2210,7 +2274,7 @@
       "step1Title": "来源",
       "step1Desc": "选择数据源类型。",
       "step2Title": "连接与资源",
-      "step2Desc": "填写名称，选择连接，并指定需要同步的仓库或资源。",
+      "step2Desc": "填写名称和资源地址，按需选择认证连接。",
       "step3Title": "同步与处理策略",
       "step3Desc": "配置同步策略与文档内容处理。",
       "summarySource": "数据源",
@@ -2376,6 +2440,7 @@
       "duplicateResourceUrl": "飞书资源地址不能重复。",
       "checkRepositoryAccess": "检查可用性",
       "repositoriesAccessible": "仓库可访问，可以继续创建数据源。",
+      "publicAccess": "公开访问（无需凭证）",
       "publicRepository": "公开",
       "githubErrors": {
         "notFound": "仓库或分支不存在，或当前连接无权访问。",
@@ -2565,7 +2630,11 @@
       "mcpEnvironmentConfigurationHint": "该 MCP Server 声明了 {count} 个环境变量。请选择已有配置集，或在这里新建。",
       "noSkills": "暂无可用 Skill，请先在 Skill 资源库中创建",
       "noMcp": "暂无可用 MCP Server，请先在 MCP Server 资源库中创建",
-      "visibilityHint": "管理员始终可访问全部助手。"
+      "visibilityHint": "管理员始终可访问全部助手。",
+      "noDecisionModel": "不配置（沿用原有链路）",
+      "decisionAutomatic": "自动（按助手能力启用）",
+      "decisionModelHint": "可选。配置后使用独立模型执行证据校验和候选排序；不配置时沿用原有处理链路。",
+      "configureDecisionModel": "配置决策模型"
     },
     "agentRounds": {
       "flash": "极速",

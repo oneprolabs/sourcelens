@@ -9,6 +9,44 @@ from lensnode.agent_tools import build_general_chat_tools
 from lensnode.runtime_resources import RuntimeResources
 
 
+def test_invalid_paths_return_schema_and_specific_recovery_without_guessing_fields(tmp_path):
+    resources = _resources(tmp_path)
+    ref, _ = _write_result(resources, {"repositories": [{"repository": "team/repo", "pull_requests": []}]})
+    tool = _tool(resources, "analyze_structured_output")
+    bad_path = json.loads(tool.invoke({"ref": ref, "operation": "count", "path": "repositories.pull_requests"}))
+    assert bad_path["error"] == "PATH_NOT_FOUND"
+    assert "numeric" in bad_path["recovery_hint"]
+    assert "synopsis" in bad_path
+    bad_field = json.loads(tool.invoke({
+        "ref": ref,
+        "operation": "project",
+        "path": "repositories",
+        "fields": ["name"],
+    }))
+    assert bad_field["error"] == "FIELD_NOT_FOUND"
+    assert "repository" in json.dumps(bad_field["synopsis"])
+
+
+def test_optional_projection_preserves_successful_rows_and_strict_required_fields(tmp_path):
+    resources = _resources(tmp_path)
+    ref, _ = _write_result(resources, {"repositories": [
+        {"repository": "team/healthy"},
+        {"repository": "team/partial", "errors": {"pull_requests": "RESPONSE_TOO_LARGE"}},
+    ]})
+    tool = _tool(resources, "analyze_structured_output")
+    result = json.loads(tool.invoke({
+        "ref": ref, "operation": "project", "path": "repositories", "fields": ["repository", "errors?"],
+    }))
+    assert result["result"] == [
+        {"repository": "team/healthy", "errors": None},
+        {"repository": "team/partial", "errors": {"pull_requests": "RESPONSE_TOO_LARGE"}},
+    ]
+    strict = json.loads(tool.invoke({
+        "ref": ref, "operation": "project", "path": "repositories", "fields": ["name"],
+    }))
+    assert strict["error"] == "FIELD_NOT_FOUND"
+
+
 def _resources(root, transforms=None):
     """Build minimal runtime resources for General Chat tool tests."""
 
@@ -109,6 +147,21 @@ def test_analyze_structured_output_groups_json_and_records_trace(tmp_path):
     assert events[-1][1]["input_bytes"] == path.stat().st_size
     assert events[-1][1]["output_bytes"] == payload["output_bytes"]
     assert events[-1][1]["result_count"] == 2
+
+
+def test_project_supports_root_and_nested_object_metadata(tmp_path):
+    """Object metadata can be projected without treating it as a record collection."""
+
+    resources = _resources(tmp_path)
+    ref, _path = _write_result(resources, {"ok": True, "coverage": {"complete": True}, "items": [1, 2]})
+    tool = _tool(resources, "analyze_structured_output")
+
+    root = json.loads(tool.invoke({"ref": ref, "operation": "project", "fields": ["ok", "coverage.complete"]}))
+    nested = json.loads(tool.invoke({"ref": ref, "operation": "project", "path": "coverage", "fields": ["complete"]}))
+
+    assert root["ok"] is True
+    assert root["result"] == {"ok": True, "coverage.complete": True}
+    assert nested["result"] == {"complete": True}
 
 
 def test_analyze_structured_output_supports_bounded_operations(tmp_path):

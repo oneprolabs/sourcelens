@@ -23,6 +23,8 @@ from .accounts import *
 
 from .logging_config import configure_logging
 
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=SyntaxWarning, module='flanker')
 warnings.filterwarnings('ignore', message='.*invalid escape sequence.*')

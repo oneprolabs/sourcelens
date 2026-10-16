@@ -149,6 +149,13 @@ black --check backend/              # 检查格式
 isort --check backend/              # 检查 import 顺序
 ```
 
+For Docker development tests, use `scripts/test-dev.sh [test labels/options]`
+for direct Compose usage, or `devctl test TARGET -- python manage.py test ...`
+for the shared development stack. Both report the actual container source;
+devctl also rejects mismatches. Use `devctl up [TARGET]` to start or switch the
+single stack; see `docs/worktree-development.md` for shared database/Redis,
+configuration, dependencies and cleanup behavior. Keep the configuration home fixed.
+
 ### Django 管理命令
 ```bash
 python backend/manage.py migrate
@@ -188,7 +195,7 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
 
 | 包 | 最低版本 | INSTALLED_APPS | 路由前缀 | 功能 |
 |---|---|---|---|---|
-| `agentcore-metering` | `0.2.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 用量追踪 |
+| `agentcore-metering` | `0.4.0` | `agentcore_metering.adapters.django` | `/api/v1/admin/` | LLM 和决策模型管理、调用及用量追踪 |
 | `agentcore-task` | `0.1.0` | `agentcore_task.adapters.django` | `/api/v1/tasks/` | 统一任务管理 |
 | `agentcore-notifier` | `0.1.0` | `agentcore_notifier.adapters.django` | `/api/v1/admin/notifications/` | 飞书通知 |
 
@@ -283,7 +290,7 @@ nginx 流量路径上。升级时先起空闲色、健康门控、原子切换 n
 不断连），观察一段时间后再退役旧色；回滚就是切回另一色。
 
 > 完整的**可复用规范**（架构、逐项适配清单、正确性必须项清单、验证协议，供其他
-> 项目移植）见 [`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)。
+> 项目移植）见 [`docs/operations/blue-green-deployment.md`](docs/operations/blue-green-deployment.md)。
 > 本节是 sourcelens 的速查；改动部署脚本/nginx 前先过一遍那份的「正确性清单」。
 
 ### 命令

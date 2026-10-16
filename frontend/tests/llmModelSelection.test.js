@@ -5,6 +5,104 @@ import {
   isSelectableChatModel,
   selectableChatModels
 } from '../src/components/llm/providerModels.js'
+import {
+  decisionAccountApiBase,
+  decisionEditableParams,
+  modelProviderOptions,
+  modelParamSchema,
+  selectableDecisionModels
+} from '../src/components/llm/providerModels.js'
+
+test('decision providers and models use their dedicated schema on mixed providers', () => {
+  const schemas = {
+    openai: {
+      editable_params: ['temperature'],
+      decision: {
+        models: ['gpt-6-luna'],
+        editable_params: ['model', 'api_key']
+      }
+    },
+    typesafe: {
+      model_types: ['decision'],
+      decision: { models: ['jev-latest'] }
+    },
+    anthropic: { editable_params: ['temperature'] }
+  }
+  const providers = [{ id: 'openai' }, { id: 'typesafe' }, { id: 'anthropic' }]
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'decision').map((item) => item.id),
+    ['openai', 'typesafe']
+  )
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'llm').map((item) => item.id),
+    ['openai', 'anthropic']
+  )
+  assert.deepEqual(
+    modelParamSchema(schemas, 'openai', 'decision').editable_params,
+    ['model', 'api_key']
+  )
+  assert.deepEqual(
+    selectableDecisionModels(schemas.openai.decision).map((item) => item.id),
+    ['gpt-6-luna']
+  )
+})
+
+test('chat providers respect catalog model types when schemas lack that metadata', () => {
+  const providers = [
+    { id: 'openai', model_types: ['llm', 'decision'] },
+    { id: 'litellm_proxy', model_types: ['decision'] },
+    { id: 'openai_compatible', model_types: ['decision'], models: [] }
+  ]
+  const schemas = {
+    openai: { decision: { models: ['gpt-6-luna'] } },
+    litellm_proxy: { decision: { models: [] } },
+    openai_compatible: { decision: { models: [] } }
+  }
+
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'llm').map((item) => item.id),
+    ['openai', 'openai_compatible']
+  )
+  assert.deepEqual(
+    modelProviderOptions(providers, schemas, 'decision').map((item) => item.id),
+    ['openai', 'litellm_proxy', 'openai_compatible']
+  )
+})
+
+test('decision credentials include only fields supported by the selected provider', () => {
+  const editable_params = [
+    'model',
+    'api_base',
+    'api_key',
+    'account_id',
+    'request_timeout_seconds'
+  ]
+  assert.deepEqual(decisionEditableParams({ editable_params }), [
+    'model',
+    'api_base',
+    'api_key',
+    'request_timeout_seconds'
+  ])
+  assert.deepEqual(
+    decisionEditableParams({ editable_params, requires_account_id: true }),
+    editable_params
+  )
+  assert.deepEqual(
+    decisionEditableParams({ editable_params, api_key_required: false }),
+    ['model', 'api_base', 'request_timeout_seconds']
+  )
+})
+
+test('Cloudflare derives its endpoint only from a complete account ID', () => {
+  const schema = { requires_account_id: true }
+  const accountId = 'a'.repeat(32)
+  assert.equal(
+    decisionAccountApiBase(schema, accountId),
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`
+  )
+  assert.equal(decisionAccountApiBase(schema, 'incomplete'), '')
+  assert.equal(decisionAccountApiBase({}, accountId), '')
+})
 
 test('keeps plain chat models selectable', () => {
   assert.equal(

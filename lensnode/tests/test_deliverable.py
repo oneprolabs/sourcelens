@@ -5,9 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode import agent_runtime
+from lensnode.agent_runtime.deliverable import AppendWriteDeduplicationMiddleware
 from lensnode.agent_tools import (
     _build_append_file_tool,
     _build_save_deliverable_tool,
@@ -103,6 +104,71 @@ def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
     assert any(name == "tool.save_deliverable.done" for name, _ in events)
 
 
+def test_failed_replacement_upload_cannot_publish_the_previous_file(monkeypatch, tmp_path):
+    """A stale attachment UUID does not prove the revised report was delivered."""
+
+    (tmp_path / "report.html").write_text("<p>Revised report</p>")
+    command = {"run_uuid": "run-123", "_deliverables": {"report.html": "old-output"}}
+    _install_transport(monkeypatch, lambda request: httpx.Response(503))
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+    payload = json.loads(tool.invoke({"path": "report.html"}))
+    assert payload["ok"] is False
+    assert payload["error"] == "DELIVERY_FAILED"
+    assert command["_deliverables"] == {}
+
+
+def test_missing_replacement_cannot_publish_the_previous_file(tmp_path):
+    """Deleting a staged report before resaving cannot keep its obsolete candidate."""
+
+    command = {"run_uuid": "run-123", "_deliverables": {"report.html": "old-output"}}
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+    payload = json.loads(tool.invoke({"path": "report.html"}))
+    assert payload["error"] == "FILE_NOT_FOUND"
+    assert command["_deliverables"] == {}
+
+
+def test_identical_write_after_append_is_deduplicated(tmp_path):
+    resources = _resources(tmp_path)
+    append = _build_append_file_tool(resources, None)
+    content = "section one\nsection two\n"
+    assert json.loads(
+        append.invoke(
+            {
+                "path": "report.md",
+                "chunk_id": "translation-001",
+                "content": content,
+            }
+        )
+    )["ok"] is True
+
+    events = []
+    middleware = AppendWriteDeduplicationMiddleware(
+        tmp_path,
+        lambda name, detail: events.append((name, detail)),
+    )
+    request = SimpleNamespace(
+        tool_call={
+            "name": "write_file",
+            "id": "write-1",
+            "args": {"file_path": "report.md", "content": content},
+        }
+    )
+    called = []
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda _request: called.append(True)
+        or ToolMessage(content="written", tool_call_id="write-1"),
+    )
+
+    assert result.status == "success"
+    assert "deduplicated" in result.content
+    assert called == []
+    assert any(
+        name == "deepagents.agent.write_deduplicated" for name, _ in events
+    )
+
+
 def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypatch, tmp_path):
     report = tmp_path / "report.html"
     report.write_text("draft", encoding="utf-8")
@@ -110,7 +176,10 @@ def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypat
 
     def handler(request):
         uploads.append(request.read())
-        return httpx.Response(201, json={"uuid": f"output-{len(uploads)}"})
+        return httpx.Response(
+            201,
+            json={"code": 0, "message": "success", "data": {"uuid": f"output-{len(uploads)}"}},
+        )
 
     _install_transport(monkeypatch, handler)
     command = {"run_uuid": "run-123"}

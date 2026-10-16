@@ -2,6 +2,7 @@
 
 import json
 import logging
+import posixpath
 
 from contextlib import nullcontext
 
@@ -13,11 +14,16 @@ LOGGER = logging.getLogger("lensnode")
 DEFAULT_INTERVAL = 8
 DEFAULT_MAX_NUDGES = 1
 DEFAULT_MAX_CONVERGENCE_NUDGES = 2
+DEFAULT_DELIVERY_TURNS = 8
+PUBLICATION_GRACE_TURNS = 2
 
 _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
     "fully supported by the evidence you retrieved. Do not answer from "
-    "memory. Search again for the specific missing facts — batch "
+    "memory. Reuse retrieved source results and any saved evidence ledger "
+    "first; correct unsupported claims using that evidence. Do not repeat "
+    "the same retrieval requests or treat truncated results as complete. "
+    "If specific missing facts can be retrieved with available tools, batch "
     'alternative keywords with "|" in ONE search_workspace call (for '
     'example "昇腾|Ascend|910B") and read the most relevant matched files '
     "— then give a final answer that every claim traces to retrieved "
@@ -25,7 +31,7 @@ _RECHECK_GUIDANCE = (
     "conclusions, compatibility or adaptation, examples, plans, and "
     "actual execution. Do not describe adaptation, examples, or plans as "
     "actual operation or validation. If the workspace genuinely lacks the "
-    "information, state that limitation briefly. Return the answer itself, "
+    "information or source coverage is limited, state that limitation briefly. Return the answer itself, "
     "not a search log, evidence inventory, list of files to read, or a "
     "promise to investigate later. Keep the existing answer structure and "
     "focus on the user's question."
@@ -43,6 +49,12 @@ _CONVERGENCE_GUIDANCE = (
     "or add a generic follow-up reading plan. Search again only for one "
     "specific missing fact, using batched keywords (\"a|b|c\") and a "
     "narrower glob; do not repeat queries you already ran."
+)
+_DELIVERY_GUIDANCE = (
+    "Stop broad searches and finish the required deliverable from the evidence already collected. "
+    "Write the requested final artifact and call save_deliverable before the final answer. "
+    "Disclose missing or truncated sources in the artifact. A text answer or a promise to create a file "
+    "does not fulfill artifact delivery."
 )
 
 
@@ -81,6 +93,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         review_scope=None,
         on_recheck=None,
         review_state=None,
+        completion_check=None,
     ):
         self.policy = policy
         self.question = str(question or "")
@@ -92,9 +105,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.review_scope = review_scope
         self.on_recheck = on_recheck
         self.review_state = review_state if review_state is not None else {}
-        self.model_calls = 0
+        self.completion_check = completion_check
+        self.model_calls = int(self.review_state.get("model_calls") or 0)
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
-        self.convergence_nudges = 0
+        self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
+        self.delivery_turns = int(self.review_state.get("delivery_turns") or 0)
+        self.correction_calls_remaining = int(self.review_state.get("correction_calls_remaining") or 0)
         self.saw_final_answer = False
         self._last_verification = None
 
@@ -114,7 +130,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def _verify(self, answer, state=None):
         evidence = self.evidence
         base_signature = _evidence_signature(evidence)
-        message_evidence = _tool_evidence(state)
+        review_limit = getattr(self.policy, "review_evidence_limit", None)
+        message_evidence = _tool_evidence(state, limit=review_limit() if callable(review_limit) else 1200)
         if message_evidence:
             evidence = {
                 **(evidence if isinstance(evidence, dict) else {}),
@@ -122,6 +139,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "evidence_completeness": (
                     "incomplete"
                     if (isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete")
+                    or any(item.get("incomplete") for item in message_evidence)
+                    else "complete"
+                ),
+                "review_completeness": (
+                    "incomplete"
+                    if (isinstance(evidence, dict) and evidence.get("review_completeness") == "incomplete")
                     or any(item.get("truncated") for item in message_evidence)
                     else "complete"
                 ),
@@ -150,6 +173,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         if isinstance(evidence, dict) and evidence.get("evidence_completeness") == "incomplete":
             verdicts = {**verdicts, "evidence_completeness": "incomplete"}
+        if isinstance(evidence, dict) and evidence.get("review_completeness") == "incomplete":
+            verdicts = {**verdicts, "review_completeness": "incomplete", "answer_supported": "inconclusive"}
         self._last_verification = (answer, base_signature, signature, dict(verdicts))
         return verdicts
 
@@ -165,11 +190,11 @@ class EvidenceGateMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
-        return self._before_model()
+        return self._before_model(state)
 
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state, runtime):
-        return self._before_model()
+        return self._before_model(state)
 
     @hook_config(can_jump_to=["model"])
     def after_model(self, state, runtime):
@@ -179,13 +204,54 @@ class EvidenceGateMiddleware(AgentMiddleware):
     async def aafter_model(self, state, runtime):
         return self._after_model(state)
 
-    def _before_model(self):
+    def _before_model(self, state=None):
         if not self._active() or self.saw_final_answer:
             return None
         if self.max_convergence_nudges <= 0:
             return None
         self.model_calls += 1
+        self.review_state["model_calls"] = self.model_calls
+        if self.correction_calls_remaining > 0:
+            self.correction_calls_remaining -= 1
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+            return None
         if self.convergence_nudges >= self.max_convergence_nudges:
+            artifact_required = (
+                isinstance(self.evidence, dict)
+                and self.evidence.get("artifact_required")
+            )
+            publication_grace = False
+            if artifact_required and self.delivery_turns >= DEFAULT_DELIVERY_TURNS:
+                grace_used = int(self.review_state.get("publication_grace_used") or 0)
+                messages = (state or {}).get("messages") or []
+                recent_write = False
+                for message in reversed(messages):
+                    if getattr(message, "type", "") != "tool":
+                        break
+                    if _successful_artifact_write(message):
+                        recent_write = True
+                        break
+                if grace_used < PUBLICATION_GRACE_TURNS and (recent_write or grace_used):
+                    self.review_state["publication_grace_used"] = grace_used + 1
+                    publication_grace = True
+            if artifact_required and (
+                self.delivery_turns < DEFAULT_DELIVERY_TURNS or publication_grace
+            ):
+                self.delivery_turns += 1
+                self.review_state["delivery_turns"] = self.delivery_turns
+                self._emit(
+                    "deepagents.evidence.convergence",
+                    {
+                        "action": "deliver",
+                        "turn": self.model_calls,
+                        "delivery_turn": self.delivery_turns,
+                    },
+                )
+                if self.delivery_turns == 1:
+                    return {"messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
+                return None
+            if isinstance(self.evidence, dict):
+                self.evidence["convergence_exhausted"] = True
             self._emit(
                 "deepagents.evidence.convergence",
                 {"action": "end", "turn": self.model_calls},
@@ -194,15 +260,17 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if self.model_calls % self.interval != 0:
             return None
         self.convergence_nudges += 1
+        self.review_state["convergence_nudges"] = self.convergence_nudges
         self._emit(
             "deepagents.evidence.convergence",
             {"action": "nudge", "turn": self.model_calls},
         )
-        return {"messages": [HumanMessage(content=_CONVERGENCE_GUIDANCE)]}
+        guidance = _CONVERGENCE_GUIDANCE
+        if isinstance(self.evidence, dict) and self.evidence.get("artifact_required"):
+            guidance = _DELIVERY_GUIDANCE
+        return {"messages": [HumanMessage(content=guidance)]}
 
     def _after_model(self, state):
-        if not self._active():
-            return None
         messages = state.get("messages") or []
         if not messages:
             return None
@@ -216,16 +284,57 @@ class EvidenceGateMiddleware(AgentMiddleware):
         answer = _message_text(last)
         if not answer.strip():
             return None
+        if self.completion_check is not None:
+            try:
+                checks = self.completion_check(answer) or []
+            except Exception:
+                LOGGER.exception("Completion check failed")
+                checks = [{"code": "completion_check_failed", "recovery": "Completion verification failed. Retry once."}]
+            seen = set(self.review_state.get("completion_check_codes") or [])
+            checks = [check for check in checks if check.get("code") not in seen]
+            if checks:
+                seen.add(checks[0].get("code", "completion_check"))
+                self.review_state["completion_check_codes"] = sorted(seen)
+                self.saw_final_answer = False
+                self.correction_calls_remaining = self.interval
+                self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+                if self.on_recheck is not None:
+                    self.on_recheck()
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"action": "recheck", "fallback_reason": checks[0].get("code", "completion_check")},
+                )
+                recovery = checks[0].get("recovery") or checks[0].get("message") or "Correct the answer from the evidence."
+                return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
+        if not self._active():
+            return None
+        if (
+            isinstance(self.evidence, dict)
+            and self.evidence.get("artifact_required")
+            and not self.evidence.get("_deliverables")
+            and not self.review_state.get("delivery_nudged")
+        ):
+            self.review_state["delivery_nudged"] = True
+            return {"jump_to": "model", "messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
         self.saw_final_answer = True
         scope = self.review_scope() if self.review_scope else nullcontext()
         with scope:
             verdicts = self._verify(answer, state)
             if verdicts is None:
                 return None
-            if verdicts.get("evidence_completeness") == "incomplete":
+            contradicted = verdicts.get("answer_supported") == "unsupported" or verdicts.get("evidence_strength") in {
+                "unsupported", "contradicted",
+            }
+            if verdicts.get("evidence_completeness") == "incomplete" and not contradicted:
                 self._emit(
                     "deepagents.evidence.verified",
                     {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_incomplete"},
+                )
+                return None
+            if verdicts.get("review_completeness") == "incomplete":
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_truncated"},
                 )
                 return None
             if _verdicts_supported(verdicts):
@@ -241,6 +350,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 )
                 return None
             self.answer_nudges += 1
+            self.saw_final_answer = False
+            self.correction_calls_remaining = self.interval
+            self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
             self.review_state["answer_nudges"] = self.answer_nudges
             if self.on_recheck is not None:
                 self.on_recheck()
@@ -252,6 +364,21 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "messages": [HumanMessage(content=_RECHECK_GUIDANCE)],
                 "jump_to": "model",
             }
+
+
+def _successful_artifact_write(message):
+    """Recognize successful writes among the latest batch of tool results."""
+
+    if getattr(message, "name", "") not in {"write_file", "edit_file", "append_file"}:
+        return False
+    content = _message_text(message).strip()
+    if getattr(message, "status", "success") == "error" or content.lower().startswith("error"):
+        return False
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(payload, dict) or (payload.get("ok") is not False and not payload.get("error"))
 
 
 def _message_text(message):
@@ -267,12 +394,27 @@ def _message_text(message):
     return str(content or "")
 
 
-def _tool_evidence(state):
+def _source_coverage_incomplete(content):
+    """Read only the generic Plugin evidence envelope."""
+
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    metadata = payload.get("_evidence")
+    return payload.get("ok") is False or (isinstance(metadata, dict) and metadata.get("complete") is False)
+
+
+def _tool_evidence(state, limit=1200):
     """Return a bounded view of retrieved tool output for post-run review."""
 
     if not isinstance(state, dict):
         return []
     evidence = []
+    operations = {}
+    failures = {}
     excluded = {
         "write_todos",
         "write_file",
@@ -284,8 +426,18 @@ def _tool_evidence(state):
         "glob",
         "delete_file",
         "mkdir",
+        "decision_score",
+        "decision_rank",
     }
     for message in state.get("messages") or []:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls or []:
+                arguments = call.get("args")
+                if isinstance(arguments, dict):
+                    operations[call.get("id")] = (
+                        call.get("name"),
+                        json.dumps(arguments, sort_keys=True, separators=(",", ":")),
+                    )
         if getattr(message, "type", "") != "tool":
             continue
         content = _message_text(message).strip()
@@ -294,20 +446,33 @@ def _tool_evidence(state):
         name = str(getattr(message, "name", "") or "tool")[:80]
         if name in excluded:
             continue
+        operation = operations.get(getattr(message, "tool_call_id", None))
+        if name == "read_file" and operation is not None and operation[0] == name:
+            arguments = json.loads(operation[1])
+            path = posixpath.normpath("/" + str(arguments.get("file_path") or "").lstrip("/"))
+            if path.startswith(("/skills/", "/mcp/")):
+                continue
         if name == "execute" and ("drwx" in content or content.startswith("total ")):
             continue
-        evidence.append(
-            {
-                "tool": name,
-                "content": content[:1200],
-                "truncated": (
-                    len(content) > 1200
-                    or content.startswith("Tool result too large,")
-                    or "[Output was truncated due to size limits." in content
-                    or "[Output exceeded the capture size limit" in content
-                ),
-            }
-        )
+        item = {
+            "tool": name,
+            "content": content[:limit],
+            "incomplete": getattr(message, "status", None) == "error"
+            or (name not in {"read_file", "grep", "execute"} and _source_coverage_incomplete(content)),
+            "truncated": (
+                len(content) > limit
+                or content.startswith("Tool result too large,")
+                or "[Output was truncated due to size limits." in content
+                or "[Output exceeded the capture size limit" in content
+            ),
+        }
+        if operation is not None and operation[0] == name:
+            if item["incomplete"]:
+                failures.setdefault(operation, []).append(item)
+            else:
+                for failure in failures.pop(operation, []):
+                    failure.update(incomplete=False, truncated=False, recovered=True)
+        evidence.append(item)
     if len(evidence) > 32:
         # Keep each tool/source represented before filling the remaining budget.
         representatives = {}

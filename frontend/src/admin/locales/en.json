@@ -17,6 +17,7 @@
     "trajectorySource_plugin_model": "Plugin model",
     "trajectoryState_completed": "Completed",
     "trajectoryState_running": "Running",
+    "trajectoryState_unloaded": "End event not loaded",
     "trajectoryState_failed": "Failed",
     "trajectoryState_cancelled": "Cancelled",
     "trajectoryState_interrupted": "Interrupted",
@@ -567,7 +568,7 @@
     "config": {
       "title": "Configs",
       "subtitle": "Global and user-level model settings",
-      "subtitleList": "Manage global and user-level configs.",
+      "subtitleList": "Manage model configurations.",
       "globalTitle": "Global configuration",
       "perUserTitle": "Per-user overrides",
       "perUserDesc": "User-specific configs override global. List below.",
@@ -654,7 +655,20 @@
         "network_error": "Cannot reach the service. Please check API base URL and network.",
         "permission_denied": "Access denied. Please check API key and account permissions.",
         "unknown": "Connection test failed. Please check your configuration and try again."
-      }
+      },
+      "modelType": "Model type",
+      "chatModel": "Chat model",
+      "decisionModel": "Decision model",
+      "decisionTestQuestion": "Decision question (yes/no)",
+      "decisionTestQuestionDefault": "Is the input a connection test?",
+      "accountId": "Cloudflare Account ID",
+      "accountIdPlaceholder": "32-character Cloudflare Account ID",
+      "apiToken": "API Token",
+      "apiCredentialPlaceholder": "Enter the provider API key or token",
+      "bearerCredentialHint": "Enter the credential only, without the Bearer prefix.",
+      "numRetries": "Retries",
+      "metadataLoadError": "Provider metadata could not be loaded. Refresh to retry.",
+      "decisionApiBasePlaceholder": "Enter the service API base URL (required)"
     },
     "dataSettings": {
       "title": "Scheduled Tasks",
@@ -1509,6 +1523,54 @@
       "failed": "Failed",
       "remove": "Remove {name}"
     },
+    "decisionSettings": {
+      "decisions": {
+        "search_needed": {
+          "title": "Search needed",
+          "description": "Decide whether answering the latest message requires searching the workspace or the provided documents."
+        },
+        "evidence_requirement": {
+          "title": "Evidence required",
+          "description": "Decide whether the answer needs tool, document, or user-provided evidence instead of a direct reply."
+        },
+        "evidence_sufficient": {
+          "title": "Evidence sufficient",
+          "description": "Check whether the answer relies only on evidence that was actually retrieved or provided."
+        },
+        "answer_supported": {
+          "title": "Answer supported",
+          "description": "Check whether the answer is supported by the evidence that was retrieved."
+        },
+        "evidence_strength": {
+          "title": "Evidence strength",
+          "description": "Classify the weakest evidence level behind the answer's material factual claims."
+        },
+        "plan_quality": {
+          "title": "Plan quality",
+          "description": "Score one candidate plan against the shared ordered rubric."
+        },
+        "evidence_relevance": {
+          "title": "Evidence relevance",
+          "description": "Score one retrieved excerpt by how much it helps answer the question."
+        }
+      },
+      "rubric": {
+        "weak": "Weak",
+        "acceptable": "Acceptable",
+        "strong": "Strong",
+        "irrelevant": "Irrelevant",
+        "related": "Related",
+        "helpful": "Helpful",
+        "direct_answer": "Direct answer",
+        "direct": "Direct evidence",
+        "derived": "Derived evidence",
+        "adapted_only": "Adaptation or compatibility only",
+        "example_only": "Example only",
+        "planned": "Planned or future work",
+        "unsupported": "Unsupported",
+        "contradicted": "Contradicted"
+      }
+    },
     "plugins": {
       "file_upload": {
         "displayName": "Manual upload",
@@ -1579,7 +1641,7 @@
       },
       "gitlab": {
         "displayName": "GitLab",
-        "description": "Connect approved GitLab.com or self-managed projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
+        "description": "Connect public GitLab.com or self-managed projects anonymously, or approved private projects with a personal access token to synchronize repository files and inspect code, commits, merge requests, and issues through read-only assistant tools.",
         "connectionFields": {
           "endpoint": {
             "title": "GitLab endpoint",
@@ -1587,7 +1649,7 @@
           },
           "secret_value": {
             "title": "Personal access token",
-            "description": "A write-only token with read_api and read_repository access to the approved projects."
+            "description": "Optional for public projects. A write-only token with read_api and read_repository access to approved private projects."
           },
           "projects": {
             "title": "Allowed projects",
@@ -2082,7 +2144,8 @@
       "feishuAppId": "Feishu App ID",
       "feishuAppSecret": "Feishu App Secret",
       "visibility": "Visibility",
-      "routingMode": "Assistant mode"
+      "routingMode": "Assistant mode",
+      "decisionModel": "Decision model"
     },
     "placeholders": {
       "assistantDescription": "Describe what this assistant helps users do.",
@@ -2091,6 +2154,7 @@
       "selectType": "Select a type",
       "selectDir": "Select a directory",
       "selectModel": "Select a model",
+      "loadingModels": "Loading models…",
       "noModel": "Default",
       "docIds": "Separate multiple IDs with commas",
       "includePaths": "One path rule per line, e.g. src/**",
@@ -2210,7 +2274,7 @@
       "step1Title": "Source",
       "step1Desc": "Choose the data source type.",
       "step2Title": "Connection and resources",
-      "step2Desc": "Name the data source, select a connection, and choose repositories or resources to sync.",
+      "step2Desc": "Enter a name and resource address, and select an authentication connection when needed.",
       "step3Title": "Sync and processing policy",
       "step3Desc": "Configure the sync policy and document content processing.",
       "summarySource": "Data source",
@@ -2376,6 +2440,7 @@
       "duplicateResourceUrl": "Feishu resource addresses must be unique.",
       "checkRepositoryAccess": "Check availability",
       "repositoriesAccessible": "Repositories are accessible. You can continue.",
+      "publicAccess": "Public access (no credentials)",
       "publicRepository": "Public",
       "githubErrors": {
         "notFound": "Repository or ref not found, or this connection cannot access it.",
@@ -2565,7 +2630,11 @@
       "mcpEnvironmentConfigurationHint": "This MCP Server needs {count} environment variables. Choose an existing variable set or create a new one.",
       "noSkills": "No Skills available — create one in the Skill Library first",
       "noMcp": "No MCP Servers available — create one in the MCP Server Library first",
-      "visibilityHint": "Admins can always access every assistant."
+      "visibilityHint": "Admins can always access every assistant.",
+      "noDecisionModel": "None (keep the existing flow)",
+      "decisionAutomatic": "Automatic (based on assistant capability)",
+      "decisionModelHint": "Optional. Configure a dedicated model for evidence checks and candidate ranking, or leave it unset to keep the existing processing flow.",
+      "configureDecisionModel": "Configure a decision model"
     },
     "agentRounds": {
       "flash": "Flash",

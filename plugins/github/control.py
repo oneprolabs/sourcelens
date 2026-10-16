@@ -555,6 +555,20 @@ def _repository_name(value):
     return repository
 
 
+def _activity_repository_selector(value):
+    """Accept an exact repository, one owner wildcard or the all selector."""
+
+    if isinstance(value, str):
+        value = value.strip().strip("/")
+        if value == "*":
+            return value
+        if value.endswith("/*"):
+            owner = value[:-2]
+            _repository_name(f"{owner}/selector")
+            return value
+    return _repository_name(value)
+
+
 def _optional_nonempty_string(value, field_name):
     """Return a trimmed optional string field."""
 
@@ -722,10 +736,7 @@ class GitHubToolProvider:
                     raise DatasourceProviderError(
                         "repositories must contain 1 through 50 items"
                     )
-                normalized_repositories = [
-                    _repository_name(repository)
-                    for repository in repositories
-                ]
+                normalized_repositories = [_activity_repository_selector(repository) for repository in repositories]
                 identities = {
                     repository.casefold()
                     for repository in normalized_repositories
@@ -734,10 +745,9 @@ class GitHubToolProvider:
                     raise DatasourceProviderError(
                         "repositories must be unique"
                     )
-                if allowed is not None and not identities.issubset(allowed):
-                    raise DatasourceProviderError(
-                        "repository is outside connection scope"
-                    )
+                explicit = {repository for repository in identities if "*" not in repository}
+                if allowed is not None and not explicit.issubset(allowed):
+                    raise DatasourceProviderError("repository is outside connection scope")
                 since = _tool_timestamp(arguments.get("since"), "since")
                 until = _tool_timestamp(arguments.get("until"), "until")
                 if since[1] > until[1]:

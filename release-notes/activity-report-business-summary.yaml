@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Restore skill-based work summaries and report delivery instead of replacing them with activity verification lists; retain source evidence and partial-coverage diagnostics.
+zh-CN: 恢复按技能生成工作总结并交付报告，避免活动验证清单替代最终结果；保留来源证据和覆盖不足诊断。

@@ -16,6 +16,7 @@ CONNECTION_WRITE_TARGET_PATTERN = re.compile(
     r"allowed_scope\.[a-z][a-z0-9_-]{0,63})$"
 )
 SUPPORTED_PROTOCOL_VERSION = 1
+RETIRED_PLUGIN_KEYS = frozenset({"typesafe"})
 SUPPORTED_CAPABILITY_FAMILIES = frozenset({"plugin", "decision"})
 PLUGIN_TYPES = frozenset({"integration", "decision"})
 DECISION_MODES = frozenset({"control", "analysis"})
@@ -160,7 +161,7 @@ def discover_plugins():
         for key_dir in sorted(root.iterdir()):
             if not key_dir.is_dir() or key_dir.is_symlink():
                 continue
-            if key_dir.name == "__pycache__":
+            if key_dir.name in {"__pycache__", "_shared"}:
                 continue
             package_dirs = [key_dir]
             if not (key_dir / "plugin.json").is_file():

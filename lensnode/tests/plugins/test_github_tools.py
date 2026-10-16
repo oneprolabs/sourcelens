@@ -437,14 +437,14 @@ def test_activity_summary_batches_and_filters_repository_activity():
                 },
             ]
         else:
-            assert parse_qs(request.url.query.decode()) == {
+            query = parse_qs(request.url.query.decode())
+            qualifier = next(field for field in ("updated", "created", "closed") if f" {field}:" in query["q"][0])
+            assert query == {
                 "direction": ["desc"],
                 "page": ["1"],
                 "per_page": ["2"],
                 "q": [
-                    "repo:HyperBDR/sourcelens is:issue "
-                    "updated:2026-09-01T16:00:00Z.."
-                    "2026-09-02T15:59:59Z"
+                    "repo:HyperBDR/sourcelens is:issue " f"{qualifier}:2026-09-01T16:00:00Z.." "2026-09-02T15:59:59Z"
                 ],
                 "sort": ["updated"],
             }
@@ -477,7 +477,7 @@ def test_activity_summary_batches_and_filters_repository_activity():
     )
 
     repository = result["repositories"][0]
-    assert len(requests) == 3
+    assert len(requests) == 5
     assert repository["commits"][0]["sha"] == "abc"
     assert [item["number"] for item in repository["pull_requests"]] == [10]
     assert [item["number"] for item in repository["issues"]] == [20]
@@ -492,7 +492,7 @@ def test_activity_summary_batches_and_filters_repository_activity():
 def test_activity_summary_applies_safe_resource_specific_limits():
     def handler(request):
         query = parse_qs(request.url.query.decode())
-        expected = "50" if request.url.path.endswith("/commits") else "10"
+        expected = "10" if request.url.path.endswith("/pulls") else "50"
         assert query["per_page"] == [expected]
         if request.url.path == "/search/issues":
             return httpx.Response(
@@ -517,10 +517,51 @@ def test_activity_summary_applies_safe_resource_specific_limits():
     )
 
     assert result["limits"] == {
-        "commits": 50,
-        "pull_requests": 10,
-        "issues": 10,
+        "commits": 500,
+        "pull_requests": 500,
+        "issues": 500,
     }
+
+
+@pytest.mark.parametrize("per_page,total", [(None, 123), (100, 123), (None, 510)])
+def test_activity_summary_reads_large_pull_requests_without_losing_pagination_coverage(per_page, total):
+    """Large PR bodies fit the response limit without dropping later activity pages."""
+
+    def handler(request):
+        if request.url.path == "/search/issues":
+            return httpx.Response(200, json={"total_count": 0, "incomplete_results": False, "items": []})
+        if not request.url.path.endswith("/pulls"):
+            return httpx.Response(200, json=[])
+        query = parse_qs(request.url.query.decode())
+        page_size = int(query["per_page"][0])
+        start = (int(query["page"][0]) - 1) * page_size
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "number": number,
+                    "title": "Large pull request",
+                    "body": "x" * 25_000,
+                    "updated_at": "2026-09-02T08:00:00Z",
+                }
+                for number in range(start + 1, min(start + page_size, total) + 1)
+            ],
+        )
+
+    arguments = {
+        "repositories": ["HyperBDR/sourcelens"],
+        "since": "2026-09-01T16:00:00Z",
+        "until": "2026-09-02T15:59:59Z",
+    }
+    if per_page is not None:
+        arguments["per_page"] = per_page
+    result = _execute("github_activity_summary", arguments, handler)
+
+    repository = result["repositories"][0]
+    assert "errors" not in repository
+    assert [item["number"] for item in repository["pull_requests"]] == list(range(1, min(total, 500) + 1))
+    assert repository["possibly_truncated"]["pull_requests"] is (total > 500)
+    assert result["source_coverage_complete"] is (total <= 500)
 
 
 def test_activity_summary_uses_issue_only_search_before_limit():
@@ -528,7 +569,7 @@ def test_activity_summary_uses_issue_only_search_before_limit():
         if request.url.path != "/search/issues":
             return httpx.Response(200, json=[], request=request)
         query = parse_qs(request.url.query.decode())
-        assert query["per_page"] == ["10"]
+        assert query["per_page"] == ["50"]
         assert "is:issue" in query["q"][0]
         issue = {
             "number": 20,
@@ -628,7 +669,7 @@ def test_activity_summary_retries_transient_issue_search_failure():
     )
 
     repository = result["repositories"][0]
-    assert issue_attempts == 2
+    assert issue_attempts == 4
     assert [item["number"] for item in repository["issues"]] == [20]
     assert "errors" not in repository
 

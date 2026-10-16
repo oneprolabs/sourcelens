@@ -3,6 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 from dj_rest_auth.views import (
     LoginView, LogoutView,
@@ -46,7 +47,7 @@ class CustomLoginView(LoginView):
         token = request.data.get('turnstile_token', '')
         passed, _errors = turnstile.verify_token(
             token,
-            request.META.get('REMOTE_ADDR'),
+            turnstile.get_client_ip(request.META),
         )
         if not passed:
             return Response(
@@ -60,7 +61,30 @@ class CustomLoginView(LoginView):
         return super().post(request, *args, **kwargs)
 
 
+class TurnstileStatusView(APIView):
+    """Expose the same client policy used by authentication enforcement."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, *args, **kwargs):
+        """Return a non-cacheable policy without exposing the client IP."""
+        client_ip = turnstile.get_client_ip(request.META)
+        return Response(
+            {
+                'required': turnstile.is_verification_required(client_ip),
+                'bypassed': turnstile.is_bypassed_ip(client_ip),
+            },
+            headers={'Cache-Control': 'no-store'},
+        )
+
+
 urlpatterns = [
+    path(
+        'api/v1/auth/turnstile/status',
+        TurnstileStatusView.as_view(),
+        name='turnstile_status',
+    ),
     # Login endpoint
     path(
         'api/v1/auth/login',

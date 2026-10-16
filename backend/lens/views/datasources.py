@@ -24,6 +24,7 @@ from lens.datasource.services import (
     normalize_workspace_target_path,
     resolve_datasource_lensnode,
 )
+from lens.datasource.stop_confirmation import describe_conversion_stop
 from lens.models import (
     CredentialLease,
     DataSource,
@@ -118,6 +119,7 @@ def _latest_datasource_tasks(TaskExecution, datasource_uuids):
     return last_task_by_uuid
 
 
+@transaction.atomic
 def _finalize_datasource_cancellation(task, datasource, reason, user=None):
     """Terminate a datasource task locally and immediately.
 
@@ -125,46 +127,66 @@ def _finalize_datasource_cancellation(task, datasource, reason, user=None):
     never have received the operation (it dropped before delivery), which used
     to strand the task in CANCELLING while it kept its lock and capacity slot.
     We finish the task now, release its resources, and send a best-effort
-    cancel so any real work on the node still stops. A late node callback is
-    ignored because the terminal completion paths are idempotent.
+    cancel so any real work on the node still stops. Conversion stop evidence
+    remains independent of this immediate cancellation outcome.
     """
 
     from agentcore_task.adapters.django import TaskTracker
+    from agentcore_task.adapters.django.models import TaskExecution
     from agentcore_task.constants import TaskStatus
     from core.celery import app
 
+    task = TaskExecution.objects.select_for_update().get(pk=task.pk)
     metadata = dict(task.metadata or {})
+    is_conversion = task.module == "lens_datasource_conversion"
+    already_terminal = task.status in TaskStatus.get_completed_statuses()
+    if is_conversion and describe_conversion_stop(task)["state"] == "confirmed":
+        return task
     celery_task_id = metadata.get("celery_task_id") or task.task_id
     try:
         app.control.revoke(celery_task_id, terminate=False)
     except Exception:
         pass
     lensnode = datasource.lensnode
-    if lensnode is None:
+    if is_conversion and metadata.get("lensnode_uuid"):
+        lensnode = LensNode.objects.filter(uuid=metadata["lensnode_uuid"]).first()
+    if lensnode is None and not (is_conversion and metadata.get("lensnode_uuid")):
         try:
             lensnode = resolve_datasource_lensnode(datasource)
         except DataSourceDispatchError:
             lensnode = None
-    if task.module == "lens_datasource_conversion":
-        cancel_datasource_conversion_on_lensnode(lensnode, task.task_id)
-    else:
-        cancel_datasource_sync_on_lensnode(lensnode, task.task_id)
+    if is_conversion:
+        metadata["stop_confirmation_state"] = "unconfirmed"
+        if lensnode is not None:
+            metadata.setdefault("lensnode_uuid", str(lensnode.uuid))
+            metadata["lensnode_connection_id"] = lensnode.connection_id
+        if already_terminal:
+            task.metadata = metadata
+            task.save(update_fields=["metadata"])
+            cancel_datasource_conversion_on_lensnode(lensnode, task.task_id)
+            return task
     metadata["manual_revoked_at"] = timezone.now().isoformat()
     if user is not None:
         metadata["manual_revoked_by"] = user.pk
     metadata["cancellation_state"] = TaskStatus.REVOKED
     metadata["completion_reason"] = reason
-    metadata["stop_confirmation_source"] = "manual_immediate"
+    if not is_conversion:
+        metadata["stop_confirmation_source"] = "manual_immediate"
     release_datasource_lock(
         str(datasource.uuid),
         token=metadata.get("lock_token") or task.task_id,
     )
-    return TaskTracker.update_task_status(
+    task = TaskTracker.update_task_status(
         task.task_id,
         TaskStatus.REVOKED,
         error=reason,
         metadata=metadata,
     )
+    if is_conversion:
+        cancel_datasource_conversion_on_lensnode(lensnode, task.task_id)
+    else:
+        cancel_datasource_sync_on_lensnode(lensnode, task.task_id)
+    return task
 
 
 class DataSourceViewSet(BaseAdminViewSet):
@@ -1599,51 +1621,87 @@ class DataSourceViewSet(BaseAdminViewSet):
         )
 
     @action(detail=True, methods=["post"], url_path="cancel-conversion")
+    @transaction.atomic
     def cancel_conversion(self, request, uuid=None):
-        """Cancel the latest active managed workspace conversion."""
+        """Cancel an exact conversion, or the latest active one for legacy callers."""
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
 
         datasource = self.get_object()
-        task = (
-            TaskExecution.objects.filter(
-                module="lens_datasource_conversion",
-                metadata__datasource_uuid=str(datasource.uuid),
+        tasks = TaskExecution.objects.select_for_update().filter(
+            module="lens_datasource_conversion",
+            metadata__datasource_uuid=str(datasource.uuid),
+        )
+        if "task_id" in request.data:
+            task_id = request.data["task_id"]
+            if not isinstance(task_id, str) or not task_id.strip():
+                raise ValidationError({"task_id": "A nonempty task ID is required."})
+            tasks = tasks.filter(task_id=task_id)
+        else:
+            tasks = tasks.filter(
                 status__in=[
                     TaskStatus.PENDING,
                     *TaskStatus.get_running_statuses(),
                     DATASOURCE_CANCELLING_STATUS,
                 ],
             )
-            .order_by("-created_at")
-            .first()
-        )
+        task = tasks.order_by("-created_at").first()
         if task is None:
             return Response(
                 {"detail": "No running datasource conversion task."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        already_terminal = task.status in TaskStatus.get_completed_statuses()
         task = _finalize_datasource_cancellation(
             task,
             datasource,
             "DATASOURCE_CONVERSION_CANCELLED",
             request.user,
         )
-        datasource.last_conversion_status = task.status
-        datasource.last_conversion_at = timezone.now()
-        datasource.save(
-            update_fields=[
-                "last_conversion_status",
-                "last_conversion_at",
-                "updated_at",
-            ]
-        )
+        newer_conversion_exists = TaskExecution.objects.filter(
+            module="lens_datasource_conversion",
+            metadata__datasource_uuid=str(datasource.uuid),
+            created_at__gt=task.created_at,
+        ).exists()
+        if not already_terminal and not newer_conversion_exists:
+            datasource.last_conversion_status = task.status
+            datasource.last_conversion_at = timezone.now()
+            datasource.save(update_fields=["last_conversion_status", "last_conversion_at", "updated_at"])
         return Response(
             {
                 "uuid": str(datasource.uuid),
                 "task_id": task.task_id,
                 "task_execution_id": task.id,
                 "status": task.status,
+                "stop_confirmation": describe_conversion_stop(task),
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"conversion-tasks/(?P<task_id>[^/.]+)/stop-status",
+    )
+    def conversion_stop_status(self, request, uuid=None, task_id=None):
+        """Query durable stop evidence for the exact datasource conversion."""
+
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        datasource = self.get_object()
+        task = TaskExecution.objects.filter(
+            module="lens_datasource_conversion",
+            task_id=task_id,
+            metadata__datasource_uuid=str(datasource.uuid),
+        ).first()
+        if task is None:
+            return Response({"detail": "Conversion task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {
+                "uuid": str(datasource.uuid),
+                "task_id": task.task_id,
+                "task_execution_id": task.id,
+                "status": task.status,
+                "stop_confirmation": describe_conversion_stop(task),
             }
         )

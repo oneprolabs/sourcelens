@@ -12,6 +12,8 @@ from ..checkpoint import CheckpointResumeError
 from ..gateway_model import _tool_result_metadata
 from .capability_protocol import is_capability_family
 from .messages import normalize_plan_steps as _normalize_plan_steps
+
+
 class CapabilityBoundaryMiddleware(AgentMiddleware):
     """Apply bounded recovery without stopping the whole agent run."""
 
@@ -391,7 +393,7 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
             return f"{capability}:{tool_name}"
         return f"tool:{tool_name}"
 
-    def _record_success(self, capability, tool_name, request):
+    def _record_success(self, capability, tool_name, request, payload=None):
         if capability is None:
             return
         source = self._source_scope(capability, tool_name, request)
@@ -413,6 +415,11 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 "tool": tool_name,
                 "source": source,
                 "request_sha256": request_sha256,
+                "coverage_complete": (
+                    payload["_evidence"].get("complete")
+                    if isinstance(payload, dict) and isinstance(payload.get("_evidence"), dict)
+                    else None
+                ),
             }
         )
         self._record_recovery(capability, source)
@@ -519,7 +526,7 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
                 return result
             payload = {"ok": False, "error": "MCP_TOOL_FAILED"}
         if payload.get("ok") is True:
-            self._record_success(capability, tool_name, request)
+            self._record_success(capability, tool_name, request, payload)
             return result
         if capability is None:
             return result

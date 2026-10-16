@@ -1,13 +1,32 @@
 """Privacy-bounded tracing middleware for LensNode agent runs."""
 
+import json
 import re
 import time
 import uuid
 from contextlib import nullcontext
 
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
 
 from ..logging_utils import utc_now
+
+
+def _normalize_tool_result(result, tool_name):
+    """Preserve operation failures hidden by successful tool dispatch."""
+
+    if not isinstance(result, ToolMessage) or result.status == "error":
+        return result
+    artifact = result.artifact
+    exit_code = artifact.get("exit_code") if isinstance(artifact, dict) else None
+    failed = type(exit_code) is int and exit_code != 0
+    if tool_name not in {"read_file", "grep", "ls", "glob", "execute", "write_todos"}:
+        try:
+            payload = json.loads(result.content)
+        except (TypeError, ValueError):
+            payload = None
+        failed = failed or (isinstance(payload, dict) and payload.get("ok") is False)
+    return result.model_copy(update={"status": "error"}) if failed else result
 
 
 class TraceObservationMiddleware(AgentMiddleware):
@@ -35,6 +54,7 @@ class TraceObservationMiddleware(AgentMiddleware):
                 else nullcontext()
             ):
                 result = handler(request)
+                result = _normalize_tool_result(result, getattr(getattr(request, "tool", None), "name", ""))
         except Exception as exc:
             self._finish(observation_id, trajectory_id, "failed", error=exc)
             raise
@@ -62,6 +82,7 @@ class TraceObservationMiddleware(AgentMiddleware):
                 else nullcontext()
             ):
                 result = await handler(request)
+                result = _normalize_tool_result(result, getattr(getattr(request, "tool", None), "name", ""))
         except Exception as exc:
             self._finish(observation_id, trajectory_id, "failed", error=exc)
             raise

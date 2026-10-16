@@ -140,16 +140,11 @@ const handleSendCode = async () => {
     errorMessage.value = t('auth.codeLogin.invalidEmail')
     return
   }
-  if (!turnstilePassed.value) {
-    errorMessage.value = t('auth.codeLogin.turnstileRequired')
-    return
-  }
-
   loading.value = true
   try {
     await authApi.sendLoginCode({
       email: codeForm.email,
-      turnstileToken: turnstileToken.value,
+      turnstile_token: turnstileToken.value,
       language: locale.value
     })
     codeSent.value = true

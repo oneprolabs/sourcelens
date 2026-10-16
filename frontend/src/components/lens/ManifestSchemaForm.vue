@@ -503,7 +503,9 @@ function treeGroups(field) {
   const groups = new Map()
   optionsFor(field).forEach((item) => {
     const value = optionValue(item)
-    const owner = value.includes('/') ? value.split('/')[0] : 'Resources'
+    const address = value.match(/^https?:\/\/([^/]+)\/(.+)$/)
+    const owner =
+      address?.[1] || (value.includes('/') ? value.split('/')[0] : 'Resources')
     if (!groups.has(owner)) groups.set(owner, [])
     groups.get(owner).push(item)
   })
@@ -639,6 +641,8 @@ function optionsFor(field) {
 
 function repositoryName(option) {
   const label = optionLabel(option)
+  const address = String(label).match(/^https?:\/\/[^/]+\/(.+)$/)
+  if (address) return address[1].replace(/\.git\/?$/, '')
   const parts = String(label).split('/')
   return parts.length > 1 ? parts.slice(1).join('/') : label
 }

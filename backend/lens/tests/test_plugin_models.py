@@ -151,7 +151,7 @@ class PluginModelTests(TestCase):
         )
         self.assertNotIn("credential_uuid", response.data)
 
-    def test_serializer_rejects_plugin_config_without_connection(self):
+    def test_serializer_accepts_public_github_without_connection(self):
         serializer = DataSourceSerializer(
             data={
                 "name": "Repository",
@@ -168,8 +168,12 @@ class PluginModelTests(TestCase):
             }
         )
 
-        self.assertFalse(serializer.is_valid())
-        self.assertIn("connection_uuid", serializer.errors)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        connection = serializer.validated_data["connection"]
+        self.assertEqual(connection.plugin_key, "github")
+        self.assertIsNone(connection.secret_version_id)
+        self.assertEqual(connection.allowed_scope["repositories"], ["*"])
+        self.assertEqual(serializer.validated_data["datasource_config"]["repository"], "HyperBDR/sourcelens")
 
     def test_serializer_rejects_disabled_plugin_connection(self):
         self.connection.status = Connection.Status.DISABLED

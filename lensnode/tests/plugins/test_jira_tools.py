@@ -351,10 +351,8 @@ def test_jira_activity_summary_uses_python_http_for_all_projects():
         for url, params in client.provider_requests
         if url.endswith("/search/jql")
     ]
-    assert search_requests[0]["jql"].endswith(
-        'updated >= "2026-09-01 08:00" '
-        'AND updated < "2026-09-02 08:00" ORDER BY updated DESC'
-    )
+    assert ('updated >= "2026-09-01 08:00" ' 'AND updated < "2026-09-02 08:00"') in search_requests[0]["jql"]
+    assert 'resolved >= "2026-09-01 08:00"' in search_requests[0]["jql"]
     assert result["items"][0]["key"] == "SL-488"
     assert len(result["items"][0]["description"]) == 2000
     assert result["possibly_truncated"] is True
@@ -380,3 +378,25 @@ def test_jira_activity_summary_rechecks_frozen_project_scope():
 
     assert result == {"ok": False, "error": "PLUGIN_SCOPE_MISMATCH"}
     assert client.provider_requests == []
+
+
+def test_activity_evidence_is_reused_after_tools_are_rebuilt(tmp_path):
+    from lensnode.plugin_agent import prepare_agent_extensions
+
+    command = {**_command("jira_activity_summary"), "question": "Summarize yesterday's work", "run_uuid": "durable-run"}
+    extensions = prepare_agent_extensions(command, tmp_path)
+    client = JiraRuntimeClient()
+    first = build_plugin_tools(command, _config(), client, agent_extensions=extensions)[0]
+    arguments = {
+        "projects": ["SL"],
+        "since": "2026-09-01T00:00:00Z",
+        "until": "2026-09-01T23:59:59Z",
+        "max_results": 2,
+        "runtime": SimpleNamespace(tool_call_id="activity-1"),
+    }
+    original = json.loads(first.func(**arguments))
+    requests = len(client.provider_requests)
+    restored = prepare_agent_extensions(command, tmp_path)
+    second = build_plugin_tools(command, _config(), client, agent_extensions=restored)[0]
+    assert json.loads(second.func(**arguments)) == original
+    assert len(client.provider_requests) == requests

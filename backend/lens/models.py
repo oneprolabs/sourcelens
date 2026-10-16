@@ -198,6 +198,10 @@ class Assistant(TimestampedUUIDModel):
     postprocess_model_ref = models.UUIDField(null=True, blank=True)
     multimodal_model_ref = models.UUIDField(null=True, blank=True)
     agent_model_ref = models.UUIDField(null=True, blank=True)
+    decision_model_ref = models.UUIDField(null=True, blank=True)
+    decision_auto = models.BooleanField(default=True)
+    decision_gates = models.JSONField(default=dict, blank=True)
+    decision_analyses = models.JSONField(default=dict, blank=True)
     agent_rounds = models.CharField(
         max_length=16,
         choices=AgentRounds.choices,

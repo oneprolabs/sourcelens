@@ -3,7 +3,6 @@ from lens.plugins.providers import get_datasource_provider
 from lens.plugins.registry import installed_plugin
 from lens.plugins.tool_providers import ToolProviderError, get_tool_provider
 
-
 GITHUB_READ_ONLY_TOOLS = [
     "github_read_file",
     "github_search_code",
@@ -177,6 +176,35 @@ class GitHubToolProviderTests(TestCase):
                     "until": "2026-09-02T15:59:59Z",
                 },
             )
+
+    def test_activity_summary_accepts_repository_selectors(self):
+        """Activity selectors retain their meaning until runtime expansion."""
+
+        for selectors in (["HyperBDR/*"], ["*"], ["HyperBDR/*", "HyperBDR/sourcelens"]):
+            with self.subTest(selectors=selectors):
+                _, arguments = self.provider.validate_request(
+                    "https://github.com",
+                    self.scope,
+                    "github_activity_summary",
+                    {
+                        "repositories": selectors,
+                        "since": "2026-09-01T16:00:00Z",
+                        "until": "2026-09-02T15:59:59Z",
+                    },
+                )
+                self.assertEqual(arguments["repositories"], selectors)
+
+    def test_activity_summary_rejects_invalid_selectors(self):
+        """Only exact repositories, owner wildcards and the all selector are accepted."""
+
+        for selector in ("HyperBDR", "*/sourcelens", "Hyper*/*", "HyperBDR/**", "../*", "a/b/c"):
+            with self.subTest(selector=selector), self.assertRaises(ToolProviderError):
+                self.provider.validate_request(
+                    "https://github.com",
+                    {"repositories": ["*"]},
+                    "github_activity_summary",
+                    {"repositories": [selector], "since": "2026-09-01T16:00:00Z", "until": "2026-09-02T15:59:59Z"},
+                )
 
     def test_rejects_repository_outside_connection_scope(self):
         with self.assertRaisesMessage(ToolProviderError, "scope"):

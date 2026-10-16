@@ -23,7 +23,7 @@
               :loading="loading"
               :title="t('common.refresh')"
               class="flex items-center gap-1 shadow-sm hover:shadow-md transition-shadow"
-              @click="loadAll"
+              @click="loadPage"
             >
               <svg
                 v-if="!loading"
@@ -41,7 +41,12 @@
               </svg>
               <span class="sr-only">{{ t('common.refresh') }}</span>
             </BaseButton>
-            <BaseButton variant="primary" size="sm" @click="openAddModal">
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :disabled="metadataLoading || !metadataReady"
+              @click="openAddModal"
+            >
               {{ t('llm.config.addConfig') }}
             </BaseButton>
           </div>
@@ -140,20 +145,15 @@
                           class="min-w-0 break-words text-sm font-semibold text-gray-900"
                         >
                           {{ row.config?.model || '–' }}
+                          <span
+                            v-if="row.model_type === 'decision'"
+                            class="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-800"
+                            >{{ t('llm.config.decisionModel') }}</span
+                          >
                         </h2>
                       </div>
                       <p class="mt-1 text-xs text-gray-500">
                         {{ providerLabel(row.provider) }}
-                        <span aria-hidden="true"> · </span>
-                        {{
-                          row.scope === 'global'
-                            ? t('llm.config.scopeGlobal')
-                            : t('llm.config.scopeUser')
-                        }}
-                        <template v-if="row.scope === 'user'">
-                          <span aria-hidden="true"> · </span>
-                          {{ row.username || row.user_id || '–' }}
-                        </template>
                       </p>
                     </div>
 
@@ -300,16 +300,6 @@
                       <th
                         class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
                       >
-                        {{ t('llm.config.scopeLabel') }}
-                      </th>
-                      <th
-                        class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
-                      >
-                        {{ t('llm.config.user') }}
-                      </th>
-                      <th
-                        class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
-                      >
                         {{ t('llm.config.provider') }}
                       </th>
                       <th
@@ -378,24 +368,6 @@
                       <td
                         class="px-4 py-4 whitespace-nowrap text-sm text-gray-900"
                       >
-                        {{
-                          row.scope === 'global'
-                            ? t('llm.config.scopeGlobal')
-                            : t('llm.config.scopeUser')
-                        }}
-                      </td>
-                      <td
-                        class="px-4 py-4 whitespace-nowrap text-sm text-gray-600"
-                      >
-                        {{
-                          row.scope === 'user'
-                            ? row.username || row.user_id || '–'
-                            : '–'
-                        }}
-                      </td>
-                      <td
-                        class="px-4 py-4 whitespace-nowrap text-sm text-gray-900"
-                      >
                         <ProviderIcon
                           :provider="row.provider"
                           :icon="providerIconUrl(row.provider)"
@@ -410,6 +382,11 @@
                         class="px-4 py-4 whitespace-nowrap text-sm text-gray-700"
                       >
                         {{ row.config?.model || '–' }}
+                        <span
+                          v-if="row.model_type === 'decision'"
+                          class="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-800"
+                          >{{ t('llm.config.decisionModel') }}</span
+                        >
                       </td>
                       <td class="px-4 py-4 text-sm text-gray-700">
                         <div
@@ -584,7 +561,17 @@
               :placeholder="t('llm.config.testPromptPlaceholder')"
             />
           </div>
-          <div>
+          <div v-if="isDecisionTest">
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{
+              t('llm.config.decisionTestQuestion')
+            }}</label>
+            <textarea
+              v-model="testDecisionQuestion"
+              rows="2"
+              class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+          <div v-else>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               {{ t('llm.config.maxOutputTokens') }} (max_tokens)
             </label>
@@ -596,7 +583,7 @@
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
-          <div class="flex flex-col gap-1 pt-1">
+          <div v-if="!isDecisionTest" class="flex flex-col gap-1 pt-1">
             <div class="flex items-center gap-2 min-h-[1.5rem]">
               <input
                 id="test-streaming"
@@ -782,28 +769,20 @@
         @close="closeConfigModal"
       >
         <form @submit.prevent="submitConfigForm" class="space-y-4">
-          <div v-if="!editingId">
+          <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.scopeLabel')
+              t('llm.config.modelType')
             }}</label>
-            <BaseSelect v-model="form.scope">
-              <option value="global">{{ t('llm.config.scopeGlobal') }}</option>
-              <option value="user">{{ t('llm.config.scopeUser') }}</option>
-            </BaseSelect>
-          </div>
-          <div v-if="!editingId && form.scope === 'user'">
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.user')
-            }}</label>
-            <BaseSelect v-model="form.user_id" :required="userList.length > 0">
-              <option value="">{{ t('llm.config.user') }}…</option>
-              <option v-for="u in userList" :key="u.id" :value="u.id">
-                {{ u.username || u.id }}
+            <BaseSelect
+              v-model="form.model_type"
+              :disabled="Boolean(editingId)"
+              @change="onModelTypeChange"
+            >
+              <option value="llm">{{ t('llm.config.chatModel') }}</option>
+              <option value="decision">
+                {{ t('llm.config.decisionModel') }}
               </option>
             </BaseSelect>
-            <p v-if="userList.length === 0" class="mt-1 text-sm text-amber-600">
-              {{ t('llm.config.noUsersHint') }}
-            </p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
@@ -813,6 +792,7 @@
               class="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm"
             >
               <ProviderIcon
+                :key="form.provider"
                 :provider="form.provider"
                 :icon="providerIconUrl(form.provider)"
                 size="sm"
@@ -832,6 +812,17 @@
                 >
                   {{ p.label }}
                 </option>
+                <template #option="{ option }">
+                  <span class="flex items-center gap-2">
+                    <ProviderIcon
+                      :provider="option.value"
+                      :icon="providerIconUrl(option.value)"
+                      size="sm"
+                      aria-hidden="true"
+                    />
+                    <span class="whitespace-nowrap">{{ option.label }}</span>
+                  </span>
+                </template>
               </BaseSelect>
             </div>
           </div>
@@ -958,30 +949,71 @@
               {{ refPriceLine(selectedModelInfo.reference_pricing) }}
             </div>
           </div>
+          <div v-if="requiresAccountId">
+            <label
+              for="llm-account-id"
+              class="block text-sm font-medium text-gray-700 mb-1"
+              >{{ t('llm.config.accountId') }}</label
+            >
+            <input
+              id="llm-account-id"
+              v-model="form.config.account_id"
+              type="text"
+              :required="!form.config.api_base"
+              pattern="[a-fA-F0-9]{32}"
+              class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
+              :placeholder="t('llm.config.accountIdPlaceholder')"
+            />
+          </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
               t('llm.config.apiBase')
             }}</label>
             <input
-              v-model="form.config.api_base"
+              :value="form.config.api_base || accountApiBase"
+              @input="form.config.api_base = $event.target.value"
               type="url"
+              :required="
+                form.model_type === 'decision' &&
+                !defaultApiBaseForProvider &&
+                !requiresAccountId
+              "
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
               :placeholder="defaultApiBasePlaceholder"
             />
           </div>
-          <div>
+          <div v-if="requiresApiKey">
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
-              t('llm.config.apiKey')
+              t(
+                form.model_type === 'decision' && form.provider === 'cloudflare'
+                  ? 'llm.config.apiToken'
+                  : 'llm.config.apiKey'
+              )
             }}</label>
             <input
               v-model="form.config.api_key"
               type="password"
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
-              :placeholder="t('llm.config.apiKeyPlaceholder')"
+              :placeholder="
+                t(
+                  editingId
+                    ? 'llm.config.apiKeyPlaceholder'
+                    : 'llm.config.apiCredentialPlaceholder'
+                )
+              "
             />
+            <p
+              v-if="form.model_type === 'decision'"
+              class="mt-1 text-xs text-gray-500"
+            >
+              {{ t('llm.config.bearerCredentialHint') }}
+            </p>
           </div>
 
-          <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+          <div
+            v-if="form.model_type !== 'decision'"
+            class="rounded-xl border border-gray-200 bg-gray-50/80 p-4"
+          >
             <h3 class="text-sm font-semibold text-gray-700">
               {{ t('llm.config.modelCapabilities') }}
             </h3>
@@ -1122,7 +1154,14 @@ import { llmAdminApi } from '@/admin/api'
 import { DEFAULT_LLM_REQUEST_TIMEOUT_SECONDS } from '@/admin/api/llmTimeout'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import ProviderIcon from '@/components/llm/ProviderIcon.vue'
-import { selectableChatModels } from '@/components/llm/providerModels.js'
+import {
+  modelParamSchema,
+  decisionAccountApiBase,
+  decisionEditableParams,
+  modelProviderOptions,
+  selectableChatModels,
+  selectableDecisionModels
+} from '@/components/llm/providerModels.js'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -1179,13 +1218,16 @@ const PARAM_LABEL_KEYS = {
   request_timeout_seconds: 'requestTimeoutSeconds',
   vision: 'visionCapability',
   temperature: 'temperature',
-  top_p: 'topP'
+  top_p: 'topP',
+  account_id: 'accountId',
+  num_retries: 'numRetries'
 }
 const NUMERIC_PARAM_RULES = {
   max_tokens: { min: 1, step: 1 },
   request_timeout_seconds: { min: 1, step: 1 },
   temperature: { min: 0, max: 2, step: 0.1 },
-  top_p: { min: 0, max: 1, step: 0.1 }
+  top_p: { min: 0, max: 1, step: 0.1 },
+  num_retries: { min: 0, step: 1 }
 }
 
 function providerLabel(provider) {
@@ -1205,19 +1247,29 @@ const { t } = useI18n()
 const { showError, showSuccess } = useToast()
 
 const loading = ref(true)
+const metadataLoading = ref(true)
 const configList = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
 const bulkLoadingKey = ref('')
 const deleteTarget = ref(null)
-const userList = ref([])
 const modelsData = ref({ providers: [], capability_labels: {} })
 const providerSchemas = ref({})
+const metadataReady = computed(
+  () =>
+    modelsData.value.providers.length > 0 &&
+    Object.keys(providerSchemas.value).length > 0
+)
 
 const showConfigModal = ref(false)
+const editingApiKey = ref('')
 const showTestModal = ref(false)
 const testConfigRow = ref(null)
 const testPrompt = ref('')
+const testDecisionQuestion = ref('')
+const isDecisionTest = computed(
+  () => testConfigRow.value?.model_type === 'decision'
+)
 const testMaxTokens = ref(2048)
 const testCallLoading = ref(false)
 const testCallResult = ref(null)
@@ -1235,9 +1287,8 @@ const modelDropdownOpen = ref(false)
 const modelDropdownRef = ref(null)
 
 const form = reactive({
-  scope: 'global',
-  user_id: null,
   provider: 'openai',
+  model_type: 'llm',
   config: {
     api_key: '',
     api_base: '',
@@ -1253,7 +1304,11 @@ const form = reactive({
 })
 
 const providersFromModels = computed(() => {
-  return (modelsData.value?.providers || []).map((p) => ({
+  return modelProviderOptions(
+    modelsData.value?.providers,
+    providerSchemas.value,
+    form.model_type
+  ).map((p) => ({
     id: p.id,
     label: p.label
   }))
@@ -1275,29 +1330,52 @@ function providerIconUrl(provider) {
   return providerIconUrls.value[(provider || '').toLowerCase()] || ''
 }
 
-const currentProviderSchema = computed(
-  () => providerSchemas.value[form.provider] || null
+const currentProviderSchema = computed(() =>
+  modelParamSchema(providerSchemas.value, form.provider, form.model_type)
 )
 
 const advancedEditableParams = computed(() =>
   getProviderEditableParams(form.provider).filter(
-    (parameter) => !CORE_CONFIG_PARAMS.has(parameter) && parameter !== 'vision'
+    (parameter) =>
+      !CORE_CONFIG_PARAMS.has(parameter) &&
+      parameter !== 'vision' &&
+      parameter !== 'account_id'
   )
+)
+
+const requiresAccountId = computed(
+  () =>
+    form.model_type === 'decision' &&
+    currentProviderSchema.value.requires_account_id === true
+)
+const requiresApiKey = computed(() =>
+  getProviderEditableParams(form.provider).includes('api_key')
+)
+const accountApiBase = computed(() =>
+  form.model_type === 'decision'
+    ? decisionAccountApiBase(
+        currentProviderSchema.value,
+        form.config.account_id
+      )
+    : ''
 )
 
 const isCustomProvider = computed(() => form.provider === 'openai_compatible')
 
 const currentProviderModels = computed(() => {
+  if (form.model_type === 'decision')
+    return selectableDecisionModels(currentProviderSchema.value)
   const list = (modelsData.value?.providers || []).find(
     (p) => (p.id || '').toLowerCase() === (form.provider || '').toLowerCase()
   )
   return list?.models || []
 })
 
-// This page configures chat models only; embedding and image-generation
-// models stay in the catalog but are filtered out of the model dropdown.
+// Each model type uses its own catalog and parameter schema.
 const selectableModels = computed(() =>
-  selectableChatModels(currentProviderModels.value)
+  form.model_type === 'decision'
+    ? currentProviderModels.value
+    : selectableChatModels(currentProviderModels.value)
 )
 
 const defaultApiBaseForProvider = computed(() => {
@@ -1311,7 +1389,19 @@ const defaultApiBaseForProvider = computed(() => {
 })
 
 const defaultApiBasePlaceholder = computed(() => {
-  return defaultApiBaseForProvider.value || t('llm.config.apiBasePlaceholder')
+  if (requiresAccountId.value)
+    return (
+      accountApiBase.value ||
+      'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run'
+    )
+  return (
+    defaultApiBaseForProvider.value ||
+    t(
+      form.model_type === 'decision'
+        ? 'llm.config.decisionApiBasePlaceholder'
+        : 'llm.config.apiBasePlaceholder'
+    )
+  )
 })
 
 const isCurrentModelInList = computed(() => {
@@ -1339,13 +1429,6 @@ const modelSelectTriggerLabel = computed(() => {
 })
 
 const submitDisabled = computed(() => {
-  if (
-    !editingId.value &&
-    form.scope === 'user' &&
-    userList.value.length === 0
-  ) {
-    return true
-  }
   if (!editingId.value && !connectionTestedSuccess.value) {
     return true
   }
@@ -1535,7 +1618,11 @@ function getRowCapabilities(row) {
   return model?.capabilities || []
 }
 
-function getProviderEditableParams(provider) {
+function getProviderEditableParams(provider, modelType = form.model_type) {
+  if (modelType === 'decision')
+    return decisionEditableParams(
+      modelParamSchema(providerSchemas.value, provider, modelType)
+    )
   if (provider === 'openai_compatible') {
     return CUSTOM_EDITABLE_PARAMS
   }
@@ -1559,18 +1646,20 @@ function getProviderEditableParams(provider) {
   return COMMON_EDITABLE_PARAMS
 }
 
-function getParameterDefault(provider, parameter) {
-  const schema = providerSchemas.value[provider] || {}
+function getParameterDefault(provider, parameter, modelType = form.model_type) {
+  const schema = modelParamSchema(providerSchemas.value, provider, modelType)
   const providerDefault = schema[`default_${parameter}`]
   if (providerDefault !== null && providerDefault !== undefined) {
     return providerDefault
   }
+  if (modelType === 'decision')
+    return parameter === 'request_timeout_seconds' ? 3 : undefined
   return GLOBAL_PARAM_DEFAULTS[parameter]
 }
 
 function getRowModelParameters(row) {
   const config = row.config || {}
-  return getProviderEditableParams(row.provider)
+  return getProviderEditableParams(row.provider, row.model_type)
     .filter((parameter) => !CORE_CONFIG_PARAMS.has(parameter))
     .map((parameter) => {
       const configuredValue = config[parameter]
@@ -1582,7 +1671,7 @@ function getRowModelParameters(row) {
         name: parameter,
         value: hasConfiguredValue
           ? configuredValue
-          : getParameterDefault(row.provider, parameter),
+          : getParameterDefault(row.provider, parameter, row.model_type),
         isDefault: !hasConfiguredValue
       }
     })
@@ -1636,8 +1725,17 @@ function updateParameterValue(parameter, value) {
     : value
 }
 
+function onModelTypeChange() {
+  form.provider = form.model_type === 'decision' ? 'typesafe' : 'openai'
+  form.config = { api_key: '', api_base: '', model: '' }
+  onProviderChange()
+}
+
 function onProviderChange() {
-  form.config.model = ''
+  form.config.model =
+    form.model_type === 'decision'
+      ? currentProviderSchema.value?.default_model || ''
+      : ''
   form.config.api_base = defaultApiBaseForProvider.value || ''
   const editableParams = new Set(getProviderEditableParams(form.provider))
   for (const parameter of Object.keys(form.config)) {
@@ -1647,9 +1745,9 @@ function onProviderChange() {
 }
 
 function resetForm() {
-  form.scope = 'global'
-  form.user_id = null
+  editingApiKey.value = ''
   form.provider = 'openai'
+  form.model_type = 'llm'
   form.config = {
     api_key: '',
     api_base: '',
@@ -1692,7 +1790,7 @@ async function loadProviderSchemas() {
 async function loadAll() {
   loading.value = true
   try {
-    const data = await llmAdminApi.getLLMConfigAll()
+    const data = await llmAdminApi.getLLMConfigAll({ model_type: 'all' })
     configList.value = Array.isArray(data) ? data : []
   } catch (e) {
     if (e?.response?.status !== 404) console.error(e)
@@ -1702,29 +1800,25 @@ async function loadAll() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const data = await llmAdminApi.getUsers()
-    userList.value = Array.isArray(data) ? data : []
-  } catch {
-    userList.value = []
-  }
-}
-
 function openAddModal() {
   editingId.value = null
   resetForm()
   form.config.api_base = defaultApiBaseForProvider.value || ''
-  loadUsers()
   showConfigModal.value = true
 }
 
 async function editConfig(row) {
+  if (metadataLoading.value || !metadataReady.value) {
+    showError(t('llm.config.metadataLoadError'))
+    return
+  }
   editingId.value = row.uuid || row.id
   try {
     const data = await llmAdminApi.getLLMConfigDetail(row.uuid || row.id)
+    form.model_type = data?.model_type || 'llm'
     form.provider = (data?.provider || 'openai').toLowerCase()
     const c = data?.config || {}
+    editingApiKey.value = c.api_key || ''
     form.config = {
       ...c,
       api_key: c.api_key ?? '',
@@ -1755,6 +1849,7 @@ function closeConfigModal() {
 function openTestModal(row) {
   testConfigRow.value = row
   testPrompt.value = ''
+  testDecisionQuestion.value = t('llm.config.decisionTestQuestionDefault')
   testMaxTokens.value = 2048
   testCallResult.value = null
   streamingContent.value = ''
@@ -1773,6 +1868,7 @@ function closeTestModal() {
 async function sendTestCall() {
   const row = testConfigRow.value
   if (!(row?.uuid || row?.id) || !testPrompt.value.trim()) return
+  if (isDecisionTest.value && !testDecisionQuestion.value.trim()) return
   const boundedMaxTokens = Math.min(
     4096,
     Math.max(1, Number(testMaxTokens.value) || 2048)
@@ -1788,6 +1884,24 @@ async function sendTestCall() {
     config_uuid: row.uuid || row.id
   }
   try {
+    if (isDecisionTest.value) {
+      const res = await llmAdminApi.postDecisionTest({
+        config_uuid: row.uuid || row.id,
+        input: testPrompt.value.trim(),
+        questions: [
+          {
+            type: 'predicate',
+            name: 'result',
+            instructions: testDecisionQuestion.value.trim()
+          }
+        ]
+      })
+      testCallResult.value = {
+        ...res,
+        content: JSON.stringify(res.answers || [], null, 2)
+      }
+      return
+    }
     if (testStreaming.value) {
       const controller = new AbortController()
       testCallAbortController.value = controller
@@ -1899,12 +2013,21 @@ async function testConnection() {
   try {
     const payload = {
       provider: form.provider,
+      model_type: form.model_type,
       config: buildFormConfigPayload()
     }
     // When editing a saved config the form's api_key is the masked value from
     // the read API; send the config id so the server can resolve it from
     // storage instead of testing the mask as the key.
     if (editingId.value) {
+      // The validation API checks required fields before resolving stored secrets.
+      if (
+        !payload.config.api_key &&
+        requiresApiKey.value &&
+        editingApiKey.value
+      ) {
+        payload.config.api_key = editingApiKey.value
+      }
       if (typeof editingId.value === 'number') {
         payload.config_id = editingId.value
       } else {
@@ -1930,26 +2053,19 @@ async function testConnection() {
 }
 
 async function submitConfigForm() {
-  if (!editingId.value && form.scope === 'user' && !form.user_id) {
-    formMessage.value = t('llm.config.user') + '?'
-    formMessageSuccess.value = false
-    return
-  }
   formSaving.value = true
   formMessage.value = ''
   try {
     const body = {
       provider: form.provider,
+      model_type: form.model_type,
       config: buildFormConfigPayload(Boolean(editingId.value)),
       is_active: form.is_active
     }
     if (editingId.value) {
       await llmAdminApi.putLLMConfigDetail(editingId.value, body)
     } else {
-      if (form.scope === 'user' && form.user_id) {
-        body.scope = 'user'
-        body.user_id = form.user_id
-      }
+      body.scope = 'global'
       await llmAdminApi.postLLMConfig(body)
     }
     formMessage.value = t('llm.config.saveSuccess')
@@ -1993,7 +2109,9 @@ function rowActions(row) {
       label: t('llm.config.testCall'),
       icon: CirclePlay
     },
-    ...(row.scope === 'global' && !row.is_default
+    ...(row.model_type !== 'decision' &&
+    row.scope === 'global' &&
+    !row.is_default
       ? [
           {
             key: 'default',
@@ -2094,11 +2212,14 @@ async function runBulkAction(action) {
   }
 }
 
-onMounted(() => {
-  loadProviderSchemas()
-  loadModels()
-  loadAll()
-})
+async function loadPage() {
+  metadataLoading.value = true
+  await Promise.all([loadProviderSchemas(), loadModels(), loadAll()])
+  metadataLoading.value = false
+  if (!metadataReady.value) showError(t('llm.config.metadataLoadError'))
+}
+
+onMounted(loadPage)
 </script>
 
 <style scoped>

@@ -1,6 +1,8 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from .views.decisions import DecisionCatalogView, LensNodeDecisionGatewayView
+
 from .views import (
     AdminGroupAccessDetailView,
     AdminRunCancelView,
@@ -272,6 +274,8 @@ urlpatterns = [
         LensNodeAIGatewayView.as_view(),
         name="lens-lensnode-ai-gateway",
     ),
+    path("lensnode/decision-gateway/", LensNodeDecisionGatewayView.as_view(), name="lens-lensnode-decision-gateway"),
+    path("admin/decision-catalog/", DecisionCatalogView.as_view(), name="lens-admin-decision-catalog"),
     path(
         "lensnode/runs/<uuid:run_uuid>/delegations/",
         LensNodeDelegationView.as_view(),

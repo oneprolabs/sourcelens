@@ -34,6 +34,7 @@ def _runtime_state(tmp_path, resume_state=None):
         tools=[],
         mcp_tools=[],
         emit_agent_event=lambda *_args, **_kwargs: None,
+        exit_span=lambda _span: None,
         resources=SimpleNamespace(),
         initial_messages=[],
         history_assistant_turns=0,

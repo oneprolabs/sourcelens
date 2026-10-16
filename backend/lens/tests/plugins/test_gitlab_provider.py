@@ -308,18 +308,20 @@ class GitLabToolProviderTests(TestCase):
         self.assertEqual(endpoint, "https://gitlab.internal.example")
         self.assertEqual(arguments["projects"], ["*"])
 
-    def test_activity_summary_rejects_all_projects_outside_all_scope(self):
-        with self.assertRaisesMessage(ToolProviderError, "scope"):
-            self.provider.validate_request(
-                "https://gitlab.internal.example",
-                self.scope,
-                "gitlab_activity_summary",
-                {
-                    "projects": ["*"],
-                    "since": "2026-09-01T16:00:00Z",
-                    "until": "2026-09-02T15:59:59Z",
-                },
-            )
+    def test_activity_summary_expands_all_projects_to_connection_scope(self):
+        scope = {"projects": ["platform/backend/sourcelens", "group/WinDSync"]}
+        _, arguments = self.provider.validate_request(
+            "https://gitlab.internal.example",
+            scope,
+            "gitlab_activity_summary",
+            {
+                "projects": ["*"],
+                "since": "2026-09-01T16:00:00Z",
+                "until": "2026-09-02T15:59:59Z",
+            },
+        )
+
+        self.assertEqual(arguments["projects"], scope["projects"])
 
     def test_activity_summary_rejects_mixed_all_projects(self):
         with self.assertRaises(ToolProviderError):
@@ -481,4 +483,30 @@ class GitLabToolSnapshotTests(TestCase):
         self.assertEqual(
             snapshot.resolved_config["arguments"]["projects"],
             ["*"],
+        )
+
+        connection.allowed_scope = {"projects": ["group/WinDSync", "group/ops"]}
+        connection.save(update_fields=["allowed_scope"])
+        response = client.post(
+            "/api/lens/plugin-runtime/tool-snapshots/",
+            {
+                "run_uuid": str(run.uuid),
+                "connection_uuid": str(connection.uuid),
+                "tool_key": "gitlab_activity_summary",
+                "call_id": "gitlab-all-call-2",
+                "arguments": {
+                    "projects": ["*"],
+                    "since": "2026-09-01T16:00:00Z",
+                    "until": "2026-09-02T15:59:59Z",
+                },
+            },
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        snapshot = ExecutionSnapshot.objects.get(uuid=response.data["snapshot_uuid"])
+        self.assertEqual(
+            snapshot.resolved_config["arguments"]["projects"],
+            connection.allowed_scope["projects"],
         )

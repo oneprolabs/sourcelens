@@ -54,6 +54,11 @@ export async function updateAssistant(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function replaceAssistantModels(payload) {
+  const response = await api.post('/lens/assistants/replace-model/', payload)
+  return unwrapResponse(response)
+}
+
 export async function listAssistantDataSourceBindings(uuid) {
   const response = await api.get(`/lens/assistants/${uuid}/datasources/`)
   return unwrapResponse(response)
@@ -552,6 +557,18 @@ export async function validateConnectionDatasource(uuid, payload) {
   return unwrapResponse(response)
 }
 
+export async function validatePublicDatasource(payload) {
+  const response = await api.post(
+    '/lens/admin/connections/validate-public-datasource/',
+    payload,
+    {
+      headers: { 'Cache-Control': 'no-store' },
+      timeout: DATASOURCE_ACCESS_TIMEOUT
+    }
+  )
+  return unwrapResponse(response)
+}
+
 export async function getConnectionResources(uuid, params = {}) {
   const response = await api.get(`/lens/admin/connections/${uuid}/resources/`, {
     params
@@ -851,13 +868,18 @@ export async function cancelDataSourceSync(uuid) {
   return unwrapResponse(response)
 }
 
-export async function listSkills() {
+export async function listSkills(params = {}) {
   return collectPaginatedResults(async (page) => {
     const response = await api.get('/lens/admin/skills/', {
-      params: { page_size: 1000, page }
+      params: { ...params, page_size: 1000, page }
     })
     return unwrapResponse(response)
   })
+}
+
+export async function getSkill(uuid) {
+  const response = await api.get(`/lens/admin/skills/${uuid}/`)
+  return unwrapResponse(response)
 }
 
 export async function createSkill(payload) {
@@ -927,8 +949,12 @@ export async function updateGithubSkill(uuid, url) {
   return unwrapResponse(response)
 }
 
-export async function checkSkillUpdates() {
-  const response = await api.post('/lens/admin/skills/check-updates/')
+export async function checkSkillUpdates(params = {}) {
+  const response = await api.post(
+    '/lens/admin/skills/check-updates/',
+    undefined,
+    { params }
+  )
   return unwrapResponse(response)
 }
 
