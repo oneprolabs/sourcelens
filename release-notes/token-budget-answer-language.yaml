@@ -1,0 +1,9 @@
+type: fix
+audience: user
+en: >-
+  Completed answers are preserved when an investigation reaches its reserved
+  answer budget. Required wrap-up answers retain the original question's language
+  instructions, runtime rules, and more of the recent evidence.
+zh-CN: >-
+  调查触及回答预留预算时保留已完成的答案。必须收尾时保留原始问题的语言要求、
+  运行时规则和更多近期证据，避免答案被错误切换为个人资料中的默认语言。

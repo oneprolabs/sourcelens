@@ -20,9 +20,12 @@ to roll back to file operations only while a sandbox provider is prepared.
 docker compose up --build
 ```
 
-The standalone compose file only starts the LensNode service. Point
-`LENSNODE_CONTROL_WS_URL` and `LENSNODE_AI_GATEWAY_URL` at an existing
-SourceLens backend.
+The standalone compose file only starts the LensNode service. Set
+`LENSNODE_SERVER_URL` to the existing SourceLens backend; LensNode derives the
+control WebSocket, AI Gateway, deliverable upload, and delegation endpoints.
+The individual endpoint variables remain available for non-standard routes.
+See [deployment configuration](../docs/reference/deployment-configuration.md)
+for optional runtime tuning and the root Compose stacks' address policy.
 
 ## TLS verification
 

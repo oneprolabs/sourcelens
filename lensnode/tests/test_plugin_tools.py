@@ -1,3 +1,4 @@
+import hashlib
 import json
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -250,6 +251,36 @@ def test_build_plugin_tools_hides_runtime_and_connection_inputs():
     assert tools[0].metadata["capability_family"] == "plugin"
     assert tools[0].metadata["plugin_key"] == "github"
     assert tools[0].metadata["capability"] == "repository.read"
+
+
+def test_plugin_events_report_actual_runtime_and_shared_source_identity():
+    """Tool execution reports source identity even when declared versions stay unchanged."""
+
+    events = []
+    tool = build_plugin_tools(
+        _command("github_read_file"),
+        _config(),
+        GitHubRuntimeClient(),
+        emit_event=lambda name, payload: events.append((name, payload)),
+    )[0]
+    result = json.loads(tool.func(
+        repository="owner/repository",
+        path="README.md",
+        runtime=SimpleNamespace(tool_call_id="read-identity"),
+    ))
+
+    assert result["ok"] is True
+    runtime_source = GITHUB_RUNTIME.execute_tool.__globals__["__file__"]
+    with open(runtime_source, "rb") as source:
+        digest = hashlib.sha256(source.read()).hexdigest()
+    identity = tool.metadata["runtime_identity"]
+    assert identity["runtime_sha256"] == digest
+    assert len(identity["support_sha256"]["_shared/activity_reports.py"]) == 64
+    assert set(identity) == {"runtime_sha256", "support_sha256", "manifest_sha256"}
+    for name in ("tool.plugin.start", "tool.plugin.done"):
+        payload = next(payload for event, payload in events if event == name)
+        assert payload["runtime_identity"] == identity
+        assert payload["plugin_version"] == "1.0.0"
 
 
 def test_plugin_tool_uses_connection_scoped_provider_http_client():

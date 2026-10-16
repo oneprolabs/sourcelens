@@ -133,6 +133,11 @@ def test_activity_progress_preserves_the_tool_parent_for_saved_and_cached_eviden
     assert [event["call_id"] for event in progress] == ["fetch", "cached"]
     assert all(event["parent_call_id"] == model_id for event in progress)
     assert all("diagnostics" not in event["payload"] for event in progress)
+    identity = load_runtime_contract(provider, "1.0.0")
+    for event in progress:
+        assert event["payload"]["plugin_version"] == "1.0.0"
+        assert event["payload"]["runtime_identity"]["runtime_sha256"] == identity.runtime_sha256
+        assert event["payload"]["runtime_identity"]["support_sha256"] == identity.support_sha256
     assert trajectory.health == "healthy"
     assert len(calls) == 1
 

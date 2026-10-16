@@ -70,6 +70,11 @@ class AgentExtension:
 
         return {}
 
+    def completion_checks(self, answer):
+        """Return host-owned completion checks for the proposed answer."""
+
+        return []
+
 
 def plugin_state_root(workspace, run_uuid):
     """Locate private per-Run state without accepting a caller-selected path."""
@@ -207,10 +212,12 @@ class AgentExtensions:
             evidence = extension.evidence()
             if not isinstance(evidence, dict):
                 raise PluginPackageLoadError("plugin evidence is invalid")
-            if set(evidence) - {"plugin_evidence", "evidence_completeness"}:
+            if set(evidence) - {
+                "plugin_evidence", "evidence_completeness", "review_completeness",
+            }:
                 raise PluginPackageLoadError("plugin evidence envelope is invalid")
             for key, value in evidence.items():
-                if key == "evidence_completeness" and combined.get(key) == "incomplete":
+                if key in {"evidence_completeness", "review_completeness"} and combined.get(key) == "incomplete":
                     continue
                 if key == "plugin_evidence":
                     if not isinstance(value, dict):
@@ -220,11 +227,22 @@ class AgentExtensions:
                         if identity in payloads and payloads[identity] != payload:
                             raise PluginPackageLoadError("plugin evidence conflict")
                         payloads[identity] = payload
-                elif value not in {"complete", "incomplete", "unverified"}:
+                elif key in {"evidence_completeness", "review_completeness"} and value not in {"complete", "incomplete", "unverified"}:
                     raise PluginPackageLoadError("plugin evidence completeness is invalid")
                 else:
                     combined[key] = value
         return combined
+
+    def completion_checks(self, answer):
+        """Combine extension-owned checks before final answer acceptance."""
+
+        checks = []
+        for extension in self.extensions:
+            values = extension.completion_checks(answer)
+            if not isinstance(values, list):
+                raise PluginPackageLoadError("plugin completion checks are invalid")
+            checks.extend(value for value in values if isinstance(value, dict))
+        return checks
 
 
 def prepare_agent_extensions(command, workspace, skills=(), tools=(), emit_event=None):

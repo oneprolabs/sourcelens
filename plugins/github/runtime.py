@@ -676,10 +676,13 @@ def _activity_pull_request_summary(payload):
         "state": _string(payload.get("state"), 32),
         "draft": bool(payload.get("draft")),
         "author": _login(payload.get("user")),
+        "assignees": [{"login": _login(value)} for value in (payload.get("assignees") or [])[:20]
+                      if isinstance(value, dict)],
         "created_at": _string(payload.get("created_at"), 64),
         "updated_at": _string(payload.get("updated_at"), 64),
         "closed_at": _string(payload.get("closed_at"), 64),
         "merged_at": _string(payload.get("merged_at"), 64),
+        "merged_by": _login(payload.get("merged_by") or payload.get("merged_by_user")),
         "url": _string(payload.get("html_url"), 500),
     }
 
@@ -693,10 +696,13 @@ def _activity_issue_summary(payload):
         "title": _string(payload.get("title"), 300),
         "state": _string(payload.get("state"), 32),
         "author": _login(payload.get("user")),
+        "assignees": [{"login": _login(value)} for value in (payload.get("assignees") or [])[:20]
+                      if isinstance(value, dict)],
         "labels": _labels(payload.get("labels")),
         "created_at": _string(payload.get("created_at"), 64),
         "updated_at": _string(payload.get("updated_at"), 64),
         "closed_at": _string(payload.get("closed_at"), 64),
+        "closed_by": _login(payload.get("closed_by") or payload.get("closed_by_user")),
         "url": _string(payload.get("html_url"), 500),
     }
 

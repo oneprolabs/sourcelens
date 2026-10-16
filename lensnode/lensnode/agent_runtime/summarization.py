@@ -1,5 +1,7 @@
 """Context compaction policy for long-running LensNode investigations."""
 
+import re
+
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.messages import HumanMessage, RemoveMessage, trim_messages
 
@@ -34,7 +36,11 @@ class InvalidSummaryError(ValueError):
 def _validated_summary(summary):
     """Reject empty summaries and upstream placeholders before removing history."""
 
-    if not summary.strip() or summary.strip() in {
+    protocol_text = re.search(
+        r"<[｜|]+DSML[｜|]+\s*(?:calls|invoke|function_calls)\b",
+        summary,
+    )
+    if protocol_text or not summary.strip() or summary.strip() in {
         "Previous conversation was too long to summarize.",
         "No previous conversation history.",
     }:

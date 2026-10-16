@@ -79,7 +79,7 @@ def test_convergence_reserves_a_bounded_delivery_window_and_records_exhaustion()
     delivery = gate.before_model(state, None)
     assert "jump_to" not in delivery
     assert "save_deliverable" in delivery["messages"][0].content
-    for _ in range(2):
+    for _ in range(7):
         assert gate.before_model(state, None) is None
     assert gate.before_model(state, None) == {"jump_to": "end"}
     assert evidence["convergence_exhausted"] is True
@@ -161,7 +161,7 @@ def test_delivery_budget_survives_checkpoint_resume():
     gate = EvidenceGateMiddleware(
         _Policy(), "report", evidence=evidence, review_state=review, interval=1, max_convergence_nudges=1
     )
-    for _ in range(4):
+    for _ in range(9):
         gate.before_model({}, None)
     restored = EvidenceGateMiddleware(
         _Policy(), "report", evidence=evidence, review_state=review, interval=1, max_convergence_nudges=1

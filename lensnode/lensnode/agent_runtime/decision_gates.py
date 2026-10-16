@@ -80,7 +80,12 @@ GATE_REGISTRY = {
         "phase": "P3",
         "pass_option": "supported",
         "instructions": (
-            "Is the answer supported by the evidence that was retrieved?"
+            "Is the answer supported by the evidence that was retrieved? "
+            "Check both positive and negative factual claims. A coverage gap in one source "
+            "does not invalidate facts from another source and cannot prove absence of activity. "
+            "Reject zero-completion claims contradicted by observed resolutions or merges. "
+            "Current owners or item authors do not establish who performed an update, close, or merge. "
+            "Creation date and current status do not establish how long that status persisted."
         ),
         "criteria": {
             "supported": (

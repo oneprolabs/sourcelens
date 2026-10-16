@@ -26,8 +26,8 @@ CACHE_PATH = os.getenv(
 def get_redis_cache_url():
     """
     Get Redis cache URL from environment variables.
-    Uses CACHE_REDIS_URL if available, otherwise constructs from
-    CELERY_BROKER_URL.
+    Prefer CACHE_REDIS_URL, then derive database 1 from the legacy broker
+    override or the shared REDIS_URL while preserving connection options.
     """
     # First try to get dedicated cache Redis URL
     cache_redis_url = os.getenv('CACHE_REDIS_URL')
@@ -35,16 +35,9 @@ def get_redis_cache_url():
         return cache_redis_url
 
     # Fallback to Celery broker URL and modify database number
-    celery_broker_url = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+    celery_broker_url = os.getenv('CELERY_BROKER_URL') or os.getenv('REDIS_URL', 'redis://redis:6379/0')
     parsed_url = urlparse(celery_broker_url)
-
-    # Change database from 0 to 1 for cache
-    if parsed_url.path and parsed_url.path != '/':
-        # URL has database number, replace it
-        return f"{parsed_url.scheme}://{parsed_url.netloc}/1"
-    else:
-        # URL doesn't have database number, add it
-        return f"{parsed_url.scheme}://{parsed_url.netloc}/1"
+    return parsed_url._replace(path='/1').geturl()
 
 if CACHE_BACKEND == 'redis':
     # Redis cache configuration

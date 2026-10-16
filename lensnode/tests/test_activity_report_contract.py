@@ -45,7 +45,8 @@ def test_work_summaries_receive_batch_contract_without_a_planned_route(question)
     prompt = _general_chat_system_prompt(command, [])
     assert "once per available source" in prompt
     assert "evidence ledger" in prompt
-    assert "deterministic template" in prompt
+    assert "model remains responsible for the business report" in prompt
+    assert "fixed template" in prompt
     assert "Use its returned grounded answer, then stop" not in prompt
     assert "Do not generate HTML yourself" not in prompt
     assert "Follow the bound report Skill's output format" in prompt

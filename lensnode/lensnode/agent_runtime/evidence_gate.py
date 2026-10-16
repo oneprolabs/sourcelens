@@ -14,6 +14,8 @@ LOGGER = logging.getLogger("lensnode")
 DEFAULT_INTERVAL = 8
 DEFAULT_MAX_NUDGES = 1
 DEFAULT_MAX_CONVERGENCE_NUDGES = 2
+DEFAULT_DELIVERY_TURNS = 8
+PUBLICATION_GRACE_TURNS = 2
 
 _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
@@ -91,6 +93,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         review_scope=None,
         on_recheck=None,
         review_state=None,
+        completion_check=None,
     ):
         self.policy = policy
         self.question = str(question or "")
@@ -102,6 +105,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.review_scope = review_scope
         self.on_recheck = on_recheck
         self.review_state = review_state if review_state is not None else {}
+        self.completion_check = completion_check
         self.model_calls = int(self.review_state.get("model_calls") or 0)
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
         self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
@@ -186,11 +190,11 @@ class EvidenceGateMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
-        return self._before_model()
+        return self._before_model(state)
 
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state, runtime):
-        return self._before_model()
+        return self._before_model(state)
 
     @hook_config(can_jump_to=["model"])
     def after_model(self, state, runtime):
@@ -200,7 +204,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
     async def aafter_model(self, state, runtime):
         return self._after_model(state)
 
-    def _before_model(self):
+    def _before_model(self, state=None):
         if not self._active() or self.saw_final_answer:
             return None
         if self.max_convergence_nudges <= 0:
@@ -212,12 +216,36 @@ class EvidenceGateMiddleware(AgentMiddleware):
             self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
             return None
         if self.convergence_nudges >= self.max_convergence_nudges:
-            if isinstance(self.evidence, dict) and self.evidence.get("artifact_required") and self.delivery_turns < 3:
+            artifact_required = (
+                isinstance(self.evidence, dict)
+                and self.evidence.get("artifact_required")
+            )
+            publication_grace = False
+            if artifact_required and self.delivery_turns >= DEFAULT_DELIVERY_TURNS:
+                grace_used = int(self.review_state.get("publication_grace_used") or 0)
+                messages = (state or {}).get("messages") or []
+                recent_write = False
+                for message in reversed(messages):
+                    if getattr(message, "type", "") != "tool":
+                        break
+                    if _successful_artifact_write(message):
+                        recent_write = True
+                        break
+                if grace_used < PUBLICATION_GRACE_TURNS and (recent_write or grace_used):
+                    self.review_state["publication_grace_used"] = grace_used + 1
+                    publication_grace = True
+            if artifact_required and (
+                self.delivery_turns < DEFAULT_DELIVERY_TURNS or publication_grace
+            ):
                 self.delivery_turns += 1
                 self.review_state["delivery_turns"] = self.delivery_turns
                 self._emit(
                     "deepagents.evidence.convergence",
-                    {"action": "deliver", "turn": self.model_calls, "delivery_turn": self.delivery_turns},
+                    {
+                        "action": "deliver",
+                        "turn": self.model_calls,
+                        "delivery_turn": self.delivery_turns,
+                    },
                 )
                 if self.delivery_turns == 1:
                     return {"messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
@@ -243,8 +271,6 @@ class EvidenceGateMiddleware(AgentMiddleware):
         return {"messages": [HumanMessage(content=guidance)]}
 
     def _after_model(self, state):
-        if not self._active():
-            return None
         messages = state.get("messages") or []
         if not messages:
             return None
@@ -257,6 +283,30 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         answer = _message_text(last)
         if not answer.strip():
+            return None
+        if self.completion_check is not None:
+            try:
+                checks = self.completion_check(answer) or []
+            except Exception:
+                LOGGER.exception("Completion check failed")
+                checks = [{"code": "completion_check_failed", "recovery": "Completion verification failed. Retry once."}]
+            seen = set(self.review_state.get("completion_check_codes") or [])
+            checks = [check for check in checks if check.get("code") not in seen]
+            if checks:
+                seen.add(checks[0].get("code", "completion_check"))
+                self.review_state["completion_check_codes"] = sorted(seen)
+                self.saw_final_answer = False
+                self.correction_calls_remaining = self.interval
+                self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+                if self.on_recheck is not None:
+                    self.on_recheck()
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"action": "recheck", "fallback_reason": checks[0].get("code", "completion_check")},
+                )
+                recovery = checks[0].get("recovery") or checks[0].get("message") or "Correct the answer from the evidence."
+                return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
+        if not self._active():
             return None
         if (
             isinstance(self.evidence, dict)
@@ -272,7 +322,10 @@ class EvidenceGateMiddleware(AgentMiddleware):
             verdicts = self._verify(answer, state)
             if verdicts is None:
                 return None
-            if verdicts.get("evidence_completeness") == "incomplete":
+            contradicted = verdicts.get("answer_supported") == "unsupported" or verdicts.get("evidence_strength") in {
+                "unsupported", "contradicted",
+            }
+            if verdicts.get("evidence_completeness") == "incomplete" and not contradicted:
                 self._emit(
                     "deepagents.evidence.verified",
                     {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_incomplete"},
@@ -311,6 +364,21 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 "messages": [HumanMessage(content=_RECHECK_GUIDANCE)],
                 "jump_to": "model",
             }
+
+
+def _successful_artifact_write(message):
+    """Recognize successful writes among the latest batch of tool results."""
+
+    if getattr(message, "name", "") not in {"write_file", "edit_file", "append_file"}:
+        return False
+    content = _message_text(message).strip()
+    if getattr(message, "status", "success") == "error" or content.lower().startswith("error"):
+        return False
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(payload, dict) or (payload.get("ok") is not False and not payload.get("error"))
 
 
 def _message_text(message):

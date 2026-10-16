@@ -212,7 +212,10 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
 
 @pytest.mark.parametrize("coverage", ["missing", "complete", "partial"])
 @pytest.mark.parametrize("host_incomplete", [False, True])
-def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, monkeypatch, coverage, host_incomplete):
+@pytest.mark.parametrize("stop_reason", [None, "token_budget_wrapup"])
+def test_terminal_runtime_preserves_business_report_and_deliverables(
+    tmp_path, monkeypatch, coverage, host_incomplete, stop_reason
+):
     from datetime import datetime, timezone
 
     from lensnode.agent_runtime import runtime as runtime_module
@@ -235,14 +238,16 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
     extensions.apply_policy(extensions.preferred_route, extensions.tools)
     if coverage != "missing":
         extensions.extensions[0].ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, evidence)
+        extensions.tools[0].invoke({})
     monkeypatch.setattr(
         runtime_module,
         "_run_agent_with_turn_limit",
-        lambda *args, **kwargs: ("Business summary based on retrieved evidence", False, ""),
+        lambda *args, **kwargs: ("Business summary based on retrieved evidence", False, None),
     )
     outputs = []
     state = SimpleNamespace(
         command=command,
+        kwargs={},
         question=command["question"],
         max_turns=0,
         agent_extensions=extensions,
@@ -257,7 +262,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
         token_budget_wrapup_event=None,
         cancel_event=None,
         config=SimpleNamespace(),
-        model=SimpleNamespace(stop_reason=None, token_usage={}),
+        model=SimpleNamespace(stop_reason=stop_reason, token_usage={}),
         resources=SimpleNamespace(root=tmp_path),
         started_at=datetime.now(timezone.utc),
         run_span="run",
@@ -275,6 +280,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(tmp_path, m
     )
     result = runtime_module.LensDeepAgentRuntime(SimpleNamespace())._execute_agent(state)
     assert result["answer"] == "Business summary based on retrieved evidence"
+    assert result["stop_reason"] is None
     assert not outputs
     assert command["_deliverables"] == {"business-report.html": "business-candidate"}
     assert result["outcome"] == ("partial" if coverage == "partial" or host_incomplete else "completed")
@@ -379,6 +385,43 @@ def test_evidence_read_is_paged_and_does_not_publish_or_finish(tmp_path):
     assert "files" not in first
     assert not list(tmp_path.glob("*.html"))
     assert json.loads(read.invoke({"offset": -1}))["error"] == "ACTIVITY_EVIDENCE_PAGE_INVALID"
+
+
+def test_evidence_page_exposes_all_observed_events_and_independent_source_coverage(tmp_path):
+    """A partial first page cannot hide a resolution or contaminate another source's coverage."""
+
+    ledger = ActivityLedger(tmp_path / "private")
+    jira = _result()
+    jira["items"] = [dict(jira["items"][0], key=f"SL-{number}") for number in range(114)]
+    jira["items"][-1]["resolution_date"] = "2026-10-08T09:35:59Z"
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, jira)
+    github = {
+        "ok": True, "since": jira["since"], "until": jira["until"],
+        "repositories": [{"repository": "team/repo", "errors": ["PR response too large"]}],
+    }
+    ledger.record("github", "connection", "1.0.0", "github_activity_summary", {}, github)
+    page = json.loads(build_activity_evidence_tool(ledger, {
+        "jira_activity_summary", "github_activity_summary"
+    }).invoke({"limit": 80}))
+
+    assert page["total_records"] == 114
+    assert page["next_page"] == {
+        "tool": "read_activity_evidence", "arguments": {"offset": len(page["records"]), "limit": 80}
+    }
+    assert page["page_complete"] is False
+    assert page["source_coverage"]["jira_activity_summary"]["complete"] is True
+    assert page["source_coverage"]["github_activity_summary"]["complete"] is False
+    facts = page["observed_events"]
+    assert next(fact for fact in facts if fact["event"] == "resolved")["record_ids"] == ["SL-113"]
+    assert sum(fact["count"] for fact in facts) == 114
+
+
+def test_empty_out_of_range_evidence_page_is_not_a_complete_dataset(tmp_path):
+    ledger = ActivityLedger(tmp_path / "private")
+    ledger.record("jira", "connection", "1.0.0", "jira_activity_summary", {}, _result())
+    page = json.loads(build_activity_evidence_tool(ledger, {"jira_activity_summary"}).invoke({"offset": 10}))
+    assert page["ok"] is False
+    assert page["error"] == "ACTIVITY_EVIDENCE_PAGE_INVALID"
 
 
 def test_evidence_read_without_sources_keeps_clarification_flow(tmp_path):

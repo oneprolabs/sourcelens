@@ -1,0 +1,12 @@
+type: improvement
+audience: admin
+en: >-
+  Deployment templates now focus on essential inputs, with optional runtime
+  tuning documented separately. LensNode endpoints derive from a single service
+  address, existing environment-file tuning remains supported, and Celery and
+  cache can share the Redis address. New installations use the worker's default
+  queue and consistent initial planning settings.
+zh-CN: >-
+  部署模板聚焦必要输入，高级运行参数单独记录。LensNode 从统一服务地址派生连接端点，
+  保留现有环境文件的调优配置，Celery 与缓存可复用 Redis 地址。
+  新安装默认使用 worker 订阅的队列，并统一初始规划设置。

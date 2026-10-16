@@ -4,8 +4,10 @@ from django.core.exceptions import ImproperlyConfigured
 from kombu import Queue
 
 # For production environments, use Redis or RabbitMQ as result backend.
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL",
-                               "redis://localhost:6379")
+CELERY_BROKER_URL = os.getenv(
+    "CELERY_BROKER_URL",
+    os.getenv("REDIS_URL", "redis://localhost:6379"),
+)
 
 # Use Django database as result backend.
 CELERY_RESULT_BACKEND = 'django-db'

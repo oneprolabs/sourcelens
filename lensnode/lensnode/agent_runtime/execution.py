@@ -27,7 +27,6 @@ from .prompts import (
 LOGGER = logging.getLogger("lensnode")
 WRAPUP_MAX_CONTEXT_CHARS = 36000
 WRAPUP_SYSTEM_MAX_CHARS = 8000
-WRAPUP_ITEM_MAX_CHARS = 1200
 
 
 class EmptyAgentResponseError(RuntimeError):
@@ -57,6 +56,9 @@ def _run_agent_with_turn_limit(
     stream_recovery_backoff_max_s=8.0,
     on_stream_recovery=None,
     subagent_display_names=None,
+    current_question="",
+    system_prompt=None,
+    execution_evidence=None,
 ):
     """Stream agent events and optionally stop after NEW AI turns.
 
@@ -137,6 +139,15 @@ def _run_agent_with_turn_limit(
     )
     budget_exhausted = False
     delivery_grace_used = False
+    if not current_question:
+        current_question = next(
+            (
+                item.get("content", "") if isinstance(item, dict) else item.content
+                for item in reversed(messages)
+                if (item.get("role") if isinstance(item, dict) else getattr(item, "type", None)) in {"user", "human"}
+            ),
+            "",
+        )
 
     def _iterate_states():
         nonlocal budget_exhausted
@@ -202,6 +213,10 @@ def _run_agent_with_turn_limit(
             token_budget_wrapup_event is not None
             and token_budget_wrapup_event.is_set()
         ):
+            if _is_budget_terminal_answer(current, model):
+                # Let after-model verification run and the graph finish naturally.
+                # A correction or pending tool state still stops at the reserve.
+                continue
             if (
                 not delivery_grace_used
                 and _has_pending_tool_call(current, "save_deliverable")
@@ -229,11 +244,16 @@ def _run_agent_with_turn_limit(
         if emit_event is not None:
             emit_event("deepagents.agent.token_budget", {})
 
+    if not truncated and isinstance(execution_evidence, dict) and execution_evidence.get("convergence_exhausted"):
+        truncated = True
+        truncation_reason = "evidence_convergence_limit"
+
     answer = _extract_final_answer(last_state or {})
     force_wrapup = truncation_reason in {
         "soft_deadline",
         "token_budget_wrapup",
         "turn_limit",
+        "evidence_convergence_limit",
     }
     needs_wrapup = force_wrapup or not answer.strip()
     if truncated and model is not None and needs_wrapup:
@@ -247,15 +267,9 @@ def _run_agent_with_turn_limit(
             (last_state or {}).get("messages", []),
             answer_language,
             emit_event,
-            current_question=next(
-                (
-                    str(item.get("content") or "")
-                    for item in reversed(messages)
-                    if item.get("role") == "user"
-                ),
-                "",
-            ),
+            current_question=current_question,
             reason=truncation_reason or "limit",
+            system_prompt=system_prompt,
         )
         if synthesis:
             answer = synthesis
@@ -266,6 +280,8 @@ def _run_agent_with_turn_limit(
             answer_language,
             emit_event,
             reason="empty",
+            current_question=current_question,
+            system_prompt=system_prompt,
         )
     if not answer.strip():
         raise EmptyAgentResponseError(
@@ -283,6 +299,10 @@ def _run_agent_with_turn_limit(
     termination_reason = truncation_reason
     if termination_reason is None and model is not None:
         model_reason = getattr(model, "stop_reason", None)
+        if model_reason == "token_budget_wrapup" and _is_budget_terminal_answer(
+            (last_state or {}).get("messages", []), model
+        ):
+            model_reason = None
         if model_reason in {
             "loop_capped",
             "model_length_capped",
@@ -292,6 +312,23 @@ def _run_agent_with_turn_limit(
         }:
             termination_reason = model_reason
     return answer, truncated, termination_reason
+
+
+def _is_budget_terminal_answer(messages, model):
+    """Recognize a completed answer while preserving abnormal model stops."""
+
+    if not messages:
+        return False
+    last = messages[-1]
+    metadata = getattr(last, "response_metadata", None) or {}
+    return (
+        getattr(last, "type", None) == "ai"
+        and bool(_message_content_text(last).strip())
+        and not getattr(last, "tool_calls", None)
+        and not getattr(last, "invalid_tool_calls", None)
+        and metadata.get("finish_reason") not in {"length", "content_filter"}
+        and getattr(model, "stop_reason", None) in {None, "token_budget_wrapup"}
+    )
 
 
 def _has_pending_tool_call(messages, tool_name):
@@ -539,7 +576,7 @@ def _strip_dangling_tool_call(messages):
 
 
 def _message_content_text(message):
-    """Return bounded plain text for one message in a wrap-up digest."""
+    """Return plain text for one message in a wrap-up digest."""
 
     content = getattr(message, "content", "")
     if isinstance(content, str):
@@ -580,9 +617,7 @@ def _compact_wrapup_messages(messages):
         if tool_names:
             label = f"{label} ({tool_names})"
         if content:
-            evidence_parts.append(
-                f"[{label}] {content[:WRAPUP_ITEM_MAX_CHARS]}"
-            )
+            evidence_parts.append(f"[{label}] {content}")
     evidence = "\n".join(evidence_parts)
     if len(evidence) > WRAPUP_MAX_CONTEXT_CHARS:
         evidence = (
@@ -605,6 +640,7 @@ def _synthesize_wrapup_answer(
     emit_event,
     current_question="",
     reason="limit",
+    system_prompt=None,
 ):
     """Ask once for a tool-free answer after cutoff or an empty terminal.
 
@@ -622,66 +658,60 @@ def _synthesize_wrapup_answer(
     """
 
     if reason == "empty":
-        instruction = _pick_text(
-            "你上一轮没有输出可见答案。不要调用任何工具，请仅基于当前对话"
-            "和已取得的结果，直接向用户给出完整答案。",
+        instruction = (
             "Your previous turn produced no visible answer. Do not call "
             "tools. Based only on the current conversation and collected "
-            "results, write the complete answer to the user now.",
-            answer_language,
+            "results, write the complete answer to the user now."
         )
     elif reason == "token_budget_wrapup":
-        instruction = _pick_text(
-            "你已经达到本次调查的 Token 预算，不能再调用任何工具。请仅基于"
-            "当前对话和已取得的结果，直接给出最完整的最终答案；未确认或未覆盖"
-            "的部分必须明确说明。不要向用户提及内部 Token 预算或运行控制状态。",
+        instruction = (
             "You have reached the token budget for this investigation and "
             "cannot call more tools. Based only on the current conversation "
             "and collected results, write the most complete final answer. "
             "Clearly identify anything unconfirmed or not covered. Do not "
-            "mention internal token budgets or runtime control state.",
-            answer_language,
+            "mention internal token budgets or runtime control state."
         )
     elif reason == "execution_failed":
-        instruction = _pick_text(
-            "能力执行已达到恢复上限，不能再调用任何工具。请仅基于当前"
-            "对话和已取得的信息给出简洁回答，并明确说明执行失败及未完成"
-            "的部分。",
+        instruction = (
             "Capability execution reached its recovery limit. Do not call "
             "tools. Give a concise answer from the current conversation and "
-            "collected information, and state what failed or remains undone.",
-            answer_language,
+            "collected information, and state what failed or remains undone."
         )
     else:
-        instruction = _pick_text(
-            "你已经达到本次分析的步数上限，不能再调用任何工具。请基于目前"
-            "为止已经掌握的全部信息，直接给出你能给出的最完整回答。如果"
-            "调查还有尚未确认或未覆盖到的部分，请明确说明。",
+        instruction = (
             "You have reached the step limit for this analysis and cannot "
             "call any more tools. Based on everything you have gathered so "
             "far, write the most complete answer you can now. Clearly note "
-            "any part of the investigation you were not able to confirm.",
-            answer_language,
+            "any part of the investigation you were not able to confirm."
         )
-    current_question_hint = ""
-    if current_question:
-        current_question_hint = _pick_text(
-            f"当前需要回答的问题是：{current_question}",
-            f"The question to answer now is: {current_question}",
-            answer_language,
-        )
-        current_question_hint += "\n\n"
     instruction = (
         f"{instruction}\n\n"
-        f"{current_question_hint}"
+        "A file is delivered only when save_deliverable succeeded. Writing a local file "
+        "or requesting a tool call does not prove delivery. Never claim an attachment "
+        "exists unless its successful save result is present.\n\n"
+        "These are internal runtime controls, not a conversational user request. "
+        "The final user message repeats the original request. Determine the "
+        "answer language from that request and its explicit language instructions, "
+        "not from internal controls or collected evidence.\n\n"
         f"{_answer_language_requirement(answer_language)}"
     )
     wrapup_history = _strip_dangling_tool_call(current)
     if reason == "empty":
         wrapup_history = _filter_recovery_history(wrapup_history)
-    wrapup_messages = _compact_wrapup_messages(wrapup_history) + [
-        HumanMessage(content=instruction)
-    ]
+    if not current_question:
+        current_question = next(
+            (message.content for message in current if getattr(message, "type", None) == "human"),
+            "",
+        )
+    wrapup_messages = _compact_wrapup_messages(wrapup_history)
+    if system_prompt:
+        wrapup_messages = [
+            SystemMessage(content=system_prompt),
+            *[message for message in wrapup_messages if getattr(message, "type", None) != "system"],
+        ]
+    wrapup_messages.append(SystemMessage(content=instruction))
+    if current_question:
+        wrapup_messages.append(HumanMessage(content=current_question))
     if emit_event is not None:
         event = (
             "deepagents.answer.recovery"

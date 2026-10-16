@@ -309,6 +309,8 @@ def _activity_issue(value, project):
             "project": project,
             "reporter": nested("reporter"),
             "creator": nested("creator"),
+            "creator_identity": _activity_user_identity(fields.get("creator")),
+            "reporter_identity": _activity_user_identity(fields.get("reporter")),
             "created": str(fields.get("created") or "")[:64],
             "resolution_date": str(fields.get("resolutiondate") or "")[:64],
             "assignee_identity": (
@@ -325,6 +327,14 @@ def _activity_issue(value, project):
     )
     item["description"] = item["description"][:2000]
     return item
+
+
+def _activity_user_identity(value):
+    """Preserve a stable source identity independently of its display name."""
+
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("accountId") or value.get("key") or "")[:160]
 
 
 def _activity_arguments(arguments, config):

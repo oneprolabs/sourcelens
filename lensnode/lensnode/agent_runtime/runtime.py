@@ -225,7 +225,8 @@ def _build_evidence_middleware(state):
 
     policy = getattr(state, "decision_policy", None)
     checker = getattr(policy, "has_evidence_gates", None)
-    if checker is None or not checker():
+    extensions = getattr(state, "agent_extensions", AgentExtensions())
+    if not (checker is not None and checker()) and not extensions.extensions:
         return None
     command = getattr(state, "command", None) or {}
     question = str(
@@ -242,6 +243,12 @@ def _build_evidence_middleware(state):
         if persist is not None:
             persist()
 
+    def completion_checks(answer):
+        """Refresh extension evidence before accepting the current candidate."""
+
+        _update_extension_evidence(state)
+        return extensions.completion_checks(answer)
+
     return EvidenceGateMiddleware(
         policy,
         question,
@@ -250,6 +257,7 @@ def _build_evidence_middleware(state):
         review_scope=getattr(state, "evidence_review_scope", None),
         on_recheck=discard_rejected_deliverables,
         review_state=review_state,
+        completion_check=completion_checks if extensions.extensions else None,
     )
 
 
@@ -1153,6 +1161,8 @@ class LensDeepAgentRuntime:
             tools=state.tools,
             emit_event=state.emit_agent_event,
         )
+        if state.agent_extensions.extensions:
+            state.command["_validate_deliverable"] = state.agent_extensions.completion_checks
         state.plugin_tools = build_plugin_tools(
             state.command,
             self.config,
@@ -1844,6 +1854,9 @@ class LensDeepAgentRuntime:
                     "subagent_display_names",
                     None,
                 ),
+                current_question=state.question,
+                system_prompt=state.kwargs.get("system_prompt"),
+                execution_evidence=state.runtime_evidence,
             )
         except BaseException as exc:
             state.emit_agent_event(
@@ -1867,13 +1880,23 @@ class LensDeepAgentRuntime:
         )
         state.exit_span(loop_span)
         _update_extension_evidence(state)
+        completion_issues = getattr(state, "agent_extensions", AgentExtensions()).completion_checks(answer)
+        if completion_issues:
+            state.runtime_evidence["completion_issues"] = completion_issues
+            state.command.get("_deliverables", {}).clear()
+            answer = _enforce_completion_status(answer, state.command, completion_issues)
+        else:
+            answer = _enforce_delivery_status(answer, state.command, state.evidence_requirement)
+        stop_reason = state.model.stop_reason
+        if not truncated and termination_reason is None and stop_reason == "token_budget_wrapup":
+            stop_reason = None
         state.emit_agent_event(
             "deepagents.runtime.done",
             {
                 "call_id": state.run_span,
                 "actual_duration": elapsed_since(state.started_at),
                 "answer_chars": len(answer),
-                "stop_reason": state.model.stop_reason,
+                "stop_reason": stop_reason,
                 "termination_reason": termination_reason,
                 "token_usage": state.model.token_usage,
             },
@@ -1883,12 +1906,16 @@ class LensDeepAgentRuntime:
             evidence_requirement=state.evidence_requirement,
             required_capabilities=state.required_capabilities,
             truncated=truncated or bool(termination_reason),
-            stop_reason=termination_reason or state.model.stop_reason,
+            stop_reason=termination_reason or stop_reason,
             execution_gate_enabled=state.runtime_mode.execution_gates,
             runtime_evidence=state.runtime_evidence,
         )
         post_run_gates = _post_run_decision_gates(state, answer)
-        if outcome == "completed" and state.evidence_requirement == "artifact" and not state.command.get("_deliverables"):
+        if (
+            outcome == "completed"
+            and state.evidence_requirement == "artifact"
+            and not state.command.get("_deliverables")
+        ):
             outcome = "partial"
             termination_detail = _evidence_termination_detail("artifact")
         if post_run_gates:
@@ -1956,7 +1983,7 @@ class LensDeepAgentRuntime:
         return {
             "answer": _normalize_code_analysis_paths(answer, state.command),
             "samples": [],
-            "stop_reason": state.model.stop_reason,
+            "stop_reason": stop_reason,
             "token_usage": state.model.token_usage,
             "outcome": outcome,
             "termination_detail": termination_detail,
@@ -1964,6 +1991,30 @@ class LensDeepAgentRuntime:
                 _command_answer_language(state.command)
             ),
         }
+
+
+def _enforce_completion_status(answer, command, checks):
+    """Withdraw an unsupported final assertion after bounded repair is exhausted."""
+
+    if not checks:
+        return answer
+    return _pick_text(
+        "结果核验未通过，本次结果不能视为已验证。请补齐证据或修正缺乏支持的结论后重试。",
+        "The result could not be verified. Complete the evidence review or correct unsupported conclusions and retry.",
+        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
+    )
+
+
+def _enforce_delivery_status(answer, command, evidence_requirement):
+    """Report an unfulfilled artifact request using the actual saved attachment state."""
+
+    if evidence_requirement != "artifact" or command.get("_deliverables"):
+        return answer
+    return _pick_text(
+        "文件交付未完成，本次没有可下载的附件。请重试生成。",
+        "File delivery is incomplete. No downloadable attachment was saved for this run. Please retry.",
+        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
+    )
 
 
 def _scenario_for_task(task):
