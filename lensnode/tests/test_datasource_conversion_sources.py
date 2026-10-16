@@ -10,20 +10,17 @@ from lensnode.datasource_sync import convert_managed_workspace
 def install_fake_markitdown(monkeypatch, text="Converted document."):
     """Install a deterministic MarkItDown test double."""
 
-    class FakeMarkItDown:
+    def parse_document(path, context):
         """Return fixed text for any convertible path."""
 
-        def convert(self, path):
-            del path
-            return types.SimpleNamespace(text_content=text)
+        del path, context
+        return text
 
+    monkeypatch.setattr("lensnode.document_convert._parse_document", parse_document)
     monkeypatch.setitem(
         sys.modules,
         "markitdown",
-        types.SimpleNamespace(
-            MarkItDown=FakeMarkItDown,
-            __version__="test",
-        ),
+        types.SimpleNamespace(__version__="test"),
     )
 
 

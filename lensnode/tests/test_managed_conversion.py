@@ -16,21 +16,19 @@ def install_fake_markitdown(
 ):
     """Install a deterministic MarkItDown test double."""
 
-    class FakeMarkItDown:
+    def parse_document(path, context):
         """Return text unless the configured filename must fail."""
 
-        def convert(self, path):
-            if failing_name and str(path).endswith(failing_name):
-                raise RuntimeError("PASSWORD_PROTECTED")
-            return types.SimpleNamespace(text_content=text)
+        del context
+        if failing_name and str(path).endswith(failing_name):
+            raise RuntimeError("PASSWORD_PROTECTED")
+        return text
 
+    monkeypatch.setattr("lensnode.document_convert._parse_document", parse_document)
     monkeypatch.setitem(
         sys.modules,
         "markitdown",
-        types.SimpleNamespace(
-            MarkItDown=FakeMarkItDown,
-            __version__="test",
-        ),
+        types.SimpleNamespace(__version__="test"),
     )
 
 

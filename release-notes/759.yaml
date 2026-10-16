@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Fix session lists getting stuck when archiving or restoring conversations, let document conversion continue after a parser timeout with accurate progress, and allow automatic answer review to handle larger evidence sets.
+zh-CN: 修复归档或恢复对话时会话列表卡住的问题；文档解析超时后继续处理后续文件，并准确显示转换进度；自动答案审核可处理更完整的多来源证据。

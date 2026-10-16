@@ -2119,6 +2119,7 @@ const mobileViewportStyle = ref({})
 const visualViewportConstrained = ref(false)
 const seenStepEventCounts = new Map()
 let sessionLoadGeneration = 0
+let sessionListGeneration = 0
 const runtimeState = ref(createRuntimeState())
 const clarificationAnswers = ref({})
 const clarificationSubmitting = ref(new Set())
@@ -3304,6 +3305,7 @@ function syncMobileViewport() {
 }
 
 async function bootstrap() {
+  sessionListGeneration += 1
   sessionLoadGeneration += 1
   // Reset transient chat state up front so the previous assistant's draft,
   // active-run/stream state, or messages cannot leak across an assistant
@@ -3422,27 +3424,32 @@ async function loadSessions(selectUuid = '', { useRouteSession = true } = {}) {
     return
   }
 
-  const loadGeneration = ++sessionLoadGeneration
+  const loadGeneration = ++sessionListGeneration
+  const selectionGeneration = sessionLoadGeneration
+  const archived = showArchivedSessions.value
   sessionsLoading.value = true
   sessionsError.value = false
   let loadedSessions
   try {
     loadedSessions = await listSessions(selectedAssistant.value?.slug || '', {
       routingMode: isSmartCollaborationConversation.value ? 'smart' : '',
-      archived: showArchivedSessions.value
+      archived
     })
   } catch {
-    if (loadGeneration === sessionLoadGeneration) {
+    if (loadGeneration === sessionListGeneration) {
+      sessionsLoading.value = false
+      if (archived !== showArchivedSessions.value) return
       sessionsError.value = true
       sessions.value = []
-      sessionsLoading.value = false
     }
     return
   }
-  if (loadGeneration !== sessionLoadGeneration) return
+  if (loadGeneration !== sessionListGeneration) return
 
-  sessions.value = loadedSessions
   sessionsLoading.value = false
+  if (archived !== showArchivedSessions.value) return
+  sessions.value = loadedSessions
+  if (selectionGeneration !== sessionLoadGeneration) return
 
   const requestedUuid =
     selectUuid || (useRouteSession ? route.query.session || '' : '')
@@ -3707,8 +3714,15 @@ async function setSessionPinned(session, pinned) {
 }
 
 async function archiveManagedSession(session) {
+  const assistant = selectedAssistant.value
+  const archived = showArchivedSessions.value
   try {
     await archiveSession(session.uuid)
+    if (
+      selectedAssistant.value !== assistant ||
+      showArchivedSessions.value !== archived
+    )
+      return
     sessions.value = sessions.value.filter((item) => item.uuid !== session.uuid)
     if (selectedSessionUuid.value === session.uuid) {
       const next = sessions.value[0]
@@ -3723,8 +3737,15 @@ async function archiveManagedSession(session) {
 
 async function restoreManagedSession(session) {
   if (!session) return
+  const assistant = selectedAssistant.value
+  const archived = showArchivedSessions.value
   try {
     await restoreSession(session.uuid)
+    if (
+      selectedAssistant.value !== assistant ||
+      showArchivedSessions.value !== archived
+    )
+      return
     sessions.value = sessions.value.filter((item) => item.uuid !== session.uuid)
     if (selectedSessionUuid.value === session.uuid) {
       const next = sessions.value[0]
@@ -4966,6 +4987,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   sessionLoadGeneration += 1
+  sessionListGeneration += 1
   window.removeEventListener('storage', handleCompletionStorage)
   window.removeEventListener('focus', handleCompletionVisibility)
   window.visualViewport?.removeEventListener('resize', syncMobileViewport)

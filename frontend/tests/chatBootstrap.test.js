@@ -173,9 +173,9 @@ test('loads sessions after selecting the route assistant', async () => {
 test('ignores a stale session list after switching to archived sessions', async () => {
   const source = await chatSource()
 
-  assert.match(source, /const loadGeneration = \+\+sessionLoadGeneration/)
+  assert.match(source, /const loadGeneration = \+\+sessionListGeneration/)
   assert.match(source, /loadedSessions = await listSessions\(/)
-  assert.match(source, /if \(loadGeneration !== sessionLoadGeneration\) return/)
+  assert.match(source, /if \(loadGeneration !== sessionListGeneration\) return/)
   assert.match(
     source,
     /async function switchSessionView\(archived\) \{\s*if \(showArchivedSessions\.value === archived\) return\s*sessionLoadGeneration \+= 1/

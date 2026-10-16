@@ -1,11 +1,15 @@
 import json
 import mimetypes
-import time
+import os
+import signal
+import subprocess
+import sys
 import threading
+import time
 import zipfile
-from xml.etree import ElementTree
 from io import BytesIO
 from pathlib import Path
+from xml.etree import ElementTree
 
 from .conversion_queue import ConversionJob
 from .conversion_queue import conversion_queue_from_context
@@ -58,6 +62,55 @@ MAX_AUTOMATIC_CONVERSION_ATTEMPTS = 3
 DEFAULT_VISUAL_MAX_ATTEMPTS = 3
 DEFAULT_VISUAL_RETRY_BASE_DELAY = 0.25
 DEFAULT_VISUAL_RETRY_MAX_DELAY = 2.0
+DEFAULT_DOCUMENT_TIMEOUT_S = 120
+
+
+def _markitdown_worker_command(path):
+    """Return the isolated parser command without shell interpolation."""
+
+    return [sys.executable, "-m", "lensnode.document_parser", str(path)]
+
+
+def _parse_document(path, context):
+    """Bound a parser by a file deadline and terminate it on cancellation."""
+
+    timeout_s = float((context.get("conversion") or {}).get("file_timeout_s") or DEFAULT_DOCUMENT_TIMEOUT_S)
+    if timeout_s <= 0:
+        timeout_s = DEFAULT_DOCUMENT_TIMEOUT_S
+    deadline = time.monotonic() + timeout_s
+    process = subprocess.Popen(
+        _markitdown_worker_command(path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        start_new_session=os.name == "posix",
+    )
+    try:
+        while True:
+            _check_runtime_cancelled(context)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("DOCUMENT_CONVERSION_TIMEOUT")
+            try:
+                stdout, _ = process.communicate(timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                _touch_runtime_activity(context)
+        _check_runtime_cancelled(context)
+        payload = json.loads(stdout)
+        if process.returncode or payload.get("error"):
+            raise RuntimeError(payload.get("error") or "CONVERSION_FILE_FAILED")
+        return payload["text_content"]
+    finally:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif process.poll() is None:
+            process.kill()
+        process.communicate()
 
 
 def _check_runtime_cancelled(context):
@@ -196,16 +249,9 @@ class MarkItDownDocumentConverter(BaseConverter):
                 warning=("SPREADSHEET_RANGE_TRUNCATED"
                          if bounded_stats.get("truncated") else ""),
             )
-        try:
-            from markitdown import MarkItDown
-        except Exception as exc:
-            raise RuntimeError("MARKITDOWN_NOT_AVAILABLE") from exc
-
-        result = MarkItDown().convert(str(path))
+        text = _parse_document(path, context)
         _check_runtime_cancelled(context)
         _touch_runtime_activity(context)
-        text_content = getattr(result, "text_content", None)
-        text = str(result) if text_content is None else text_content
         cost = empty_cost_stats()
         image_context = document_image_context(context, path, text)
         embedded = convert_embedded_images(path, image_context)
@@ -485,10 +531,10 @@ def post_process_documents(context, sync_result, emit=None):
                     emit,
                     "conversion_progress",
                     "running",
-                    f"Converted {index}/{total} datasource files.",
+                    f"Converted {summary['skipped']}/{total} datasource files.",
                     summary,
                     total=total,
-                    current=index,
+                    current=summary["skipped"],
                     current_file=manifest_local_path(item),
                     current_status="skipped",
                     current_reason="CONVERSION_MAX_IMAGES_EXCEEDED",
@@ -512,10 +558,10 @@ def post_process_documents(context, sync_result, emit=None):
                     emit,
                     "conversion_progress",
                     "running",
-                    f"Converted {index}/{total} datasource files.",
+                    f"Converted {summary['skipped']}/{total} datasource files.",
                     summary,
                     total=total,
-                    current=index,
+                    current=summary["skipped"],
                     current_file=manifest_local_path(item),
                     current_status="skipped",
                     current_reason="IMAGE_DUPLICATE",
@@ -543,7 +589,6 @@ def post_process_documents(context, sync_result, emit=None):
     for job, output in queue.run(jobs, handle_job):
         path = job.path
         item = job.item
-        index = job.index
         current_status = "converted"
         current_reason = ""
         current_stats = {}
@@ -616,14 +661,15 @@ def post_process_documents(context, sync_result, emit=None):
                 "failed",
                 current_reason,
             )
+        completed = summary["success"] + summary["skipped"] + summary["failed"]
         emit_conversion(
             emit,
             "conversion_progress",
             "running",
-            f"Converted {index}/{total} datasource files.",
+            f"Converted {completed}/{total} datasource files.",
             summary,
             total=total,
-            current=index,
+            current=completed,
             current_file=manifest_local_path(item),
             current_status=current_status,
             current_reason=current_reason,
@@ -651,6 +697,7 @@ def conversion_error_reason(exc):
 
     message = str(exc or "").upper()
     for code in (
+        "DOCUMENT_CONVERSION_TIMEOUT",
         "VISUAL_PAYLOAD_TOO_LARGE",
         "VISUAL_UPSTREAM_TIMEOUT",
         "VISUAL_RETRY_EXHAUSTED",
