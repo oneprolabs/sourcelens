@@ -10,7 +10,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("lens", "0063_assistantpluginbinding_decision_gates"),
+        ("lens", "0064_builtin_decisions"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
