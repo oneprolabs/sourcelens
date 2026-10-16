@@ -376,6 +376,7 @@ def _activity_merge_request(value):
         {
             "draft": bool(value.get("draft")),
             "merged_at": str(value.get("merged_at") or "")[:64],
+            "merged_by": _activity_user(value.get("merged_by") or value.get("merge_user")),
         }
     )
     return item
@@ -402,11 +403,22 @@ def _activity_work_item(value):
             "username": str(author.get("username") or "")[:160],
             "name": str(author.get("name") or "")[:160],
         },
+        "assignee": _activity_user(value.get("assignee")),
+        "assignees": [_activity_user(user) for user in (value.get("assignees") or [])[:20]
+                      if isinstance(user, dict)],
+        "closed_by": _activity_user(value.get("closed_by") or value.get("close_user")),
         "created_at": str(value.get("created_at") or "")[:64],
         "updated_at": str(value.get("updated_at") or "")[:64],
         "closed_at": str(value.get("closed_at") or "")[:64],
         "url": str(value.get("web_url") or "")[:500],
     }
+
+
+def _activity_user(value):
+    """Retain only bounded source account identifiers and display names."""
+
+    value = value if isinstance(value, dict) else {}
+    return {"username": str(value.get("username") or "")[:160], "name": str(value.get("name") or "")[:160]}
 
 
 def _activity_arguments(arguments, config):

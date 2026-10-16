@@ -104,6 +104,29 @@ def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
     assert any(name == "tool.save_deliverable.done" for name, _ in events)
 
 
+def test_failed_replacement_upload_cannot_publish_the_previous_file(monkeypatch, tmp_path):
+    """A stale attachment UUID does not prove the revised report was delivered."""
+
+    (tmp_path / "report.html").write_text("<p>Revised report</p>")
+    command = {"run_uuid": "run-123", "_deliverables": {"report.html": "old-output"}}
+    _install_transport(monkeypatch, lambda request: httpx.Response(503))
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+    payload = json.loads(tool.invoke({"path": "report.html"}))
+    assert payload["ok"] is False
+    assert payload["error"] == "DELIVERY_FAILED"
+    assert command["_deliverables"] == {}
+
+
+def test_missing_replacement_cannot_publish_the_previous_file(tmp_path):
+    """Deleting a staged report before resaving cannot keep its obsolete candidate."""
+
+    command = {"run_uuid": "run-123", "_deliverables": {"report.html": "old-output"}}
+    tool = _build_save_deliverable_tool(command, _resources(tmp_path), _config(), None)
+    payload = json.loads(tool.invoke({"path": "report.html"}))
+    assert payload["error"] == "FILE_NOT_FOUND"
+    assert command["_deliverables"] == {}
+
+
 def test_identical_write_after_append_is_deduplicated(tmp_path):
     resources = _resources(tmp_path)
     append = _build_append_file_tool(resources, None)

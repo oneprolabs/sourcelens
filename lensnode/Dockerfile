@@ -57,6 +57,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    LENS_PLUGIN_MANIFEST_REQUIRED=1 \
     VIRTUAL_ENV=/opt/venv
 
 WORKDIR /opt/lensnode
@@ -102,6 +103,10 @@ RUN set -eux; \
 COPY --from=builder /opt/venv /opt/venv
 COPY lensnode/docker/entrypoint.sh /entrypoint.sh
 COPY plugins /opt/plugins
+COPY scripts/build_plugin_manifest.py /tmp/build_plugin_manifest.py
+
+RUN python /tmp/build_plugin_manifest.py /opt/plugins \
+    && rm /tmp/build_plugin_manifest.py
 
 RUN chmod +x /entrypoint.sh
 

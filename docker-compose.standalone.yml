@@ -35,10 +35,11 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
     env_file:
       - ./.env
-    environment:
+    environment: &backend-lensnode-environment
       LENSNODE_NAME: ${LENSNODE_NAME:-local-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-change-me-lensnode-token}
       LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
     volumes:
       - ./data/django/staticfiles:/opt/backend/core/staticfiles
       - ./data/logs/api:/var/log/gunicorn
@@ -101,6 +102,7 @@ services:
     stop_grace_period: 120s
     env_file:
       - ./.env
+    environment: *backend-lensnode-environment
     volumes:
       - ./data/logs/worker:/var/log/celery
       - ./data/storage:/opt/storage
@@ -158,29 +160,15 @@ services:
       LENSNODE_NAME: ${LENSNODE_NAME:-local-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-change-me-lensnode-token}
       LENSNODE_AGENT_VERSION: ${APP_VERSION:-unknown}
-      # Single fixed backend-api here (no blue/green), so talk to it directly
-      # rather than through nginx. These override the nginx-based defaults the
-      # blue/green stack puts in env.sample.
       LENSNODE_SERVER_URL: http://backend-api:8000
-      LENSNODE_CONTROL_WS_URL: ws://backend-api:8000/ws/lens/lensnodes/
-      LENSNODE_AI_GATEWAY_URL: http://backend-api:8000/api/lens/lensnode/ai-gateway/
+      # Ignore legacy per-endpoint URLs from env_file; derive from the service topology.
+      LENSNODE_CONTROL_WS_URL: ""
+      LENSNODE_AI_GATEWAY_URL: ""
+      LENSNODE_DELIVERABLE_UPLOAD_URL: ""
+      LENSNODE_DELEGATION_BASE_URL: ""
       LENSNODE_WORKSPACE_PATH: /workspace
       LENSNODE_CHECKPOINT_DIR: /runtime/checkpoints
-      LENSNODE_EXECUTION_BACKEND: ${LENSNODE_EXECUTION_BACKEND:-trusted_container}
-      LENSNODE_HEARTBEAT_INTERVAL_S: 15
-      LENSNODE_REQUEST_TIMEOUT_S: ${LENSNODE_REQUEST_TIMEOUT_S:-240}
-      LENSNODE_RUN_IDLE_TIMEOUT_S: ${LENSNODE_RUN_IDLE_TIMEOUT_S:-180}
-      LENSNODE_PLANNING_REASONING_EFFORT: ${LENSNODE_PLANNING_REASONING_EFFORT:-none}
-      LENSNODE_MCP_DISCOVERY_TIMEOUT_S: ${LENSNODE_MCP_DISCOVERY_TIMEOUT_S:-30}
-      LENSNODE_MCP_TOOL_TIMEOUT_S: ${LENSNODE_MCP_TOOL_TIMEOUT_S:-60}
-      LENSNODE_MCP_DEFER_THRESHOLD: ${LENSNODE_MCP_DEFER_THRESHOLD:-12}
-      # Graceful-drain budget on shutdown/upgrade. Keep below stop_grace_period.
-      LENSNODE_DRAIN_TIMEOUT_S: ${LENSNODE_DRAIN_TIMEOUT_S:-240}
       LENSNODE_MAX_CONCURRENT_RUNS: ${LENSNODE_MAX_CONCURRENT_RUNS:-8}
-      LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS: ${LENSNODE_MAX_CONCURRENT_DATASOURCE_SYNCS:-1}
-      LENSNODE_MEMORY_LIMIT_MB: ${LENSNODE_MEMORY_LIMIT_MB:-}
-      LENSNODE_NODE_MAX_OLD_SPACE_MB: ${LENSNODE_NODE_MAX_OLD_SPACE_MB:-}
-      LENSNODE_NODE_OPTIONS: ${LENSNODE_NODE_OPTIONS:-}
     volumes:
       - ./data/workspace:/workspace
       - ./data/runtime:/runtime

@@ -8,10 +8,13 @@ import shutil
 import threading
 import uuid
 from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 from lensnode.plugin_agent import AgentExecutionPolicy, AgentExtension, plugin_state_root
 from lensnode.plugin_package_loader import load_runtime_contract
+
+MAX_ACTIVITY_PAGE_CHARS = 24000
 
 
 def activity_ledger_root(workspace, run_uuid):
@@ -139,6 +142,44 @@ class ActivityLedger:
             os.replace(temporary, path)
             self.entries[key] = entry
 
+    def read_progress(self, evidence, page=None):
+        """Persist consumed ranges for one exact immutable evidence snapshot."""
+
+        digest = hashlib.sha256(_json(evidence).encode()).hexdigest()
+        total = len(evidence["records"])
+        folder = self.root / "review"
+        path = folder / "progress.json"
+        with self.lock:
+            if folder.is_symlink() or path.is_symlink():
+                raise ValueError("Invalid activity review state")
+            state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if state.get("snapshot_sha256") != digest:
+                state = {"snapshot_sha256": digest, "ranges": [], "read": False}
+            if page is not None:
+                state["read"] = True
+                ranges = sorted([*state["ranges"], list(page)])
+                merged = []
+                for start, end in ranges:
+                    if merged and start <= merged[-1][1]:
+                        merged[-1][1] = max(merged[-1][1], end)
+                    else:
+                        merged.append([start, end])
+                state["ranges"] = merged
+                folder.mkdir(exist_ok=True, mode=0o700)
+                temporary = folder / f"{uuid.uuid4().hex}.tmp"
+                with temporary.open("x", encoding="utf-8") as stream:
+                    os.chmod(temporary, 0o600)
+                    stream.write(_json(state))
+                os.replace(temporary, path)
+            cursor = 0
+            for start, end in state["ranges"]:
+                if start > cursor:
+                    break
+                cursor = max(cursor, end)
+            complete = state["read"] and cursor >= total
+            return {"complete": complete, "total_records": total,
+                    "next_offset": None if complete else cursor, "snapshot_sha256": digest}
+
     def report(self, expected_tools):
         """Normalize saved evidence without producing a business report or answer."""
 
@@ -156,6 +197,7 @@ class ActivityLedger:
         limitations = []
         tools = set()
         windows = set()
+        source_coverage = {}
         for entry in sorted(latest.values(), key=lambda entry: (entry["provider"], entry["sequence"])):
             provider, result = entry["provider"], entry["result"]
             tools.add(entry["tool"])
@@ -165,6 +207,18 @@ class ActivityLedger:
             if not isinstance(groups, list):
                 groups = [{"project": "", "issues": result.get("items", [])}]
             sources = [result, *groups]
+            coverage = source_coverage.setdefault(entry["tool"], {"complete": True, "snapshots": []})
+            complete = not any(_limited(source) for source in sources)
+            coverage["complete"] = coverage["complete"] and complete
+            coverage["snapshots"].append({
+                "provider": provider, "since": since, "until": until, "complete": complete,
+                "resources": [
+                    {"resource": str(group.get("repository", group.get("project", ""))),
+                     "complete": not _limited(group), "errors": group.get("errors", [])}
+                    for group in groups
+                ],
+                "errors": result.get("errors", []),
+            })
             if any(_limited(source) for source in sources):
                 limitations.append(f"{provider}: 来源截断或部分请求失败 / truncated or partially failed")
             for group in groups:
@@ -197,16 +251,30 @@ class ActivityLedger:
                             existing["sources"].extend(record["sources"])
         for tool in sorted(set(expected_tools) - tools):
             limitations.append(f"{tool}: 尚无来源结果 / source not retrieved")
+            source_coverage[tool] = {"complete": False, "snapshots": []}
         if not windows:
             limitations.append("尚无可验证的来源材料 / no source evidence")
         ordered = sorted(records.values(), key=lambda item: (item["person_id"], item["timestamp"], item["id"]))
         limitations = sorted(set(limitations))
+        observed_events = {}
+        for record in ordered:
+            key = (record["person_id"], record["provider"], record["kind"], record["event"], record["role"])
+            facts = observed_events.setdefault(key, {
+                "person_id": record["person_id"], "person": record["person"], "provider": record["provider"],
+                "kind": record["kind"], "event": record["event"], "role": record["role"],
+                "count": 0, "record_ids": [],
+                "attribution": "associated_with_role_not_performed_by_person",
+            })
+            facts["count"] += 1
+            facts["record_ids"].append(record["id"])
         report = {
             "records": ordered,
             "limitations": limitations,
             "complete": not limitations,
             "windows": sorted(windows),
             "source_tools": sorted(tools),
+            "source_coverage": source_coverage,
+            "observed_events": list(observed_events.values()),
             "source_snapshots": [
                 {"provider": entry["provider"], "arguments": entry["arguments"], "result": entry["result"]}
                 for entry in sorted(latest.values(), key=lambda entry: (entry["provider"], entry["sequence"]))
@@ -233,6 +301,67 @@ def _limited(source):
         or flag is True
         or (isinstance(flag, dict) and any(value is True for value in flag.values()))
     )
+
+
+class _ReportText(HTMLParser):
+    """Keep visible report blocks separate while joining inline formatting."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style"}:
+            self.hidden += 1
+        if tag in {"p", "div", "tr", "li", "br", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style"}:
+            self.hidden = max(self.hidden - 1, 0)
+        if tag in {"p", "div", "tr", "li", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+        elif tag in {"td", "th"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def _contains_negative_activity_claim(answer):
+    """Detect high-risk personnel conclusions without judging ordinary prose."""
+
+    parser = _ReportText()
+    parser.feed(str(answer or ""))
+    pattern = re.compile(
+        r"零完成|没有(?:任何)?(?:完成|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
+        r"\b(?:completed nothing|zero[- ]completions?|low productivity|no activity|inactive|no work)\b",
+        re.IGNORECASE,
+    )
+    for sentence in re.split(r"[。！？.!?\n]", "".join(parser.parts)):
+        sentence = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", sentence)
+        for match in pattern.finditer(sentence):
+            prefix = sentence[:match.start()]
+            if not re.search(
+                r"(?:不能据此判断|无法判断|不代表|不能认定|cannot conclude|does not mean)"
+                r"[^，,；;]{0,40}$", prefix, re.IGNORECASE,
+            ):
+                return True
+    return False
+
+
+def _account(value, identity="", login=False):
+    """Keep display names separate from verified source account identifiers."""
+
+    if isinstance(value, dict):
+        identity = identity or value.get("login") or value.get("username") or value.get("accountId") or value.get("key")
+        name = value.get("displayName") or value.get("name") or identity or ""
+    else:
+        name = str(value or identity or "")
+        identity = identity or (name if login else "")
+    return {"identity": str(identity or ""), "name": str(name), "verified": bool(identity)}
 
 
 def _record(provider, connection, resource, kind, item, since, until):
@@ -284,12 +413,28 @@ def _record(provider, connection, resource, kind, item, since, until):
         event = "closed"
     elif not commit and _in_window(item.get("created_at", item.get("created")), since, until):
         event = "created"
+    roles = {
+        "author": _account(author, item.get("author_identity"), login=provider == "github"),
+        "assignee": _account(item.get("assignee"), item.get("assignee_identity")),
+    }
+    for role_name in ("creator", "reporter", "updated_by", "closed_by", "merged_by", "resolved_by"):
+        roles[role_name] = _account(item.get(role_name), item.get(f"{role_name}_identity"),
+                                    login=provider == "github")
+    roles["assignees"] = [_account(value) for value in item.get("assignees", []) if isinstance(value, dict)]
+    if commit:
+        roles["author"] = _account(name, item.get("login") or item.get("author_email"))
+    actor_role = {"merged": "merged_by", "closed": "closed_by", "resolved": "resolved_by",
+                  "updated": "updated_by", "created": "creator" if provider == "jira" else "author",
+                  "committed": "author"}[event]
+    actor = roles[actor_role]
     return {
         "provider": provider,
         "person_id": f"{provider}:{connection}:{person}",
         "person": name,
         "sources": [{"provider": provider, "resource": resource, "url": str(item.get("url", ""))}],
         "role": role,
+        "roles": roles,
+        "event_actor": actor if actor["identity"] or actor["name"] else None,
         "kind": kind,
         "id": identity,
         "resources": [resource or str(item.get("project", ""))],
@@ -324,21 +469,49 @@ def build_activity_evidence_tool(ledger, expected_tools):
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_INVALID"})
         evidence = ledger.report(expected_tools)
         records = evidence["records"]
+        if offset >= len(records) and offset != 0:
+            return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_INVALID", "total_records": len(records)})
         end = min(offset + limit, len(records))
-        return _json(
-            {
+        payload = {
                 "ok": True,
                 "records": records[offset:end],
                 "total_records": len(records),
                 "next_offset": end if end < len(records) else None,
+                "next_page": (
+                    {"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}}
+                    if end < len(records) else None
+                ),
+                "page_complete": offset == 0 and end == len(records),
                 "windows": evidence["windows"],
                 "source_tools": evidence["source_tools"],
                 "limitations": evidence["limitations"],
                 "source_coverage_complete": evidence["complete"],
+                "source_coverage": evidence["source_coverage"],
+                "observed_events": evidence["observed_events"],
                 "_evidence": {"complete": evidence["complete"]},
             }
-        )
+        while len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and len(payload["records"]) > 1:
+            payload["records"] = payload["records"][:max(1, len(payload["records"]) // 2)]
+            end = offset + len(payload["records"])
+            payload.update(
+                next_offset=end,
+                next_page={"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}},
+                page_complete=False,
+            )
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
+            payload["observed_events"] = []
+            payload["observed_events_omitted"] = True
+            payload["source_coverage"] = {
+                key: {"complete": value["complete"]} for key, value in evidence["source_coverage"].items()
+            }
+            payload["coverage_details_omitted"] = True
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
+            return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE",
+                          "message": "The evidence page exceeds the inline review limit; report this review gap."})
+        payload["read_progress"] = ledger.read_progress(evidence, (offset, end))
+        return _json(payload)
 
+    read_activity_evidence.metadata = {"bounded_inline_result": True}
     return read_activity_evidence
 
 
@@ -386,21 +559,37 @@ def _report_execution_guidance(command):
             "or source_coverage_complete=false, disclose "
             "that coverage limitation briefly instead of paginating or "
             "retrying per resource.",
+            "- Shell exit status zero does not prove that every command succeeded. "
+            "Inspect stderr and each operation's result; a later successful command cannot "
+            "erase a preceding traceback or failed file read. /large_tool_results paths are virtual; "
+            "use inspect_saved_output or analyze_structured_output instead of shell/Python open or jq.",
             "- The Plugin persists retrieved source results in a private evidence ledger. "
             "Normalize records by verified source identity and event; keep "
             "source IDs, timestamps, and coverage limits. Distinguish current "
             "status from transitions within the requested time window, and "
             "deduplicate exact commit SHAs without inventing identities or equating backports.",
-            "- Reuse that ledger for corrections instead of retrieving the same "
-            "sources again. Prefer a deterministic template rendered from normalized "
-            "data instead of regenerating the entire HTML in each model response.",
+            "- Reuse that ledger for corrections instead of retrieving the same sources again. "
+            "The model remains responsible for the business report and HTML content; use normalized "
+            "data as evidence and do not replace the requested report with a fixed template.",
             "- Use read_activity_evidence to revisit saved records without refetching sources. "
+            "Follow its next_page by calling read_activity_evidence again; paginating a saved result only "
+            "re-reads that page. total_records and observed_events cover the full ledger, while records is "
+            "only the current page. Read every required page before per-person conclusions. "
             "This is evidence for the report, not the final answer.",
             "- Apply requested person and resource filters before writing the answer or artifact. "
             "Do not stop after one window when the request requires more; retrieve each requested period.",
             "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
             "to group people, distinguish completed work from work in progress, and ground risks and comments "
             "in the evidence. Never infer a shared identity from a display name alone.",
+            "- Preserve workspace account mappings verbatim; never transliterate an account into an invented "
+            "real name. Keep each record's provider and resource. An incomplete GitHub source does not make "
+            "complete Jira or GitLab snapshots incomplete. Disclose every affected resource and source.",
+            "- Check observed_events before zero-completion or negative performance claims. Missing records "
+            "or incomplete coverage mean unobserved work, not zero work. A resolved Jira item or merged MR "
+            "inside the window must not be omitted when describing that person's observed completions. "
+            "Item authors and current assignees do not identify who closed, merged, or updated an item. "
+            "Creation date plus current status cannot establish how long that status has persisted. "
+            "Do not infer inactivity, delay, or productivity from event counts alone.",
             "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
             "business summary and any material coverage limits. Keep verification diagnostics out of the "
             "business report unless they explain a real evidence gap.",
@@ -636,6 +825,30 @@ class ActivityReportExtension(AgentExtension):
                 return turn.get("content")
         return self.command.get("question")
 
+    def completion_checks(self, answer):
+        """Return host-owned checks that must pass before a report is accepted."""
+
+        if not self.active or not self.ledger.has_evidence():
+            return []
+        evidence = self.ledger.report(self.expected_tools)
+        checks = []
+        progress = self.ledger.read_progress(evidence)
+        if not progress["complete"]:
+            checks.append({
+                "code": "activity_evidence_unread",
+                "message": "Activity evidence has unread pages; do not finalize the report yet.",
+                "recovery": f"Call read_activity_evidence(offset={progress['next_offset']}) and follow every next_page. "
+                            "After fixing the evidence, save all intended deliverables again.",
+            })
+        if _contains_negative_activity_claim(answer):
+            checks.append({
+                "code": "activity_claim_unsupported",
+                "message": "Activity counts cannot establish zero work, low productivity, or status duration.",
+                "recovery": "Remove the unsupported personnel conclusion. Report observed events with source IDs, "
+                            "roles and coverage limits. Save corrected deliverables again.",
+            })
+        return checks
+
     def execution_policy(self, route, tools):
         """Apply the bound report Skill's artifact and source obligations."""
 
@@ -670,6 +883,9 @@ class ActivityReportExtension(AgentExtension):
         if selected is None or selected.metadata.get("activity_report") is not True:
             return executor
         provider, connection, version = binding["plugin_key"], binding["connection_uuid"], binding["plugin_version"]
+        runtime_identity = getattr(executor, "_lens_runtime_identity", None)
+        if runtime_identity is None:
+            runtime_identity = load_runtime_contract(provider, version).runtime_identity
 
         def invoke(tool_key, arguments, runtime):
             """Serialize identical requests and retain evidence across model compaction."""
@@ -690,6 +906,8 @@ class ActivityReportExtension(AgentExtension):
                             "tool.plugin.cache_hit",
                             {
                                 "plugin": provider,
+                                "plugin_version": version,
+                                "runtime_identity": runtime_identity,
                                 "tool": tool_key,
                                 "call_id": call_id,
                             },
@@ -701,7 +919,10 @@ class ActivityReportExtension(AgentExtension):
                     self.ledger.record(provider, connection, version, tool_key, arguments, result)
                     if self.context.emit_event:
                         self.context.emit_event(
-                            "tool.activity_evidence.saved", {"tool": tool_key, "call_id": call_id}
+                            "tool.activity_evidence.saved", {
+                                "plugin": provider, "plugin_version": version, "runtime_identity": runtime_identity,
+                                "tool": tool_key, "call_id": call_id,
+                            }
                         )
                 return encoded
 
@@ -713,14 +934,19 @@ class ActivityReportExtension(AgentExtension):
         if not self.active or not self.ledger.has_evidence():
             return {}
         evidence = self.ledger.report(self.expected_tools)
+        progress = self.ledger.read_progress(evidence)
         return {
             "plugin_evidence": {
                 "activity-report": {
                     "records": evidence["records"],
+                    "read_progress": progress,
                     "limitations": evidence["limitations"],
+                    "source_coverage": evidence["source_coverage"],
+                    "observed_events": evidence["observed_events"],
                 }
             },
             "evidence_completeness": "complete" if evidence["complete"] else "incomplete",
+            "review_completeness": "complete" if progress["complete"] else "incomplete",
         }
 
 

@@ -56,7 +56,12 @@ def test_compaction_summarizes_tool_evidence_without_dropping_human_anchors(asyn
     assert "Previous conversation was too long" not in text
 
 
-@pytest.mark.parametrize("response", ["", "Previous conversation was too long to summarize."])
+@pytest.mark.parametrize("response", [
+    "", "Previous conversation was too long to summarize.",
+    'I will collect more evidence. <｜DSML｜calls><｜DSML｜invoke name="read_file">',
+    'Evidence summary. <||DSML||invoke name="execute">',
+    'Remaining work. <｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_file">',
+])
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_invalid_summary_retains_original_history_and_emits_diagnostic(response, asynchronous):
     middleware = _middleware(response)

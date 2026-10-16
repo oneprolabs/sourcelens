@@ -1,0 +1,18 @@
+type: fix
+audience: user
+en: >-
+  Activity reports now keep a bounded publication window after evidence
+  convergence, report convergence stops as partial execution, and never claim
+  an attachment was delivered without a successful save. Evidence pagination
+  exposes remaining pages, aggregate observed events, and per-source coverage;
+  summaries and structured-output recovery also reject protocol leakage and
+  explain virtual paths and optional fields. Reports now enforce persistent
+  evidence pagination, reject unsupported personnel conclusions in answers and
+  text attachments, and distinguish ownership from event actors. Plugin builds
+  verify source hashes and expose the identity of the code actually loaded.
+zh-CN: >-
+  活动报告在证据收敛后保留有上限的交付窗口，收敛终止会明确记录为部分执行；
+  没有成功保存附件时不会再声称已交付。证据分页会展示剩余页、完整账本的事件汇总和
+  各来源独立覆盖状态；摘要和结构化结果恢复逻辑也会拦截协议泄漏，并说明虚拟路径和可选字段的用法。
+  报告现在强制检查可恢复的证据阅读进度，拒绝正文及文本附件中缺乏支持的人员评价，区分归属角色
+  和实际操作者；插件构建校验源码摘要，并在调用追踪中记录实际加载代码的身份。

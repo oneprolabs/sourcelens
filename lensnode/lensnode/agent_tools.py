@@ -863,6 +863,8 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
         if not allowed:
             emit("tool.save_deliverable.denied", {"path": path})
             return _json({"ok": False, "error": "PATH_NOT_ALLOWED"})
+        if resolved is not None:
+            command.get("_deliverables", {}).pop(str(resolved.relative_to(root)), None)
         if resolved is None or not resolved.is_file():
             emit(
                 "tool.save_deliverable.done",
@@ -897,6 +899,16 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
         data = resolved.read_bytes()
         filename = resolved.name
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        validate = command.get("_validate_deliverable")
+        if callable(validate):
+            textual = content_type.startswith("text/") or content_type in {
+                "application/xhtml+xml", "application/json", "application/xml", "image/svg+xml",
+            }
+            text = data.decode("utf-8", errors="replace") if textual else ""
+            issues = validate(text)
+            if issues:
+                emit("tool.save_deliverable.failed", {"path": path, "error": "COMPLETION_CHECK_FAILED"})
+                return _json({"ok": False, "error": "COMPLETION_CHECK_FAILED", "checks": issues})
         try:
             with httpx.Client(
                 timeout=config.request_timeout_s,
@@ -1378,6 +1390,8 @@ def build_general_chat_tools(
         collections, project the complete collection field first, rather
         than guessing paths through its items. Inspect the saved output's
         synopsis before selecting unfamiliar fields.
+        Suffix an optional projection field with '?' (for example 'errors?')
+        to return null when that field is absent; required fields stay strict.
         """
 
         started = time.monotonic()
@@ -2278,6 +2292,26 @@ def _structured_analysis_failure(
         input_sha256 = hashlib.sha256(raw).hexdigest()
         detail.update({"input_bytes": len(raw), "input_sha256": input_sha256})
         payload.update({"input_bytes": len(raw), "input_sha256": input_sha256})
+        if error in {"PATH_NOT_FOUND", "FIELD_NOT_FOUND"}:
+            _, synopsis = _saved_output_synopsis(raw, _decode_output(raw))
+            document = json.loads(raw)
+            if isinstance(document, dict):
+                synopsis["collection_fields"] = {
+                    str(key)[:120]: sorted({
+                        str(field)[:120]
+                        for item in value[:5] if isinstance(item, dict)
+                        for field in list(item)[:32]
+                    })[:32]
+                    for key, value in list(document.items())[:32] if isinstance(value, list)
+                }
+            payload["synopsis"] = synopsis
+            payload["recovery_hint"] = (
+                "Use the actual keys in synopsis. Dotted paths through arrays require numeric indices, "
+                "for example repositories.0.pull_requests. Project the parent collection first when needed. "
+                "An optional field may be absent on some rows; inspect those rows instead of assuming it exists. "
+                "The input_ref is a virtual path: use inspect_saved_output or analyze_structured_output, "
+                "not a host shell or Python open()."
+            )
     emit("tool.analyze_structured_output.failed", detail)
     return _json(payload)
 
@@ -2565,18 +2599,24 @@ def _project_structured_items(items, fields):
 
     if not fields:
         return items
-    if any(not str(item).strip() for item in fields) or len(set(fields)) != len(fields):
+    normalized_fields = [item[:-1] if item.endswith("?") else item for item in fields]
+    if any(not str(item).strip() for item in normalized_fields) or len(set(normalized_fields)) != len(normalized_fields):
         raise ValueError("OPERATION_INPUT_INVALID")
     projected = []
     for item in items:
         row = {}
         for item_field in fields:
+            optional = item_field.endswith("?")
+            source_field = item_field[:-1] if optional else item_field
             try:
-                row[item_field] = _structured_record_value(
+                row[source_field] = _structured_record_value(
                     item,
-                    item_field,
+                    source_field,
                 )
             except ValueError as exc:
+                if optional and source_field:
+                    row[source_field] = None
+                    continue
                 raise ValueError("FIELD_NOT_FOUND") from exc
         projected.append(row)
     return projected

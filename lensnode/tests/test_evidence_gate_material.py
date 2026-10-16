@@ -75,6 +75,37 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     assert json.loads(rebound)["evidence_completeness"] == "complete"
 
 
+def test_partial_source_coverage_still_reviews_available_facts():
+    """Missing GitHub data must not disable checks against a known Jira resolution."""
+
+    calls = []
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            calls.append(json.loads(question))
+            return "unsupported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {"max_state_chars": 6000}})
+    verdicts = policy.post_run_checks("Summarize work", "Alice completed nothing.", {
+        "evidence_completeness": "incomplete",
+        "jira": {"complete": True, "resolved": ["SL-42"], "assignee": "Alice"},
+        "github": {"complete": False},
+    })
+    assert len(calls) == 1
+    assert verdicts == {"evidence_completeness": "incomplete", "answer_supported": "unsupported"}
+    assert calls[0]["runtime_evidence"]["jira"]["resolved"] == ["SL-42"]
+
+
+def test_partial_sources_allow_only_one_correction_for_an_explicitly_unsupported_claim():
+    policy = _ReviewPolicy(verdict="unsupported", completeness="incomplete")
+    gate = EvidenceGateMiddleware(policy, "Summarize work")
+    state = {"messages": [AIMessage(content="Alice completed nothing.")]}
+    assert gate.after_model(state, None)["jump_to"] == "model"
+    assert gate.answer_nudges == 1
+    assert gate.after_model(state, None) is None
+    assert gate.answer_nudges == 1
+
+
 def test_complete_tool_results_respect_the_configured_review_budget():
     """The collector must not truncate evidence below the selected gate budget."""
 
@@ -156,6 +187,7 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
         checkpoint_thread=None,
         resume_from_graph_checkpoint=False,
         command={"task": "knowledge_qa"},
+        kwargs={},
         cancel_event=None,
         token_budget_wrapup_event=None,
         checkpoint_ready=False,
@@ -369,7 +401,7 @@ def test_incomplete_review_never_accepts_a_claim_or_triggers_futile_rechecks():
 
 
 def test_incomplete_review_material_does_not_regenerate_an_unsupported_answer():
-    policy = _ReviewPolicy(verdict="unsupported", completeness="incomplete")
+    policy = _ReviewPolicy(verdict="unsupported", review_completeness="incomplete")
     middleware = EvidenceGateMiddleware(policy, "What caused the incident?")
 
     assert middleware.after_model({"messages": [AIMessage(content="The migration failed.")]}, None) is None
@@ -387,7 +419,7 @@ def test_offloaded_preview_and_compacted_evidence_remain_inconclusive():
             AIMessage(content="INC-42 is resolved."),
         ]
     }
-    assert middleware.after_model(state, None) is None
+    assert middleware.after_model(state, None)["jump_to"] == "model"
     assert policy.materials[-1]["evidence_completeness"] == "incomplete"
 
     middleware = EvidenceGateMiddleware(policy, "What failed?")
@@ -479,6 +511,6 @@ def test_only_the_same_retried_operation_restores_substantive_answer_review(retr
         assert policy.materials[-1]["evidence_completeness"] == "complete"
         assert policy.materials[-1]["retrieved_evidence"][0]["recovered"] is True
     else:
-        assert result is None
+        assert result["jump_to"] == "model"
         assert policy.materials[-1]["evidence_completeness"] == "incomplete"
     assert messages[1].status == "error"

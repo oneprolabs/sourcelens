@@ -184,6 +184,14 @@ metadata.plugin_version = <Manifest.version>
 metadata.capability = <Tool.capability>
 ```
 
+发布镜像在 `/opt/plugins/.runtime-manifest.json` 中记录每个 Python 源文件的完整
+SHA-256。生产 LensNode 要求该清单存在，并在每次加载 runtime 或 shared support 时
+重新计算实际源码摘要；缺失、格式错误或内容漂移都会拒绝加载。源码通过校验后的
+字节直接编译执行，避免时间戳有效的旧 `.pyc` 覆盖新源码。Tool 注册元数据以及
+`tool.plugin.*` 轨迹事件会带上 `runtime_sha256`、`support_sha256` 和
+`manifest_sha256`，用于把一次调用归因到实际加载的发布内容。开发环境可关闭清单
+强制校验，但仍记录源码摘要并按摘要失效缓存。
+
 路由、能力恢复和执行审计只能读取这些显式元数据，不能通过 `github_*`、`jira_*`
 等名称前缀猜测能力类型。
 

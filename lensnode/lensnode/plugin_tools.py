@@ -78,6 +78,8 @@ def build_plugin_tools(
                 raise PluginToolError("PLUGIN_TOOL_INVALID")
             if tool_key in seen_keys:
                 raise PluginToolError("PLUGIN_TOOL_NAME_CONFLICT")
+            if not callable(contract.build_tool):
+                raise PluginToolError("PLUGIN_TOOL_INVALID")
 
             def executor(
                 selected_tool_key,
@@ -110,13 +112,13 @@ def build_plugin_tools(
                     result_cache=result_cache,
                     result_cache_lock=result_cache_lock,
                     project_tool_result=_contract.project_tool_result,
+                    runtime_identity=_contract.runtime_identity,
                 )
 
+            executor._lens_runtime_identity = contract.runtime_identity
             if agent_extensions is not None:
                 executor = agent_extensions.wrap_executor(binding, definition, executor)
 
-            if not callable(contract.build_tool):
-                raise PluginToolError("PLUGIN_TOOL_INVALID")
             try:
                 registered = contract.build_tool(definition, executor)
             except Exception as exc:
@@ -128,6 +130,7 @@ def build_plugin_tools(
                 "capability_family": capability_family,
                 "plugin_key": plugin_key,
                 "plugin_version": plugin_version,
+                "runtime_identity": contract.runtime_identity,
                 "plugin_metadata": (contract.tool_metadata or {}).get(tool_key, {}),
                 "capability": str(
                     definition.get("capability") or ""
@@ -158,6 +161,7 @@ def _execute_plugin_tool(
     source="model_tool",
     trace_call_id=None,
     project_tool_result=None,
+    runtime_identity=None,
 ):
     """Authorize, lease, and execute one Tool without exposing secret."""
 
@@ -178,7 +182,13 @@ def _execute_plugin_tool(
             _emit(
                 emit_event,
                 "tool.plugin.cache_hit",
-                {"plugin": plugin_key, "tool": tool_key, "parent_call_id": call_id},
+                {
+                    "plugin": plugin_key,
+                    "plugin_version": plugin_version,
+                    "tool": tool_key,
+                    "parent_call_id": call_id,
+                    "runtime_identity": runtime_identity,
+                },
             )
             return cached
     started = time.monotonic()
@@ -187,6 +197,8 @@ def _execute_plugin_tool(
         "tool.plugin.start",
         {
             "plugin": plugin_key,
+            "plugin_version": plugin_version,
+            "runtime_identity": runtime_identity,
             "tool": tool_key,
             "invocation_id": call_id,
             "call_id": trace_call_id,
@@ -294,6 +306,8 @@ def _execute_plugin_tool(
             "tool.plugin.done",
             {
                 "plugin": plugin_key,
+                "plugin_version": plugin_version,
+                "runtime_identity": runtime_identity,
                 "tool": tool_key,
                 "invocation_id": call_id,
                 "call_id": trace_call_id,

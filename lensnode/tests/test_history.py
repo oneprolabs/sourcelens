@@ -6261,13 +6261,15 @@ def test_synthesize_wrapup_answer_strips_dangling_call_and_returns_content():
     answer = _synthesize_wrapup_answer(model, current, "English", None)
 
     assert answer == "here is what I found"
-    # dangling tool-call turn dropped, wrap-up instruction appended
-    assert len(model.invoked_with) == 3
-    assert model.invoked_with[-2].content == "partial reasoning"
+    # Keep internal controls separate from the repeated original request.
+    assert len(model.invoked_with) == 4
+    assert model.invoked_with[-3].content == "partial reasoning"
     assert model.invoked_with[-1].type == "human"
+    assert model.invoked_with[-1].content == "q"
+    assert model.invoked_with[-2].type == "system"
     assert (
         "ANSWER LANGUAGE REQUIREMENT: English"
-        in model.invoked_with[-1].content
+        in model.invoked_with[-2].content
     )
 
 
@@ -6398,8 +6400,17 @@ def test_soft_deadline_forces_wrapup_from_current_evidence():
 
 def test_token_budget_forces_tool_free_wrapup_from_current_evidence():
     messages = [{"role": "user", "content": "q"}]
-    prefix = [_Msg("human", "q")]
-    agent = _FakeStreamAgent(prefix, new_ai_turns=3)
+
+    class PendingToolAgent:
+        """Stop at the reserve with unfinished tool work."""
+
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [
+                HumanMessage(content="q"),
+                AIMessage(content="", tool_calls=[{"id": "read", "name": "grep", "args": {}}]),
+            ]}
+
+    agent = PendingToolAgent()
     model = _FakeWrapupModel("budget synthesis")
     token_budget_wrapup_event = threading.Event()
     token_budget_wrapup_event.set()
@@ -6466,8 +6477,8 @@ def test_token_budget_allows_one_pending_delivery_tool_call():
     )
 
     assert answer == "Delivered."
-    assert truncated is True
-    assert reason == "token_budget_wrapup"
+    assert truncated is False
+    assert reason is None
 
 
 def test_unpublished_sandbox_link_is_not_claimed_as_download():
