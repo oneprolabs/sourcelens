@@ -19,7 +19,7 @@ jobs:
       github.event.sender.type != 'Bot' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
       issues: write
@@ -50,8 +50,8 @@ jobs:
           OPENAI_KEY: ${{ secrets.LLM_API_KEY }}
           OPENAI.API_BASE: ${{ secrets.LLM_BASE_URL }}
           CONFIG.MODEL: ${{ vars.LLM_MODEL || 'openai/deepseek-v3' }}
-          CONFIG.FALLBACK_MODELS: >-
-            ["${{ vars.LLM_MODEL || 'openai/deepseek-v3' }}"]
+          CONFIG.FALLBACK_MODELS: "[]"
+          CONFIG.AI_TIMEOUT: "300"
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: >-
             ${{ vars.LLM_MODEL_MAX_TOKENS || '64000' }}
           CONFIG.RESPONSE_LANGUAGE: en-US
