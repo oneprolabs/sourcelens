@@ -1,5 +1,6 @@
 """Regression coverage for budget boundaries and final synthesis context."""
 
+import json
 import threading
 
 import pytest
@@ -234,3 +235,72 @@ def test_required_wrapup_retains_runtime_rules_and_original_question():
     assert model.messages[0].type == "system"
     assert model.messages[0].content == rules
     assert model.messages[-1].content == question
+
+
+def test_wrapup_retains_early_paginated_coverage_and_conversation_constraints():
+    """Large late evidence must not erase an earlier dataset or platform constraint."""
+
+    messages = [
+        HumanMessage(content="Use VMware agentless backups; compare quotes with invoices."),
+    ]
+    for offset in range(0, 127, 20):
+        messages.extend([
+            AIMessage(content="", tool_calls=[{
+                "id": f"invoice-{offset}", "name": "query_records",
+                "args": {"table": "invoices", "offset": offset},
+            }]),
+            ToolMessage(content=json.dumps({"result": [{"type": "text", "text": json.dumps({
+                "results": [{"id": n, "value": "row " * 100} for n in range(offset, min(offset + 20, 127))],
+                "total": 127, "offset": offset, "has_more": offset + 20 < 127,
+            })}]}), tool_call_id=f"invoice-{offset}"),
+        ])
+    messages.extend([
+        ToolMessage(content=json.dumps({"total": 260, "offset": 240, "has_more": False,
+                                       "results": [{"id": n, "value": "quote " * 500} for n in range(20)]}),
+                    tool_call_id="quotes"),
+        HumanMessage(content="Does the same window restriction still apply?"),
+        AIMessage(content="Latest provisional answer; verify against the sources."),
+    ])
+    compact = _compact_wrapup_messages(messages)
+    text = "\n".join(str(message.content) for message in compact)
+    assert "VMware agentless" in text
+    assert '"table": "invoices"' in text
+    assert '"total": 127' in text
+    assert '"offset": 120' in text
+    assert '"has_more": false' in text
+    assert '"total": 260' in text
+    assert "Latest provisional answer" in text
+    assert len(text) < 40000
+
+
+def test_wrapup_recovers_evidence_removed_by_graph_summarization():
+    """Keep observed tool metadata outside graph messages that middleware replaces."""
+
+    class SummarizingAgent:
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [
+                HumanMessage(content="VMware agentless; compare invoice and quote totals."),
+                AIMessage(content="", tool_calls=[{
+                    "id": "invoices", "name": "query_records", "args": {"table": "invoices"},
+                }]),
+                ToolMessage(content=json.dumps({"total": 127, "offset": 120, "has_more": False}),
+                            tool_call_id="invoices"),
+            ]}
+            event.set()
+            yield {"messages": [
+                HumanMessage(content="Conversation summarized; continue comparison."),
+                ToolMessage(content=json.dumps({"total": 260, "offset": 240, "has_more": False}),
+                            tool_call_id="quotes"),
+            ]}
+
+    event = threading.Event()
+    model = SynthesisModel()
+    _run_agent_with_turn_limit(
+        SummarizingAgent(), [{"role": "user", "content": "VMware agentless; compare invoice and quote totals."}],
+        26, model=model, token_budget_wrapup_event=event,
+    )
+    text = "\n".join(str(m.content) for m in model.messages)
+    assert '"total": 127' in text
+    assert '"table": "invoices"' in text
+    assert '"total": 260' in text
+    assert "VMware agentless" in text

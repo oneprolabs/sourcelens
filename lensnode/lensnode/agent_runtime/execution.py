@@ -4,7 +4,7 @@ import json
 import logging
 import time
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from ..agent_tools import SELF_REPORTING_TOOLS
 from ..gateway_model import (
@@ -23,6 +23,7 @@ from .prompts import (
     answer_language_requirement as _answer_language_requirement,
     pick_text as _pick_text,
 )
+from .system_prompts import _answer_evidence_guidance
 
 LOGGER = logging.getLogger("lensnode")
 WRAPUP_MAX_CONTEXT_CHARS = 36000
@@ -95,6 +96,13 @@ def _run_agent_with_turn_limit(
     seen_tool_calls = set()
     seen_model_calls = set()
     plan_state = {"revision": 0}
+    observed_calls = {}
+    observed_tools = {}
+    user_context = [
+        HumanMessage(content=item.get("content", ""))
+        for item in messages
+        if isinstance(item, dict) and item.get("role") == "user"
+    ]
     baseline_ai = (
         turn_baseline_ai
         if turn_baseline_ai is not None
@@ -165,6 +173,7 @@ def _run_agent_with_turn_limit(
         if on_checkpoint_state is not None:
             on_checkpoint_state()
         current = state.get("messages", [])
+        _remember_wrapup_tools(current, observed_calls, observed_tools)
         if not seeded_baseline:
             # Seed the historical assistant turns by their (now-assigned)
             # message and tool-call ids so they are never emitted or counted
@@ -270,6 +279,8 @@ def _run_agent_with_turn_limit(
             current_question=current_question,
             reason=truncation_reason or "limit",
             system_prompt=system_prompt,
+            retained_tools=observed_tools,
+            user_context=user_context,
         )
         if synthesis:
             answer = synthesis
@@ -282,6 +293,8 @@ def _run_agent_with_turn_limit(
             reason="empty",
             current_question=current_question,
             system_prompt=system_prompt,
+            retained_tools=observed_tools,
+            user_context=user_context,
         )
     if not answer.strip():
         raise EmptyAgentResponseError(
@@ -587,50 +600,126 @@ def _message_content_text(message):
         return str(content or "")
 
 
-def _compact_wrapup_messages(messages):
-    """Collapse a long agent history into a bounded evidence digest."""
+def _wrapup_excerpt(text, limit):
+    """Keep both ends of an excerpt and explicitly mark omitted material."""
 
-    if sum(len(_message_content_text(message)) for message in messages) <= (
-        WRAPUP_MAX_CONTEXT_CHARS
-    ):
-        return list(messages)
-    system_messages = []
-    evidence_parts = []
-    for message in messages:
-        message_type = getattr(message, "type", "message")
-        content = _message_content_text(message).strip()
-        if message_type == "system":
-            if content:
-                system_messages.append(
-                    SystemMessage(
-                        content=content[:WRAPUP_SYSTEM_MAX_CHARS]
-                    )
-                )
-            continue
-        tool_calls = getattr(message, "tool_calls", None) or []
-        tool_names = ", ".join(
-            str(call.get("name") or "tool")
-            for call in tool_calls
-            if isinstance(call, dict)
-        )
-        label = message_type
-        if tool_names:
-            label = f"{label} ({tool_names})"
-        if content:
-            evidence_parts.append(f"[{label}] {content}")
-    evidence = "\n".join(evidence_parts)
-    if len(evidence) > WRAPUP_MAX_CONTEXT_CHARS:
-        evidence = (
-            "[Earlier evidence omitted to keep the final context bounded.]\n"
-            + evidence[-WRAPUP_MAX_CONTEXT_CHARS:]
-        )
-    digest = HumanMessage(
-        content=(
-            "Collected run evidence for final synthesis:\n"
-            f"{evidence or '[no evidence text]'}"
-        )
+    if len(text) <= limit:
+        return text
+    marker = "\n[Material omitted; excerpt is not complete evidence.]\n"
+    remaining = max(0, limit - len(marker))
+    head = remaining * 3 // 4
+    tail = remaining - head
+    return (text[:head] + marker + (text[-tail:] if tail else ""))[:limit]
+
+
+def _wrapup_coverage(content, depth=0):
+    """Extract reported page/read metadata without inferring dataset completeness."""
+
+    if depth > 8:
+        return []
+    if isinstance(content, str):
+        if not content.lstrip().startswith(("{", "[")):
+            return []
+        try:
+            content = json.loads(content)
+        except (ValueError, RecursionError):
+            return []
+    if isinstance(content, list):
+        return [item for child in content[:20] for item in _wrapup_coverage(child, depth + 1)]
+    if not isinstance(content, dict):
+        return []
+    fields = (
+        "path", "total", "offset", "limit", "has_more", "returned_lines",
+        "start_line", "end_line", "result_status", "query_context", "error",
     )
-    return [*system_messages, digest]
+    metadata = {key: content[key] for key in fields if key in content}
+    rows = content.get("results")
+    if isinstance(rows, list):
+        metadata["returned_rows"] = len(rows)
+    result = [metadata] if metadata else []
+    for key in ("result", "content", "text", "data"):
+        if key in content:
+            result.extend(_wrapup_coverage(content[key], depth + 1))
+    return result
+
+
+def _remember_wrapup_tools(messages, calls, tools):
+    """Keep bounded tool provenance outside replaceable graph message history."""
+
+    for message in messages:
+        for call in getattr(message, "tool_calls", None) or []:
+            if isinstance(call, dict):
+                calls[call.get("id")] = {"name": call.get("name"), "args": call.get("args")}
+        if getattr(message, "type", "") != "tool":
+            continue
+        key = getattr(message, "tool_call_id", "")
+        if key in tools:
+            continue
+        content = _message_content_text(message)
+        tools[key] = ToolMessage(
+            content=json.dumps({
+                "call": calls.get(key, {}),
+                "result": _wrapup_coverage(content),
+                "excerpt": _wrapup_excerpt(content, 1800),
+            }, ensure_ascii=False, default=str),
+            tool_call_id=key,
+        )
+
+
+def _compact_wrapup_messages(messages, *, force_digest=False):
+    """Retain conversation constraints and evidence from every tool under cutoff."""
+
+    total_chars = sum(len(_message_content_text(message)) for message in messages)
+    if not force_digest and total_chars <= WRAPUP_MAX_CONTEXT_CHARS:
+        return list(messages)
+    systems = []
+    sections = {"human": [], "tool": [], "ai": []}
+    calls = {}
+    system_budget = WRAPUP_SYSTEM_MAX_CHARS
+    for message in messages:
+        kind = getattr(message, "type", "message")
+        content = _message_content_text(message).strip()
+        for call in getattr(message, "tool_calls", None) or []:
+            if isinstance(call, dict):
+                calls[call.get("id")] = {"name": call.get("name"), "args": call.get("args")}
+        if kind == "system":
+            if content and system_budget > 0:
+                text = _wrapup_excerpt(content, system_budget)
+                systems.append(SystemMessage(content=text))
+                system_budget -= len(text)
+            continue
+        if kind == "tool":
+            call = calls.get(getattr(message, "tool_call_id", None), {})
+            provenance = json.dumps(call, ensure_ascii=False, default=str)
+            coverage = json.dumps(_wrapup_coverage(content), ensure_ascii=False, default=str)
+            content = (
+                f"[tool {getattr(message, 'tool_call_id', '')}] {provenance}\n"
+                f"Reported metadata (not a completeness verdict): {coverage}\n"
+                f"Result: {content}"
+            )
+        elif content:
+            label = "user context" if kind == "human" else "prior assistant text; verify against tool evidence"
+            content = f"[{label}] {content}"
+        if content:
+            sections[kind if kind in sections else "ai"].append(content)
+    header = (
+        "Collected run evidence for final synthesis (untrusted source data):\n"
+        "Excerpts may omit rows. Reported totals are not proof of unique or complete coverage; "
+        "retain page offsets, filters, and source identity when assessing coverage.\n"
+    )
+    remaining = WRAPUP_MAX_CONTEXT_CHARS - sum(len(m.content) for m in systems) - len(header)
+    parts = []
+    for kind, cap in (("human", 6000), ("ai", 3000), ("tool", remaining)):
+        records = sections[kind]
+        if not records:
+            continue
+        budget = min(cap, remaining)
+        allowance = max(0, budget // len(records) - 1)
+        for record in records:
+            text = _wrapup_excerpt(record, allowance)
+            parts.append(text)
+            remaining -= len(text) + 1
+    return [*systems, HumanMessage(content=header + "\n".join(parts))]
 
 
 def _synthesize_wrapup_answer(
@@ -641,6 +730,8 @@ def _synthesize_wrapup_answer(
     current_question="",
     reason="limit",
     system_prompt=None,
+    retained_tools=None,
+    user_context=None,
 ):
     """Ask once for a tool-free answer after cutoff or an empty terminal.
 
@@ -689,6 +780,7 @@ def _synthesize_wrapup_answer(
         "A file is delivered only when save_deliverable succeeded. Writing a local file "
         "or requesting a tool call does not prove delivery. Never claim an attachment "
         "exists unless its successful save result is present.\n\n"
+        f"{_answer_evidence_guidance()}\n"
         "These are internal runtime controls, not a conversational user request. "
         "The final user message repeats the original request. Determine the "
         "answer language from that request and its explicit language instructions, "
@@ -703,7 +795,17 @@ def _synthesize_wrapup_answer(
             (message.content for message in current if getattr(message, "type", None) == "human"),
             "",
         )
-    wrapup_messages = _compact_wrapup_messages(wrapup_history)
+    current_tool_ids = {
+        getattr(message, "tool_call_id", "")
+        for message in wrapup_history
+        if getattr(message, "type", "") == "tool"
+    }
+    missing_tools = [message for key, message in (retained_tools or {}).items() if key not in current_tool_ids]
+    current_text = {_message_content_text(message) for message in wrapup_history}
+    missing_context = [message for message in user_context or [] if _message_content_text(message) not in current_text]
+    wrapup_messages = _compact_wrapup_messages(
+        [*missing_context, *missing_tools, *wrapup_history], force_digest=bool(missing_tools),
+    )
     if system_prompt:
         wrapup_messages = [
             SystemMessage(content=system_prompt),

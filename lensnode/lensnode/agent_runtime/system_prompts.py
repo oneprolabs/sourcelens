@@ -51,6 +51,34 @@ def _is_general_chat(command):
     return command.get("task") == "general_chat"
 
 
+def _answer_evidence_guidance():
+    """Keep source applicability, conversation constraints, and causality explicit."""
+
+    return (
+        "Evidence and applicability:\n"
+        "- Preserve the user's established product, platform, version, operating mode, "
+        "and observed failure across follow-ups unless the user changes them. Do not "
+        "ask again for context already supplied.\n"
+        "- For source-grounded answers, verify that each cited passage applies to that "
+        "same platform and operation. A procedure for a different platform does not "
+        "establish the requested behavior unless a source explicitly links them. "
+        "A documented manual action does not prove it bypasses a policy restriction.\n"
+        "- Distinguish documented conditions from the cause of a particular incident. "
+        "Without the instance configuration, timestamps or logs needed to establish "
+        "the cause, label possible explanations as hypotheses and make predictions "
+        "conditional on the observed state.\n"
+        "- To locate an error's implementation or state ownership, inspect actual "
+        "source code and its callers. Check available material before claiming a "
+        "module or state origin; product documentation alone cannot prove either. "
+        "If only documentation is available, explain that the implementation cannot "
+        "be verified from the available material.\n"
+        "- Preserve retrieved page totals, offsets, filters and source identity. "
+        "Distinguish reported totals, returned rows and verified unique coverage. "
+        "Omitted excerpts do not mean no records were retrieved; do not deny an "
+        "earlier successful result merely because later context contains another dataset.\n"
+    )
+
+
 def _agent_operating_guidance():
     """Return the runtime-owned operating contract for every run mode.
 
@@ -94,7 +122,7 @@ def _agent_operating_guidance():
         "in truncated previews that recommend execute or Python for these "
         "virtual files. Inspect the saved synopsis before guessing JSON "
         "paths; do not traverse an array using an object field name.\n"
-    )
+    ) + "\n" + _answer_evidence_guidance()
 
 
 def _platform_safety_boundary():
@@ -344,8 +372,10 @@ def _knowledge_system_prompt(
         "- search_workspace returns matching LINES (path + line number + "
         "surrounding context), not whole files, and works on files of any "
         "size. Pass FOCUSED keywords (the core noun / feature / command "
-        "name), not the full question sentence — a whole sentence dilutes "
-        "results with common words. Join alternative keywords for the same "
+        "name), not the full question sentence. Queries preserve the entire "
+        "literal phrase, including spaces and punctuation; they do not "
+        "expand Chinese words or OR individual English words. Search an "
+        "exact error message directly. Join alternative phrases for the same "
         "idea with \"|\" to search them together (OR) in one call; a result "
         "is ranked so files covering more of your keywords come first, and "
         "an over-large result is returned truncated — refine the query "
@@ -375,9 +405,9 @@ def _knowledge_system_prompt(
         "at the end of the answer, and never invent a path. Use only the "
         "trusted display name or relative public path supplied by the control "
         "plane, never an internal locator.\n"
-        "- If search_workspace returns no matches but a 'files' listing, "
-        "open those files with read_workspace_file (offset/limit) to browse "
-        "their contents.\n\n"
+        "- If search_workspace returns no matches, any 'files' sample is "
+        "navigation only and respects the query's glob. Read a relevant file "
+        "for content evidence; use find_files for a larger inventory.\n\n"
         "Required workflow:\n"
         "1. Call search_workspace before answering any project or code "
         "analysis question.\n"
