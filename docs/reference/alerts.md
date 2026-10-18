@@ -90,7 +90,7 @@ implements the design approved in the 2026-10-16 conversation.
    Users subscribe in Settings → Notifications → Alert subscriptions.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
 
-Deploy with migrations through `0067_message_publications`, register periodic tasks,
+Deploy with migrations through `0066_unified_alerts`, register periodic tasks,
 and restart Celery workers and the scheduler. No real external notifications were
 sent during acceptance. Existing staff-only scope endpoints retain their permissions;
 operators without scope-list access can still use the alert management interface.

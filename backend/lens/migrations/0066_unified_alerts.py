@@ -70,6 +70,7 @@ class Migration(migrations.Migration):
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
+                ("dedupe_key", models.CharField(blank=True, max_length=64, null=True, unique=True)),
                 ("destination", models.JSONField(default=dict)),
                 (
                     "status",
@@ -173,6 +174,11 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="alertrule",
+            name="topic",
+            field=models.CharField(blank=True, db_default="", default="", max_length=120),
+        ),
+        migrations.AddField(
+            model_name="alertrule",
             name="cooldown_seconds",
             field=models.PositiveIntegerField(default=0, db_default=0),
         ),
@@ -216,6 +222,7 @@ class Migration(migrations.Migration):
             name="subject",
             field=models.CharField(
                 choices=[
+                    ("message", "Business message"),
                     ("run", "Q&A"),
                     ("sync", "Datasource sync"),
                     ("processing", "Document processing"),
@@ -230,6 +237,7 @@ class Migration(migrations.Migration):
             name="event_type",
             field=models.CharField(
                 choices=[
+                    ("message_published", "Message published"),
                     ("run_failed", "Run failed"),
                     ("run_partial", "Answer incomplete"),
                     ("run_timeout", "Answer timed out"),
