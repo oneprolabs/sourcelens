@@ -1,8 +1,8 @@
+import importlib
 import logging
 import os
 
 from django.apps import AppConfig
-
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class CoreConfig(AppConfig):
     verbose_name = "Core"
 
     def ready(self) -> None:
-        """Initialize optional process-level integrations."""
+        """Finish cyclic provider imports before serving concurrent requests."""
 
+        importlib.import_module("litellm")
         configure_langfuse()

@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -430,7 +431,24 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             loop = asyncio.get_running_loop()
             queue = asyncio.Queue()
 
+            stopped = threading.Event()
+
+            def publish(event):
+                """Do not enqueue provider output after the client disconnects."""
+
+                def enqueue():
+                    if not stopped.is_set():
+                        queue.put_nowait(event)
+
+                if not stopped.is_set():
+                    loop.call_soon_threadsafe(enqueue)
+
             def run_in_thread():
+                """Own the generator and budget reservation until provider cleanup."""
+
+                generator = None
+                terminal = None
+                token_count = 0
                 try:
                     generator = call_and_track_with_fallback(
                         messages=messages,
@@ -438,93 +456,49 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                         node_name=f"lensnode:{lensnode_uuid_str}",
                         state=tracker_state,
                         stream=True,
-                        on_retry=lambda event: loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            ("event", {"type": "retry", **event}),
-                        ),
+                        on_retry=lambda event: publish({"type": "retry", **event}),
                         tools=payload.get("tools"),
                         tool_choice=payload.get("tool_choice"),
                         temperature=payload.get("temperature"),
                         max_tokens=effective_max_tokens,
                         reasoning_effort=payload.get("reasoning_effort"),
                     )
-                    token_count = 0
-                    while True:
+                    while not stopped.is_set():
                         try:
                             kind, text = next(generator)
                         except StopIteration as exc:
                             result = exc.value or {}
-                            tool_calls = result.pop("_tool_calls", None) or []
-                            finish_reason = result.pop(
-                                "_finish_reason", None
-                            )
-                            _log.debug(
-                                "gateway stream done: token_count=%d "
-                                "tool_calls=%d",
-                                token_count,
-                                len(tool_calls),
-                            )
-                            loop.call_soon_threadsafe(
-                                queue.put_nowait,
-                                ("done", {
-                                    "type": "done",
-                                    "usage": result,
-                                    "lensnode_uuid": lensnode_uuid_str,
-                                    "tool_calls": tool_calls,
-                                    "finish_reason": finish_reason,
-                                }),
-                            )
-                            return
-                        except Exception as exc:
-                            error_code = self._gateway_stream_error_code(exc)
-                            _log.error(
-                                "gateway stream exception: type=%s error=%s "
-                                "token_count=%d",
-                                type(exc).__name__,
-                                exc,
-                                token_count,
-                            )
-                            loop.call_soon_threadsafe(
-                                queue.put_nowait,
-                                (
-                                    "event",
-                                    {
-                                        "type": "error",
-                                        "error": {
-                                            "code": error_code,
-                                            "message": str(exc),
-                                        },
-                                    },
-                                ),
-                            )
-                            return
+                            terminal = {
+                                "type": "done",
+                                "tool_calls": result.pop("_tool_calls", None) or [],
+                                "finish_reason": result.pop("_finish_reason", None),
+                                "usage": result,
+                                "lensnode_uuid": lensnode_uuid_str,
+                            }
+                            break
                         token_count += 1
-                        loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            ("event", {
-                                "type": "token",
-                                "kind": kind,
-                                "content": text,
-                            }),
-                        )
+                        publish({"type": "token", "kind": kind, "content": text})
                 except Exception as exc:
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        (
-                            "event",
-                            {
-                                "type": "error",
-                                "error": {
-                                    "code": (
-                                        self._gateway_stream_error_code(
-                                            exc
-                                        )
-                                    ),
-                                    "message": str(exc),
-                                },
-                            },
-                        ),
+                    _log.error(
+                        "gateway stream exception: run_uuid=%s type=%s token_count=%d disconnected=%s",
+                        (tracker_state.get("metadata") or {}).get("run_uuid"),
+                        type(exc).__name__, token_count, stopped.is_set(),
+                        exc_info=True,
                     )
+                    terminal = {
+                        "type": "error",
+                        "error": {"code": self._gateway_stream_error_code(exc), "message": str(exc)},
+                    }
+                finally:
+                    try:
+                        if generator is not None:
+                            generator.close()
+                    except Exception:
+                        _log.exception("Gateway provider stream cleanup failed")
+                    finally:
+                        self._release_parent_budget_lock(budget_lock)
+                if terminal is not None:
+                    publish(terminal)
 
             future = loop.run_in_executor(None, run_in_thread)
             try:
@@ -534,20 +508,18 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                             queue.get(), timeout=GATEWAY_STREAM_HEARTBEAT_S
                         )
                     except asyncio.TimeoutError:
+                        if future.done():
+                            future.result()
                         yield self._sse({"type": "heartbeat"})
                         continue
-                    if item[0] == "event":
-                        yield self._sse(item[1])
-                        if item[1].get("type") == "error":
-                            return
-                    elif item[0] == "done":
-                        yield self._sse(item[1])
+                    yield self._sse(item)
+                    if item.get("type") in {"error", "done"}:
                         return
-                    elif item[0] == "error":
-                        raise item[1]
             finally:
-                await future
-                self._release_parent_budget_lock(budget_lock)
+                stopped.set()
+                # A synchronous network read cannot be interrupted by cancelling
+                # its asyncio Future. The worker closes its generator and releases
+                # the reservation when that read returns; ASGI must not wait here.
 
         response = StreamingHttpResponse(
             event_stream(),
