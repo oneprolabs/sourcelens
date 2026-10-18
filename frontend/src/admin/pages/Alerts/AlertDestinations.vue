@@ -1,14 +1,14 @@
 <template>
   <section class="space-y-3">
     <div class="flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold text-ink-900">
+      <h2 class="text-sm font-semibold text-theme">
         {{ t('alertManagement.unified.destinations') }}
       </h2>
       <BaseButton type="button" size="sm" variant="outline" @click="add">{{
         t('alertManagement.unified.addDestination')
       }}</BaseButton>
     </div>
-    <p v-if="!modelValue.length" class="text-sm text-ink-500">
+    <p v-if="!modelValue.length" class="text-sm text-theme-muted">
       {{ t('alertManagement.unified.noDestinations') }}
     </p>
     <fieldset
@@ -16,7 +16,7 @@
       :key="item.uuid || index"
       class="space-y-3 rounded-lg border border-line p-3"
     >
-      <legend class="px-1 text-sm text-ink-700">
+      <legend class="px-1 text-sm text-theme-secondary">
         {{
           t('alertManagement.unified.destinationNumber', { number: index + 1 })
         }}
@@ -26,50 +26,44 @@
         :label="t('alertManagement.rules.name')"
         @update:model-value="change(index, 'name', $event)"
       />
-      <label class="block text-sm text-ink-700">
-        {{ t('alertManagement.rules.channel') }}
-        <BaseSelect
-          :model-value="item.channel_uuid"
-          required
-          class="mt-1 w-full rounded border border-line bg-surface p-2"
-          @update:model-value="change(index, 'channel_uuid', $event)"
+      <BaseSelect
+        :label="t('alertManagement.rules.channel')"
+        :model-value="item.channel_uuid"
+        required
+        @update:model-value="change(index, 'channel_uuid', $event)"
+      >
+        <option value="" disabled>
+          {{ t('alertManagement.rules.channelPlaceholder') }}
+        </option>
+        <option
+          v-for="channel in channels"
+          :key="channel.uuid"
+          :value="channel.uuid"
         >
-          <option value="" disabled>
-            {{ t('alertManagement.rules.channelPlaceholder') }}
-          </option>
-          <option
-            v-for="channel in channels"
-            :key="channel.uuid"
-            :value="channel.uuid"
-          >
-            {{ channel.name }} ({{ channel.channel_type }})
-          </option>
-        </BaseSelect>
-      </label>
-      <label class="block text-sm text-ink-700">
-        {{ t('alertManagement.diagnosis.language') }}
-        <BaseSelect
-          :model-value="item.language || 'en-US'"
-          class="mt-1 w-full rounded border border-line bg-surface p-2"
-          @update:model-value="change(index, 'language', $event)"
-        >
-          <option value="zh-CN">简体中文</option>
-          <option value="en-US">English</option>
-          <option value="es">Español</option>
-        </BaseSelect>
-      </label>
+          {{ channel.name }} ({{ channel.channel_type }})
+        </option>
+      </BaseSelect>
+      <BaseSelect
+        :label="t('alertManagement.diagnosis.language')"
+        :model-value="item.language || 'en-US'"
+        @update:model-value="change(index, 'language', $event)"
+      >
+        <option value="zh-CN">简体中文</option>
+        <option value="en-US">English</option>
+        <option value="es">Español</option>
+      </BaseSelect>
       <template
         v-if="
           channels.find((channel) => channel.uuid === item.channel_uuid)
             ?.channel_type === 'email'
         "
       >
-        <label class="block text-sm text-ink-700">
+        <label class="block text-sm font-medium text-theme">
           {{ t('alertManagement.rules.emailRecipients') }}
           <textarea
             :value="item.email_recipients"
             rows="2"
-            class="mt-1 w-full rounded border border-line bg-surface p-2"
+            class="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-theme shadow-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
             :placeholder="t('alertManagement.rules.emailRecipientsPlaceholder')"
             @input="change(index, 'email_recipients', $event.target.value)"
           />
@@ -91,7 +85,7 @@
         <label class="flex items-center gap-2 text-sm"
           ><input
             type="checkbox"
-            class="h-4 w-4 shrink-0"
+            class="h-4 w-4 shrink-0 rounded border-line text-primary-600 focus:ring-primary-500"
             :checked="item.enabled"
             @change="change(index, 'enabled', $event.target.checked)"
           />{{ t('alertManagement.rules.enabled') }}</label

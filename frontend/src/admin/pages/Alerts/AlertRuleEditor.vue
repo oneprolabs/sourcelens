@@ -10,28 +10,25 @@
     "
     @close="emit('close')"
   >
-    <form class="space-y-4" @submit.prevent="submit">
+    <form id="alert-rule-form" class="space-y-4" @submit.prevent="submit">
       <BaseInput
         v-model="form.name"
         :label="t('alertManagement.rules.name')"
         required
       />
-      <label class="block text-sm text-ink-700"
-        >{{ t('alertManagement.unified.subject') }}
-        <BaseSelect
-          v-model="form.subject"
-          class="mt-1 w-full rounded border border-line bg-surface p-2"
-          @change="resetEvents"
+      <BaseSelect
+        :label="t('alertManagement.unified.subject')"
+        v-model="form.subject"
+        @change="resetEvents"
+      >
+        <option
+          v-for="subject in ['run', 'sync', 'processing', 'message']"
+          :key="subject"
+          :value="subject"
         >
-          <option
-            v-for="subject in ['run', 'sync', 'processing', 'message']"
-            :key="subject"
-            :value="subject"
-          >
-            {{ t(`alertManagement.unified.subjects.${subject}`) }}
-          </option>
-        </BaseSelect>
-      </label>
+          {{ t(`alertManagement.unified.subjects.${subject}`) }}
+        </option>
+      </BaseSelect>
       <BaseInput
         v-if="form.subject === 'message'"
         v-model="form.topic"
@@ -39,37 +36,37 @@
         placeholder="release.ready"
         required
       />
-      <label v-if="form.subject === 'run'" class="block text-sm text-ink-700"
-        >{{ t('alertManagement.unified.evaluationMode') }}
-        <BaseSelect
-          v-model="form.evaluation_mode"
-          class="mt-1 w-full rounded border border-line bg-surface p-2"
-          @change="resetEvents"
-        >
-          <option value="terminal">
-            {{ t('alertManagement.unified.terminal') }}
-          </option>
-          <option value="running">
-            {{ t('alertManagement.unified.running') }}
-          </option>
-        </BaseSelect>
-      </label>
-      <fieldset class="space-y-2">
-        <legend class="mb-2 text-sm font-medium text-ink-700">
+      <BaseSelect
+        v-if="form.subject === 'run'"
+        :label="t('alertManagement.unified.evaluationMode')"
+        v-model="form.evaluation_mode"
+        @change="resetEvents"
+      >
+        <option value="terminal">
+          {{ t('alertManagement.unified.terminal') }}
+        </option>
+        <option value="running">
+          {{ t('alertManagement.unified.running') }}
+        </option>
+      </BaseSelect>
+      <fieldset class="rounded-lg border border-line bg-surface-sunken p-4">
+        <legend class="mb-2 text-sm font-medium text-theme-secondary">
           {{ t('alertManagement.rules.events') }}
         </legend>
-        <label
-          v-for="event in eventOptions"
-          :key="event"
-          class="flex items-center gap-2 text-sm text-ink-700"
-        >
-          <input
-            v-model="form.events"
-            type="checkbox"
-            class="h-4 w-4 shrink-0"
-            :value="event"
-          />{{ t(`alertManagement.unified.events.${event}`) }}
-        </label>
+        <div class="grid gap-2 sm:grid-cols-2">
+          <label
+            v-for="event in eventOptions"
+            :key="event"
+            class="flex items-center gap-2 text-sm text-theme-secondary"
+          >
+            <input
+              v-model="form.events"
+              type="checkbox"
+              class="h-4 w-4 shrink-0 rounded border-line text-primary-600 focus:ring-primary-500"
+              :value="event"
+            />{{ t(`alertManagement.unified.events.${event}`) }}
+          </label>
+        </div>
       </fieldset>
       <BaseInput
         v-if="form.events.includes('token_exceeded')"
@@ -95,10 +92,13 @@
         :label="t('alertManagement.unified.durationThreshold')"
         required
       />
-      <p v-if="form.evaluation_mode === 'running'" class="text-xs text-ink-500">
+      <p
+        v-if="form.evaluation_mode === 'running'"
+        class="text-xs text-theme-muted"
+      >
         {{ t('alertManagement.unified.runningHint') }}
       </p>
-      <p v-if="form.subject !== 'message'" class="text-xs text-ink-500">
+      <p v-if="form.subject !== 'message'" class="text-xs text-theme-muted">
         {{ t('alertManagement.unified.scopeHint') }}
       </p>
       <AlertScopeSelect
@@ -129,25 +129,18 @@
       <template
         v-if="form.subject !== 'message' && form.evaluation_mode !== 'running'"
       >
-        <label class="block text-sm text-ink-700">
-          {{ t('alertManagement.diagnosis.mode') }}
-          <BaseSelect
-            v-model="form.diagnosis_mode"
-            class="mt-1 w-full rounded border border-line bg-surface p-2"
+        <BaseSelect
+          :label="t('alertManagement.diagnosis.mode')"
+          v-model="form.diagnosis_mode"
+        >
+          <option
+            v-for="mode in ['direct', 'diagnose_first', 'notify_then_diagnose']"
+            :key="mode"
+            :value="mode"
           >
-            <option
-              v-for="mode in [
-                'direct',
-                'diagnose_first',
-                'notify_then_diagnose'
-              ]"
-              :key="mode"
-              :value="mode"
-            >
-              {{ t(`alertManagement.diagnosis.modes.${mode}`) }}
-            </option>
-          </BaseSelect>
-        </label>
+            {{ t(`alertManagement.diagnosis.modes.${mode}`) }}
+          </option>
+        </BaseSelect>
         <template v-if="form.diagnosis_mode !== 'direct'">
           <BaseInput
             v-model="form.diagnosis_timeout_seconds"
@@ -165,7 +158,7 @@
             required
             :label="t('alertManagement.diagnosis.maxTokens')"
           />
-          <p class="text-xs text-ink-500">
+          <p class="text-xs text-theme-muted">
             {{ t('alertManagement.diagnosis.fallbackHint') }}
           </p>
         </template>
@@ -177,56 +170,58 @@
         :groups="options.groups"
       />
       <template v-if="['run', 'message'].includes(form.subject)">
-        <label class="flex items-center gap-2 text-sm text-ink-700"
+        <label class="flex items-center gap-2 text-sm text-theme-secondary"
           ><input
             v-model="form.personal_subscription_enabled"
             type="checkbox"
-            class="h-4 w-4 shrink-0"
+            class="h-4 w-4 shrink-0 rounded border-line text-primary-600 focus:ring-primary-500"
           />{{ t('alertManagement.unified.allowPersonal') }}</label
         >
-        <label
+        <BaseSelect
           v-if="form.personal_subscription_enabled"
-          class="block text-sm text-ink-700"
-          >{{ t('alertManagement.unified.personalChannel') }}
-          <BaseSelect
-            v-model="form.personal_channel_uuid"
-            required
-            class="mt-1 w-full rounded border border-line bg-surface p-2"
+          :label="t('alertManagement.unified.personalChannel')"
+          v-model="form.personal_channel_uuid"
+          required
+        >
+          <option value="" disabled>
+            {{ t('alertManagement.rules.channelPlaceholder') }}
+          </option>
+          <option
+            v-for="channel in options.channels.filter(
+              (item) => item.channel_type === 'email'
+            )"
+            :key="channel.uuid"
+            :value="channel.uuid"
           >
-            <option value="" disabled>
-              {{ t('alertManagement.rules.channelPlaceholder') }}
-            </option>
-            <option
-              v-for="channel in options.channels.filter(
-                (item) => item.channel_type === 'email'
-              )"
-              :key="channel.uuid"
-              :value="channel.uuid"
-            >
-              {{ channel.name }}
-            </option>
-          </BaseSelect>
-        </label>
+            {{ channel.name }}
+          </option>
+        </BaseSelect>
       </template>
       <label class="flex items-center gap-2 text-sm"
         ><input
           v-model="form.enabled"
           type="checkbox"
-          class="h-4 w-4 shrink-0"
+          class="h-4 w-4 shrink-0 rounded border-line text-primary-600 focus:ring-primary-500"
         />{{ t('alertManagement.rules.enabled') }}</label
       >
       <p v-if="error" role="alert" class="break-words text-sm text-danger-700">
         {{ error }}
       </p>
-      <div class="flex justify-end gap-3 border-t border-line pt-3">
-        <BaseButton type="button" variant="outline" @click="emit('close')">{{
-          t('common.cancel')
-        }}</BaseButton>
-        <BaseButton type="submit" :loading="saving">{{
+    </form>
+    <template #footer>
+      <div class="flex w-full justify-end gap-3">
+        <BaseButton
+          type="button"
+          variant="outline"
+          :disabled="saving"
+          @click="emit('close')"
+          >{{ t('common.cancel') }}</BaseButton
+        >
+        <BaseButton type="submit" form="alert-rule-form" :loading="saving">{{
           t('common.save')
         }}</BaseButton>
       </div>
-    </form>
+    </template>
   </BaseModal>
 </template>
 <script setup>

@@ -3,111 +3,127 @@
     <div class="w-full max-w-full space-y-4 p-4 md:p-6">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 class="text-xl font-semibold text-ink-900">
+          <h1 class="text-lg font-semibold text-theme">
             {{ t('alertManagement.rules.title') }}
           </h1>
-          <p class="mt-1 text-sm text-ink-500">
+          <p class="mt-1 text-sm text-theme-muted">
             {{ t('alertManagement.rules.subtitle') }}
           </p>
         </div>
-        <BaseButton :disabled="!ready" @click="edit(null)">{{
-          t('alertManagement.rules.addRule')
-        }}</BaseButton>
       </div>
-      <p v-if="error" role="alert" class="text-sm text-danger-700">
-        {{ error }}
-        <button class="underline" @click="initialize">
-          {{ t('common.refresh') }}
-        </button>
-      </p>
-      <BaseLoading v-if="loading" />
-      <div v-else class="rounded-lg border border-line bg-surface">
-        <div class="overflow-x-auto">
-          <table
-            class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
-          >
-            <thead class="bg-surface-sunken text-ink-500">
-              <tr>
-                <th
-                  v-for="key in [
-                    'name',
-                    'events',
-                    'scope',
-                    'channel',
-                    'enabled',
-                    'actions'
-                  ]"
-                  :key="key"
-                  class="px-4 py-3 font-medium"
-                >
-                  {{
-                    key === 'scope'
-                      ? t('alertManagement.unified.resourceScope')
-                      : t(`alertManagement.rules.${key}`)
-                  }}
-                </th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-line text-ink-700">
-              <tr v-for="rule in rules" :key="rule.uuid">
-                <td class="px-4 py-3">
-                  <div class="font-medium">{{ rule.name }}</div>
-                  <span class="text-xs text-ink-500">{{
-                    t(`alertManagement.unified.subjects.${rule.subject}`)
-                  }}</span>
-                </td>
-                <td class="max-w-xs px-4 py-3">
-                  {{
-                    rule.events
-                      .map((event) =>
-                        t(`alertManagement.unified.events.${event}`)
-                      )
-                      .join(' · ')
-                  }}
-                </td>
-                <td class="px-4 py-3">{{ scopeLabel(rule) }}</td>
-                <td class="px-4 py-3">
-                  {{ rule.subscriptions.length
-                  }}<span v-if="rule.personal_subscription_enabled">
-                    · {{ t('alertManagement.unified.allowPersonal') }}</span
-                  >
-                </td>
-                <td class="px-4 py-3">
-                  {{ t(rule.enabled ? 'common.yes' : 'common.no') }}
-                </td>
-                <td class="px-4 py-3">
-                  <div class="flex gap-3">
-                    <button
-                      class="text-primary-600 underline"
-                      @click="edit(rule)"
-                    >
-                      {{ t('common.edit') }}</button
-                    ><button
-                      class="text-danger-700 underline"
-                      @click="deleteTarget = rule"
-                    >
-                      {{ t('common.delete') }}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="!rules.length">
-                <td colspan="6" class="p-10 text-center text-ink-500">
-                  {{ t('alertManagement.rules.noRules') }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      <BaseCard class="[&>.card-body]:p-4 md:[&>.card-body]:p-6">
+        <div class="mb-6 flex justify-end">
+          <BaseButton :disabled="!ready" @click="edit(null)">{{
+            t('alertManagement.rules.addRule')
+          }}</BaseButton>
         </div>
-        <PaginationBar
-          v-model:page-size="pageSize"
-          :current-page="page"
-          :total="total"
-          @page-size-change="changePage(1)"
-          @prev="changePage(page - 1)"
-          @next="changePage(page + 1)"
+        <p v-if="error" role="alert" class="text-sm text-danger-700">
+          {{ error }}
+          <button class="underline" @click="initialize">
+            {{ t('common.refresh') }}
+          </button>
+        </p>
+        <BaseLoading v-if="loading" />
+        <AlertEmptyState
+          v-else-if="!rules.length"
+          :text="t('alertManagement.rules.noRules')"
         />
-      </div>
+        <template v-else>
+          <div class="overflow-hidden rounded-lg border border-line bg-surface">
+            <div class="overflow-x-auto">
+              <table
+                class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
+              >
+                <thead class="bg-surface-sunken text-theme-muted">
+                  <tr>
+                    <th
+                      v-for="key in [
+                        'name',
+                        'events',
+                        'scope',
+                        'channel',
+                        'enabled',
+                        'actions'
+                      ]"
+                      :key="key"
+                      class="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-theme-secondary"
+                    >
+                      {{
+                        key === 'scope'
+                          ? t('alertManagement.unified.resourceScope')
+                          : t(`alertManagement.rules.${key}`)
+                      }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody
+                  class="divide-y divide-line bg-surface text-theme-secondary"
+                >
+                  <tr
+                    v-for="rule in rules"
+                    :key="rule.uuid"
+                    class="transition-colors hover:bg-surface-hover"
+                  >
+                    <td class="px-4 py-3">
+                      <div class="font-medium text-theme">{{ rule.name }}</div>
+                      <span class="text-xs text-theme-muted">{{
+                        t(`alertManagement.unified.subjects.${rule.subject}`)
+                      }}</span>
+                    </td>
+                    <td class="max-w-xs px-4 py-3">
+                      {{
+                        rule.events
+                          .map((event) =>
+                            t(`alertManagement.unified.events.${event}`)
+                          )
+                          .join(' · ')
+                      }}
+                    </td>
+                    <td class="max-w-xs break-words px-4 py-3">
+                      {{ scopeLabel(rule) }}
+                    </td>
+                    <td class="px-4 py-3">
+                      {{ rule.subscriptions.length
+                      }}<span v-if="rule.personal_subscription_enabled">
+                        · {{ t('alertManagement.unified.allowPersonal') }}</span
+                      >
+                    </td>
+                    <td class="px-4 py-3">
+                      <StatusBadge
+                        :status="rule.enabled ? 'enabled' : 'disabled'"
+                      />
+                    </td>
+                    <td class="px-4 py-3">
+                      <div class="flex gap-2">
+                        <BaseButton
+                          variant="ghost"
+                          size="sm"
+                          @click="edit(rule)"
+                          >{{ t('common.edit') }}</BaseButton
+                        >
+                        <BaseButton
+                          variant="danger-outline"
+                          size="sm"
+                          @click="deleteTarget = rule"
+                          >{{ t('common.delete') }}</BaseButton
+                        >
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <PaginationBar
+            v-model:page-size="pageSize"
+            :current-page="page"
+            :total="total"
+            @page-size-change="changePage(1)"
+            @prev="changePage(page - 1)"
+            @next="changePage(page + 1)"
+          />
+        </template>
+      </BaseCard>
       <AlertRuleEditor
         :show="showEditor"
         :value="editing"
@@ -121,14 +137,14 @@
         :title="t('alertManagement.rules.delete')"
         @close="deleteTarget = null"
       >
-        <p class="mb-4 text-sm text-ink-700">
+        <p class="mb-4 text-sm text-theme-secondary">
           {{ t('alertManagement.rules.confirmDelete') }}
         </p>
         <div class="flex justify-end gap-3">
           <BaseButton variant="outline" @click="deleteTarget = null">{{
             t('common.cancel')
           }}</BaseButton
-          ><BaseButton :loading="deleting" @click="remove">{{
+          ><BaseButton variant="danger" :loading="deleting" @click="remove">{{
             t('common.delete')
           }}</BaseButton>
         </div>
@@ -147,9 +163,12 @@ import {
 import { listAssistants, listDataSources, listLensNodes } from '@/api/lens'
 import { collectPaginatedResults } from '@/api/pagination'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
+import BaseCard from '@/components/ui/BaseCard.vue'
+import AlertEmptyState from './AlertEmptyState.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import AlertRuleEditor from './AlertRuleEditor.vue'
 import { alertApiError } from './alertOptions'

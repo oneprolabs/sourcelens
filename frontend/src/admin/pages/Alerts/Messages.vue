@@ -1,122 +1,150 @@
 <template>
   <AdminLayout>
-    <div class="space-y-4 p-4 md:p-6">
+    <div class="w-full max-w-full space-y-4 p-4 md:p-6">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 class="text-xl font-semibold text-ink-900">
+          <h1 class="text-lg font-semibold text-theme">
             {{ t('alertManagement.messages.title') }}
           </h1>
-          <p class="mt-1 text-sm text-ink-500">
+          <p class="mt-1 text-sm text-theme-muted">
             {{ t('alertManagement.messages.description') }}
           </p>
         </div>
-        <BaseButton @click="openPublisher">{{
-          t('alertManagement.messages.publish')
-        }}</BaseButton>
       </div>
-      <form class="flex flex-wrap items-end gap-3" @submit.prevent="load(1)">
-        <BaseInput
-          v-model="topic"
-          :label="t('alertManagement.messages.topic')"
-          placeholder="release.ready"
-        />
-        <BaseButton type="submit" variant="outline">{{
-          t('common.refresh')
-        }}</BaseButton>
-      </form>
-      <p v-if="error" role="alert" class="break-words text-sm text-danger-700">
-        {{ error }}
-      </p>
-      <p v-if="published" role="status" class="text-sm text-success-700">
-        {{ t('alertManagement.messages.recorded') }}
-      </p>
-      <BaseLoading v-if="loading" />
-      <div
-        v-else
-        class="overflow-x-auto rounded-lg border border-line bg-surface"
-      >
-        <table
-          class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
+      <BaseCard class="[&>.card-body]:p-4 md:[&>.card-body]:p-6">
+        <form
+          class="mb-6 grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap"
+          @submit.prevent="load(1)"
         >
-          <thead class="bg-surface-sunken text-ink-500">
-            <tr>
-              <th
-                v-for="key in [
-                  'topic',
-                  'messageTitle',
-                  'businessKey',
-                  'matching',
-                  'createdAt'
-                ]"
-                :key="key"
-                class="px-4 py-3 font-medium"
-              >
-                {{ t(`alertManagement.messages.${key}`) }}
-              </th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-line text-ink-700">
-            <tr v-for="row in messages" :key="row.uuid">
-              <td class="px-4 py-3">{{ row.topic }}</td>
-              <td class="max-w-md px-4 py-3">
-                <details>
-                  <summary class="cursor-pointer font-medium">
-                    {{ row.title }}
-                  </summary>
-                  <p class="mt-2 whitespace-pre-wrap break-words">
-                    {{ row.body }}
-                  </p>
-                </details>
-              </td>
-              <td class="max-w-xs break-all px-4 py-3">
-                {{ row.idempotency_key }}
-              </td>
-              <td class="px-4 py-3">
-                <p>
-                  {{
-                    t(
-                      row.processed_at
-                        ? 'alertManagement.messages.processed'
-                        : 'alertManagement.messages.pending'
-                    )
-                  }}
-                </p>
-                <router-link
-                  class="text-primary-600 underline"
-                  :to="{
-                    path: '/management/alerts/events',
-                    query: { subject: 'message', source_uuid: row.source_uuid }
-                  }"
-                  >{{ t('alertManagement.messages.deliveries') }}</router-link
-                >
-              </td>
-              <td class="whitespace-nowrap px-4 py-3">
-                {{ new Date(row.created_at).toLocaleString() }}
-                <p class="text-xs text-ink-500">{{ row.publisher_name }}</p>
-              </td>
-            </tr>
-            <tr v-if="!messages.length">
-              <td colspan="5" class="p-10 text-center text-ink-500">
-                {{ t('alertManagement.messages.empty') }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <PaginationBar
-          v-model:page-size="pageSize"
-          :current-page="page"
-          :total="total"
-          @page-size-change="load(1)"
-          @prev="load(page - 1)"
-          @next="load(page + 1)"
+          <BaseInput
+            v-model="topic"
+            class="col-span-2 w-full sm:w-64"
+            :label="t('alertManagement.messages.topic')"
+            placeholder="release.ready"
+          />
+          <BaseButton type="submit" variant="outline">{{
+            t('common.refresh')
+          }}</BaseButton>
+          <BaseButton class="sm:ml-auto" @click="openPublisher">{{
+            t('alertManagement.messages.publish')
+          }}</BaseButton>
+        </form>
+
+        <p
+          v-if="error"
+          role="alert"
+          class="break-words text-sm text-danger-700"
+        >
+          {{ error }}
+        </p>
+        <p v-if="published" role="status" class="text-sm text-success-700">
+          {{ t('alertManagement.messages.recorded') }}
+        </p>
+        <BaseLoading v-if="loading" />
+        <AlertEmptyState
+          v-else-if="!messages.length"
+          :text="t('alertManagement.messages.empty')"
         />
-      </div>
+        <template v-else>
+          <div class="overflow-hidden rounded-lg border border-line bg-surface">
+            <div class="overflow-x-auto">
+              <table
+                class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
+              >
+                <thead class="bg-surface-sunken text-theme-muted">
+                  <tr>
+                    <th
+                      v-for="key in [
+                        'topic',
+                        'messageTitle',
+                        'businessKey',
+                        'matching',
+                        'createdAt'
+                      ]"
+                      :key="key"
+                      class="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-theme-secondary"
+                    >
+                      {{ t(`alertManagement.messages.${key}`) }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody
+                  class="divide-y divide-line bg-surface text-theme-secondary"
+                >
+                  <tr
+                    v-for="row in messages"
+                    :key="row.uuid"
+                    class="transition-colors hover:bg-surface-hover"
+                  >
+                    <td class="px-4 py-3">{{ row.topic }}</td>
+                    <td class="max-w-md px-4 py-3">
+                      <details>
+                        <summary class="cursor-pointer font-medium">
+                          {{ row.title }}
+                        </summary>
+                        <p class="mt-2 whitespace-pre-wrap break-words">
+                          {{ row.body }}
+                        </p>
+                      </details>
+                    </td>
+                    <td class="max-w-xs break-all px-4 py-3">
+                      {{ row.idempotency_key }}
+                    </td>
+                    <td class="px-4 py-3">
+                      <p>
+                        {{
+                          t(
+                            row.processed_at
+                              ? 'alertManagement.messages.processed'
+                              : 'alertManagement.messages.pending'
+                          )
+                        }}
+                      </p>
+                      <router-link
+                        class="text-primary-600 underline"
+                        :to="{
+                          path: '/management/alerts/events',
+                          query: {
+                            subject: 'message',
+                            source_uuid: row.source_uuid
+                          }
+                        }"
+                        >{{
+                          t('alertManagement.messages.deliveries')
+                        }}</router-link
+                      >
+                    </td>
+                    <td class="whitespace-nowrap px-4 py-3">
+                      {{ new Date(row.created_at).toLocaleString() }}
+                      <p class="text-xs text-theme-muted">
+                        {{ row.publisher_name }}
+                      </p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <PaginationBar
+            v-model:page-size="pageSize"
+            :current-page="page"
+            :total="total"
+            @page-size-change="load(1)"
+            @prev="load(page - 1)"
+            @next="load(page + 1)"
+          />
+        </template>
+      </BaseCard>
       <BaseModal
         :show="showPublisher"
         :title="t('alertManagement.messages.publish')"
         @close="showPublisher = false"
       >
-        <form class="space-y-4" @submit.prevent="publish">
+        <form
+          id="alert-message-form"
+          class="space-y-4"
+          @submit.prevent="publish"
+        >
           <BaseInput
             v-model="form.topic"
             :label="t('alertManagement.messages.topic')"
@@ -130,7 +158,7 @@
             maxlength="160"
             required
           />
-          <p class="text-xs text-ink-500">
+          <p class="text-xs text-theme-muted">
             {{ t('alertManagement.messages.keyHint') }}
           </p>
           <BaseInput
@@ -139,41 +167,47 @@
             maxlength="200"
             required
           />
-          <label class="block text-sm text-ink-700"
+          <label class="block text-sm font-medium text-theme"
             >{{ t('alertManagement.messages.body')
             }}<textarea
               v-model="form.body"
               rows="6"
               maxlength="12000"
               required
-              class="mt-1 w-full rounded border border-line bg-surface p-2"
+              class="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-theme shadow-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
             />
           </label>
-          <details class="rounded border border-line p-3">
-            <summary class="cursor-pointer text-sm text-ink-700">
+          <details class="rounded-lg border border-line bg-surface-sunken p-4">
+            <summary class="cursor-pointer text-sm text-theme-secondary">
               {{ t('alertManagement.diagnosis.translations') }}
             </summary>
-            <p class="mt-2 text-xs text-ink-500">
+            <p class="mt-2 text-xs text-theme-muted">
               {{ t('alertManagement.diagnosis.translationHint') }}
             </p>
             <div
               v-for="(translation, language) in form.translations"
               :key="language"
-              class="mt-3 space-y-2"
+              class="mt-4 space-y-3 border-t border-line pt-4"
             >
-              <p class="text-sm font-medium">{{ language }}</p>
+              <p class="text-sm font-semibold text-theme">
+                {{
+                  { 'zh-CN': '简体中文', 'en-US': 'English', es: 'Español' }[
+                    language
+                  ]
+                }}
+              </p>
               <BaseInput
                 v-model="translation.title"
                 :label="t('alertManagement.messages.messageTitle')"
                 maxlength="200"
               />
-              <label class="block text-sm text-ink-700"
+              <label class="block text-sm font-medium text-theme"
                 >{{ t('alertManagement.messages.body') }}
                 <textarea
                   v-model="translation.body"
                   rows="3"
                   maxlength="12000"
-                  class="mt-1 w-full rounded border border-line bg-surface p-2"
+                  class="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-theme shadow-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                 />
               </label>
             </div>
@@ -185,18 +219,23 @@
           >
             {{ publishError }}
           </p>
-          <div class="flex justify-end gap-3">
+        </form>
+        <template #footer>
+          <div class="flex w-full justify-end gap-3">
             <BaseButton
               type="button"
               variant="outline"
               :disabled="publishing"
               @click="showPublisher = false"
               >{{ t('common.cancel') }}</BaseButton
-            ><BaseButton type="submit" :loading="publishing">{{
-              t('alertManagement.messages.publish')
-            }}</BaseButton>
+            ><BaseButton
+              type="submit"
+              form="alert-message-form"
+              :loading="publishing"
+              >{{ t('alertManagement.messages.publish') }}</BaseButton
+            >
           </div>
-        </form>
+        </template>
       </BaseModal>
     </div>
   </AdminLayout>
@@ -206,6 +245,8 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { alertsAdminApi } from '@/admin/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
+import BaseCard from '@/components/ui/BaseCard.vue'
+import AlertEmptyState from './AlertEmptyState.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'

@@ -4,13 +4,9 @@
       <h2 class="text-sm font-semibold text-theme">
         {{ t('settings.alertSubscriptions.title') }}
       </h2>
-      <button
-        type="button"
-        class="text-sm text-primary-600 underline"
-        @click="load"
-      >
+      <BaseButton type="button" variant="ghost" size="sm" @click="load">
         {{ t('common.refresh') }}
-      </button>
+      </BaseButton>
     </div>
     <p class="text-xs text-theme-secondary">
       {{ t('settings.alertSubscriptions.description') }}
@@ -21,13 +17,16 @@
     <p v-if="loading" role="status" class="text-sm text-theme-secondary">
       {{ t('common.loading') }}
     </p>
-    <div v-else class="divide-y divide-line">
+    <div
+      v-else
+      class="divide-y divide-line overflow-hidden rounded-xl border border-line"
+    >
       <div
         v-for="rule in rows"
         :key="rule.uuid"
-        class="flex items-center justify-between gap-3 py-3"
+        class="flex items-center justify-between gap-3 px-4 py-4"
       >
-        <span class="min-w-0 text-sm text-theme"
+        <span class="min-w-0 break-words text-sm font-medium text-theme"
           >{{ rule.name
           }}<span
             v-if="rule.topic"
@@ -35,9 +34,11 @@
             >{{ rule.topic }}</span
           ></span
         >
-        <button
+        <BaseButton
           type="button"
-          class="shrink-0 text-sm text-primary-600 underline disabled:opacity-50"
+          :variant="subscribed(rule) ? 'outline' : 'primary'"
+          size="sm"
+          class="shrink-0"
           :disabled="busy === rule.uuid"
           @click="toggle(rule)"
         >
@@ -48,15 +49,19 @@
                 : 'settings.alertSubscriptions.subscribe'
             )
           }}
-        </button>
+        </BaseButton>
       </div>
-      <p v-if="!rows.length" class="py-4 text-sm text-theme-secondary">
+      <p
+        v-if="!rows.length"
+        class="px-4 py-8 text-center text-sm text-theme-secondary"
+      >
         {{ t('settings.alertSubscriptions.empty') }}
       </p>
     </div>
   </section>
 </template>
 <script setup>
+import BaseButton from '@/components/ui/BaseButton.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { personalAlertsApi } from '@/api/alerts'
