@@ -24,7 +24,7 @@ def validate_channel(value, email_only=False):
     from agentcore_notifier.adapters.django.models import NotificationChannel
 
     channel = NotificationChannel.objects.filter(uuid=value, is_active=True).first()
-    supported = {"email"} if email_only else {"email", "webhook"}
+    supported = {"email"} if email_only else {"email", "webhook", "feishu", "wecom", "dingtalk"}
     if not channel or channel.channel_type not in supported:
         raise serializers.ValidationError("Select an active supported notification channel.")
     return channel

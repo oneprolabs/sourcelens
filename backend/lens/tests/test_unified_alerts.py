@@ -551,10 +551,41 @@ class UnifiedAlertTests(TestCase):
         ) as send:
             send_alert_delivery(delivery.uuid)
         send.assert_called_once()
-        self.assertEqual(send.call_args.kwargs["payload"]["msg_type"], "text")
+        self.assertEqual(send.call_args.kwargs["payload"]["msg_type"], "interactive")
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, "pending")
         self.assertEqual(delivery.attempts, 1)
+
+    def test_native_target_delivery_records_localized_content_and_remains_idempotent(
+        self,
+    ):
+        from unittest.mock import Mock
+
+        from agentcore_notifier.adapters.django.models import NotificationRecord
+
+        for provider, url in (
+            ("feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/test"),
+            ("wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"),
+            ("dingtalk", "https://oapi.dingtalk.com/robot/send?access_token=test"),
+        ):
+            channel = NotificationChannel.objects.create(name=provider, channel_type=provider, config={"url": url})
+            self.subscription.channel_uuid = channel.uuid
+            self.subscription.language = "zh-CN"
+            self.subscription.save()
+            run = self.run_event()
+            evaluate_run_alerts(run.uuid)
+            delivery = AlertDelivery.objects.get(event__source_uuid=str(run.uuid))
+            with patch("core.services.notification_targets.requests.post") as post:
+                post.return_value = Mock(status_code=200, json=Mock(return_value={"code": 0, "errcode": 0}))
+                send_alert_delivery(delivery.uuid)
+                send_alert_delivery(delivery.uuid)
+                post.assert_called_once()
+                self.assertIn("问答超时", str(post.call_args.kwargs["json"]))
+            delivery.refresh_from_db()
+            self.assertEqual(delivery.status, "sent")
+            record = NotificationRecord.objects.get(source_id=str(delivery.uuid))
+            self.assertEqual(record.locale, "zh-CN")
+            self.assertEqual(record.channel_link, channel)
 
     def test_publish_api_is_idempotent_and_rejects_changed_content(self):
         client = APIClient()

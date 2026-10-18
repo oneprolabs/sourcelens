@@ -197,4 +197,5 @@ def render_notification(delivery, language):
                 lines.append(f"{labels['recommendations']}: {item.get('action', '')[:800]}")
         else:
             lines.extend(["", labels["timed_out" if diagnosis.status == "timed_out" else "failed"]])
+    lines[0] = title
     return title, "\n".join(lines)[:16000]

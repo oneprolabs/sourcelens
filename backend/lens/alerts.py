@@ -434,7 +434,13 @@ def _delivery_result(delivery):
     if destination["channel_uuid"] != delivery.destination.get("channel_uuid"):
         return {"skipped": True, "reason": "Destination changed"}
     channel = NotificationChannel.objects.filter(uuid=destination["channel_uuid"] or None, is_active=True).first()
-    if not channel or channel.channel_type not in {"email", "webhook"}:
+    if not channel or channel.channel_type not in {
+        "email",
+        "webhook",
+        "feishu",
+        "wecom",
+        "dingtalk",
+    }:
         return {"skipped": True, "reason": "Notification channel unavailable"}
     from .alert_content import notification_language, render_notification
 
@@ -448,6 +454,17 @@ def _delivery_result(delivery):
     delivery.destination = {**delivery.destination, "language": language}
     AlertDelivery.objects.filter(pk=delivery.pk).update(destination=delivery.destination)
     title, body = render_notification(delivery, language)
+    if channel.channel_type in {"feishu", "wecom", "dingtalk"}:
+        from core.services.notification_targets import send_target
+
+        return send_target(
+            channel,
+            title,
+            body,
+            source_id=str(delivery.uuid),
+            warning=delivery.event.subject != "message",
+            language=language,
+        )
     if channel.channel_type == "email":
         recipients = sorted(set(destination["recipients"]) & set(delivery.destination.get("recipients") or []))
         if not recipients:
@@ -455,7 +472,17 @@ def _delivery_result(delivery):
         params = {"subject": title, "body": body, "to": recipients}
     else:
         provider = str((channel.config or {}).get("provider_type") or "feishu")
-        params = {"provider_type": provider, "payload": _webhook_payload(provider, body)}
+        from core.services.notification_targets import build_payload
+
+        params = {
+            "provider_type": provider,
+            "payload": build_payload(
+                "wecom" if provider == "wechat" else provider,
+                f"{(channel.config or {}).get('message_prefix', '')} {title}".strip(),
+                body,
+                warning=delivery.event.subject != "message",
+            ),
+        }
     return _send_notification(
         notification_type=channel.channel_type,
         channel_uuid=str(channel.uuid),
@@ -464,14 +491,6 @@ def _delivery_result(delivery):
         source_id=str(delivery.uuid),
         params=params,
     )
-
-
-def _webhook_payload(provider, text):
-    """Format text for supported notifier providers."""
-
-    if provider in {"wecom", "wechat", "dingtalk"}:
-        return {"msgtype": "text", "text": {"content": text}}
-    return {"msg_type": "text", "content": {"text": text}}
 
 
 def send_alert_delivery(delivery_uuid):
