@@ -1,257 +1,260 @@
 <template>
   <AdminLayout>
-    <div class="w-full max-w-full p-6">
-      <div class="mb-4">
-        <h1 class="text-lg font-semibold text-gray-900">
+    <div class="w-full max-w-full space-y-4 p-4 md:p-6">
+      <div>
+        <h1 class="text-xl font-semibold text-ink-900">
           {{ t('alertManagement.events.title') }}
         </h1>
-        <p class="mt-1 text-sm text-gray-500">
+        <p class="mt-1 text-sm text-ink-500">
           {{ t('alertManagement.events.subtitle') }}
         </p>
       </div>
-
-      <div class="bg-white rounded-lg border border-gray-200 shadow-sm">
-        <div class="p-6">
-          <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-            <BaseSelect v-model="eventFilter" class="w-56">
-              <option value="">
-                {{ t('alertManagement.events.allEvents') }}
-              </option>
-              <option value="run_failed">
-                {{ t('alertManagement.events.eventRunFailed') }}
-              </option>
-              <option value="token_exceeded">
-                {{ t('alertManagement.events.eventTokenExceeded') }}
-              </option>
-              <option value="rounds_exceeded">
-                {{ t('alertManagement.events.eventRoundsExceeded') }}
-              </option>
-            </BaseSelect>
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :loading="loading"
-              @click="loadEvents"
+      <div class="flex flex-wrap items-center gap-3">
+        <label class="text-sm text-ink-700"
+          >{{ t('alertManagement.unified.subject') }}
+          <BaseSelect
+            v-model="subject"
+            class="ml-2 rounded border border-line bg-surface p-2"
+            @change="resetFilters"
+          >
+            <option value="">
+              {{ t('alertManagement.unified.allResources') }}
+            </option>
+            <option
+              v-for="value in Object.keys(catalog)"
+              :key="value"
+              :value="value"
             >
-              {{ t('common.refresh') }}
-            </BaseButton>
-          </div>
-
-          <BaseLoading v-if="loading" />
-          <template v-else>
-            <div
-              v-if="events.length === 0"
-              class="py-16 text-center rounded-lg border border-gray-200 bg-gray-50"
-            >
-              <p class="text-sm font-medium text-gray-600">
-                {{ t('alertManagement.events.noEvents') }}
-              </p>
-            </div>
-            <div
-              v-else
-              class="overflow-x-auto rounded-lg border border-gray-200"
-            >
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                  <tr>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+              {{ t(`alertManagement.unified.subjects.${value}`) }}
+            </option>
+          </BaseSelect>
+        </label>
+        <label class="text-sm text-ink-700"
+          >{{ t('alertManagement.events.eventType') }}
+          <BaseSelect
+            v-model="eventType"
+            class="ml-2 rounded border border-line bg-surface p-2"
+            @change="load(1)"
+          >
+            <option value="">
+              {{ t('alertManagement.events.allEvents') }}
+            </option>
+            <option v-for="value in eventOptions" :key="value" :value="value">
+              {{ t(`alertManagement.unified.events.${value}`) }}
+            </option>
+          </BaseSelect>
+        </label>
+        <BaseButton
+          variant="outline"
+          size="sm"
+          :loading="loading"
+          @click="load(page)"
+          >{{ t('common.refresh') }}</BaseButton
+        >
+      </div>
+      <p v-if="error" role="alert" class="text-sm text-danger-700">
+        {{ error }}
+      </p>
+      <BaseLoading v-if="loading" />
+      <div v-else class="rounded-lg border border-line bg-surface">
+        <div class="overflow-x-auto">
+          <table
+            class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
+          >
+            <thead class="bg-surface-sunken text-ink-500">
+              <tr>
+                <th
+                  v-for="key in [
+                    'createdAt',
+                    'eventType',
+                    'rule',
+                    'assistant',
+                    'detail',
+                    'status'
+                  ]"
+                  :key="key"
+                  class="px-4 py-3 font-medium"
+                >
+                  {{
+                    key === 'assistant'
+                      ? t('alertManagement.unified.resourceScope')
+                      : t(`alertManagement.events.${key}`)
+                  }}
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-line text-ink-700">
+              <tr v-for="row in events" :key="row.uuid">
+                <td class="whitespace-nowrap px-4 py-3">
+                  {{ new Date(row.created_at).toLocaleString() }}
+                </td>
+                <td class="px-4 py-3">
+                  {{ t(`alertManagement.unified.events.${row.event_type}`) }}
+                </td>
+                <td class="px-4 py-3">{{ row.rule_name || '–' }}</td>
+                <td class="px-4 py-3">
+                  {{
+                    row.detail?.assistant_name ||
+                    row.detail?.datasource_name ||
+                    row.detail?.topic ||
+                    '–'
+                  }}
+                </td>
+                <td class="max-w-md px-4 py-3">
+                  <div>
+                    {{
+                      row.detail?.matched_events
+                        ?.map((event) =>
+                          t(`alertManagement.unified.events.${event}`)
+                        )
+                        .join(' · ') ||
+                      row.detail?.error ||
+                      '–'
+                    }}
+                  </div>
+                  <details v-if="row.deliveries.length" class="mt-2">
+                    <summary class="cursor-pointer text-primary-600">
+                      {{ t('alertManagement.unified.deliveryDetails') }} ({{
+                        row.deliveries.length
+                      }})
+                    </summary>
+                    <ul class="mt-2 space-y-2">
+                      <li
+                        v-for="delivery in row.deliveries"
+                        :key="delivery.uuid"
+                        class="break-words text-xs"
+                      >
+                        {{
+                          delivery.destination.name ||
+                          delivery.destination.recipients?.join(', ') ||
+                          delivery.destination.channel_uuid
+                        }}
+                        ·
+                        {{
+                          t(
+                            `alertManagement.unified.statuses.${delivery.status}`
+                          )
+                        }}
+                        <span v-if="delivery.error_message">
+                          · {{ delivery.error_message }}</span
+                        >
+                      </li>
+                    </ul>
+                    <button
+                      v-if="
+                        row.deliveries.some((item) => item.status === 'failed')
+                      "
+                      :disabled="retrying === row.uuid"
+                      class="mt-2 text-primary-600 underline disabled:opacity-50"
+                      @click="retry(row)"
                     >
-                      {{ t('alertManagement.events.createdAt') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.eventType') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.rule') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.assistant') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.user') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.detail') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.events.status') }}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-100">
-                  <tr
-                    v-for="row in events"
-                    :key="row.uuid"
-                    class="hover:bg-gray-50"
-                  >
-                    <td
-                      class="px-4 py-3 whitespace-nowrap text-sm text-gray-700"
-                    >
-                      {{ formatDate(row.created_at) }}
-                    </td>
-                    <td
-                      class="px-4 py-3 whitespace-nowrap text-sm text-gray-900"
-                    >
-                      {{ eventLabel(row.event_type) }}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      {{ row.rule_name || '–' }}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      {{ row.detail?.assistant_name || '–' }}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      {{ row.detail?.username || '–' }}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-md">
-                      {{ detailSummary(row) }}
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm">
-                      <span :class="statusClass(row.status)">
-                        {{ statusLabel(row.status) }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <PaginationBar
-              v-model:page-size="pageSize"
-              :current-page="currentPage"
-              :total="total"
-              @page-size-change="handlePageSizeChange"
-              @prev="goPrevPage"
-              @next="goNextPage"
-            />
-          </template>
+                      {{ t('alertManagement.unified.retry') }}
+                    </button>
+                  </details>
+                </td>
+                <td
+                  class="whitespace-nowrap px-4 py-3"
+                  :class="row.status === 'failed' ? 'text-danger-700' : ''"
+                >
+                  {{ t(`alertManagement.unified.statuses.${row.status}`) }}
+                </td>
+              </tr>
+              <tr v-if="!events.length">
+                <td colspan="6" class="p-10 text-center text-ink-500">
+                  {{ t('alertManagement.events.noEvents') }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+        <PaginationBar
+          v-model:page-size="pageSize"
+          :current-page="page"
+          :total="total"
+          @page-size-change="load(1)"
+          @prev="load(page - 1)"
+          @next="load(page + 1)"
+        />
       </div>
     </div>
   </AdminLayout>
 </template>
-
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-
 import { alertsAdminApi } from '@/admin/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
-import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
-
+import { alertApiError } from './alertOptions'
 const { t } = useI18n()
-
-const loading = ref(false)
-const events = ref([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(20)
-const eventFilter = ref('')
-
-function eventLabel(value) {
-  const labels = {
-    run_failed: t('alertManagement.events.eventRunFailed'),
-    token_exceeded: t('alertManagement.events.eventTokenExceeded'),
-    rounds_exceeded: t('alertManagement.events.eventRoundsExceeded')
-  }
-  return labels[value] || value
-}
-
-function statusLabel(value) {
-  const labels = {
-    dispatched: t('alertManagement.events.statusDispatched'),
-    skipped: t('alertManagement.events.statusSkipped'),
-    failed: t('alertManagement.events.statusFailed')
-  }
-  return labels[value] || value
-}
-
-function statusClass(value) {
-  if (value === 'dispatched') return 'text-green-600'
-  if (value === 'failed') return 'text-red-600'
-  return 'text-gray-500'
-}
-
-function formatDate(value) {
-  if (!value) return '–'
-  return new Date(value).toLocaleString()
-}
-
-function detailSummary(row) {
-  const detail = row.detail || {}
-  const parts = []
-  if (row.event_type === 'token_exceeded') {
-    parts.push(
-      `${t('alertManagement.events.tokens')}: ${detail.total_tokens} / ${detail.token_threshold}`
-    )
-  } else if (row.event_type === 'rounds_exceeded') {
-    parts.push(
-      `${t('alertManagement.events.rounds')}: ${detail.rounds} / ${detail.rounds_threshold}`
-    )
-  } else if (row.event_type === 'run_failed') {
-    parts.push(detail.error || t('alertManagement.events.unknownError'))
-  }
-  if (detail.question) parts.push(detail.question)
-  return parts.join(' · ') || '–'
-}
-
-function handlePageSizeChange() {
-  currentPage.value = 1
-  loadEvents()
-}
-
-function goPrevPage() {
-  if (currentPage.value <= 1) return
-  currentPage.value -= 1
-  loadEvents()
-}
-
-function goNextPage() {
-  if (currentPage.value * pageSize.value >= total.value) return
-  currentPage.value += 1
-  loadEvents()
-}
-
-async function loadEvents() {
+const route = useRoute()
+const events = ref([]),
+  catalog = ref({}),
+  subject = ref(String(route.query.subject || '')),
+  eventType = ref(''),
+  loading = ref(false),
+  error = ref(''),
+  retrying = ref('')
+const page = ref(1),
+  pageSize = ref(20),
+  total = ref(0)
+const eventOptions = computed(() =>
+  subject.value
+    ? catalog.value[subject.value] || []
+    : [...new Set(Object.values(catalog.value).flat())]
+)
+async function load(value = 1) {
+  page.value = Math.max(1, value)
   loading.value = true
+  error.value = ''
   try {
-    const params = {
-      page: currentPage.value,
-      page_size: pageSize.value
-    }
-    if (eventFilter.value) params.event_type = eventFilter.value
-    const data = await alertsAdminApi.getEvents(params)
-    events.value = Array.isArray(data) ? data : data?.results || []
-    total.value = Array.isArray(data) ? data.length : data?.count || 0
-  } catch {
-    events.value = []
-    total.value = 0
+    const data = await alertsAdminApi.getEvents({
+      page: page.value,
+      page_size: pageSize.value,
+      subject: subject.value,
+      event_type: eventType.value,
+      source_uuid: route.query.source_uuid || undefined
+    })
+    events.value = data.results || []
+    total.value = data.count || 0
+  } catch (err) {
+    error.value = alertApiError(err)
   } finally {
     loading.value = false
   }
 }
-
-watch(eventFilter, () => {
-  currentPage.value = 1
-  loadEvents()
-})
-
-onMounted(() => {
-  loadEvents()
+function resetFilters() {
+  eventType.value = ''
+  load(1)
+}
+async function retry(row) {
+  retrying.value = row.uuid
+  try {
+    await alertsAdminApi.retryEvent(row.uuid)
+    await load(page.value)
+  } catch (err) {
+    error.value = alertApiError(err)
+  } finally {
+    retrying.value = ''
+  }
+}
+watch(
+  () => route.query,
+  () => {
+    subject.value = String(route.query.subject || '')
+    load(1)
+  }
+)
+onMounted(async () => {
+  try {
+    catalog.value = await alertsAdminApi.getCatalog()
+    await load()
+  } catch (err) {
+    error.value = alertApiError(err)
+  }
 })
 </script>

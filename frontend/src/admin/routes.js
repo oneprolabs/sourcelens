@@ -179,6 +179,12 @@ export const adminRoutes = [
     meta: { requiresAuth: true, requiredFeature: 'admin_console' }
   },
   {
+    path: '/management/alerts/messages',
+    name: 'AdminAlertMessages',
+    component: () => import('@/admin/pages/Alerts/Messages.vue'),
+    meta: { requiresAuth: true, requiredFeature: 'admin_console' }
+  },
+  {
     path: '/management/alerts/events',
     name: 'AdminAlertEvents',
     component: () => import('@/admin/pages/Alerts/Events.vue'),

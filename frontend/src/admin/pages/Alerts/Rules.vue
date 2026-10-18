@@ -1,559 +1,289 @@
 <template>
   <AdminLayout>
-    <div class="w-full max-w-full p-6">
-      <div class="mb-4">
-        <h1 class="text-lg font-semibold text-gray-900">
-          {{ t('alertManagement.rules.title') }}
-        </h1>
-        <p class="mt-1 text-sm text-gray-500">
-          {{ t('alertManagement.rules.subtitle') }}
-        </p>
-      </div>
-
-      <div class="bg-white rounded-lg border border-gray-200 shadow-sm">
-        <div class="p-6">
-          <div class="flex flex-wrap items-center justify-end gap-3 mb-6">
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :loading="loading"
-              @click="loadRules"
-            >
-              {{ t('common.refresh') }}
-            </BaseButton>
-            <BaseButton variant="primary" size="sm" @click="openAddModal">
-              {{ t('alertManagement.rules.addRule') }}
-            </BaseButton>
-          </div>
-
-          <BaseLoading v-if="loading" />
-          <template v-else>
-            <div
-              v-if="rules.length === 0"
-              class="py-16 text-center rounded-lg border border-gray-200 bg-gray-50"
-            >
-              <p class="text-sm font-medium text-gray-600">
-                {{ t('alertManagement.rules.noRules') }}
-              </p>
-            </div>
-            <div
-              v-else
-              class="overflow-x-auto rounded-lg border border-gray-200"
-            >
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                  <tr>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.name') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.events') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.scope') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.channel') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.enabled') }}
-                    </th>
-                    <th
-                      class="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider"
-                    >
-                      {{ t('alertManagement.rules.actions') }}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-100">
-                  <tr
-                    v-for="row in rules"
-                    :key="row.uuid"
-                    class="hover:bg-gray-50"
-                  >
-                    <td class="px-4 py-3 text-sm text-gray-900">
-                      {{ row.name }}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      <span
-                        v-for="event in row.events"
-                        :key="event"
-                        class="inline-flex items-center px-2 py-0.5 mr-1 rounded text-xs font-medium bg-gray-100 text-gray-700"
-                      >
-                        {{ eventLabel(event) }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      <span
-                        v-if="!row.assistants || row.assistants.length === 0"
-                      >
-                        {{ t('alertManagement.rules.allAssistants') }}
-                      </span>
-                      <span v-else>
-                        {{ assistantNames(row.assistants) }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-700">
-                      {{ channelName(row.channel_uuid) }}
-                    </td>
-                    <td class="px-4 py-3 text-sm">
-                      <span
-                        :class="
-                          row.enabled ? 'text-green-600' : 'text-gray-400'
-                        "
-                      >
-                        {{ row.enabled ? t('common.yes') : t('common.no') }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-right">
-                      <RowActionMenu
-                        :actions="rowActions"
-                        @select="handleRowAction($event, row)"
-                      />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </template>
+    <div class="w-full max-w-full space-y-4 p-4 md:p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 class="text-xl font-semibold text-ink-900">
+            {{ t('alertManagement.rules.title') }}
+          </h1>
+          <p class="mt-1 text-sm text-ink-500">
+            {{ t('alertManagement.rules.subtitle') }}
+          </p>
         </div>
+        <BaseButton :disabled="!ready" @click="edit(null)">{{
+          t('alertManagement.rules.addRule')
+        }}</BaseButton>
       </div>
-
-      <BaseModal
-        :show="showModal"
-        :title="
-          editingUuid
-            ? t('alertManagement.rules.editRule')
-            : t('alertManagement.rules.addRule')
-        "
-        @close="closeModal"
-      >
-        <form @submit.prevent="submitForm" class="space-y-4">
-          <BaseInput
-            v-model="form.name"
-            :label="t('alertManagement.rules.name')"
-            required
-          />
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              {{ t('alertManagement.rules.events') }}
-            </label>
-            <label
-              v-for="option in eventOptions"
-              :key="option.value"
-              class="flex cursor-pointer items-center gap-2 py-1"
-            >
-              <input
-                v-model="form.events"
-                type="checkbox"
-                :value="option.value"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700">{{ option.label }}</span>
-            </label>
-          </div>
-
-          <BaseInput
-            v-if="form.events.includes('token_exceeded')"
-            v-model="form.token_threshold"
-            type="number"
-            :label="t('alertManagement.rules.tokenThreshold')"
-            required
-          />
-          <BaseInput
-            v-if="form.events.includes('rounds_exceeded')"
-            v-model="form.rounds_threshold"
-            type="number"
-            :label="t('alertManagement.rules.roundsThreshold')"
-            required
-          />
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              {{ t('alertManagement.rules.channel') }}
-            </label>
-            <BaseSelect v-model="form.channel_uuid">
-              <option value="">
-                {{ t('alertManagement.rules.channelPlaceholder') }}
-              </option>
-              <option
-                v-for="channel in channels"
-                :key="channel.uuid"
-                :value="channel.uuid"
-              >
-                {{ channelLabel(channel) }}
-              </option>
-            </BaseSelect>
-          </div>
-
-          <div v-if="isEmailChannel">
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              {{ t('alertManagement.rules.emailRecipients') }}
-            </label>
-            <textarea
-              v-model="form.email_recipients"
-              rows="2"
-              class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
-              :placeholder="
-                t('alertManagement.rules.emailRecipientsPlaceholder')
-              "
-            ></textarea>
-            <p class="mt-1 text-xs text-gray-500">
-              {{ t('alertManagement.rules.emailRecipientsDesc') }}
-            </p>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              {{ t('alertManagement.rules.scope') }}
-            </label>
-            <p class="mb-2 text-xs text-gray-500">
-              {{ t('alertManagement.rules.selectAssistantsDesc') }}
-            </p>
-            <div
-              class="max-h-48 overflow-y-auto rounded-md border border-gray-200 p-2 space-y-1"
-            >
-              <label
-                v-for="assistant in assistants"
-                :key="assistant.uuid"
-                class="flex cursor-pointer items-center gap-2"
-              >
-                <input
-                  v-model="form.assistants"
-                  type="checkbox"
-                  :value="assistant.uuid"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span class="text-sm text-gray-700">{{ assistant.name }}</span>
-              </label>
-            </div>
-          </div>
-
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              v-model="form.enabled"
-              type="checkbox"
-              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-            <span class="text-sm font-medium text-gray-700">
-              {{ t('alertManagement.rules.enabled') }}
-            </span>
-          </label>
-
-          <div v-if="formError" class="text-sm text-red-600">
-            {{ formError }}
-          </div>
-
-          <div
-            class="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-gray-200"
+      <p v-if="error" role="alert" class="text-sm text-danger-700">
+        {{ error }}
+        <button class="underline" @click="initialize">
+          {{ t('common.refresh') }}
+        </button>
+      </p>
+      <BaseLoading v-if="loading" />
+      <div v-else class="rounded-lg border border-line bg-surface">
+        <div class="overflow-x-auto">
+          <table
+            class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
           >
-            <BaseButton type="button" variant="outline" @click="closeModal">
-              {{ t('common.cancel') }}
-            </BaseButton>
-            <BaseButton type="submit" variant="primary" :loading="saving">
-              {{ t('common.save') }}
-            </BaseButton>
-          </div>
-        </form>
-      </BaseModal>
-
+            <thead class="bg-surface-sunken text-ink-500">
+              <tr>
+                <th
+                  v-for="key in [
+                    'name',
+                    'events',
+                    'scope',
+                    'channel',
+                    'enabled',
+                    'actions'
+                  ]"
+                  :key="key"
+                  class="px-4 py-3 font-medium"
+                >
+                  {{
+                    key === 'scope'
+                      ? t('alertManagement.unified.resourceScope')
+                      : t(`alertManagement.rules.${key}`)
+                  }}
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-line text-ink-700">
+              <tr v-for="rule in rules" :key="rule.uuid">
+                <td class="px-4 py-3">
+                  <div class="font-medium">{{ rule.name }}</div>
+                  <span class="text-xs text-ink-500">{{
+                    t(`alertManagement.unified.subjects.${rule.subject}`)
+                  }}</span>
+                </td>
+                <td class="max-w-xs px-4 py-3">
+                  {{
+                    rule.events
+                      .map((event) =>
+                        t(`alertManagement.unified.events.${event}`)
+                      )
+                      .join(' · ')
+                  }}
+                </td>
+                <td class="px-4 py-3">{{ scopeLabel(rule) }}</td>
+                <td class="px-4 py-3">
+                  {{ rule.subscriptions.length
+                  }}<span v-if="rule.personal_subscription_enabled">
+                    · {{ t('alertManagement.unified.allowPersonal') }}</span
+                  >
+                </td>
+                <td class="px-4 py-3">
+                  {{ t(rule.enabled ? 'common.yes' : 'common.no') }}
+                </td>
+                <td class="px-4 py-3">
+                  <div class="flex gap-3">
+                    <button
+                      class="text-primary-600 underline"
+                      @click="edit(rule)"
+                    >
+                      {{ t('common.edit') }}</button
+                    ><button
+                      class="text-danger-700 underline"
+                      @click="deleteTarget = rule"
+                    >
+                      {{ t('common.delete') }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="!rules.length">
+                <td colspan="6" class="p-10 text-center text-ink-500">
+                  {{ t('alertManagement.rules.noRules') }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <PaginationBar
+          v-model:page-size="pageSize"
+          :current-page="page"
+          :total="total"
+          @page-size-change="changePage(1)"
+          @prev="changePage(page - 1)"
+          @next="changePage(page + 1)"
+        />
+      </div>
+      <AlertRuleEditor
+        :show="showEditor"
+        :value="editing"
+        :options="options"
+        :catalog="catalog"
+        @close="showEditor = false"
+        @saved="saved"
+      />
       <BaseModal
-        :show="showDeleteConfirm"
+        :show="!!deleteTarget"
         :title="t('alertManagement.rules.delete')"
-        @close="showDeleteConfirm = false"
+        @close="deleteTarget = null"
       >
-        <p class="text-sm text-gray-700 mb-4">
+        <p class="mb-4 text-sm text-ink-700">
           {{ t('alertManagement.rules.confirmDelete') }}
         </p>
-        <div class="flex flex-wrap items-center justify-end gap-3">
-          <BaseButton variant="outline" @click="showDeleteConfirm = false">
-            {{ t('common.cancel') }}
-          </BaseButton>
-          <BaseButton
-            variant="primary"
-            :loading="deleting"
-            class="bg-red-600 hover:bg-red-700"
-            @click="doDelete"
-          >
-            {{ t('common.delete') }}
-          </BaseButton>
+        <div class="flex justify-end gap-3">
+          <BaseButton variant="outline" @click="deleteTarget = null">{{
+            t('common.cancel')
+          }}</BaseButton
+          ><BaseButton :loading="deleting" @click="remove">{{
+            t('common.delete')
+          }}</BaseButton>
         </div>
       </BaseModal>
     </div>
   </AdminLayout>
 </template>
-
 <script setup>
-import { Pencil, Trash2 } from '@lucide/vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-
-import { alertsAdminApi, notificationsAdminApi } from '@/admin/api'
+import {
+  alertsAdminApi,
+  managementApi,
+  notificationsAdminApi
+} from '@/admin/api'
+import { listAssistants, listDataSources, listLensNodes } from '@/api/lens'
+import { collectPaginatedResults } from '@/api/pagination'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
-import { listAssistants } from '@/api/lens'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
-import BaseSelect from '@/components/ui/BaseSelect.vue'
-import RowActionMenu from '@/components/ui/RowActionMenu.vue'
-import { useToast } from '@/composables/useToast'
-
+import PaginationBar from '@/components/ui/PaginationBar.vue'
+import AlertRuleEditor from './AlertRuleEditor.vue'
+import { alertApiError } from './alertOptions'
 const { t } = useI18n()
-const { showSuccess, showError } = useToast()
-
-const loading = ref(false)
-const saving = ref(false)
-const deleting = ref(false)
-const rules = ref([])
-const channels = ref([])
-const assistants = ref([])
-const showModal = ref(false)
-const showDeleteConfirm = ref(false)
-const editingUuid = ref(null)
-const deleteTarget = ref(null)
-const formError = ref('')
-
-const form = reactive({
-  name: '',
-  enabled: true,
-  events: [],
-  token_threshold: '',
-  rounds_threshold: '',
-  channel_uuid: '',
-  email_recipients: '',
-  assistants: []
-})
-
-const eventOptions = computed(() => [
-  { value: 'run_failed', label: t('alertManagement.rules.eventRunFailed') },
-  {
-    value: 'token_exceeded',
-    label: t('alertManagement.rules.eventTokenExceeded')
-  },
-  {
-    value: 'rounds_exceeded',
-    label: t('alertManagement.rules.eventRoundsExceeded')
-  }
-])
-
-const rowActions = computed(() => [
-  { key: 'edit', label: t('common.edit'), icon: Pencil },
-  {
-    key: 'delete',
-    label: t('common.delete'),
-    icon: Trash2,
-    variant: 'danger',
-    divider: true
-  }
-])
-
-const isEmailChannel = computed(() => {
-  const channel = channels.value.find((item) => item.uuid === form.channel_uuid)
-  return channel?.channel_type === 'email'
-})
-
-function eventLabel(value) {
-  const option = eventOptions.value.find((item) => item.value === value)
-  return option ? option.label : value
-}
-
-function channelLabel(channel) {
-  const type =
-    channel.channel_type === 'email'
-      ? t('alertManagement.rules.typeEmail')
-      : t('alertManagement.rules.typeWebhook')
-  return `${channel.name || channel.uuid} (${type})`
-}
-
-function channelName(uuid) {
-  if (!uuid) return t('alertManagement.rules.noChannel')
-  const channel = channels.value.find((item) => item.uuid === uuid)
-  return channel ? channel.name || uuid : uuid
-}
-
-function assistantNames(uuids) {
-  return uuids
-    .map(
-      (uuid) =>
-        assistants.value.find((item) => item.uuid === uuid)?.name || uuid
-    )
-    .join(', ')
-}
-
-function resetForm() {
-  form.name = ''
-  form.enabled = true
-  form.events = []
-  form.token_threshold = ''
-  form.rounds_threshold = ''
-  form.channel_uuid = ''
-  form.email_recipients = ''
-  form.assistants = []
-  formError.value = ''
-  editingUuid.value = null
-}
-
-function openAddModal() {
-  resetForm()
-  showModal.value = true
-}
-
-function openEditModal(row) {
-  resetForm()
-  editingUuid.value = row.uuid
-  form.name = row.name || ''
-  form.enabled = !!row.enabled
-  form.events = [...(row.events || [])]
-  form.token_threshold = row.token_threshold ?? ''
-  form.rounds_threshold = row.rounds_threshold ?? ''
-  form.channel_uuid = row.channel_uuid || ''
-  form.email_recipients = (row.email_recipients || []).join('\n')
-  form.assistants = [...(row.assistants || [])]
-  showModal.value = true
-}
-
-function closeModal() {
-  showModal.value = false
-  resetForm()
-}
-
-function handleRowAction(action, row) {
-  if (action === 'edit') {
-    openEditModal(row)
-    return
-  }
-  deleteTarget.value = row
-  showDeleteConfirm.value = true
-}
-
-async function loadRules() {
-  loading.value = true
+const rules = ref([]),
+  catalog = ref({}),
+  options = ref({
+    assistants: [],
+    datasources: [],
+    lensnodes: [],
+    channels: [],
+    users: [],
+    groups: []
+  })
+const loading = ref(false),
+  ready = ref(false),
+  error = ref(''),
+  showEditor = ref(false),
+  editing = ref(null),
+  deleteTarget = ref(null),
+  deleting = ref(false)
+const page = ref(1),
+  pageSize = ref(20),
+  total = ref(0)
+const choices = (rows, identity = 'uuid') =>
+  rows.map((row) => ({
+    value: row[identity],
+    label: row.name || row.username || row.email || String(row[identity])
+  }))
+async function availableScopes(request) {
   try {
-    const data = await alertsAdminApi.getRules({ page_size: 100 })
-    rules.value = Array.isArray(data) ? data : data?.results || []
-  } catch {
-    rules.value = []
+    return await request
+  } catch (error) {
+    if (error?.response?.status === 403) return []
+    throw error
+  }
+}
+async function initialize() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [
+      events,
+      assistants,
+      datasources,
+      lensnodes,
+      channels,
+      users,
+      groups
+    ] = await Promise.all([
+      alertsAdminApi.getCatalog(),
+      listAssistants(),
+      availableScopes(
+        collectPaginatedResults((page) =>
+          listDataSources({ page, page_size: 100 })
+        )
+      ),
+      availableScopes(listLensNodes()),
+      collectPaginatedResults((page) =>
+        notificationsAdminApi.getChannels({ page, page_size: 100 })
+      ),
+      managementApi.getAllUsers(),
+      managementApi.getAllGroups()
+    ])
+    catalog.value = events
+    options.value = {
+      assistants: choices(assistants),
+      datasources: choices(datasources),
+      lensnodes: choices(lensnodes),
+      channels: channels.filter(
+        (row) =>
+          row.is_active && ['email', 'webhook'].includes(row.channel_type)
+      ),
+      users: choices(users, 'id'),
+      groups: choices(groups, 'id')
+    }
+    ready.value = true
+    await loadRules()
+  } catch (err) {
+    error.value = alertApiError(err)
   } finally {
     loading.value = false
   }
 }
-
-async function loadChannels() {
+async function loadRules() {
+  const data = await alertsAdminApi.getRules({
+    page: page.value,
+    page_size: pageSize.value
+  })
+  rules.value = data.results || []
+  total.value = data.count || 0
+}
+async function changePage(value) {
+  page.value = Math.max(1, value)
   try {
-    const data = await notificationsAdminApi.getChannels()
-    const rows = Array.isArray(data) ? data : data?.results || []
-    channels.value = rows.filter((channel) =>
-      ['webhook', 'email'].includes(channel.channel_type)
-    )
-  } catch {
-    channels.value = []
+    await loadRules()
+  } catch (err) {
+    error.value = alertApiError(err)
   }
 }
-
-async function loadAssistants() {
-  try {
-    const data = await listAssistants()
-    assistants.value = Array.isArray(data) ? data : []
-  } catch {
-    assistants.value = []
-  }
+function scopeLabel(rule) {
+  if (rule.subject === 'message') return rule.topic
+  const resources = rule.subject === 'run' ? rule.assistants : rule.datasources
+  const available =
+    rule.subject === 'run'
+      ? options.value.assistants
+      : options.value.datasources
+  return resources.length
+    ? resources
+        .map(
+          (uuid) => available.find((row) => row.value === uuid)?.label || uuid
+        )
+        .join(', ')
+    : t('alertManagement.unified.allResources')
 }
-
-async function submitForm() {
-  formError.value = ''
-  if (!form.name.trim()) {
-    formError.value = t('alertManagement.rules.nameRequired')
-    return
-  }
-  if (form.events.length === 0) {
-    formError.value = t('alertManagement.rules.eventsRequired')
-    return
-  }
-  if (form.events.includes('token_exceeded') && !Number(form.token_threshold)) {
-    formError.value = t('alertManagement.rules.thresholdRequired')
-    return
-  }
-  if (
-    form.events.includes('rounds_exceeded') &&
-    !Number(form.rounds_threshold)
-  ) {
-    formError.value = t('alertManagement.rules.thresholdRequired')
-    return
-  }
-  const recipients = form.email_recipients
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-  if (isEmailChannel.value && recipients.length === 0) {
-    formError.value = t('alertManagement.rules.emailRecipientsRequired')
-    return
-  }
-  const body = {
-    name: form.name.trim(),
-    enabled: form.enabled,
-    events: form.events,
-    token_threshold: form.events.includes('token_exceeded')
-      ? Number(form.token_threshold)
-      : null,
-    rounds_threshold: form.events.includes('rounds_exceeded')
-      ? Number(form.rounds_threshold)
-      : null,
-    channel_uuid: form.channel_uuid || null,
-    email_recipients: recipients,
-    assistants: form.assistants
-  }
-  saving.value = true
-  try {
-    if (editingUuid.value) {
-      await alertsAdminApi.updateRule(editingUuid.value, body)
-    } else {
-      await alertsAdminApi.createRule(body)
-    }
-    showSuccess(t('alertManagement.rules.saveSuccess'))
-    closeModal()
-    loadRules()
-  } catch (e) {
-    showError(
-      e?.response?.data?.detail ||
-        e?.message ||
-        t('alertManagement.rules.saveFailed')
-    )
-  } finally {
-    saving.value = false
-  }
+function edit(rule) {
+  editing.value = rule
+  showEditor.value = true
 }
-
-async function doDelete() {
-  if (!deleteTarget.value) return
+async function saved() {
+  showEditor.value = false
+  await changePage(page.value)
+}
+async function remove() {
   deleting.value = true
   try {
     await alertsAdminApi.deleteRule(deleteTarget.value.uuid)
-    showSuccess(t('common.success'))
-    showDeleteConfirm.value = false
     deleteTarget.value = null
-    loadRules()
-  } catch (e) {
-    showError(e?.response?.data?.detail || e?.message || t('common.error'))
+    await changePage(1)
+  } catch (err) {
+    error.value = alertApiError(err)
   } finally {
     deleting.value = false
   }
 }
-
-onMounted(() => {
-  loadRules()
-  loadChannels()
-  loadAssistants()
-})
+onMounted(initialize)
 </script>

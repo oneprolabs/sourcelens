@@ -6,6 +6,26 @@ import apiClient from '@/api/index'
 import { extractResponseData } from '@/utils/api'
 
 export const alertsAdminApi = {
+  getMessages(params = {}) {
+    return apiClient
+      .get('/lens/admin/alert-messages/', { params })
+      .then(extractResponseData)
+  },
+  publishMessage(body) {
+    return apiClient
+      .post('/lens/admin/alert-messages/', body)
+      .then(extractResponseData)
+  },
+  getCatalog() {
+    return apiClient
+      .get('/lens/admin/alert-rules/catalog/')
+      .then(extractResponseData)
+  },
+  retryEvent(uuid) {
+    return apiClient
+      .post(`/lens/admin/alert-events/${uuid}/retry/`)
+      .then(extractResponseData)
+  },
   getRules(params = {}) {
     return apiClient
       .get('/lens/admin/alert-rules/', { params })

@@ -1,5 +1,5 @@
 type: feature
 audience: admin
-en: Added admin alert rules that send notifications through existing notification channels when a QA run fails, exceeds a configured token threshold, or exceeds a configured round threshold.
-zh-CN: 新增管理台告警规则：当问答 Run 回答失败、超出配置的 token 阈值或超出配置的轮次阈值时，通过现有通知渠道发送告警。
-es: Se añadieron reglas de alerta en la consola de administración que envían notificaciones a través de los canales existentes cuando una ejecución de consulta falla, supera un umbral de tokens configurado o supera un umbral de rondas configurado.
+en: Unified synchronization, processing and Q&A alerts with topic-based message publication, personal email subscriptions, idempotency keys, destination deduplication and retryable delivery records.
+zh-CN: 统一同步、处理与问答告警，新增按主题发布消息、个人邮件订阅、业务幂等键、通知目标去重与可重试的投递记录。
+es: Alertas unificadas de sincronización, procesamiento y consultas con publicación por temas, suscripciones personales por correo, claves de idempotencia, deduplicación de destinos e historial de entrega con reintentos.
