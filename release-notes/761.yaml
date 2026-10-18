@@ -1,0 +1,11 @@
+type: fix
+audience: user
+en: >-
+  Improve Q&A reliability with literal phrase search across converted documents,
+  preserved source paths, and retained tool evidence when preparing final answers.
+  Reduce model gateway cold-start failures and let disconnected answer streams
+  close promptly.
+zh-CN: >-
+  改进问答可靠性：按字面短语检索转换后的文档、保留原始来源路径，
+  并在生成最终回答时保留已获取的工具证据。减少模型网关冷启动失败，
+  断开的回答流可及时关闭。
