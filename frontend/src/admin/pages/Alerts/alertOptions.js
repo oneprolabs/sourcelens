@@ -15,6 +15,12 @@ export function alertRulePayload(form) {
     enabled: form.enabled ?? true,
     events,
     evaluation_mode: form.evaluation_mode || 'terminal',
+    diagnosis_mode:
+      form.subject === 'message' || form.evaluation_mode === 'running'
+        ? 'direct'
+        : form.diagnosis_mode || 'direct',
+    diagnosis_timeout_seconds: Number(form.diagnosis_timeout_seconds ?? 60),
+    diagnosis_max_tokens: Number(form.diagnosis_max_tokens ?? 2048),
     token_threshold: events.includes('token_exceeded')
       ? Number(form.token_threshold)
       : null,
@@ -39,6 +45,7 @@ export function alertRulePayload(form) {
     subscriptions: (form.subscriptions || []).map((item) => ({
       ...(item.uuid ? { uuid: item.uuid } : {}),
       name: item.name || '',
+      language: item.language || 'en-US',
       enabled: item.enabled ?? true,
       channel_uuid: item.channel_uuid || null,
       email_recipients: [

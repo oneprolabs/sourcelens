@@ -827,6 +827,29 @@
     }
   },
   "alertManagement": {
+    "diagnosis": {
+      "mode": "通知发送方式",
+      "modes": {
+        "direct": "直接发送",
+        "diagnose_first": "先诊断再发送",
+        "notify_then_diagnose": "先告警，再补诊断"
+      },
+      "timeout": "诊断等待上限（秒）",
+      "maxTokens": "诊断输出 token 上限",
+      "fallbackHint": "诊断失败或超时仍会发送基础告警。",
+      "language": "通知语言",
+      "title": "诊断分析",
+      "supplement": "诊断补充通知",
+      "statuses": {
+        "pending": "等待诊断",
+        "running": "正在分析",
+        "completed": "分析完成",
+        "failed": "分析未完成",
+        "timed_out": "诊断超时"
+      },
+      "translations": "添加其他语言的消息内容（可选）",
+      "translationHint": "每种语言填写标题和正文；未提供译文时发送原始内容。"
+    },
     "menuTitle": "告警",
     "rules": {
       "menuTitle": "告警规则",
@@ -934,6 +957,7 @@
         "message_published": "消息已发布"
       },
       "statuses": {
+        "diagnosing": "等待诊断",
         "pending": "待发送",
         "sending": "发送中",
         "sent": "提供方已接受",

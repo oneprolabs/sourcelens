@@ -827,6 +827,29 @@
     }
   },
   "alertManagement": {
+    "diagnosis": {
+      "mode": "Notification workflow",
+      "modes": {
+        "direct": "Send directly",
+        "diagnose_first": "Diagnose before sending",
+        "notify_then_diagnose": "Notify, then send diagnosis"
+      },
+      "timeout": "Diagnosis deadline (seconds)",
+      "maxTokens": "Diagnosis output token limit",
+      "fallbackHint": "If diagnosis fails or times out, the basic alert is still sent.",
+      "language": "Notification language",
+      "title": "Diagnosis",
+      "supplement": "Diagnosis follow-up",
+      "statuses": {
+        "pending": "Queued",
+        "running": "Analyzing",
+        "completed": "Completed",
+        "failed": "Unavailable",
+        "timed_out": "Timed out"
+      },
+      "translations": "Optional message translations",
+      "translationHint": "Provide a title and body per language. Recipients without a translation receive the original message."
+    },
     "menuTitle": "Alerts",
     "rules": {
       "menuTitle": "Alert rules",
@@ -934,6 +957,7 @@
         "message_published": "Message published"
       },
       "statuses": {
+        "diagnosing": "Waiting for diagnosis",
         "pending": "Pending",
         "sending": "Sending",
         "sent": "Accepted by provider",

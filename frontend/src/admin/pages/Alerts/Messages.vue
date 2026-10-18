@@ -149,6 +149,35 @@
               class="mt-1 w-full rounded border border-line bg-surface p-2"
             />
           </label>
+          <details class="rounded border border-line p-3">
+            <summary class="cursor-pointer text-sm text-ink-700">
+              {{ t('alertManagement.diagnosis.translations') }}
+            </summary>
+            <p class="mt-2 text-xs text-ink-500">
+              {{ t('alertManagement.diagnosis.translationHint') }}
+            </p>
+            <div
+              v-for="(translation, language) in form.translations"
+              :key="language"
+              class="mt-3 space-y-2"
+            >
+              <p class="text-sm font-medium">{{ language }}</p>
+              <BaseInput
+                v-model="translation.title"
+                :label="t('alertManagement.messages.messageTitle')"
+                maxlength="200"
+              />
+              <label class="block text-sm text-ink-700"
+                >{{ t('alertManagement.messages.body') }}
+                <textarea
+                  v-model="translation.body"
+                  rows="3"
+                  maxlength="12000"
+                  class="mt-1 w-full rounded border border-line bg-surface p-2"
+                />
+              </label>
+            </div>
+          </details>
           <p
             v-if="publishError"
             role="alert"
@@ -219,7 +248,13 @@ function openPublisher() {
     topic: topic.value.trim(),
     idempotency_key: crypto.randomUUID(),
     title: '',
-    body: ''
+    body: '',
+    translations: Object.fromEntries(
+      ['zh-CN', 'en-US', 'es'].map((language) => [
+        language,
+        { title: '', body: '' }
+      ])
+    )
   }
   publishError.value = ''
   published.value = false
@@ -230,7 +265,14 @@ async function publish() {
   publishing.value = true
   publishError.value = ''
   try {
-    await alertsAdminApi.publishMessage(form.value)
+    await alertsAdminApi.publishMessage({
+      ...form.value,
+      translations: Object.fromEntries(
+        Object.entries(form.value.translations).filter(
+          ([, value]) => value.title.trim() || value.body.trim()
+        )
+      )
+    })
     showPublisher.value = false
     published.value = true
     topic.value = form.value.topic

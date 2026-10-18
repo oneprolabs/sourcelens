@@ -46,6 +46,18 @@
           </option>
         </BaseSelect>
       </label>
+      <label class="block text-sm text-ink-700">
+        {{ t('alertManagement.diagnosis.language') }}
+        <BaseSelect
+          :model-value="item.language || 'en-US'"
+          class="mt-1 w-full rounded border border-line bg-surface p-2"
+          @update:model-value="change(index, 'language', $event)"
+        >
+          <option value="zh-CN">简体中文</option>
+          <option value="en-US">English</option>
+          <option value="es">Español</option>
+        </BaseSelect>
+      </label>
       <template
         v-if="
           channels.find((channel) => channel.uuid === item.channel_uuid)
@@ -128,6 +140,7 @@ function add() {
     {
       name: '',
       enabled: true,
+      language: 'en-US',
       channel_uuid: '',
       email_recipients: '',
       users: [],

@@ -827,6 +827,29 @@
     }
   },
   "alertManagement": {
+    "diagnosis": {
+      "mode": "Flujo de notificación",
+      "modes": {
+        "direct": "Enviar directamente",
+        "diagnose_first": "Diagnosticar antes de enviar",
+        "notify_then_diagnose": "Alertar y luego enviar diagnóstico"
+      },
+      "timeout": "Plazo del diagnóstico (segundos)",
+      "maxTokens": "Límite de tokens de salida del diagnóstico",
+      "fallbackHint": "Si el diagnóstico falla o agota el plazo, se envía la alerta básica.",
+      "language": "Idioma de notificación",
+      "title": "Diagnóstico",
+      "supplement": "Seguimiento del diagnóstico",
+      "statuses": {
+        "pending": "En cola",
+        "running": "Analizando",
+        "completed": "Completado",
+        "failed": "No disponible",
+        "timed_out": "Tiempo agotado"
+      },
+      "translations": "Traducciones opcionales del mensaje",
+      "translationHint": "Indique título y texto por idioma. Si falta una traducción, se envía el mensaje original."
+    },
     "menuTitle": "Alertas",
     "rules": {
       "menuTitle": "Reglas de alerta",
@@ -934,6 +957,7 @@
         "message_published": "Mensaje publicado"
       },
       "statuses": {
+        "diagnosing": "Esperando diagnóstico",
         "pending": "Pendiente",
         "sending": "Enviando",
         "sent": "Aceptado por el proveedor",

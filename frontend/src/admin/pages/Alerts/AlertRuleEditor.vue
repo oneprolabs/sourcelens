@@ -126,6 +126,50 @@
         min="0"
         :label="t('alertManagement.unified.cooldown')"
       />
+      <template
+        v-if="form.subject !== 'message' && form.evaluation_mode !== 'running'"
+      >
+        <label class="block text-sm text-ink-700">
+          {{ t('alertManagement.diagnosis.mode') }}
+          <BaseSelect
+            v-model="form.diagnosis_mode"
+            class="mt-1 w-full rounded border border-line bg-surface p-2"
+          >
+            <option
+              v-for="mode in [
+                'direct',
+                'diagnose_first',
+                'notify_then_diagnose'
+              ]"
+              :key="mode"
+              :value="mode"
+            >
+              {{ t(`alertManagement.diagnosis.modes.${mode}`) }}
+            </option>
+          </BaseSelect>
+        </label>
+        <template v-if="form.diagnosis_mode !== 'direct'">
+          <BaseInput
+            v-model="form.diagnosis_timeout_seconds"
+            type="number"
+            min="5"
+            max="300"
+            required
+            :label="t('alertManagement.diagnosis.timeout')"
+          />
+          <BaseInput
+            v-model="form.diagnosis_max_tokens"
+            type="number"
+            min="256"
+            max="8192"
+            required
+            :label="t('alertManagement.diagnosis.maxTokens')"
+          />
+          <p class="text-xs text-ink-500">
+            {{ t('alertManagement.diagnosis.fallbackHint') }}
+          </p>
+        </template>
+      </template>
       <AlertDestinations
         v-model="form.subscriptions"
         :channels="options.channels"
@@ -230,6 +274,9 @@ watch(
       events: [],
       enabled: true,
       evaluation_mode: 'terminal',
+      diagnosis_mode: 'direct',
+      diagnosis_timeout_seconds: 60,
+      diagnosis_max_tokens: 2048,
       assistants: [],
       datasources: [],
       lensnodes: [],
@@ -248,6 +295,11 @@ watch(
 )
 function resetEvents() {
   if (form.value.subject !== 'run') form.value.evaluation_mode = 'terminal'
+  if (
+    form.value.subject === 'message' ||
+    form.value.evaluation_mode === 'running'
+  )
+    form.value.diagnosis_mode = 'direct'
   form.value.events = form.value.events.filter((event) =>
     eventOptions.value.includes(event)
   )

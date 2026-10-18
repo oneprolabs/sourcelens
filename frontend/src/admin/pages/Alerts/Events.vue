@@ -135,6 +135,52 @@
                             `alertManagement.unified.statuses.${delivery.status}`
                           )
                         }}
+                        <span class="ml-1">{{
+                          delivery.destination.language || 'en-US'
+                        }}</span>
+                        <span
+                          v-if="delivery.phase === 'diagnosis'"
+                          class="ml-1"
+                          >{{ t('alertManagement.diagnosis.supplement') }}</span
+                        >
+                        <div
+                          v-if="delivery.diagnosis"
+                          class="mt-1 rounded border border-line p-2"
+                        >
+                          {{ t('alertManagement.diagnosis.title') }} ·
+                          {{
+                            t(
+                              `alertManagement.diagnosis.statuses.${delivery.diagnosis.status}`
+                            )
+                          }}
+                          <p
+                            v-if="delivery.diagnosis.result?.summary"
+                            class="mt-1 whitespace-pre-wrap"
+                          >
+                            {{ delivery.diagnosis.result.summary }}
+                          </p>
+                          <p
+                            v-if="
+                              delivery.diagnosis.result?.root_cause?.description
+                            "
+                            class="mt-1"
+                          >
+                            {{
+                              delivery.diagnosis.result.root_cause.description
+                            }}
+                          </p>
+                          <p
+                            v-for="(item, index) in delivery.diagnosis.result
+                              ?.recommendations || []"
+                            :key="index"
+                            class="mt-1"
+                          >
+                            {{ item.action }}
+                          </p>
+                          <p v-if="delivery.diagnosis.error_code" class="mt-1">
+                            {{ t('alertManagement.diagnosis.fallbackHint') }}
+                          </p>
+                        </div>
                         <span v-if="delivery.error_message">
                           · {{ delivery.error_message }}</span
                         >

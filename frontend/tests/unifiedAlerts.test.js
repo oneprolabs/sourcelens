@@ -87,3 +87,40 @@ test('publication conflicts show the actionable server message', () => {
     'Use a new business key for changed content.'
   )
 })
+
+test('diagnosis budgets and managed destination languages survive an edit', () => {
+  const body = alertRulePayload({
+    subject: 'processing',
+    events: ['processing_failed'],
+    diagnosis_mode: 'diagnose_first',
+    diagnosis_timeout_seconds: '30',
+    diagnosis_max_tokens: '1024',
+    subscriptions: [
+      {
+        language: 'es',
+        channel_uuid: 'email',
+        email_recipients: ['a@example.test']
+      }
+    ]
+  })
+  assert.equal(body.diagnosis_mode, 'diagnose_first')
+  assert.equal(body.diagnosis_timeout_seconds, 30)
+  assert.equal(body.diagnosis_max_tokens, 1024)
+  assert.equal(body.subscriptions[0].language, 'es')
+})
+
+test('message and running rules always use direct notification', () => {
+  for (const form of [
+    { subject: 'message' },
+    { subject: 'run', evaluation_mode: 'running' }
+  ]) {
+    assert.equal(
+      alertRulePayload({
+        ...form,
+        events: [],
+        diagnosis_mode: 'diagnose_first'
+      }).diagnosis_mode,
+      'direct'
+    )
+  }
+})
