@@ -469,22 +469,16 @@ class UnifiedAlertTests(TestCase):
         process_alert_outbox()
         self.assertEqual(AlertEvent.objects.get().detail["total_tokens"], 20)
 
-    def test_migrated_legacy_history_is_not_resent(self):
-        from importlib import import_module
-
-        from django.apps import apps
-        from django.db import connection
-
+    def test_existing_keyed_history_is_not_resent(self):
         run = self.run_event()
-        event = AlertEvent.objects.create(rule=self.rule, run=run, event_type="run_failed", status="dispatched")
-        migration = import_module("lens.migrations.0066_unified_alerts")
-
-        class Editor:
-            connection = None
-
-        editor = Editor()
-        editor.connection = connection
-        migration.migrate_legacy_events(apps, editor)
+        event = AlertEvent.objects.create(
+            rule=self.rule,
+            run=run,
+            event_type="run_failed",
+            status="dispatched",
+            source_key=f"run:{run.uuid}:terminal",
+            source_uuid=str(run.uuid),
+        )
         process_alert_outbox()
         event.refresh_from_db()
         self.assertEqual(event.source_uuid, str(run.uuid))
@@ -501,16 +495,10 @@ class UnifiedAlertTests(TestCase):
         process_alert_outbox()
         self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 2)
 
-    def test_old_binary_can_still_write_rules_and_events_after_expand_migration(self):
-        from django.db import connection
-        from django.db.migrations.executor import MigrationExecutor
-
-        old = MigrationExecutor(connection).loader.project_state([("lens", "0065_alert_rules")]).apps
-        rule = old.get_model("lens", "AlertRule").objects.create(name="Rolling rule", events=["run_failed"])
+    def test_existing_unkeyed_history_is_not_resent(self):
+        rule = AlertRule.objects.create(name="Existing rule", events=["run_failed"])
         run = self.run_event()
-        legacy = old.get_model("lens", "AlertEvent").objects.create(
-            rule_id=rule.pk, run_id=run.pk, event_type="run_failed"
-        )
+        legacy = AlertEvent.objects.create(rule=rule, run=run, event_type="run_failed")
         evaluate_run_alerts(run.uuid)
         self.assertEqual(AlertRule.objects.get(pk=rule.pk).subject, "run")
         self.assertEqual(AlertEvent.objects.filter(rule_id=rule.pk).get().pk, legacy.pk)

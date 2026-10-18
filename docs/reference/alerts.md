@@ -45,9 +45,9 @@ personal notifications. A rule's cooldown suppresses repeated scheduled failures
 for the same resource/destination; manual operations bypass cooldown. Keep
 suppressed delivery records for audit. Pending delivery rows are the durable queue.
 
-Legacy channel fields remain compatible and are migrated into subscriptions.
-Existing event records retain their status and details. Non-null additions to existing tables retain database defaults for old writers.
-New migrations are additive; future removal of legacy fields requires a later release.
+Legacy channel fields remain supported by the rule API. Migration `0065_alert_rules`
+creates the complete notification schema directly after `0064_builtin_decisions`.
+No alert-data backfill is needed before the first release.
 
 ## Implementation plan and acceptance
 
@@ -90,7 +90,7 @@ implements the design approved in the 2026-10-16 conversation.
    Users subscribe in Settings → Notifications → Alert subscriptions.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
 
-Deploy with migrations through `0066_unified_alerts`, register periodic tasks,
+Deploy with migrations through `0065_alert_rules`, register periodic tasks,
 and restart Celery workers and the scheduler. No real external notifications were
 sent during acceptance. Existing staff-only scope endpoints retain their permissions;
 operators without scope-list access can still use the alert management interface.
