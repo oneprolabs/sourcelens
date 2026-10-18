@@ -1,7 +1,5 @@
 """Unified business alert matching, durable outbox and notification delivery."""
 
-import hashlib
-import json
 import logging
 import re
 import uuid
@@ -267,7 +265,10 @@ def subscription_destination(subscription):
             .exclude(email="")
             .values_list("email", flat=True)
         )
+    from .alert_content import notification_language
+
     return {
+        "language": notification_language(subscription),
         "name": subscription.name or (channel.name if channel else ""),
         "channel_uuid": str(channel_uuid or ""),
         "channel_type": channel.channel_type if channel else "",
@@ -309,7 +310,7 @@ def _evaluate_occurrence(outbox, running=False):
                 "run": run,
                 "event_type": matched[0],
                 "status": "pending",
-                "rule_snapshot": {"name": rule.name, "events": rule.events},
+                "rule_snapshot": {"name": rule.name, "events": rule.events, "diagnosis_mode": rule.diagnosis_mode},
                 "detail": {
                     **payload,
                     "matched_events": matched,
@@ -346,14 +347,13 @@ def _evaluate_occurrence(outbox, running=False):
                 "status": delivery_status,
             }
             if delivery_status == "pending":
-                identity = [
-                    source_key,
-                    destination["channel_uuid"],
-                    sorted({email.casefold() for email in destination["recipients"]}),
-                ]
-                dedupe_key = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+                from .alert_diagnostics import attach_diagnosis, delivery_identity
+
+                dedupe_key = delivery_identity(source_key, destination)
                 original, unique = AlertDelivery.objects.get_or_create(dedupe_key=dedupe_key, defaults=delivery_fields)
-                if not unique:
+                if unique:
+                    attach_diagnosis(original, rule, source_key)
+                else:
                     AlertDelivery.objects.create(
                         **{
                             **delivery_fields,
@@ -395,7 +395,7 @@ def _refresh_event_status(event):
 
     event = AlertEvent.objects.select_for_update().get(pk=event.pk)
     statuses = set(event.deliveries.values_list("status", flat=True))
-    if statuses & {"pending", "sending"}:
+    if statuses & {"pending", "sending", "diagnosing"}:
         status = "pending"
     elif statuses == {"sent"}:
         status = "sent"
@@ -436,30 +436,26 @@ def _delivery_result(delivery):
     channel = NotificationChannel.objects.filter(uuid=destination["channel_uuid"] or None, is_active=True).first()
     if not channel or channel.channel_type not in {"email", "webhook"}:
         return {"skipped": True, "reason": "Notification channel unavailable"}
-    detail = delivery.event.detail
-    title = (
-        f"[SourceLens] {detail.get('title') or EVENT_LABELS.get(delivery.event.event_type, delivery.event.event_type)}"
-    )
-    lines = [
-        title,
-        f"Rule: {delivery.event.rule_snapshot.get('name', '')}",
-        f"Resource: {detail.get('assistant_name') or detail.get('datasource_name') or '-'}",
-        f"Operation: {delivery.event.source_uuid}",
-        f"Conditions: {', '.join(detail.get('matched_events') or [])}",
-    ]
-    if delivery.event.subject == "message":
-        lines = [title, f"Topic: {detail.get('topic', '')}", str(detail.get("body") or "")]
-    for key in ("error", "total_tokens", "rounds", "duration_seconds", "failed_files"):
-        if detail.get(key):
-            lines.append(f"{key}: {detail[key]}")
+    from .alert_content import notification_language, render_notification
+
+    language = notification_language(subscription)
+    if delivery.phase == "diagnosis" and (
+        subscription.rule.diagnosis_mode != "notify_then_diagnose"
+        or not delivery.diagnosis
+        or delivery.diagnosis.language != language
+    ):
+        return {"skipped": True, "reason": "Diagnosis policy or language changed"}
+    delivery.destination = {**delivery.destination, "language": language}
+    AlertDelivery.objects.filter(pk=delivery.pk).update(destination=delivery.destination)
+    title, body = render_notification(delivery, language)
     if channel.channel_type == "email":
         recipients = sorted(set(destination["recipients"]) & set(delivery.destination.get("recipients") or []))
         if not recipients:
             return {"skipped": True, "reason": "No current email recipients"}
-        params = {"subject": title, "body": "\n".join(lines), "to": recipients}
+        params = {"subject": title, "body": body, "to": recipients}
     else:
         provider = str((channel.config or {}).get("provider_type") or "feishu")
-        params = {"provider_type": provider, "payload": _webhook_payload(provider, "\n".join(lines))}
+        params = {"provider_type": provider, "payload": _webhook_payload(provider, body)}
     return _send_notification(
         notification_type=channel.channel_type,
         channel_uuid=str(channel.uuid),

@@ -2,6 +2,7 @@
 
 from django.db import transaction
 from django.utils import timezone
+from djangorestframework_camel_case.parser import CamelCaseJSONParser
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -51,7 +52,7 @@ class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
 
     permission_classes = [HasRequiredFeature]
     required_feature = "admin_console"
-    queryset = AlertEvent.objects.select_related("rule", "run").prefetch_related("deliveries")
+    queryset = AlertEvent.objects.select_related("rule", "run").prefetch_related("deliveries__diagnosis")
     serializer_class = AlertEventSerializer
     pagination_class = AlertPagination
     lookup_field = "uuid"
@@ -134,10 +135,20 @@ class PersonalAlertSubscriptionViewSet(BaseAuthenticatedViewSet):
         return self.get_paginated_response(rows)
 
 
+class MessagePublicationParser(CamelCaseJSONParser):
+    """Preserve BCP 47 locale keys while accepting camelCase publication fields."""
+
+    json_underscoreize = {
+        **CamelCaseJSONParser.json_underscoreize,
+        "ignore_fields": tuple(CamelCaseJSONParser.json_underscoreize.get("ignore_fields") or ()) + ("translations",),
+    }
+
+
 class MessagePublicationViewSet(viewsets.GenericViewSet):
     """Publish immutable topic messages and inspect every publication, even unmatched ones."""
 
     permission_classes = [HasRequiredFeature]
+    parser_classes = [MessagePublicationParser]
     required_feature = "admin_console"
     pagination_class = AlertPagination
     lookup_field = "uuid"

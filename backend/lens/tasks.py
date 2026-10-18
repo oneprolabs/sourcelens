@@ -4285,15 +4285,26 @@ def document_attachment_cleanup_task():
     return cleanup_expired_document_files()
 
 
+@shared_task(name="lens.execute_alert_diagnosis", queue="lens")
+def execute_alert_diagnosis_task(diagnosis_uuid):
+    """Execute one analysis under the deadline supplied by its durable job."""
+
+    from .alert_diagnostics import execute_alert_diagnosis
+
+    return execute_alert_diagnosis(diagnosis_uuid)
+
+
 @shared_task(name="lens.dispatch_alerts", queue="lens")
 def dispatch_alerts_task():
     """Recover durable occurrences and deliver a bounded batch of due alerts."""
 
+    from .alert_diagnostics import dispatch_alert_diagnoses
     from .alerts import process_alert_outbox, reconcile_alert_sources, send_alert_delivery
     from .models import AlertDelivery
 
     reconcile_alert_sources()
     process_alert_outbox()
+    dispatch_alert_diagnoses()
     now = timezone.now()
     exhausted = AlertDelivery.objects.filter(
         status="sending", attempts__gte=5, claimed_at__lt=now - timedelta(minutes=5)

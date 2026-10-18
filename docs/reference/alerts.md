@@ -90,7 +90,7 @@ implements the design approved in the 2026-10-16 conversation.
    Users subscribe in Settings → Notifications → Alert subscriptions.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
 
-Deploy with migrations through `0065_alert_rules`, register periodic tasks,
+Deploy with migrations through `0066_alert_diagnosis_languages`, register periodic tasks,
 and restart Celery workers and the scheduler. No real external notifications were
 sent during acceptance. Existing staff-only scope endpoints retain their permissions;
 operators without scope-list access can still use the alert management interface.
@@ -130,3 +130,67 @@ immutable records; `processed_at` means rule matching completed, not sent. Follo
 for per-destination outcomes. In-process trusted publishers call
 `lens.messages.publish_message` with the same validated contract inside their
 business transaction. UI entry: Notifications → Message publications.
+
+## Diagnosis workflows and notification languages
+
+Terminal Run, sync and processing rules support `diagnosis_mode`:
+
+- `direct` (default): send the basic alert immediately.
+- `diagnose_first`: wait for a validated diagnosis, then include its summary,
+  evidence references and recommendations. Failure or deadline expiry releases
+  the basic alert with a localized fallback explanation.
+- `notify_then_diagnose`: send the basic alert immediately; send one separately
+  recorded supplement only after the initial notification was accepted and the
+  diagnosis completed successfully. Failed diagnoses produce no supplement.
+
+Creating a diagnosis-enabled rule requires the existing Run diagnostics permission.
+Message publications and running threshold reminders use direct delivery. Configure
+`diagnostics.model_ref` in global settings; Run diagnosis can also use the execution's
+agent model snapshot. Missing model configuration releases a basic alert.
+
+Independent Celery tasks on the existing `lens` queue analyze safe failure codes,
+execution budgets and bounded structured step evidence. They omit raw questions,
+answers and task logs. Evidence references in model output are validated before
+publication. `diagnosis_timeout_seconds` (5–300, default 60) includes queue time;
+`diagnosis_max_tokens` (256–8192, default 2048) limits **output** tokens, not total
+billable input/output tokens. Input is bounded to 24000 characters. Tasks have soft
+and hard execution limits; the dispatcher recovers enqueue failures and expired
+jobs. Deadline fallback is eventually dispatched, so a busy worker can delay the
+actual notification beyond the configured diagnosis deadline. Late results are
+ignored. Matching rules share analyses by occurrence, language and budget. Waiting
+for diagnosis does not consume transport attempts.
+
+Managed destinations select `language`: `en-US` (default), `zh-CN`, or `es`.
+Personal subscriptions follow the user's current profile language at send time;
+unsupported languages fall back to English. Titles, condition labels, field labels,
+diagnosis instructions and fallback explanations use that language. Resource names,
+rule names and error codes retain their original values. If a recipient changes
+language while diagnosis is queued, the initial notification falls back to a basic
+alert in the current language; an obsolete-language supplement is skipped.
+Identical destinations deduplicate separately by language and initial/supplement
+phase. History records the sending language, diagnosis status, validated conclusions
+and independent supplement outcome. Sending rechecks subscription access and policy.
+
+Published business messages can optionally include operator-authored translations:
+
+```json
+{
+  "topic": "release.ready",
+  "idempotency_key": "release-123",
+  "title": "Release ready",
+  "body": "Ready for review",
+  "translations": {
+    "zh-CN": {"title": "版本就绪", "body": "可以开始验收"},
+    "es": {"title": "Versión lista", "body": "Lista para revisión"}
+  }
+}
+```
+
+Each translation requires both title and body. A destination without a translation
+receives the original text. Supplied translations are immutable publication content:
+changing them under the same topic/business key returns 409. The publication UI
+provides optional translation inputs; there is no automatic translation model call.
+
+Apply `0066_alert_diagnosis_languages` after the previously installed `0065_alert_rules`,
+then restart workers and scheduler. Existing rules remain direct and existing
+managed destinations default to English; queued deliveries and history are preserved.

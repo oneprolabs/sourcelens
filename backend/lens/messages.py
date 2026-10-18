@@ -15,7 +15,7 @@ class PublicationConflict(ValueError):
 
 
 @transaction.atomic
-def publish_message(*, topic, idempotency_key, title, body, publisher):
+def publish_message(*, topic, idempotency_key, title, body, publisher, translations=None):
     """Persist validated plain-text content once per topic and business key.
 
     Callers must validate the public input contract with MessagePublicationSerializer.
@@ -25,6 +25,8 @@ def publish_message(*, topic, idempotency_key, title, body, publisher):
     identity = json.dumps([topic, idempotency_key], ensure_ascii=False)
     source_uuid = hashlib.sha256(identity.encode()).hexdigest()
     content = {"topic": topic, "idempotency_key": idempotency_key, "title": title, "body": body}
+    if translations:
+        content["translations"] = translations
     publication, created = AlertOutbox.objects.get_or_create(
         source_key=f"message:{source_uuid}:terminal",
         defaults={
@@ -38,7 +40,9 @@ def publish_message(*, topic, idempotency_key, title, body, publisher):
             },
         },
     )
-    if any(publication.payload.get(key) != value for key, value in content.items()):
+    if any(publication.payload.get(key) != value for key, value in content.items()) or (
+        publication.payload.get("translations") or {}
+    ) != (translations or {}):
         raise PublicationConflict("This topic and idempotency key already identify different message content.")
     if created or publication.processed_at is None:
         transaction.on_commit(_wake_dispatcher)

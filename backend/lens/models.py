@@ -2186,6 +2186,18 @@ class AlertRule(TimestampedUUIDModel):
         default="terminal",
         db_default="terminal",
     )
+    diagnosis_mode = models.CharField(
+        max_length=24,
+        choices=[
+            ("direct", "Send directly"),
+            ("diagnose_first", "Diagnose before sending"),
+            ("notify_then_diagnose", "Notify then diagnose"),
+        ],
+        default="direct",
+        db_default="direct",
+    )
+    diagnosis_timeout_seconds = models.PositiveIntegerField(default=60, db_default=60)
+    diagnosis_max_tokens = models.PositiveIntegerField(default=2048, db_default=2048)
     duration_threshold = models.PositiveIntegerField(null=True, blank=True)
     cooldown_seconds = models.PositiveIntegerField(default=0, db_default=0)
     personal_subscription_enabled = models.BooleanField(default=False, db_default=False)
@@ -2309,6 +2321,12 @@ class AlertSubscription(TimestampedUUIDModel):
     email_recipients = models.JSONField(default=list, blank=True)
     users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="managed_alert_subscriptions")
     groups = models.ManyToManyField("auth.Group", blank=True, related_name="alert_subscriptions")
+    language = models.CharField(
+        max_length=16,
+        choices=[("en-US", "English"), ("zh-CN", "简体中文"), ("es", "Español")],
+        default="en-US",
+        db_default="en-US",
+    )
     personal = models.BooleanField(default=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="alert_subscriptions"
@@ -2332,6 +2350,26 @@ class AlertOutbox(TimestampedUUIDModel):
         ordering = ["created_at"]
 
 
+class AlertDiagnosis(TimestampedUUIDModel):
+    """One bounded analysis shared by matching rules in the same language."""
+
+    key = models.CharField(max_length=64, unique=True)
+    source_key = models.CharField(max_length=320)
+    subject = models.CharField(max_length=16)
+    source_uuid = models.CharField(max_length=255)
+    language = models.CharField(max_length=16)
+    max_tokens = models.PositiveIntegerField(default=2048)
+    timeout_seconds = models.PositiveIntegerField(default=60)
+    status = models.CharField(max_length=16, default="pending", db_index=True)
+    evidence = models.JSONField(default=dict)
+    result = models.JSONField(default=dict)
+    usage = models.JSONField(default=dict)
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    deadline_at = models.DateTimeField(db_index=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+
 class AlertDelivery(TimestampedUUIDModel):
     """Durable destination job with a claim lease and bounded retries."""
 
@@ -2339,6 +2377,8 @@ class AlertDelivery(TimestampedUUIDModel):
     subscription = models.ForeignKey(
         AlertSubscription, null=True, blank=True, on_delete=models.SET_NULL, related_name="deliveries"
     )
+    diagnosis = models.ForeignKey(AlertDiagnosis, null=True, blank=True, on_delete=models.SET_NULL, related_name="deliveries")
+    phase = models.CharField(max_length=16, default="initial", db_default="initial")
     dedupe_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
     destination = models.JSONField(default=dict)
     status = models.CharField(max_length=16, default="pending", db_index=True)
@@ -2350,5 +2390,7 @@ class AlertDelivery(TimestampedUUIDModel):
     error_message = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["event", "subscription"], name="lens_alert_delivery_dest_uniq")]
+        constraints = [
+            models.UniqueConstraint(fields=["event", "subscription", "phase"], name="lens_alert_delivery_phase_uniq")
+        ]
         ordering = ["created_at"]

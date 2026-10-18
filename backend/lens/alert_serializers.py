@@ -6,7 +6,16 @@ from django.db import transaction
 from rest_framework import serializers
 
 from .alerts import RUNNING_EVENTS, SUBJECT_EVENTS, personal_subscription_allowed
-from .models import AlertDelivery, AlertEvent, AlertRule, AlertSubscription, Assistant, DataSource, LensNode
+from .models import (
+    AlertDelivery,
+    AlertDiagnosis,
+    AlertEvent,
+    AlertRule,
+    AlertSubscription,
+    Assistant,
+    DataSource,
+    LensNode,
+)
 
 
 def validate_channel(value, email_only=False):
@@ -33,7 +42,7 @@ class AlertSubscriptionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AlertSubscription
-        fields = ["uuid", "name", "enabled", "channel_uuid", "email_recipients", "users", "groups"]
+        fields = ["uuid", "name", "enabled", "channel_uuid", "email_recipients", "users", "groups", "language"]
 
     def validate(self, attrs):
         """Require a destination and recipients for email transports."""
@@ -74,6 +83,9 @@ class AlertRuleSerializer(serializers.ModelSerializer):
             "enabled",
             "events",
             "evaluation_mode",
+            "diagnosis_mode",
+            "diagnosis_timeout_seconds",
+            "diagnosis_max_tokens",
             "duration_threshold",
             "token_threshold",
             "rounds_threshold",
@@ -142,6 +154,21 @@ class AlertRuleSerializer(serializers.ModelSerializer):
                     {"personal_subscription_enabled": "Datasource subscriptions require admin access."}
                 )
             validate_channel(value("personal_channel_uuid"), email_only=True)
+        mode = value("diagnosis_mode", "direct")
+        if mode != "direct":
+            if subject == "message" or value("evaluation_mode", "terminal") == "running":
+                raise serializers.ValidationError(
+                    {"diagnosis_mode": "Diagnosis requires a completed business operation."}
+                )
+            from accounts.permissions import HasRunDiagnosticsAccess
+
+            request = self.context.get("request")
+            if not request or not HasRunDiagnosticsAccess().has_permission(request, None):
+                raise serializers.ValidationError({"diagnosis_mode": "Diagnostics access is required."})
+        for field, minimum, maximum in (("diagnosis_timeout_seconds", 5, 300), ("diagnosis_max_tokens", 256, 8192)):
+            amount = value(field, 60 if field.endswith("seconds") else 2048)
+            if not minimum <= amount <= maximum:
+                raise serializers.ValidationError({field: f"Choose a value between {minimum} and {maximum}."})
         channel_uuid = value("channel_uuid")
         if channel_uuid:
             channel = validate_channel(channel_uuid)
@@ -212,12 +239,33 @@ class AlertRuleSerializer(serializers.ModelSerializer):
         rule.subscriptions.filter(personal=False).exclude(pk__in=retained).delete()
 
 
+class AlertDiagnosisSerializer(serializers.ModelSerializer):
+    """Expose validated conclusions, without raw evidence or model configuration."""
+
+    class Meta:
+        model = AlertDiagnosis
+        fields = ["uuid", "language", "status", "result", "error_code", "deadline_at", "finished_at"]
+        read_only_fields = fields
+
+
 class AlertDeliverySerializer(serializers.ModelSerializer):
     """Expose provider acceptance separately from pending and suppressed work."""
 
+    diagnosis = AlertDiagnosisSerializer(read_only=True)
+
     class Meta:
         model = AlertDelivery
-        fields = ["uuid", "destination", "status", "attempts", "next_attempt_at", "sent_at", "error_message"]
+        fields = [
+            "uuid",
+            "destination",
+            "status",
+            "attempts",
+            "next_attempt_at",
+            "sent_at",
+            "error_message",
+            "phase",
+            "diagnosis",
+        ]
         read_only_fields = fields
 
 
@@ -295,6 +343,13 @@ class PersonalAlertSubscriptionSerializer(serializers.ModelSerializer):
         return AlertSubscription.objects.create(**validated_data, user=self.context["request"].user, personal=True)
 
 
+class MessageTranslationSerializer(serializers.Serializer):
+    """Optional operator-authored message content for one supported locale."""
+
+    title = serializers.RegexField(r"^[^\r\n]+$", max_length=200)
+    body = serializers.CharField(max_length=12000)
+
+
 class MessagePublicationSerializer(serializers.Serializer):
     """Bound plain-text publication input with a required business idempotency key."""
 
@@ -302,6 +357,16 @@ class MessagePublicationSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(max_length=160)
     title = serializers.RegexField(r"^[^\r\n]+$", max_length=200)
     body = serializers.CharField(max_length=12000)
+    translations = serializers.DictField(child=MessageTranslationSerializer(), required=False, default=dict)
+
+    def validate_translations(self, value):
+        """Keep supplied translations explicit; ordinary message text is not auto-translated."""
+
+        from .alert_content import LANGUAGES
+
+        if set(value) - set(LANGUAGES):
+            raise serializers.ValidationError("Choose en-US, zh-CN or es for message translations.")
+        return value
 
 
 class MessageRecordSerializer(serializers.Serializer):
@@ -313,6 +378,7 @@ class MessageRecordSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(source="payload.idempotency_key", read_only=True)
     title = serializers.CharField(source="payload.title", read_only=True)
     body = serializers.CharField(source="payload.body", read_only=True)
+    translations = serializers.JSONField(source="payload.translations", read_only=True, default=dict)
     publisher_name = serializers.CharField(source="payload.publisher_name", read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     processed_at = serializers.DateTimeField(read_only=True, allow_null=True)
