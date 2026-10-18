@@ -113,8 +113,8 @@ def search_workspace(
     - "files": the list of files that contain a match.
     - "count": per-file match counts.
 
-    `query` is treated as keywords (fixed-string, case-folded) by default;
-    set regex=True to pass a ripgrep regular expression instead. `glob`
+    `query` is a literal phrase (case-folded) by default; use | between
+    alternative phrases. Set regex=True for a regular expression. `glob`
     restricts the search to matching paths (e.g. "**/*.md", "*.py"). File
     size never gates a match — ripgrep streams, so any size is searchable.
     """
@@ -138,8 +138,6 @@ def search_workspace(
                     regex=regex, glob=glob, case_sensitive=case_sensitive,
                 )
             )
-            if len(files) >= max_results:
-                break
         files = _visible_paths(files, dirs, policy, allowed=allowed)
         return {"mode": "files", "files": files[:max_results]}
 
@@ -152,8 +150,6 @@ def search_workspace(
                     regex=regex, glob=glob, case_sensitive=case_sensitive,
                 )
             )
-            if len(counts) >= max_results:
-                break
         counts = _visible_counts(counts, dirs, policy, allowed=allowed)
         counts.sort(key=lambda item: (-item["count"], item["path"]))
         return {"mode": "count", "counts": counts[:max_results]}
@@ -168,18 +164,19 @@ def search_workspace(
         )
         matches.extend(
             _rg_line_matches(
-                root, query, terms, scope, policy, ctx,
+                root, query, scope, policy, ctx,
                 regex=regex, glob=glob, case_sensitive=case_sensitive,
             )
         )
-        if len(matches) >= max_results:
-            break
 
     if matches:
         matches = [match for match in matches if allowed(match["path"])]
         visible = {}
+        unique = {}
         for match in matches:
             match["path"] = _visible_value(match["path"], visible)
+            unique.setdefault((match["path"], match["line"]), match)
+        matches = list(unique.values())
         matches = _rank_matches(matches, terms)
         matches = _apply_rerank(matches, rerank)
         if matches:
@@ -211,27 +208,19 @@ def search_workspace(
             return result
 
     files = []
-    for root, scope in dirs:
-        files.extend(
-            _iter_scope_files(
-                root,
-                scope,
-                policy,
-                limit=DEFAULT_FILE_LIST_LIMIT - len(files),
-            )
-        )
-        if len(files) >= DEFAULT_FILE_LIST_LIMIT:
+    for path in glob_files(target_dirs, glob or "**/*", max_results=min(8, max_results), policy=policy):
+        if sum(len(item) for item in files) + len(path) > 2000:
             break
+        files.append(path)
     note = (
-        "No matches in the selected workspace. Listing files in scope so "
-        "you can read them directly with read_workspace_file (use "
-        "offset/limit to page). Tip: try different keywords (the "
-        "documents' own terms), a regex, or find_files by name."
+        "No matching text. The small file sample is navigation only, not "
+        "evidence for an answer. Use find_files for more paths or read a "
+        "relevant file. Queries match literal phrases; use '|' for alternatives."
     )
     return {
         "mode": "content",
         "matches": [],
-        "files": _visible_paths(files, dirs, policy, allowed=allowed),
+        "files": files,
         "note": note,
     }
 
@@ -500,7 +489,10 @@ def _path_gate(dirs, policy):
     def allowed(path_value):
         key = str(path_value)
         if key not in cache:
-            cache[key] = _path_allowed_in_dirs(path_value, dirs, policy)
+            cache[key] = (
+                _path_allowed_in_dirs(path_value, dirs, policy)
+                and retrieval_path(path_value) == Path(path_value)
+            )
         return cache[key]
 
     return allowed
@@ -554,10 +546,8 @@ def _visible_counts(counts, dirs, policy, allowed=None):
 def _query_groups(query):
     """Split a query into OR-separated keyword groups.
 
-    `query` is a batch of alternatives joined by "|" (ASCII or full-width
-    "｜"). Whitespace inside a group is not a separator — the group is a
-    phrase that is still tokenized into terms below. A query with no "|" is
-    one single group, preserving the historical keyword behavior.
+    Whitespace and punctuation inside a group remain literal. Only an
+    explicit ASCII or full-width pipe separates alternatives.
     """
 
     text = str(query or "")
@@ -569,25 +559,9 @@ def _query_groups(query):
 
 
 def _query_terms(query):
-    """Extract lightweight search terms from a query (OR across groups)."""
+    """Return case-folded literal alternatives for deterministic ranking."""
 
-    terms = []
-    for group in _query_groups(query):
-        for term in re.findall(r"[\w一-鿿]+", group.lower()):
-            if len(term) < 2:
-                continue
-            terms.append(term)
-            if _contains_cjk(term):
-                terms.extend(_ngrams(term, 2))
-                terms.extend(_ngrams(term, 3))
-    seen = set()
-    unique_terms = []
-    for term in terms:
-        if term in seen:
-            continue
-        seen.add(term)
-        unique_terms.append(term)
-    return unique_terms
+    return list(dict.fromkeys(group.lower() for group in _query_groups(query) if group))
 
 
 def _run_rg(cmd):
@@ -651,21 +625,22 @@ def _excluded_symlink_globs(root):
     return excluded
 
 
-def _rg_patterns(query, terms, regex):
+def _rg_patterns(query, regex):
     """Return (patterns, fixed) for a search, or (None, _) when empty."""
 
     if regex:
         return ([query], False) if query else (None, False)
-    return (terms, True) if terms else (None, True)
+    patterns = [group for group in _query_groups(query) if group]
+    return (patterns, True) if patterns else (None, True)
 
 
 def _rg_line_matches(
-    root, query, terms, scope, policy, context_lines,
+    root, query, scope, policy, context_lines,
     *, regex=False, glob="", case_sensitive=False,
 ):
     """Return ripgrep line matches with context, or a Python fallback."""
 
-    patterns, fixed = _rg_patterns(query, terms, regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
 
@@ -699,7 +674,8 @@ def _rg_line_matches(
         if regex:
             return []
         return _python_line_matches(
-            root, terms, scope, policy, context_lines, max_per_file, max_line_chars
+            root, patterns, scope, policy, context_lines, max_per_file, max_line_chars,
+            glob=glob, case_sensitive=case_sensitive,
         )
     return _parse_rg_json(stdout, int(context_lines), max_line_chars)
 
@@ -709,7 +685,7 @@ def _rg_files_with_matches(
 ):
     """Return files in a directory that contain a match (rg -l)."""
 
-    patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
     cmd = ["rg", "--follow", "-l"]
@@ -732,7 +708,7 @@ def _rg_counts(
 ):
     """Return per-file match counts in a directory (rg -c)."""
 
-    patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
     cmd = ["rg", "--follow", "-c"]
@@ -923,13 +899,16 @@ def _parse_rg_json(stdout, context_lines, max_line_chars):
 
 
 def _python_line_matches(
-    root, terms, scope, policy, context_lines, max_per_file, max_line_chars
+    root, terms, scope, policy, context_lines, max_per_file, max_line_chars,
+    *, glob="", case_sensitive=False,
 ):
     """Pure-Python line search fallback when ripgrep is unavailable."""
 
-    lowered = [term.lower() for term in terms]
+    patterns = terms if case_sensitive else [term.lower() for term in terms]
     results = []
     for path in _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
+        if glob and not _matches_glob_pattern(path.relative_to(root).as_posix(), glob):
+            continue
         if _is_binary(path):
             continue
         text = _read_text(path)
@@ -940,7 +919,8 @@ def _python_line_matches(
         for index, line in enumerate(lines):
             if count >= max_per_file:
                 break
-            if not any(term in line.lower() for term in lowered):
+            value = line if case_sensitive else line.lower()
+            if not any(term in value for term in patterns):
                 continue
             before = [
                 {"n": n + 1, "text": _truncate(lines[n], max_line_chars)}
@@ -1232,20 +1212,6 @@ def _normalize_extensions(values):
             extension = f".{extension}"
         extensions.add(extension)
     return extensions
-
-
-def _contains_cjk(value):
-    """Return whether a string contains CJK characters."""
-
-    return any("一" <= char <= "鿿" for char in value)
-
-
-def _ngrams(value, size):
-    """Return character n-grams for compact CJK query terms."""
-
-    if len(value) < size:
-        return []
-    return [value[index : index + size] for index in range(len(value) - size + 1)]
 
 
 def _truncate(text, max_chars):

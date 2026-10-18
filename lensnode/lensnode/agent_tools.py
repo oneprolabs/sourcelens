@@ -194,16 +194,17 @@ def build_agent_tools(
         {path, line, text, before, after}; "files" returns the files that
         match; "count" returns per-file match counts.
 
-        query is keywords (fixed-string, case-folded) by default; set
-        regex=True to pass a ripgrep regular expression. Batch alternative
-        keywords in ONE call with "|" (OR), e.g.
+        query is a literal phrase (fixed-string, case-folded), preserving
+        spaces, punctuation, and Chinese words; it is not split into words.
+        Set regex=True for a regular expression. Batch alternative
+        phrases in ONE call with "|" (OR), e.g.
         "昇腾|Ascend|910B|算力卡" — prefer this over several separate
         searches for the same idea. glob restricts the search by path/type
         (e.g. "**/*.md", "*.py"). Use keywords/terms as they appear in the
         files (translate names into the documents' language when needed).
         File size is not a constraint. In content mode, when nothing matches
-        a 'files' listing of the scope is returned so you can read files
-        directly with read_workspace_file. Converted documents are identified
+        a small 'files' navigation sample respecting glob is returned. It is
+        not content evidence; use find_files for more paths. Converted documents are identified
         by their original source paths, never by internal .sourcelens sidecar
         paths.
         """

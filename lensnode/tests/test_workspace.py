@@ -94,7 +94,7 @@ def test_ranking_prioritizes_broad_term_coverage(tmp_path):
         "alpha line\nbeta line\ngamma line\n", encoding="utf-8"
     )
 
-    result = search_workspace([{"path": str(root)}], "alpha beta gamma")
+    result = search_workspace([{"path": str(root)}], "alpha|beta|gamma")
 
     assert result["matches"]
     assert result["matches"][0]["path"].endswith("zzz.txt")
@@ -1019,3 +1019,64 @@ def test_search_reuses_one_allowlist_check_per_path(tmp_path, monkeypatch):
     assert result["matches"]
     assert len(checked) == len(set(checked))
     assert len(set(checked)) == 2
+
+
+def test_literal_queries_do_not_match_fragments(tmp_path):
+    """Error sentences and Chinese terms must not become common-word OR queries."""
+
+    (tmp_path / "noise.md").write_text("host status is active\nOracle 备份说明\n")
+    (tmp_path / "answer.md").write_text(
+        "Unable to merge host snapshot because host snapshot status is: removed.\n备份窗口限制\n"
+    )
+    for query in (
+        "Unable to merge host snapshot because host snapshot status is: removed.",
+        "备份窗口",
+    ):
+        for mode in ("content", "files", "count"):
+            result = search_workspace([{"path": str(tmp_path)}], query, output_mode=mode)
+            items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
+            paths = [item if isinstance(item, str) else item["path"] for item in items]
+            assert paths == [str(tmp_path / "answer.md")]
+
+
+def test_conversion_is_canonical_even_when_original_is_searchable(tmp_path):
+    """Converted line numbers must agree with read_workspace_file in every mode."""
+
+    source, content = _make_converted_document(tmp_path, "guide.md")
+    source.write_text("Warranty period: obsolete.\nWarranty period: five years.\n")
+    for mode in ("content", "files", "count"):
+        result = search_workspace([{"path": str(tmp_path)}], "Warranty period", output_mode=mode)
+        if mode == "content":
+            assert [(m["path"], m["line"], m["text"]) for m in result["matches"]] == [
+                (str(source), 3, "Warranty period: five years.")
+            ]
+        elif mode == "count":
+            assert result["counts"] == [{"path": str(source), "count": 1}]
+        else:
+            assert result["files"] == [str(source)]
+
+
+def test_no_match_navigation_obeys_glob_and_stays_small(tmp_path):
+    """A failed scoped query must not inject a workspace-wide file inventory."""
+
+    for index in range(40):
+        (tmp_path / f"{index:03d}-{'long-name-' * 15}.md").write_text("unrelated")
+    (tmp_path / "private.py").write_text("unrelated")
+    result = search_workspace([{"path": str(tmp_path)}], "missing phrase", glob="**/*.md")
+    assert result["matches"] == []
+    assert result["files"]
+    assert all(path.endswith(".md") for path in result["files"])
+    assert len(json.dumps(result, ensure_ascii=False)) < 4000
+
+
+def test_python_search_obeys_literal_case_and_glob(tmp_path, monkeypatch):
+    """Missing ripgrep must not silently broaden a restricted query."""
+
+    (tmp_path / "match.md").write_text("Exact Phrase\n")
+    (tmp_path / "lower.md").write_text("exact phrase\n")
+    (tmp_path / "noise.py").write_text("Exact Phrase\n")
+    monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+    result = search_workspace(
+        [{"path": str(tmp_path)}], "Exact Phrase", case_sensitive=True, glob="**/*.md"
+    )
+    assert [m["path"] for m in result["matches"]] == [str(tmp_path / "match.md")]
