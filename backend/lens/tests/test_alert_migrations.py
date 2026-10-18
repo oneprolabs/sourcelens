@@ -51,9 +51,16 @@ class UnifiedAlertMigrationTests(TransactionTestCase):
             name="Release subscription", subject="message", topic="release.ready", events=["message_published"]
         )
         self.assertEqual(message_rule.topic, "release.ready")
+        self.assertEqual(
+            (message_rule.diagnosis_mode, message_rule.diagnosis_timeout_seconds, message_rule.diagnosis_max_tokens),
+            ("direct", 60, 2048),
+        )
         subscription = apps.get_model("lens", "AlertSubscription").objects.create(
             rule=message_rule, channel_uuid=uuid.uuid4(), email_recipients=["ops@example.test"]
         )
+        self.assertEqual(subscription.language, "en-US")
+        subscription.language = "es"
+        subscription.save()
         outbox_model = apps.get_model("lens", "AlertOutbox")
         self.assertFalse(outbox_model.objects.exists())
         publication = outbox_model.objects.create(
@@ -74,42 +81,49 @@ class UnifiedAlertMigrationTests(TransactionTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             delivery_model.objects.create(event=event, dedupe_key="same-occurrence-destination")
 
-
-class AlertDiagnosisMigrationTests(TransactionTestCase):
-    """Upgrade already-installed alert rules without reinterpreting queued alerts."""
-
-    def test_upgrade_preserves_existing_delivery_and_defaults_to_direct_english(self):
-        executor = MigrationExecutor(connection)
-        latest = executor.loader.graph.leaf_nodes()
-        self.addCleanup(lambda: MigrationExecutor(connection).migrate(latest))
-        previous = [("lens", "0065_alert_rules")]
-        executor.migrate(previous)
-        apps = executor.loader.project_state(previous).apps
-        rule = apps.get_model("lens", "AlertRule").objects.create(name="Existing rule", events=["run_failed"])
-        subscription = apps.get_model("lens", "AlertSubscription").objects.create(
-            rule=rule, email_recipients=["a@example.test"]
+        diagnosis_model = apps.get_model("lens", "AlertDiagnosis")
+        self.assertFalse(diagnosis_model.objects.exists())
+        diagnosis = diagnosis_model.objects.create(
+            key="a" * 64,
+            source_key=f"run:{run.uuid}:terminal",
+            subject="run",
+            source_uuid=str(run.uuid),
+            language="es",
+            deadline_at=timezone.now(),
+            status="completed",
+            result={"summary": "Se agotó el plazo."},
         )
-        event = apps.get_model("lens", "AlertEvent").objects.create(
-            rule=rule, event_type="run_failed", source_key="old-run"
+        diagnosed_rule = rule_model.objects.create(
+            name="Diagnosed Run failure",
+            events=["run_failed"],
+            diagnosis_mode="diagnose_first",
+            diagnosis_timeout_seconds=30,
+            diagnosis_max_tokens=1024,
         )
-        delivery = apps.get_model("lens", "AlertDelivery").objects.create(
-            event=event, subscription=subscription, dedupe_key="old-delivery", status="sent", attempts=1
+        diagnosed_subscription = apps.get_model("lens", "AlertSubscription").objects.create(
+            rule=diagnosed_rule,
+            channel_uuid=uuid.uuid4(),
+            language="zh-CN",
         )
-        target = [("lens", "0066_alert_diagnosis_languages")]
-        executor = MigrationExecutor(connection)
-        executor.migrate(target)
-        apps = executor.loader.project_state(target).apps
-        migrated_rule = apps.get_model("lens", "AlertRule").objects.get(pk=rule.pk)
-        self.assertEqual(
-            (migrated_rule.diagnosis_mode, migrated_rule.diagnosis_timeout_seconds, migrated_rule.diagnosis_max_tokens),
-            ("direct", 60, 2048),
+        diagnosed_event = event_model.objects.create(
+            rule=diagnosed_rule,
+            run_id=run.pk,
+            source_key=diagnosis.source_key,
+            event_type="run_failed",
         )
-        self.assertEqual(apps.get_model("lens", "AlertSubscription").objects.get(pk=subscription.pk).language, "en-US")
-        deliveries = apps.get_model("lens", "AlertDelivery")
-        migrated = deliveries.objects.get(pk=delivery.pk)
-        self.assertEqual((migrated.status, migrated.phase, migrated.attempts), ("sent", "initial", 1))
-        self.assertIsNone(migrated.diagnosis_id)
-        deliveries.objects.create(event_id=event.pk, subscription_id=subscription.pk, phase="diagnosis")
+        initial = delivery_model.objects.create(
+            event=diagnosed_event,
+            subscription=diagnosed_subscription,
+            diagnosis=diagnosis,
+        )
+        self.assertEqual(initial.phase, "initial")
+        supplement = delivery_model.objects.create(
+            event=diagnosed_event,
+            subscription=diagnosed_subscription,
+            diagnosis=diagnosis,
+            phase="diagnosis",
+        )
+        self.assertEqual(supplement.diagnosis.result["summary"], "Se agotó el plazo.")
         with self.assertRaises(IntegrityError), transaction.atomic():
-            deliveries.objects.create(event_id=event.pk, subscription_id=subscription.pk, phase="initial")
-        self.assertFalse(apps.get_model("lens", "AlertDiagnosis").objects.exists())
+            delivery_model.objects.create(event=diagnosed_event, subscription=diagnosed_subscription, phase="initial")
+        self.assertEqual(apps.get_model("lens", "Run").objects.get(pk=run.pk).status, "failed")

@@ -18,6 +18,33 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
+            name="AlertDiagnosis",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("uuid", models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("key", models.CharField(max_length=64, unique=True)),
+                ("source_key", models.CharField(max_length=320)),
+                ("subject", models.CharField(max_length=16)),
+                ("source_uuid", models.CharField(max_length=255)),
+                ("language", models.CharField(max_length=16)),
+                ("max_tokens", models.PositiveIntegerField(default=2048)),
+                ("timeout_seconds", models.PositiveIntegerField(default=60)),
+                ("status", models.CharField(db_index=True, default="pending", max_length=16)),
+                ("evidence", models.JSONField(default=dict)),
+                ("result", models.JSONField(default=dict)),
+                ("usage", models.JSONField(default=dict)),
+                ("error_code", models.CharField(blank=True, default="", max_length=64)),
+                ("deadline_at", models.DateTimeField(db_index=True)),
+                ("dispatched_at", models.DateTimeField(blank=True, null=True)),
+                ("finished_at", models.DateTimeField(blank=True, null=True)),
+            ],
+            options={
+                "abstract": False,
+            },
+        ),
+        migrations.CreateModel(
             name="AlertOutbox",
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
@@ -89,6 +116,21 @@ class Migration(migrations.Migration):
                 ),
                 ("datasources", models.ManyToManyField(blank=True, related_name="alert_rules", to="lens.datasource")),
                 ("lensnodes", models.ManyToManyField(blank=True, related_name="alert_rules", to="lens.lensnode")),
+                ("diagnosis_max_tokens", models.PositiveIntegerField(db_default=2048, default=2048)),
+                (
+                    "diagnosis_mode",
+                    models.CharField(
+                        choices=[
+                            ("direct", "Send directly"),
+                            ("diagnose_first", "Diagnose before sending"),
+                            ("notify_then_diagnose", "Notify then diagnose"),
+                        ],
+                        db_default="direct",
+                        default="direct",
+                        max_length=24,
+                    ),
+                ),
+                ("diagnosis_timeout_seconds", models.PositiveIntegerField(db_default=60, default=60)),
             ],
             options={
                 "ordering": ["-created_at"],
@@ -208,6 +250,15 @@ class Migration(migrations.Migration):
                         blank=True, related_name="managed_alert_subscriptions", to=settings.AUTH_USER_MODEL
                     ),
                 ),
+                (
+                    "language",
+                    models.CharField(
+                        choices=[("en-US", "English"), ("zh-CN", "简体中文"), ("es", "Español")],
+                        db_default="en-US",
+                        default="en-US",
+                        max_length=16,
+                    ),
+                ),
             ],
             options={
                 "ordering": ["created_at"],
@@ -248,11 +299,24 @@ class Migration(migrations.Migration):
                         to="lens.alertsubscription",
                     ),
                 ),
+                ("phase", models.CharField(db_default="initial", default="initial", max_length=16)),
+                (
+                    "diagnosis",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="deliveries",
+                        to="lens.alertdiagnosis",
+                    ),
+                ),
             ],
             options={
                 "ordering": ["created_at"],
                 "constraints": [
-                    models.UniqueConstraint(fields=("event", "subscription"), name="lens_alert_delivery_dest_uniq")
+                    models.UniqueConstraint(
+                        fields=("event", "subscription", "phase"), name="lens_alert_delivery_phase_uniq"
+                    )
                 ],
             },
         ),

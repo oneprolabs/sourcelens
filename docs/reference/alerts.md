@@ -90,7 +90,7 @@ implements the design approved in the 2026-10-16 conversation.
    Users subscribe in Settings → Notifications → Alert subscriptions.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
 
-Deploy with migrations through `0066_alert_diagnosis_languages`, register periodic tasks,
+Deploy with migrations through `0065_alert_rules`, register periodic tasks,
 and restart Celery workers and the scheduler. No real external notifications were
 sent during acceptance. Existing staff-only scope endpoints retain their permissions;
 operators without scope-list access can still use the alert management interface.
@@ -191,6 +191,13 @@ receives the original text. Supplied translations are immutable publication cont
 changing them under the same topic/business key returns 409. The publication UI
 provides optional translation inputs; there is no automatic translation model call.
 
-Apply `0066_alert_diagnosis_languages` after the previously installed `0065_alert_rules`,
-then restart workers and scheduler. Existing rules remain direct and existing
-managed destinations default to English; queued deliveries and history are preserved.
+The unpublished diagnosis and language schema is included directly in `0065_alert_rules`,
+after `0064_builtin_decisions`; there is no separate 0066 migration. This creates
+all six notification tables, including diagnosis jobs and delivery phases, in one
+migration. Restart workers and scheduler after applying migrations. Rules default
+to direct delivery and managed destinations default to English.
+
+Local development databases that already applied the former 0065 and 0066 have the
+complete schema. Validate that schema before removing the obsolete 0066 migration
+record; preserve the tables and data. An older partial 0065 schema must be upgraded
+to the complete schema before reconciling migration history.
