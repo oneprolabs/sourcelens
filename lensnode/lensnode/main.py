@@ -212,6 +212,7 @@ class LensNodeClient:
             while len(self._pending_trace_frames) > self._outbox_max:
                 self._pending_trace_frames.popitem(last=False)
         if payload.get("type") == "run_done" and payload.get("run_uuid"):
+            payload = {**payload, "node_enqueued_at": payload.get("node_enqueued_at") or utc_now().isoformat()}
             run_uuid = str(payload["run_uuid"])
             self._pending_terminal_frames[run_uuid] = payload
             self._pending_terminal_frames.move_to_end(run_uuid)
@@ -2339,7 +2340,10 @@ class LensNodeClient:
             while self._outbox:
                 payload = self._outbox.popleft()
                 try:
-                    await websocket.send(json.dumps(payload, ensure_ascii=False))
+                    frame = payload
+                    if payload.get("type") == "run_done":
+                        frame = {**payload, "node_sent_at": utc_now().isoformat()}
+                    await websocket.send(json.dumps(frame, ensure_ascii=False))
                 except (RuntimeError, AttributeError):
                     # The event loop is being torn down (container restart or
                     # deploy). Requeue the frame and stop quietly instead of

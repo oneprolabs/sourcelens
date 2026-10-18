@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from urllib.parse import parse_qs
 
@@ -8,6 +9,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from .lensnode_auth import hash_lensnode_token
 from .models import DataSource, LensNode, Run, SessionCleanupOperation
@@ -50,6 +52,18 @@ def _ack_session_cleanup(session_uuid, lensnode_uuid, error):
 
 
 DETAIL_ITEMS_LIMIT = 200
+
+
+def _terminal_timestamp(value):
+    """Normalize optional node timestamps without trusting arbitrary log text."""
+
+    if not isinstance(value, str) or len(value) > 64:
+        return None
+    try:
+        parsed = parse_datetime(value)
+    except ValueError:
+        return None
+    return parsed.isoformat() if parsed is not None and timezone.is_aware(parsed) else None
 
 
 class LensNodeConsumer(AsyncJsonWebsocketConsumer):
@@ -523,10 +537,17 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def _handle_run_done(self, content):
+        handler_started = time.monotonic()
         run_uuid = self._parse_uuid(content.get("run_uuid"))
         if run_uuid is None:
             await self._send_bad_frame("run_uuid is invalid")
             return
+        LOGGER.info(
+            "Received LensNode terminal frame run_uuid=%s received_at=%s node_enqueued_at=%s node_sent_at=%s",
+            run_uuid, timezone.now().isoformat(),
+            _terminal_timestamp(content.get("node_enqueued_at")),
+            _terminal_timestamp(content.get("node_sent_at")),
+        )
         status = content.get("status") or Run.Status.DONE
         if status not in [
             Run.Status.AWAITING_USER_INPUT,
@@ -571,10 +592,11 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
                 },
             )
         LOGGER.info(
-            "Finished LensNode run run_uuid=%s status=%s error=%s",
+            "Finished LensNode run run_uuid=%s status=%s error=%s handler_ms=%d",
             run_uuid,
             status,
             content.get("error") or "",
+            int((time.monotonic() - handler_started) * 1000),
         )
         if run.status in [
             Run.Status.DONE,
