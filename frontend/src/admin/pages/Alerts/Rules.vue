@@ -240,7 +240,10 @@ async function initialize() {
       lensnodes: choices(lensnodes),
       channels: channels.filter(
         (row) =>
-          row.is_active && ['email', 'webhook'].includes(row.channel_type)
+          row.is_active &&
+          ['email', 'webhook', 'feishu', 'wecom', 'dingtalk'].includes(
+            row.channel_type
+          )
       ),
       users: choices(users, 'id'),
       groups: choices(groups, 'id')

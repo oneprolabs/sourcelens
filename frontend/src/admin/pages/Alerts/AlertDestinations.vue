@@ -40,7 +40,9 @@
           :key="channel.uuid"
           :value="channel.uuid"
         >
-          {{ channel.name }} ({{ channel.channel_type }})
+          {{ channel.name }} ({{
+            notificationTargetLabel(channel.channel_type, t)
+          }})
         </option>
       </BaseSelect>
       <BaseSelect
@@ -107,6 +109,7 @@
   </section>
 </template>
 <script setup>
+import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useI18n } from 'vue-i18n'
 import BaseButton from '@/components/ui/BaseButton.vue'
