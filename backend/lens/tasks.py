@@ -4283,3 +4283,32 @@ def document_attachment_cleanup_task():
     from .document_attachments import cleanup_expired_document_files
 
     return cleanup_expired_document_files()
+
+
+@shared_task(name="lens.dispatch_alerts", queue="lens")
+def dispatch_alerts_task():
+    """Recover durable occurrences and deliver a bounded batch of due alerts."""
+
+    from .alerts import process_alert_outbox, reconcile_alert_sources, send_alert_delivery
+    from .models import AlertDelivery
+
+    reconcile_alert_sources()
+    process_alert_outbox()
+    now = timezone.now()
+    exhausted = AlertDelivery.objects.filter(
+        status="sending", attempts__gte=5, claimed_at__lt=now - timedelta(minutes=5)
+    )
+    exhausted_events = list(exhausted.values_list("event_id", flat=True))
+    exhausted.update(status="failed", error_message="Delivery worker lease expired after final attempt")
+    if exhausted_events:
+        from .alerts import _refresh_event_status
+        from .models import AlertEvent
+
+        for event in AlertEvent.objects.filter(pk__in=exhausted_events):
+            _refresh_event_status(event)
+    due = AlertDelivery.objects.filter(
+        Q(status="pending", next_attempt_at__lte=now)
+        | Q(status="sending", claimed_at__lt=now - timedelta(minutes=5))
+    ).order_by("next_attempt_at")[:25]
+    for delivery_uuid in due.values_list("uuid", flat=True):
+        send_alert_delivery(delivery_uuid)

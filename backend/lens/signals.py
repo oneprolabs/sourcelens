@@ -1,9 +1,9 @@
 import logging
 
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import RunOutputFile, SharedQAFile
+from .models import Run, RunOutputFile, SharedQAFile
 
 logger = logging.getLogger(__name__)
 
@@ -28,3 +28,23 @@ def purge_deliverable_bytes(sender, instance, **kwargs):
             instance.uuid,
             exc_info=True,
         )
+
+
+@receiver(post_save, sender=Run)
+def capture_terminal_run(sender, instance, raw=False, **kwargs):
+    """Persist alert work in the same transaction as a terminal Run save."""
+
+    if not raw:
+        from .alerts import capture_run_alert
+
+        capture_run_alert(instance)
+
+
+@receiver(post_save, sender="agentcore_task_tracker.TaskExecution")
+def capture_terminal_datasource_task(sender, instance, raw=False, **kwargs):
+    """Capture datasource task saves without modifying the vendor package."""
+
+    if not raw:
+        from .alerts import capture_task_alert
+
+        capture_task_alert(instance)

@@ -5,14 +5,15 @@ from unittest.mock import patch
 
 from agentcore_metering.adapters.django.models import LLMUsage
 from agentcore_notifier.adapters.django.models import NotificationChannel
-from agentcore_notifier.adapters.django.tasks.send import send_notification
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
-from lens.alerts import evaluate_run_alerts
+from lens.alerts import evaluate_run_alerts, send_alert_delivery
 from lens.models import (
+    AlertDelivery,
     AlertEvent,
+    AlertOutbox,
     AlertRule,
     Assistant,
     LensNode,
@@ -106,17 +107,24 @@ class AlertEvaluationTests(TestCase):
         defaults.update(overrides)
         return AlertRule.objects.create(**defaults)
 
+    def _evaluate(self, run_uuid):
+        """Drain persisted destination jobs with the transport stubbed by each test."""
+
+        evaluate_run_alerts(run_uuid)
+        for delivery in AlertDelivery.objects.filter(status="pending"):
+            send_alert_delivery(delivery.uuid)
+
     def test_failed_run_dispatches_once(self):
         rule = self._rule()
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(run=run)
         self.assertEqual(event.event_type, AlertEvent.EventType.RUN_FAILED)
-        self.assertEqual(event.status, AlertEvent.Status.DISPATCHED)
+        self.assertEqual(event.status, AlertEvent.Status.SENT)
         self.assertEqual(AlertEvent.objects.filter(rule=rule).count(), 1)
         delay.assert_called_once()
         self.assertEqual(
@@ -128,8 +136,8 @@ class AlertEvaluationTests(TestCase):
         self._rule()
         run = self._run(status=Run.Status.DONE)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         self.assertFalse(AlertEvent.objects.filter(run=run).exists())
         delay.assert_not_called()
@@ -143,8 +151,8 @@ class AlertEvaluationTests(TestCase):
         run = self._run()
         self._usage(run, 150)
 
-        with patch.object(send_notification, "delay"):
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}):
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(run=run)
         self.assertEqual(event.event_type, AlertEvent.EventType.TOKEN_EXCEEDED)
@@ -159,8 +167,8 @@ class AlertEvaluationTests(TestCase):
         run = self._run()
         self._usage(run, 80)
 
-        with patch.object(send_notification, "delay"):
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}):
+            self._evaluate(run.uuid)
 
         self.assertFalse(AlertEvent.objects.filter(run=run).exists())
 
@@ -174,8 +182,8 @@ class AlertEvaluationTests(TestCase):
         self._turn(run, 2)
         self._turn(run, 5)
 
-        with patch.object(send_notification, "delay"):
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}):
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(run=run)
         self.assertEqual(event.event_type, AlertEvent.EventType.ROUNDS_EXCEEDED)
@@ -186,8 +194,8 @@ class AlertEvaluationTests(TestCase):
         rule.assistants.add(self.other_assistant)
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         self.assertFalse(AlertEvent.objects.filter(run=run).exists())
         delay.assert_not_called()
@@ -196,8 +204,8 @@ class AlertEvaluationTests(TestCase):
         self._rule(enabled=False)
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         self.assertFalse(AlertEvent.objects.filter(run=run).exists())
         delay.assert_not_called()
@@ -206,8 +214,8 @@ class AlertEvaluationTests(TestCase):
         rule = self._rule(channel_uuid=None)
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(rule=rule)
         self.assertEqual(event.status, AlertEvent.Status.SKIPPED)
@@ -222,8 +230,8 @@ class AlertEvaluationTests(TestCase):
         rule = self._rule(channel_uuid=email_channel.uuid)
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(rule=rule)
         self.assertEqual(event.status, AlertEvent.Status.SKIPPED)
@@ -238,12 +246,12 @@ class AlertEvaluationTests(TestCase):
         rule = self._rule(channel_uuid=app_channel.uuid)
         run = self._run(status=Run.Status.FAILED)
 
-        with patch.object(send_notification, "delay") as delay:
-            evaluate_run_alerts(run.uuid)
+        with patch("lens.alerts._send_notification", return_value={"success": True}) as delay:
+            self._evaluate(run.uuid)
 
         event = AlertEvent.objects.get(rule=rule)
         self.assertEqual(event.status, AlertEvent.Status.SKIPPED)
-        self.assertIn("not supported", event.error_message)
+        self.assertIn("unavailable", event.deliveries.get().error_message)
         delay.assert_not_called()
 
     def test_finish_hook_evaluates_alerts(self):
@@ -254,8 +262,8 @@ class AlertEvaluationTests(TestCase):
             enqueue=False,
         )
 
-        with patch("lens.alerts.evaluate_run_alerts") as evaluate:
+        with patch("lens.alerts._wake_dispatcher"):
             with self.captureOnCommitCallbacks(execute=True):
                 finish_lensnode_run(run.uuid, Run.Status.DONE)
 
-        evaluate.assert_called_once_with(run.uuid)
+        self.assertTrue(AlertOutbox.objects.filter(source_uuid=str(run.uuid)).exists())

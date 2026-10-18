@@ -1,68 +1,191 @@
-"""Admin alert rule CRUD and triggered alert event views."""
+"""Managed alert rules/history and permission-scoped personal subscriptions."""
 
-from rest_framework import viewsets
+from django.db import transaction
+from django.utils import timezone
+from rest_framework import permissions, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from accounts.permissions import HasRequiredFeature
 from core.paginations import APIPagination
-from lens.models import AlertEvent, AlertRule
-from lens.serializers import AlertEventSerializer, AlertRuleSerializer
+from lens.alert_serializers import AlertEventSerializer, AlertRuleSerializer, PersonalAlertSubscriptionSerializer
+from lens.alerts import SUBJECT_EVENTS, personal_subscription_allowed
+from lens.models import AlertEvent, AlertRule, AlertSubscription
+
 from .base import BaseAuthenticatedViewSet
 
 
 class AlertPagination(APIPagination):
-    """Bounded pagination for alert collections."""
+    """Bound collection sizes for rules, occurrences and personal subscriptions."""
 
     max_page_size = 100
 
 
 class AlertRuleViewSet(BaseAuthenticatedViewSet):
-    """Manage alert rules that notify on terminal QA Run events."""
+    """Manage shared rules and their independently configured destinations."""
 
     permission_classes = [HasRequiredFeature]
     required_feature = "admin_console"
-    queryset = AlertRule.objects.select_related("created_by").prefetch_related(
-        "assistants"
+    queryset = (
+        AlertRule.objects.select_related("created_by")
+        .prefetch_related("assistants", "datasources", "lensnodes", "subscriptions__users", "subscriptions__groups")
+        .order_by("-created_at")
     )
     serializer_class = AlertRuleSerializer
     pagination_class = AlertPagination
 
     def perform_create(self, serializer):
-        """Stamp the creating operator on new rules."""
+        """Record the managing operator."""
 
         serializer.save(created_by=self.request.user)
 
+    @action(detail=False, methods=["get"])
+    def catalog(self, request):
+        """Publish supported event combinations without a separate client registry."""
+
+        return Response({key: sorted(values) for key, values in SUBJECT_EVENTS.items()})
+
 
 class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only list of triggered alert events."""
+    """Inspect occurrences and per-destination provider outcomes."""
 
     permission_classes = [HasRequiredFeature]
     required_feature = "admin_console"
-    queryset = AlertEvent.objects.select_related(
-        "rule",
-        "run",
-        "run__session",
-        "run__session__assistant",
-        "run__session__user",
-    )
+    queryset = AlertEvent.objects.select_related("rule", "run").prefetch_related("deliveries")
     serializer_class = AlertEventSerializer
     pagination_class = AlertPagination
     lookup_field = "uuid"
 
     def get_queryset(self):
-        """Apply optional event/rule/run/status filters."""
+        """Filter by subject, event, rule, operation and summary status."""
 
         queryset = super().get_queryset()
-        params = self.request.query_params
-        event_type = params.get("event_type")
-        if event_type:
-            queryset = queryset.filter(event_type=event_type)
-        rule_uuid = params.get("rule_uuid")
-        if rule_uuid:
-            queryset = queryset.filter(rule__uuid=rule_uuid)
-        run_uuid = params.get("run_uuid")
-        if run_uuid:
-            queryset = queryset.filter(run__uuid=run_uuid)
-        status = params.get("status")
-        if status:
-            queryset = queryset.filter(status=status)
+        for name, field in (
+            ("event_type", "event_type"),
+            ("rule_uuid", "rule__uuid"),
+            ("run_uuid", "run__uuid"),
+            ("status", "status"),
+            ("subject", "subject"),
+            ("source_uuid", "source_uuid"),
+        ):
+            if self.request.query_params.get(name):
+                queryset = queryset.filter(**{field: self.request.query_params[name]})
         return queryset
+
+    @action(detail=True, methods=["post"], url_path="retry")
+    @transaction.atomic
+    def retry(self, request, uuid=None):
+        """Retry failed destinations only; successful sends cannot be replayed."""
+
+        event = self.get_object()
+        event = AlertEvent.objects.select_for_update().get(pk=event.pk)
+        count = event.deliveries.filter(status="failed").update(
+            status="pending", attempts=0, next_attempt_at=timezone.now(), error_message=""
+        )
+        if count:
+            from lens.alerts import _wake_dispatcher
+
+            AlertEvent.objects.filter(pk=event.pk).update(status="pending")
+            transaction.on_commit(_wake_dispatcher)
+        return Response({"retried": count})
+
+
+class PersonalAlertSubscriptionViewSet(BaseAuthenticatedViewSet):
+    """Manage only the current user's published Q&A subscriptions."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = PersonalAlertSubscriptionSerializer
+    pagination_class = AlertPagination
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        """Never expose another subscriber's identity, channel or destination."""
+
+        return (
+            AlertSubscription.objects.filter(user=self.request.user, personal=True)
+            .select_related("rule")
+            .order_by("-created_at")
+        )
+
+    @action(detail=False, methods=["get"])
+    def rules(self, request):
+        """List published rules visible to this user without private resource scopes."""
+
+        candidates = AlertRule.objects.filter(
+            enabled=True, subject__in=["run", "message"], personal_subscription_enabled=True
+        ).prefetch_related("assistants")
+        candidates = [
+            rule
+            for rule in candidates
+            if personal_subscription_allowed(AlertSubscription(rule=rule, user=request.user, personal=True))
+        ]
+        page = self.paginate_queryset(candidates)
+        rows = [
+            {
+                "uuid": str(rule.uuid),
+                "name": rule.name,
+                "events": rule.events,
+                "evaluation_mode": rule.evaluation_mode,
+                "subject": rule.subject,
+                "topic": rule.topic,
+            }
+            for rule in page
+        ]
+        return self.get_paginated_response(rows)
+
+
+class MessagePublicationViewSet(viewsets.GenericViewSet):
+    """Publish immutable topic messages and inspect every publication, even unmatched ones."""
+
+    permission_classes = [HasRequiredFeature]
+    required_feature = "admin_console"
+    pagination_class = AlertPagination
+    lookup_field = "uuid"
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_serializer_class(self):
+        """Describe publication input and record output for API schema generation."""
+
+        from lens.alert_serializers import MessagePublicationSerializer, MessageRecordSerializer
+
+        return MessagePublicationSerializer if self.action == "create" else MessageRecordSerializer
+
+    def get_queryset(self):
+        """Return exact topic matches without exposing business alert snapshots."""
+
+        from lens.models import AlertOutbox
+
+        queryset = AlertOutbox.objects.filter(subject="message").order_by("-created_at")
+        topic = self.request.query_params.get("topic")
+        return queryset.filter(payload__topic=topic) if topic else queryset
+
+    def list(self, request):
+        """Paginate immutable publication records."""
+
+        from lens.alert_serializers import MessageRecordSerializer
+
+        page = self.paginate_queryset(self.get_queryset())
+        return self.get_paginated_response(MessageRecordSerializer(page, many=True).data)
+
+    def retrieve(self, request, uuid=None):
+        """Inspect one recorded message by its public UUID."""
+
+        from lens.alert_serializers import MessageRecordSerializer
+
+        return Response(MessageRecordSerializer(self.get_object()).data)
+
+    def create(self, request):
+        """Return the original record for retries and reject conflicting key reuse."""
+
+        from lens.alert_serializers import MessagePublicationSerializer, MessageRecordSerializer
+        from lens.messages import PublicationConflict, publish_message
+
+        serializer = MessagePublicationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            publication, created = publish_message(**serializer.validated_data, publisher=request.user)
+        except PublicationConflict as error:
+            return Response({"detail": str(error)}, status=409)
+        return Response(
+            {**MessageRecordSerializer(publication).data, "deduplicated": not created}, status=201 if created else 200
+        )
