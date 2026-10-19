@@ -20,6 +20,7 @@
 | [数据源同步与转换](reference/datasource-processing.md) | 增量同步、兼容目录、转换生命周期和进度字段 |
 | [Agent 集成](reference/agent-integration.md) | 外部编码 Agent 的 REST 调用、身份、引用与授权范围 |
 | [Run 实时轨迹](reference/run-trajectory.md) | 查询检查点、SSE、事件顺序和运行诊断 |
+| [Alerts and subscriptions](reference/alerts.md) | Rules, publication, diagnosis, platform targets and delivery history |
 | [提示词与证据边界](reference/prompt-boundaries.md) | 指令优先级、上传材料、引用和输出清理 |
 
 ## 运维与验证

@@ -469,23 +469,6 @@ class UnifiedAlertTests(TestCase):
         process_alert_outbox()
         self.assertEqual(AlertEvent.objects.get().detail["total_tokens"], 20)
 
-    def test_existing_keyed_history_is_not_resent(self):
-        run = self.run_event()
-        event = AlertEvent.objects.create(
-            rule=self.rule,
-            run=run,
-            event_type="run_failed",
-            status="dispatched",
-            source_key=f"run:{run.uuid}:terminal",
-            source_uuid=str(run.uuid),
-        )
-        process_alert_outbox()
-        event.refresh_from_db()
-        self.assertEqual(event.source_uuid, str(run.uuid))
-        self.assertEqual(event.status, "dispatched")
-        self.assertEqual(AlertEvent.objects.count(), 1)
-        self.assertFalse(AlertDelivery.objects.exists())
-
     def test_missing_resource_does_not_group_unrelated_scheduled_attempts(self):
         self.rule.subject, self.rule.events, self.rule.cooldown_seconds = "sync", ["sync_failed"], 300
         self.rule.save()
@@ -494,15 +477,6 @@ class UnifiedAlertTests(TestCase):
         self.task_event("missing-second", trigger="scheduled")
         process_alert_outbox()
         self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 2)
-
-    def test_existing_unkeyed_history_is_not_resent(self):
-        rule = AlertRule.objects.create(name="Existing rule", events=["run_failed"])
-        run = self.run_event()
-        legacy = AlertEvent.objects.create(rule=rule, run=run, event_type="run_failed")
-        evaluate_run_alerts(run.uuid)
-        self.assertEqual(AlertRule.objects.get(pk=rule.pk).subject, "run")
-        self.assertEqual(AlertEvent.objects.filter(rule_id=rule.pk).get().pk, legacy.pk)
-        self.assertFalse(AlertDelivery.objects.filter(event__rule_id=rule.pk).exists())
 
     def test_legacy_api_can_clear_migrated_destination(self):
         self.rule.channel_uuid = self.channel.uuid

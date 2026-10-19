@@ -49,41 +49,9 @@ Legacy channel fields remain supported by the rule API. Migration `0065_alert_ru
 creates the complete notification schema directly after `0064_builtin_decisions`.
 No alert-data backfill is needed before the first release.
 
-## Implementation plan and acceptance
-
-1. Models, outbox and matching: terminal failures, partial success and timeout
-   classification; transaction rollback, duplicate callbacks and retry tests.
-2. Destination APIs and delivery: validation, multiple channels, per-destination
-   results, cooldown, broker failure recovery, permission revocation tests.
-3. Admin rule/event interfaces and personal subscriptions: conditional fields,
-   pagination, explicit errors, localized text, no credential exposure.
-4. Integration: actual datasource callbacks, Run failure cleanup, periodic
-   registration, running threshold sampling, browser acceptance.
-
-Source: `backend/lens/alerts.py`, models and serializers in `backend/lens/`,
-views in `backend/lens/views/alerts.py`; UI in `frontend/src/admin/pages/Alerts/`
-and user settings. Tests use Django TestCase and Node's built-in test runner.
-Follow existing snake_case API fields, Vue composition API and 120-column Python
-style. Validate external inputs; never edit vendor packages or send real test
-messages to external recipients.
-
-Verification commands (run backend against this worktree's container source):
-
-```sh
-python manage.py makemigrations --check --dry-run
-python manage.py test lens.tests.test_alerts lens.tests.test_unified_alerts --noinput
-cd frontend && npm run test:unit
-npm run build
-```
-
-Browser acceptance uses ego-browser: create/edit scoped rules, configure multiple
-destinations, inspect filtered event/delivery records, subscribe/unsubscribe as a
-normal user, and verify conditional inputs and mobile layout. This specification
-implements the design approved in the 2026-10-16 conversation.
-
 ## Configuration
 
-1. Create an active email or webhook channel in Admin Console → Notifications → Channels.
+1. Create an active Feishu, WeCom, DingTalk or email target in Admin Console → Notifications → Channels.
 2. In Alert rules, select synchronization, document processing, Q&A or a message topic; choose events,
    thresholds and optional resource/LensNode scopes. Add one or more destinations.
 3. For personal Q&A or message subscriptions, publish the rule and select the personal email channel.
@@ -91,9 +59,38 @@ implements the design approved in the 2026-10-16 conversation.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
 
 Deploy with migrations through `0065_alert_rules`, register periodic tasks,
-and restart Celery workers and the scheduler. No real external notifications were
-sent during acceptance. Existing staff-only scope endpoints retain their permissions;
-operators without scope-list access can still use the alert management interface.
+and restart Celery workers and the scheduler.
+
+## Notification targets
+
+Feishu, WeCom and DingTalk use independent `channel_type` values: `feishu`, `wecom`
+and `dingtalk`. Existing Webhook targets remain editable. The SourceLens adapter
+owns native validation, rendering and sending; it stores native values in existing
+notifier string columns without changing the dependency's model choices or schema.
+Native sends must use this adapter rather than the dependency's generic
+`send_notification` entry point or model-choice validation.
+
+Native targets use alert rule cooldown, deduplication and retry policies. Generic
+notifier merge/silence settings apply to legacy Webhook targets. Provider
+acknowledgement is required before a delivery becomes sent; ambiguous timeouts can
+still cause duplicate external sends because robot APIs provide no idempotency key.
+
+Feishu receives interactive cards; WeCom and DingTalk receive Markdown. Content
+uses the destination language, escapes untrusted markup and mentions, and truncates
+at UTF-8 boundaries with an ellipsis. Payloads stay below platform limits: 4096
+bytes for WeCom, 20 KB for DingTalk and 30 KB for Feishu. Email remains plain text;
+supported legacy Webhooks also receive the richer payload.
+
+Robot URLs and signing secrets are write-only; blank edits retain saved values.
+Native endpoints require official HTTPS URLs, reject redirects and use bounded
+timeouts. Feishu signs the payload; DingTalk signs query parameters; WeCom uses the
+robot URL key. Records contain unsigned content, locale, target identity and result
+codes, excluding credentials and raw transport exception messages. Explicit test
+sends use the same renderer and sender and create notification records.
+
+Platform contracts: [Feishu](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot),
+[WeCom](https://developer.work.weixin.qq.com/document/path/91770), and
+[DingTalk](https://open.dingtalk.com/document/robots/custom-robot-access).
 
 ## On-demand message publication
 
@@ -191,13 +188,22 @@ receives the original text. Supplied translations are immutable publication cont
 changing them under the same topic/business key returns 409. The publication UI
 provides optional translation inputs; there is no automatic translation model call.
 
-The unpublished diagnosis and language schema is included directly in `0065_alert_rules`,
-after `0064_builtin_decisions`; there is no separate 0066 migration. This creates
-all six notification tables, including diagnosis jobs and delivery phases, in one
-migration. Restart workers and scheduler after applying migrations. Rules default
-to direct delivery and managed destinations default to English.
+## Verification
 
-Local development databases that already applied the former 0065 and 0066 have the
-complete schema. Validate that schema before removing the obsolete 0066 migration
-record; preserve the tables and data. An older partial 0065 schema must be upgraded
-to the complete schema before reconciling migration history.
+Run backend checks against this worktree's container source using
+[devctl](../worktree-development.md):
+
+```sh
+./devctl test . -- python manage.py makemigrations --check --dry-run
+./devctl test . -- python manage.py test \
+  lens.tests.test_alerts lens.tests.test_unified_alerts \
+  lens.tests.test_alert_diagnostics lens.tests.test_notification_targets \
+  lens.tests.test_alert_migrations --noinput
+cd frontend && npm run test:unit
+npm run build
+```
+
+Use mocked transports or local receivers for automated delivery tests. Browser
+verification uses ego-browser to check scoped rules, destinations, delivery history,
+personal opt-in, localization and mobile layout. Rendering in each platform's
+desktop/mobile client requires separate verification with a configured robot.
