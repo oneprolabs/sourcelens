@@ -28,7 +28,6 @@ from ..checkpoint import (
     checkpoint_enabled,
     get_checkpoint_saver,
     load_resume_state,
-    save_decision_gates,
     save_initial_checkpoint,
     save_resume_metadata,
     save_runtime_state,
@@ -71,7 +70,7 @@ from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
 )
-from .evidence_gate import EvidenceGateMiddleware, _verdicts_supported
+from .evidence_gate import EvidenceGateMiddleware
 from .execution import (
     EmptyAgentResponseError,
     _emit_new_model_calls,
@@ -81,6 +80,13 @@ from .execution import (
     _run_agent_with_turn_limit,
     _strip_dangling_tool_call,
     _synthesize_wrapup_answer,
+)
+from .finalization import (
+    _enforce_completion_status,
+    _enforce_delivery_status,
+    _post_run_decision_gates,
+    _update_extension_evidence,
+    finalize_run,
 )
 from .limits import (
     SharedTokenBudget,
@@ -166,58 +172,6 @@ def _decision_attempt(state):
         int(getattr(resume_state, "current_attempt", 1) or 1),
         1,
     )
-
-
-def _update_extension_evidence(state):
-    """Merge Plugin snapshots without discarding host-observed evidence gaps."""
-
-    extensions = getattr(state, "agent_extensions", AgentExtensions())
-    extension_evidence = extensions.evidence()
-    if state.runtime_evidence.get("evidence_completeness") == "incomplete":
-        extension_evidence.pop("evidence_completeness", None)
-    state.runtime_evidence.update(extension_evidence)
-
-
-def _post_run_decision_gates(state, answer):
-    """Return advisory post-run gate verdicts, replaying resume metadata.
-
-    The verdicts never block: they are recorded for observability and
-    persisted so a resumed run replays them instead of calling out again.
-    """
-
-    resume_state = getattr(state, "resume_state", None)
-    if (
-        resume_state is not None
-        and resume_state.decision_gates
-        and not getattr(getattr(state, "agent_extensions", None), "refresh_evidence", False)
-    ):
-        return dict(resume_state.decision_gates)
-    policy = getattr(state, "decision_policy", None)
-    if policy is None:
-        return {}
-    runtime_evidence = getattr(state, "runtime_evidence", None)
-    evidence_middleware = getattr(state, "evidence_middleware", None)
-    verdicts = (
-        evidence_middleware.cached_verdicts(answer, runtime_evidence)
-        if evidence_middleware is not None
-        else None
-    )
-    if verdicts is None:
-        verdicts = policy.post_run_checks(
-            state.question,
-            answer,
-            runtime_evidence,
-        )
-    if verdicts and getattr(state, "checkpoint_ready", False):
-        try:
-            save_decision_gates(
-                state.run_uuid,
-                state.config.workspace_path,
-                verdicts,
-            )
-        except Exception:
-            LOGGER.exception("Failed to persist decision gate verdicts")
-    return verdicts
 
 
 def _build_evidence_middleware(state):
@@ -1907,20 +1861,11 @@ class LensDeepAgentRuntime:
             },
         )
         state.exit_span(loop_span)
-        _update_extension_evidence(state)
-        if state.cancel_event is not None and state.cancel_event.is_set():
-            raise RunCancelledError("Run was cancelled before attachment staging.")
-        completion_issues = getattr(state, "agent_extensions", AgentExtensions()).completion_checks(answer)
-        completion_issues = list(completion_issues or []) + state.runtime_evidence.get("delivery_issues", [])
-        if completion_issues:
-            state.runtime_evidence["completion_issues"] = completion_issues
-            state.command.get("_deliverables", {}).clear()
-            answer = _enforce_completion_status(answer, state.command, completion_issues)
-        else:
-            answer = _enforce_delivery_status(answer, state.command, state.evidence_requirement)
-        stop_reason = state.model.stop_reason
-        if not truncated and termination_reason is None and stop_reason == "token_budget_wrapup":
-            stop_reason = None
+        finalized = finalize_run(state, answer, truncated=truncated, termination_reason=termination_reason)
+        answer = finalized.answer
+        outcome = finalized.outcome
+        termination_detail = finalized.termination_detail
+        stop_reason = finalized.stop_reason
         state.emit_agent_event(
             "deepagents.runtime.done",
             {
@@ -1932,47 +1877,6 @@ class LensDeepAgentRuntime:
                 "token_usage": state.model.token_usage,
             },
         )
-        outcome, termination_detail = _finalize_runtime_outcome(
-            capability_middleware=state.capability_middleware,
-            evidence_requirement=state.evidence_requirement,
-            required_capabilities=state.required_capabilities,
-            truncated=truncated or bool(termination_reason),
-            stop_reason=termination_reason or stop_reason,
-            execution_gate_enabled=state.runtime_mode.execution_gates,
-            runtime_evidence=state.runtime_evidence,
-        )
-        post_run_gates = _post_run_decision_gates(state, answer)
-        if (
-            outcome == "completed"
-            and state.evidence_requirement == "artifact"
-            and not state.command.get("_deliverables")
-        ):
-            outcome = "partial"
-            termination_detail = _evidence_termination_detail("artifact")
-        if post_run_gates:
-            termination_detail = {
-                **termination_detail,
-                "decision_gates": post_run_gates,
-            }
-            if outcome == "completed":
-                if post_run_gates.get("evidence_completeness") == "incomplete":
-                    outcome = "partial"
-                    termination_detail.update(
-                        reason="evidence_incomplete",
-                        error_type="verification",
-                    )
-                elif post_run_gates.get("review_completeness") == "incomplete":
-                    outcome = "partial"
-                    termination_detail.update(
-                        reason="review_material_incomplete",
-                        error_type="verification",
-                    )
-                elif not _verdicts_supported(post_run_gates):
-                    outcome = "partial"
-                    termination_detail.update(
-                        reason="evidence_insufficient",
-                        error_type="verification",
-                    )
         if state.capability_middleware is not None:
             state.emit_agent_event(
                 "deepagents.runtime.outcome",
@@ -1999,13 +1903,6 @@ class LensDeepAgentRuntime:
                     "verification.failed",
                     termination_detail,
                 )
-            answer = _unverified_execution_answer(
-                state.question,
-                termination_detail,
-                answer_language=_command_answer_language(
-                    state.command
-                ),
-            )
         if state.runtime_mode.general_chat:
             state.emit_user_event(
                 "phase.changed",
@@ -2022,50 +1919,6 @@ class LensDeepAgentRuntime:
                 _command_answer_language(state.command)
             ),
         }
-
-
-def _enforce_completion_status(answer, command, checks):
-    """Withdraw an unsupported final assertion after bounded repair is exhausted."""
-
-    if not checks:
-        return answer
-    if any(check.get("code") == "artifact_delivery_failed" for check in checks):
-        return _pick_text(
-            "文件交付未完成，本次附件未发布。请重试生成。",
-            "File delivery is incomplete. The attachments were not published. Please retry.",
-            _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
-        )
-    if any(check.get("code") == "activity_evidence_unread" for check in checks):
-        return _pick_text(
-            "结果核验未通过：尚有工作记录未完成核对，本次报告及附件未发布。请重试完成汇总。",
-            "The result could not be verified. Some activity records remain unread; the report and attachments "
-            "were not published. Please retry the summary.",
-            _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
-        )
-    if any(check.get("code") == "activity_claim_unsupported" for check in checks):
-        return _pick_text(
-            "结果核验未通过：报告包含来源无法支持的人员结论，本次报告及附件未发布。请按已观察到的工作重新汇总。",
-            "The result could not be verified. The report contains unsupported personnel conclusions; "
-            "the report and attachments were not published. Please summarize the observed work instead.",
-            _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
-        )
-    return _pick_text(
-        "结果核验未通过，本次结果不能视为已验证。请补齐证据或修正缺乏支持的结论后重试。",
-        "The result could not be verified. Complete the evidence review or correct unsupported conclusions and retry.",
-        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
-    )
-
-
-def _enforce_delivery_status(answer, command, evidence_requirement):
-    """Report an unfulfilled artifact request using the actual saved attachment state."""
-
-    if evidence_requirement != "artifact" or command.get("_deliverables"):
-        return answer
-    return _pick_text(
-        "文件交付未完成，本次没有可下载的附件。请重试生成。",
-        "File delivery is incomplete. No downloadable attachment was saved for this run. Please retry.",
-        _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
-    )
 
 
 def _scenario_for_task(task):

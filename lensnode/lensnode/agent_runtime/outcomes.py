@@ -1,6 +1,7 @@
 """Terminal outcome policy for LensNode agent runs."""
 
 from .capability_protocol import CAPABILITY_FAMILIES
+from .evidence_gate import _verdicts_supported
 from .prompts import (
     detect_answer_language as _detect_answer_language,
     pick_text as _pick_text,
@@ -45,6 +46,53 @@ def _evidence_termination_detail(
 
 
 def _finalize_runtime_outcome(
+    *,
+    capability_middleware,
+    evidence_requirement,
+    required_capabilities=None,
+    truncated,
+    stop_reason,
+    execution_gate_enabled=True,
+    runtime_evidence=None,
+    decision_gates=None,
+):
+    """Combine execution facts and final review without overwriting an earlier failure."""
+
+    outcome, detail = _execution_outcome(
+        capability_middleware=capability_middleware,
+        evidence_requirement=evidence_requirement,
+        required_capabilities=required_capabilities,
+        truncated=truncated,
+        stop_reason=stop_reason,
+        execution_gate_enabled=execution_gate_enabled,
+        runtime_evidence=runtime_evidence,
+    )
+    if (
+        outcome == "completed"
+        and evidence_requirement == "artifact"
+        and runtime_evidence is not None
+        and "_deliverables" in runtime_evidence
+        and not runtime_evidence["_deliverables"]
+    ):
+        outcome, detail = "partial", _evidence_termination_detail("artifact")
+    if decision_gates:
+        detail = {**detail, "decision_gates": decision_gates}
+        if outcome == "completed":
+            if decision_gates.get("evidence_completeness") == "incomplete":
+                reason = "evidence_incomplete"
+            elif decision_gates.get("review_completeness") == "incomplete":
+                reason = "review_material_incomplete"
+            elif not _verdicts_supported(decision_gates):
+                reason = "evidence_insufficient"
+            else:
+                reason = None
+            if reason is not None:
+                outcome = "partial"
+                detail.update(reason=reason, error_type="verification")
+    return outcome, detail
+
+
+def _execution_outcome(
     *,
     capability_middleware,
     evidence_requirement,
