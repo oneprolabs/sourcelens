@@ -45,6 +45,13 @@ with a saved-file preview. Matching graph tool messages use those retained facts
 for review. Eviction alone therefore does not imply missing review material;
 source limits, genuinely oversized results and total review capacity still do.
 
+Built-in decision gates and ranking calls freeze the configured model timeout
+(bounded to 1–30 seconds) with the Run. The backend honors that deadline, and
+the node allows one additional second for gateway transport. This removes the
+previous silent two-second backend cap and three-second node cap. Legacy
+snapshots without a deadline retain their previous behavior. Provider retries
+remain disabled, and timeout still produces an inconclusive review.
+
 An unavailable final reviewer returns an inconclusive, partial result with
 `review_unavailable`, preserving existing output rather than dropping the answer
 or declaring it verified. This applies both to a raised review error and to an

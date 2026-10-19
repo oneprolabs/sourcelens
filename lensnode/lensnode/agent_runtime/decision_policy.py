@@ -482,7 +482,7 @@ class DecisionRanker:
                 arguments,
                 call_id,
                 RANK_SOURCE,
-                RANK_TIMEOUT_S,
+                binding["timeout_seconds"] + 1 if binding.get("timeout_seconds") else RANK_TIMEOUT_S,
                 emit=self._tagged_emit,
             )
             if result is not None:

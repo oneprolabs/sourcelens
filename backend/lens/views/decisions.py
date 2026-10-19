@@ -97,7 +97,7 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
             config = dict(model.config)
             config["request_timeout_seconds"] = (
                 definition["timeout_seconds"]
-                if source == "decision_score"
+                if definition.get("timeout_seconds")
                 else min(int(config.get("request_timeout_seconds") or 2), 2)
             )
             config["num_retries"] = 0

@@ -401,7 +401,7 @@ class DecisionRunner:
                 arguments,
                 call_id,
                 GATE_SOURCE,
-                GATE_TIMEOUT_S,
+                binding["timeout_seconds"] + 1 if binding.get("timeout_seconds") else GATE_TIMEOUT_S,
                 emit=self._tagged_emit,
             )
         plugin_key = str(binding.get("plugin_key") or "")

@@ -108,6 +108,46 @@ class BuiltinDecisionTests(TestCase):
             with self.subTest(gate=gate):
                 self.assertEqual(snapshot["gates"][gate]["max_state_chars"], 80000)
 
+    def test_review_timeout_is_frozen_and_not_silently_shortened(self):
+        """A configured ten-second reviewer must not be limited to two seconds."""
+
+        self.model.config["request_timeout_seconds"] = 10
+        self.model.save(update_fields=["config"])
+        self.execution.runtime_snapshot["decision_model"] = build_assistant_decision_model(self.assistant)
+        self.execution.save(update_fields=["runtime_snapshot"])
+        self.model.config["request_timeout_seconds"] = 1
+        self.model.save(update_fields=["config"])
+        with patch(
+            "lens.views.decisions.DecisionTracker.call_with_config",
+            return_value=([{"type": "predicate", "name": "evidence_sufficient", "probability": 0.8}], {}),
+        ) as tracker:
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(tracker.call_args.kwargs["config"]["request_timeout_seconds"], 10)
+        self.assertEqual(tracker.call_args.kwargs["config"]["num_retries"], 0)
+
+    def test_decision_deadline_remains_bounded_in_the_snapshot(self):
+        for configured, expected in [(100, 30), (-10, 1), (None, 3)]:
+            with self.subTest(configured=configured):
+                self.model.config["request_timeout_seconds"] = configured
+                self.model.save(update_fields=["config"])
+                snapshot = build_assistant_decision_model(self.assistant)
+                self.assertEqual(snapshot["gates"]["answer_supported"]["timeout_seconds"], expected)
+
+    def test_legacy_snapshot_keeps_its_previous_timeout_limit(self):
+        for definition in self.execution.runtime_snapshot["decision_model"]["gates"].values():
+            definition.pop("timeout_seconds", None)
+        self.execution.save(update_fields=["runtime_snapshot"])
+        self.model.config["request_timeout_seconds"] = 10
+        self.model.save(update_fields=["config"])
+        with patch(
+            "lens.views.decisions.DecisionTracker.call_with_config",
+            return_value=([{"type": "predicate", "name": "evidence_sufficient", "probability": 0.8}], {}),
+        ) as tracker:
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(tracker.call_args.kwargs["config"]["request_timeout_seconds"], 2)
+
     def test_explicit_score_uses_the_frozen_model_and_user_rubric(self):
         self.payload.update(
             source="decision_score",
