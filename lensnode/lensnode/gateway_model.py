@@ -830,6 +830,8 @@ class LensGatewayChatModel(BaseChatModel):
                         call_id,
                     )
         if error is not None:
+            if isinstance(error, GatewayProtocolError):
+                error.trajectory_call_id = call_id
             payload = {
                 "error_type": type(error).__name__,
                 "error": str(error),

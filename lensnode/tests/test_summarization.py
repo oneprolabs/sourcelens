@@ -9,6 +9,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from lensnode.agent_runtime.summarization import LensSummarizationMiddleware
+from lensnode.trajectory import RunTrajectory
 from lensnode.gateway_model import (
     GatewayProtocolError,
     LensGatewayChatModel,
@@ -113,7 +114,7 @@ def test_protocol_failure_preserves_history_and_stops_retrying_compaction(monkey
         assert result is None
         assert state["messages"] == messages
     assert attempts == ["summary"]
-    assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR"})]
+    assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR", "action": "preserve_history"})]
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -146,9 +147,12 @@ def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(as
             "content": '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="read_file">', "tool_calls": [],
         }})
 
+    frames = []
+    trajectory = RunTrajectory("summary-run", frames.append)
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         model = LensGatewayChatModel(model_ref="summary-model", ai_gateway_url="http://gateway/ai/",
-                                     token="test", http_client=client, observation_name="summarization")
+                                     token="test", http_client=client, observation_name="summarization",
+                                     trajectory=trajectory)
         middleware = LensSummarizationMiddleware(
             model=model,
             token_counter=lambda messages: sum(len(str(message.content)) for message in messages),
@@ -169,7 +173,14 @@ def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(as
         assert state["messages"] == messages
         assert len(requests) == 1
         assert not requests[0].get("tools")
-        assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR"})]
+        trace = [event for frame in frames for event in frame["events"]]
+        failed = [event for event in trace if event["event_type"] == "model.failed"]
+        recovered = [event for event in trace if event["event_type"] == "model.recovered"]
+        assert len(failed) == len(recovered) == 1
+        assert failed[0]["call_id"] == recovered[0]["call_id"]
+        assert recovered[0]["payload"]["action"] == "preserve_history"
+        assert not recovered[0]["payload"].get("diagnostics")
+        assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR", "action": "preserve_history"})]
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

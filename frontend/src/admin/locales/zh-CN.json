@@ -26,6 +26,7 @@
     "trajectoryState_awaiting_user_input": "等待用户输入",
     "trajectoryState_timeout": "超时回退",
     "trajectoryState_fallback": "已回退",
+    "trajectorySummaryHistoryPreserved": "摘要失败，已保留历史",
     "trajectoryState_degraded": "存在异常",
     "trajectoryState_healthy": "正常",
     "trajectoryState_incomplete": "未闭合",

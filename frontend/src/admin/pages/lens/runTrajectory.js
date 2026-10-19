@@ -539,6 +539,15 @@ function buildSpan({
     diagnostics.push('unbound_lifecycle')
   }
   const status = spanStatus(statusEvents)
+  const historyPreserved =
+    category === 'model' &&
+    name === 'model.summarization' &&
+    status === 'failed' &&
+    ordered.some(
+      (event) =>
+        event.event_type === 'model.recovered' &&
+        event.payload?.action === 'preserve_history'
+    )
   return {
     id,
     name,
@@ -592,7 +601,8 @@ function buildSpan({
         : started
           ? null
           : durationMs,
-    status,
+    status: historyPreserved ? 'degraded' : status,
+    recoveryAction: historyPreserved ? 'preserve_history' : null,
     ttftMs: optionalNumber(ttftEvent?.payload?.ttft_ms),
     ...tokenUsage,
     toolCount: optionalNumber(startEvent?.payload?.tool_count),

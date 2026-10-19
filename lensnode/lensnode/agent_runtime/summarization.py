@@ -124,13 +124,17 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
 
         return _validated_summary(await super()._acreate_summary(messages_to_summarize))
 
-    def _invalid_summary(self, reason="invalid_summary"):
+    def _invalid_summary(self, reason="invalid_summary", call_id=None):
         """Report skipped compaction without reporting evidence as successfully saved."""
 
         self._summary_disabled = True
+        detail = {"reason": reason, "action": "preserve_history"}
+        trajectory = getattr(self.model, "trajectory", None)
+        if trajectory is not None and call_id:
+            trajectory.record("model.recovered", detail, call_id=call_id)
         emit = getattr(self, "_emit_event", None)
         if emit is not None:
-            emit("deepagents.summarization.failed", {"reason": reason})
+            emit("deepagents.summarization.failed", detail)
 
     def before_model(self, state, runtime):
         """Summarize on threshold and report what was compacted."""
@@ -144,7 +148,7 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
             self._invalid_summary()
             return None
         except GatewayProtocolError as exc:
-            self._invalid_summary(exc.code)
+            self._invalid_summary(exc.code, getattr(exc, "trajectory_call_id", None))
             return None
         self._report_compaction(before_tokens, result)
         return result
@@ -161,7 +165,7 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
             self._invalid_summary()
             return None
         except GatewayProtocolError as exc:
-            self._invalid_summary(exc.code)
+            self._invalid_summary(exc.code, getattr(exc, "trajectory_call_id", None))
             return None
         self._report_compaction(before_tokens, result)
         return result

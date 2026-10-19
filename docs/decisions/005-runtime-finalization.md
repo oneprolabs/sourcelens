@@ -91,3 +91,10 @@ complete upstream data, or make natural-language verification a proof of
 correctness. The activity-report workflow remains an extension in this
 increment. Broader recovery-policy and path-namespace changes require their own
 contracts and regression slices.
+
+Summary protocol failures retain their failed model lifecycle. After the host
+preserves the original history, it records a `model.recovered` annotation
+bound to that exact model call. The trajectory renders this as a degraded
+summary with an explicit history-preserved label, keeping the raw failure
+available. A completed Run alone is never sufficient to relabel a failure;
+legacy and unrelated failures retain their original status.
