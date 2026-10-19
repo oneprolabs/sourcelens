@@ -8,6 +8,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 
 class TimestampedUUIDModel(models.Model):
@@ -2143,3 +2144,253 @@ class SharedQAFile(TimestampedUUIDModel):
 
     def __str__(self):
         return self.filename or str(self.uuid)
+
+
+class AlertRule(TimestampedUUIDModel):
+    """Unified business conditions with independently configured destinations.
+
+    An empty ``assistants`` relation means the rule applies to every
+    assistant. ``events`` holds a subset of :class:`AlertEvent.EventType`;
+    token/round thresholds only matter when their event is selected.
+    """
+
+    class Event(models.TextChoices):
+        MESSAGE_PUBLISHED = "message_published", "Message published"
+        RUN_FAILED = "run_failed", "Run failed"
+        RUN_PARTIAL = "run_partial", "Answer incomplete"
+        RUN_TIMEOUT = "run_timeout", "Answer timed out"
+        RUN_TOKEN_LIMIT = "run_token_limit", "Token budget termination"
+        RUN_ROUND_LIMIT = "run_round_limit", "Round limit termination"
+        RUN_SLOW = "run_slow", "Run duration exceeded"
+        SYNC_FAILED = "sync_failed", "Sync failed"
+        SYNC_PARTIAL = "sync_partial", "Sync partially failed"
+        SYNC_TIMEOUT = "sync_timeout", "Sync timed out"
+        PROCESSING_FAILED = "processing_failed", "Processing failed"
+        PROCESSING_PARTIAL = "processing_partial", "Processing partially failed"
+        PROCESSING_TIMEOUT = "processing_timeout", "Processing timed out"
+        TOKEN_EXCEEDED = "token_exceeded", "Token exceeded"
+        ROUNDS_EXCEEDED = "rounds_exceeded", "Rounds exceeded"
+
+    class Subject(models.TextChoices):
+        MESSAGE = "message", "Business message"
+        RUN = "run", "Q&A"
+        SYNC = "sync", "Datasource sync"
+        PROCESSING = "processing", "Document processing"
+
+    topic = models.CharField(max_length=120, blank=True, default="", db_default="")
+    name = models.CharField(max_length=160)
+    subject = models.CharField(max_length=16, choices=Subject.choices, default=Subject.RUN, db_default="run")
+    evaluation_mode = models.CharField(
+        max_length=16,
+        choices=[("terminal", "On completion"), ("running", "While running")],
+        default="terminal",
+        db_default="terminal",
+    )
+    diagnosis_mode = models.CharField(
+        max_length=24,
+        choices=[
+            ("direct", "Send directly"),
+            ("diagnose_first", "Diagnose before sending"),
+            ("notify_then_diagnose", "Notify then diagnose"),
+        ],
+        default="direct",
+        db_default="direct",
+    )
+    diagnosis_timeout_seconds = models.PositiveIntegerField(default=60, db_default=60)
+    diagnosis_max_tokens = models.PositiveIntegerField(default=2048, db_default=2048)
+    duration_threshold = models.PositiveIntegerField(null=True, blank=True)
+    cooldown_seconds = models.PositiveIntegerField(default=0, db_default=0)
+    personal_subscription_enabled = models.BooleanField(default=False, db_default=False)
+    personal_channel_uuid = models.UUIDField(null=True, blank=True)
+    datasources = models.ManyToManyField(DataSource, blank=True, related_name="alert_rules")
+    lensnodes = models.ManyToManyField(LensNode, blank=True, related_name="alert_rules")
+    enabled = models.BooleanField(default=True, db_default=True)
+    events = models.JSONField(default=list, blank=True, db_default=[])
+    token_threshold = models.PositiveIntegerField(null=True, blank=True)
+    rounds_threshold = models.PositiveIntegerField(null=True, blank=True)
+    channel_uuid = models.UUIDField(null=True, blank=True)
+    email_recipients = models.JSONField(default=list, blank=True, db_default=[])
+    assistants = models.ManyToManyField(
+        Assistant,
+        blank=True,
+        related_name="alert_rules",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="lens_alert_rules",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name or str(self.uuid)
+
+    def applies_to_assistant(self, assistant_id):
+        """Return True when the rule targets the given assistant."""
+
+        targets = list(self.assistants.all())
+        if not targets:
+            return True
+        return any(item.pk == assistant_id for item in targets)
+
+
+class AlertEvent(models.Model):
+    """One matched business occurrence with durable destination history."""
+
+    class EventType(models.TextChoices):
+        MESSAGE_PUBLISHED = "message_published", "Message published"
+        RUN_FAILED = "run_failed", "Run failed"
+        RUN_PARTIAL = "run_partial", "Answer incomplete"
+        RUN_TIMEOUT = "run_timeout", "Answer timed out"
+        RUN_TOKEN_LIMIT = "run_token_limit", "Token budget termination"
+        RUN_ROUND_LIMIT = "run_round_limit", "Round limit termination"
+        RUN_SLOW = "run_slow", "Run duration exceeded"
+        SYNC_FAILED = "sync_failed", "Sync failed"
+        SYNC_PARTIAL = "sync_partial", "Sync partially failed"
+        SYNC_TIMEOUT = "sync_timeout", "Sync timed out"
+        PROCESSING_FAILED = "processing_failed", "Processing failed"
+        PROCESSING_PARTIAL = "processing_partial", "Processing partially failed"
+        PROCESSING_TIMEOUT = "processing_timeout", "Processing timed out"
+        TOKEN_EXCEEDED = "token_exceeded", "Token exceeded"
+        ROUNDS_EXCEEDED = "rounds_exceeded", "Rounds exceeded"
+
+    class Status(models.TextChoices):
+        DISPATCHED = "dispatched", "Dispatched"
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        PARTIAL = "partial", "Partially sent"
+        SKIPPED = "skipped", "Skipped"
+        FAILED = "failed", "Failed"
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    rule = models.ForeignKey(
+        AlertRule,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="alert_events",
+    )
+    run = models.ForeignKey(
+        Run,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="alert_events",
+    )
+    source_key = models.CharField(max_length=320, null=True, blank=True)
+    subject = models.CharField(max_length=16, default="run", db_default="run")
+    source_uuid = models.CharField(max_length=255, blank=True, default="", db_default="")
+    rule_snapshot = models.JSONField(default=dict, blank=True, db_default={})
+    event_type = models.CharField(max_length=32, choices=EventType.choices)
+    detail = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DISPATCHED,
+    )
+    error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["rule", "source_key"], name="lens_alert_rule_source_uniq"),
+        ]
+        indexes = [
+            models.Index(
+                fields=["event_type", "created_at"],
+                name="lens_alertevent_type_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type}:{self.run_id}"
+
+
+class AlertSubscription(TimestampedUUIDModel):
+    """One managed destination or a user's personal email subscription."""
+
+    rule = models.ForeignKey(AlertRule, on_delete=models.CASCADE, related_name="subscriptions")
+    name = models.CharField(max_length=160, blank=True, default="")
+    enabled = models.BooleanField(default=True)
+    channel_uuid = models.UUIDField(null=True, blank=True)
+    email_recipients = models.JSONField(default=list, blank=True)
+    users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="managed_alert_subscriptions")
+    groups = models.ManyToManyField("auth.Group", blank=True, related_name="alert_subscriptions")
+    language = models.CharField(
+        max_length=16,
+        choices=[("en-US", "English"), ("zh-CN", "简体中文"), ("es", "Español")],
+        default="en-US",
+        db_default="en-US",
+    )
+    personal = models.BooleanField(default=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="alert_subscriptions"
+    )
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["rule", "user"], name="lens_alert_subscription_user_uniq")]
+        ordering = ["created_at"]
+
+
+class AlertOutbox(TimestampedUUIDModel):
+    """Durable occurrence persisted together with the business state change."""
+
+    source_key = models.CharField(max_length=320, unique=True)
+    subject = models.CharField(max_length=16)
+    source_uuid = models.CharField(max_length=255)
+    payload = models.JSONField(default=dict)
+    processed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+
+class AlertDiagnosis(TimestampedUUIDModel):
+    """One bounded analysis shared by matching rules in the same language."""
+
+    key = models.CharField(max_length=64, unique=True)
+    source_key = models.CharField(max_length=320)
+    subject = models.CharField(max_length=16)
+    source_uuid = models.CharField(max_length=255)
+    language = models.CharField(max_length=16)
+    max_tokens = models.PositiveIntegerField(default=2048)
+    timeout_seconds = models.PositiveIntegerField(default=60)
+    status = models.CharField(max_length=16, default="pending", db_index=True)
+    evidence = models.JSONField(default=dict)
+    result = models.JSONField(default=dict)
+    usage = models.JSONField(default=dict)
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    deadline_at = models.DateTimeField(db_index=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+
+class AlertDelivery(TimestampedUUIDModel):
+    """Durable destination job with a claim lease and bounded retries."""
+
+    event = models.ForeignKey(AlertEvent, on_delete=models.CASCADE, related_name="deliveries")
+    subscription = models.ForeignKey(
+        AlertSubscription, null=True, blank=True, on_delete=models.SET_NULL, related_name="deliveries"
+    )
+    diagnosis = models.ForeignKey(AlertDiagnosis, null=True, blank=True, on_delete=models.SET_NULL, related_name="deliveries")
+    phase = models.CharField(max_length=16, default="initial", db_default="initial")
+    dedupe_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    destination = models.JSONField(default=dict)
+    status = models.CharField(max_length=16, default="pending", db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["event", "subscription", "phase"], name="lens_alert_delivery_phase_uniq")
+        ]
+        ordering = ["created_at"]

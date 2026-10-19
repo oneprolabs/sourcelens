@@ -11,6 +11,12 @@ from core.views.admin_bulk import (
     LLMConfigBulkView,
     NotificationChannelBulkDeleteView,
 )
+from core.views.notification_targets import (
+    TargetDetailView,
+    TargetListView,
+    TargetTestView,
+    TargetValidateView,
+)
 from core.views.tasks import TaskExecutionListViewSet
 from .swagger import schema_view, swagger_view, redoc_view
 
@@ -135,6 +141,11 @@ urlpatterns = [
         LLMConfigBulkView.as_view(),
         name='llm_configs_bulk',
     ),
+
+    path('api/v1/admin/notifications/channels/', TargetListView.as_view()),
+    path('api/v1/admin/notifications/channels/validate/', TargetValidateView.as_view()),
+    path('api/v1/admin/notifications/channels/<uuid:uuid>/', TargetDetailView.as_view()),
+    path('api/v1/admin/notifications/channels/<uuid:uuid>/test/', TargetTestView.as_view()),
 
     # Notifier admin API (agentcore-notifier: must be before admin/ to match)
     path(

@@ -237,7 +237,11 @@
         "
         @close="closeModal"
       >
-        <form @submit.prevent="submitForm" class="space-y-4">
+        <form
+          id="notification-channel-form"
+          @submit.prevent="submitForm"
+          class="space-y-4"
+        >
           <p v-if="editingId" class="text-xs text-gray-500 mb-2">
             {{ t('notificationManagement.channels.editSaveHint') }}
           </p>
@@ -250,7 +254,14 @@
               :disabled="!!editingId"
               required
             >
-              <option value="webhook">
+              <option
+                v-for="type in nativeTargetTypes"
+                :key="type"
+                :value="type"
+              >
+                {{ channelTypeLabel(type) }}
+              </option>
+              <option v-if="form.channel_type === 'webhook'" value="webhook">
                 {{ t('notificationManagement.channels.typeWebhook') }}
               </option>
               <option value="email">
@@ -265,32 +276,41 @@
             <input
               v-model="form.name"
               type="text"
+              required
               class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
               :placeholder="
                 t('notificationManagement.channels.namePlaceholder')
               "
             />
           </div>
-          <template v-if="form.channel_type === 'webhook'">
-            <div>
+          <template v-if="isRobotTarget(form.channel_type)">
+            <div v-if="form.channel_type === 'webhook'">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{
                 t('notificationManagement.channels.providerType')
               }}</label>
               <BaseSelect v-model="form.config.provider_type" required>
-                <option value="feishu">飞书</option>
-                <option value="wecom">WeCom</option>
-                <option value="wechat">企业微信</option>
+                <option value="feishu">{{ channelTypeLabel('feishu') }}</option>
+                <option value="wecom">{{ channelTypeLabel('wecom') }}</option>
+                <option value="wechat">{{ channelTypeLabel('wecom') }}</option>
               </BaseSelect>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">{{
-                t('notificationManagement.channels.url')
+                form.channel_type === 'webhook'
+                  ? t('notificationManagement.channels.url')
+                  : t('notificationManagement.channels.robotUrl')
               }}</label>
               <input
                 v-model="form.config.url"
-                type="url"
+                type="password"
+                autocomplete="off"
+                :placeholder="
+                  form.config.url_configured
+                    ? t('notificationManagement.channels.urlEditHint')
+                    : targetUrlPlaceholder
+                "
+                :required="!form.config.url_configured"
                 class="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
-                required
               />
             </div>
             <div>
@@ -325,10 +345,17 @@
                 </option>
               </BaseSelect>
               <p class="mt-1 text-xs text-gray-500">
-                {{ t('notificationManagement.channels.languageDesc') }}
+                {{
+                  t(
+                    isRobotTarget(form.channel_type) &&
+                      form.channel_type !== 'webhook'
+                      ? 'notificationManagement.channels.targetLanguageDesc'
+                      : 'notificationManagement.channels.languageDesc'
+                  )
+                }}
               </p>
             </div>
-            <div>
+            <div v-if="form.channel_type !== 'wecom'">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{
                 t('notificationManagement.channels.signSecret')
               }}</label>
@@ -349,7 +376,10 @@
                 }}
               </p>
             </div>
-            <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+            <div
+              v-if="form.channel_type === 'webhook'"
+              class="rounded-xl border border-gray-200 bg-gray-50/80 p-4"
+            >
               <h3
                 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"
               >
@@ -413,7 +443,10 @@
                 </div>
               </div>
             </div>
-            <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+            <div
+              v-if="form.channel_type === 'webhook'"
+              class="rounded-xl border border-gray-200 bg-gray-50/80 p-4"
+            >
               <h3
                 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"
               >
@@ -660,9 +693,9 @@
           >
             {{ formMessage }}
           </div>
-          <div
-            class="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-gray-200"
-          >
+        </form>
+        <template #footer>
+          <div class="flex flex-wrap items-center justify-end gap-3">
             <BaseButton
               type="button"
               variant="outline"
@@ -677,6 +710,7 @@
             </BaseButton>
             <BaseButton
               type="submit"
+              form="notification-channel-form"
               variant="primary"
               :loading="saving"
               :disabled="submitDisabled"
@@ -688,7 +722,7 @@
               }}
             </BaseButton>
           </div>
-        </form>
+        </template>
       </BaseModal>
 
       <BaseModal
@@ -761,6 +795,10 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { notificationsAdminApi } from '@/admin/api'
+import {
+  nativeTargetTypes,
+  notificationTargetLabel
+} from '@/admin/utils/notificationTargets'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
@@ -817,20 +855,25 @@ const defaultEmailConfig = () => ({
 })
 
 const form = reactive({
-  channel_type: 'webhook',
+  channel_type: 'feishu',
   name: '',
   is_active: true,
   config: defaultWebhookConfig()
 })
 
-const channelTypeLabels = {
-  webhook: 'notificationManagement.channels.typeWebhook',
-  email: 'notificationManagement.channels.typeEmail'
-}
-const providerLabels = { feishu: '飞书', wecom: 'WeCom', wechat: '企业微信' }
+const isRobotTarget = (type) =>
+  type === 'webhook' || nativeTargetTypes.includes(type)
+const targetUrlPlaceholder = computed(
+  () =>
+    ({
+      feishu: 'https://open.feishu.cn/open-apis/bot/v2/hook/…',
+      wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…',
+      dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=…'
+    })[form.channel_type] || 'https://…'
+)
 
 function channelTypeLabel(type) {
-  return t(channelTypeLabels[type] || type || '–')
+  return notificationTargetLabel(type, t)
 }
 
 function normalizeConfig(rawConfig) {
@@ -915,7 +958,7 @@ function goNextPage() {
 watch(
   () => [form.channel_type, form.config?.url, form.config?.sign_secret],
   () => {
-    if (form.channel_type === 'webhook') {
+    if (isRobotTarget(form.channel_type)) {
       validationSuccess.value = false
     }
   }
@@ -941,11 +984,35 @@ watch(
   }
 )
 
+function robotConfig() {
+  const config = {
+    url: (form.config.url || '').trim(),
+    message_prefix: (form.config.message_prefix || '').trim(),
+    language: form.config.language || 'zh-hans',
+    sign_secret: (form.config.sign_secret || '').trim() || undefined
+  }
+  if (form.channel_type === 'webhook') {
+    Object.assign(config, {
+      provider_type: form.config.provider_type || 'feishu',
+      merge_enabled: !!form.config.merge_enabled,
+      merge_window_minutes: Math.max(
+        0,
+        Math.min(1440, Number(form.config.merge_window_minutes) || 0)
+      ),
+      silence_window_minutes: Math.max(
+        0,
+        Math.min(1440, Number(form.config.silence_window_minutes) || 0)
+      )
+    })
+  }
+  return config
+}
+
 async function validateForm() {
   formMessage.value = ''
-  if (form.channel_type === 'webhook') {
+  if (isRobotTarget(form.channel_type)) {
     const url = (form.config.url || '').trim()
-    if (!url) {
+    if (!url && !form.config.url_configured) {
       formMessage.value = t(
         'notificationManagement.channels.validateUrlRequired'
       )
@@ -953,7 +1020,7 @@ async function validateForm() {
       return
     }
     try {
-      new URL(url)
+      if (url) new URL(url)
     } catch {
       formMessage.value = t(
         'notificationManagement.channels.validateUrlInvalid'
@@ -994,29 +1061,21 @@ async function validateForm() {
   try {
     const body = {
       channel_type: form.channel_type,
-      config:
-        form.channel_type === 'webhook'
-          ? {
-              provider_type: form.config.provider_type || 'feishu',
-              url: (form.config.url || '').trim(),
-              message_prefix:
-                (form.config.message_prefix || '').trim() || undefined,
-              language: form.config.language || 'zh-hans',
-              sign_secret: (form.config.sign_secret || '').trim() || undefined
-            }
-          : {
-              smtp_host: (form.config.smtp_host || '').trim(),
-              smtp_port: Math.max(
-                1,
-                Math.min(65535, Number(form.config.smtp_port) || 587)
-              ),
-              use_tls: !!form.config.use_tls,
-              use_ssl: !!form.config.use_ssl,
-              smtp_user: (form.config.smtp_user || '').trim() || undefined,
-              smtp_password:
-                (form.config.smtp_password || '').trim() || undefined,
-              from_email: (form.config.from_email || '').trim()
-            }
+      config: isRobotTarget(form.channel_type)
+        ? robotConfig()
+        : {
+            smtp_host: (form.config.smtp_host || '').trim(),
+            smtp_port: Math.max(
+              1,
+              Math.min(65535, Number(form.config.smtp_port) || 587)
+            ),
+            use_tls: !!form.config.use_tls,
+            use_ssl: !!form.config.use_ssl,
+            smtp_user: (form.config.smtp_user || '').trim() || undefined,
+            smtp_password:
+              (form.config.smtp_password || '').trim() || undefined,
+            from_email: (form.config.from_email || '').trim()
+          }
     }
     if (editingId.value) body.channel_uuid = editingId.value
     await notificationsAdminApi.validateChannel(body)
@@ -1087,11 +1146,14 @@ const languageLabels = {
 }
 function configSummary(row) {
   if (!row.config || typeof row.config !== 'object') return '–'
-  if (row.channel_type === 'webhook') {
+  if (isRobotTarget(row.channel_type)) {
     const p = row.config.provider_type
-    const label = providerLabels[p] || p || ''
-    const url = row.config.url
-      ? `${row.config.url.slice(0, 40)}${row.config.url.length > 40 ? '…' : ''}`
+    const label =
+      row.channel_type === 'webhook'
+        ? channelTypeLabel(p)
+        : channelTypeLabel(row.channel_type)
+    const url = row.config.url_configured
+      ? t('notificationManagement.channels.configured')
       : ''
     const lang = row.config.language
       ? languageLabels[row.config.language] || row.config.language
@@ -1111,7 +1173,7 @@ function configSummary(row) {
 }
 
 function resetForm() {
-  form.channel_type = 'webhook'
+  form.channel_type = 'feishu'
   form.name = ''
   form.is_active = true
   form.config = defaultWebhookConfig()
@@ -1155,7 +1217,7 @@ function openEditModal(row) {
   form.name = row.name || ''
   form.is_active = !!row.is_active
   const config = normalizeConfig(row.config)
-  if (row.channel_type === 'webhook') {
+  if (isRobotTarget(row.channel_type)) {
     const c = config
     form.config = {
       ...defaultWebhookConfig(),
@@ -1219,23 +1281,8 @@ async function submitForm() {
   formMessage.value = ''
   try {
     let config
-    if (form.channel_type === 'webhook') {
-      config = {
-        provider_type: form.config.provider_type,
-        url: (form.config.url || '').trim(),
-        message_prefix: (form.config.message_prefix || '').trim(),
-        language: form.config.language || 'zh-hans',
-        sign_secret: (form.config.sign_secret || '').trim() || undefined,
-        merge_enabled: !!form.config.merge_enabled,
-        merge_window_minutes: Math.max(
-          0,
-          Math.min(1440, Number(form.config.merge_window_minutes) || 0)
-        ),
-        silence_window_minutes: Math.max(
-          0,
-          Math.min(1440, Number(form.config.silence_window_minutes) ?? 0)
-        )
-      }
+    if (isRobotTarget(form.channel_type)) {
+      config = robotConfig()
     } else if (form.channel_type === 'email') {
       config = {
         smtp_host: (form.config.smtp_host || '').trim(),

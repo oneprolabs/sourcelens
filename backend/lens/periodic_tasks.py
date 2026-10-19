@@ -295,6 +295,10 @@ def _disable_datasource_periodic_task(datasource):
 def register_periodic_tasks():
     """Register Lens periodic tasks in the project registry."""
 
+    TASK_REGISTRY.add(
+        name="lens-alert-dispatch", task="lens.dispatch_alerts", schedule=60, queue="lens", enabled=True
+    )
+
     for task_type, meta in GLOBAL_PERIODIC_TASKS.items():
         schedule = _get_global_setting_int(
             meta["setting_key"],

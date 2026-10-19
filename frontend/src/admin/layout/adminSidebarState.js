@@ -10,7 +10,10 @@ const menuRoutes = [
   },
   { menu: 'llm', paths: ['/management/llm'] },
   { menu: 'tasks', paths: ['/management/task-management'] },
-  { menu: 'notifications', paths: ['/management/notifier'] }
+  {
+    menu: 'notifications',
+    paths: ['/management/notifier', '/management/alerts']
+  }
 ]
 
 const isWithinPath = (path, parentPath) => {

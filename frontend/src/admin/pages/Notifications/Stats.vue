@@ -441,6 +441,7 @@ import {
 } from 'chart.js'
 import { notificationsAdminApi, llmAdminApi } from '@/admin/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
+import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import { hasStatisticsData } from '@/admin/utils/statisticsState'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -606,12 +607,7 @@ const totalForChannel = computed(() => {
 
 const CHANNEL_COLORS = ['#3b82f6', '#22c55e', '#eab308', '#a855f7']
 
-const ALL_CHANNELS = [
-  { provider_type: 'feishu', label: '飞书' },
-  { provider_type: 'wecom', label: 'WeCom' },
-  { provider_type: 'wechat', label: '企业微信' },
-  { provider_type: 'email', label: 'Email' }
-]
+const ALL_CHANNELS = ['feishu', 'wecom', 'wechat', 'dingtalk', 'email']
 
 const channelBarData = computed(() => {
   const list = statsData.value?.by_provider
@@ -628,11 +624,11 @@ const channelBarData = computed(() => {
     : {}
   const total = totalForChannel.value || 1
   return ALL_CHANNELS.map((ch, i) => {
-    const data = byType[ch.provider_type]
+    const data = byType[ch]
     const count = data ? data.count : 0
-    const label = data?.label || ch.label
+    const label = notificationTargetLabel(ch, t)
     return {
-      provider_type: ch.provider_type,
+      provider_type: ch,
       label,
       count,
       percent: total > 0 ? Math.round((count / total) * 100) : 0,

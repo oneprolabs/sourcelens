@@ -850,6 +850,14 @@
     "profile": {
       "title": "User Settings",
       "subtitle": "Manage your profile and basic information"
+    },
+    "alertSubscriptions": {
+      "title": "My alert subscriptions",
+      "description": "Choose Q&A alerts for your own runs and published business topics. Notifications go to your account email.",
+      "subscribe": "Subscribe",
+      "unsubscribe": "Unsubscribe",
+      "empty": "No subscriptions available. Ask an administrator to publish a rule and configure an email channel.",
+      "failed": "Unable to update subscriptions."
     }
   },
   "dashboard": {

@@ -217,7 +217,7 @@
                     <td
                       class="px-4 py-3 whitespace-nowrap text-sm text-gray-600"
                     >
-                      {{ r.provider_display_name || r.provider_type || '-' }}
+                      {{ notificationTargetLabel(r.provider_type, t) }}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap">
                       <span :class="statusClass(r.status)">{{
@@ -350,9 +350,7 @@
                     </dt>
                     <dd class="text-sm font-medium text-gray-900">
                       {{
-                        detailRecord.provider_display_name ||
-                        detailRecord.provider_type ||
-                        '-'
+                        notificationTargetLabel(detailRecord.provider_type, t)
                       }}
                     </dd>
                   </div>
@@ -471,6 +469,7 @@
 </template>
 
 <script setup>
+import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { format } from 'date-fns'

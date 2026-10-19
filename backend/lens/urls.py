@@ -1,8 +1,6 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views.decisions import DecisionCatalogView, LensNodeDecisionGatewayView
-
 from .views import (
     AdminGroupAccessDetailView,
     AdminRunCancelView,
@@ -15,6 +13,8 @@ from .views import (
     AdminRunTrajectoryView,
     AdminSharedQAViewSet,
     AdminUserAccessDetailView,
+    AlertEventViewSet,
+    AlertRuleViewSet,
     AssistantViewSet,
     ConnectionViewSet,
     DataSourceCredentialViewSet,
@@ -53,6 +53,8 @@ from .views import (
     admin_run_trajectory_stream_view,
     run_stream_view,
 )
+from .views.alerts import MessagePublicationViewSet, PersonalAlertSubscriptionViewSet
+from .views.decisions import DecisionCatalogView, LensNodeDecisionGatewayView
 
 router = DefaultRouter()
 router.register("assistants", AssistantViewSet, basename="lens-assistants")
@@ -108,6 +110,20 @@ router.register(
     GlobalSettingViewSet,
     basename="lens-admin-global-settings",
 )
+router.register(
+    "admin/alert-rules",
+    AlertRuleViewSet,
+    basename="lens-admin-alert-rules",
+)
+router.register(
+    "admin/alert-events",
+    AlertEventViewSet,
+    basename="lens-admin-alert-events",
+)
+
+router.register("admin/alert-messages", MessagePublicationViewSet, basename="lens-admin-alert-messages")
+
+router.register("alert-subscriptions", PersonalAlertSubscriptionViewSet, basename="lens-alert-subscriptions")
 
 urlpatterns = [
     path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),

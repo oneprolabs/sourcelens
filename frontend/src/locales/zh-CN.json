@@ -850,6 +850,14 @@
     "profile": {
       "title": "用户设置",
       "subtitle": "管理您的个人资料和基本信息"
+    },
+    "alertSubscriptions": {
+      "title": "我的告警订阅",
+      "description": "按需订阅本人问答告警和管理员开放的业务消息主题，发送至账号邮箱。",
+      "subscribe": "订阅",
+      "unsubscribe": "退订",
+      "empty": "暂无可订阅规则。请管理员开放规则并配置邮件渠道。",
+      "failed": "订阅操作失败，请重试。"
     }
   },
   "dashboard": {
