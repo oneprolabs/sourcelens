@@ -5,11 +5,9 @@ en: >-
   disabling compaction, then return a partial result if recovery fails. Summary
   tokens now count toward shared run usage and wrap-up reserves. Activity evidence
   pagination fills unread gaps and stops after completion. Report wording is
-  judged by the model against evidence instead of keyword blocking. The maximum
-  execution strategy now has a 5M total token budget with a 250K wrap-up reserve;
-  historical execution snapshots retain their original budgets.
+  judged by the model against evidence instead of keyword blocking. Maximum
+  execution retains unlimited token budgets.
 zh-CN: >-
   长任务的上下文摘要异常后会恢复一次，不再永久停用压缩；恢复失败时利用已有证据收尾并标记部分结果。
   摘要用量纳入共享 Run 统计及收尾预算。活动证据分页会优先补齐未读缺口，读完后停止。
-  报告内容由模型结合证据判断，不再按关键词拦截。极限执行策略改为 5M 总 token 预算，
-  预留 250K 用于收尾；历史执行快照继续保留原预算。
+  报告内容由模型结合证据判断，不再按关键词拦截。极限执行策略继续保持不限 token 预算。

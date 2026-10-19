@@ -1259,12 +1259,12 @@ def test_resume_reconciles_newer_message_usage_with_durable_state(shared):
     assert model.export_runtime_state()["run_token_usage"] == model.token_usage
 
 
-@pytest.mark.parametrize("consumed,expected_wrapup", [(2000000, False), (4800000, True)])
-def test_max_budget_keeps_normal_two_million_token_tasks_running(monkeypatch, consumed, expected_wrapup):
-    """The maximum preset starts wrapping up only when its 250K reserve is reached."""
+@pytest.mark.parametrize("consumed", [2000000, 6000000])
+def test_unlimited_budget_keeps_large_tasks_running(monkeypatch, consumed):
+    """Unlimited runs retain shared accounting without a token cutoff."""
 
     event = threading.Event()
-    budget = SharedTokenBudget(5000000)
+    budget = SharedTokenBudget(0)
     budget.consume(consumed - 100, 0, consumed - 100)
     _install_transport(monkeypatch, lambda _: httpx.Response(200, json={
         "message": {"content": "Continue the investigation"},
@@ -1272,13 +1272,14 @@ def test_max_budget_keeps_normal_two_million_token_tasks_running(monkeypatch, co
     }))
     model = LensGatewayChatModel(
         model_ref="agent", ai_gateway_url="http://gateway/ai/", token="token",
-        token_budget_max_tokens=5000000, token_budget_final_reserve_tokens=250000,
+        token_budget_max_tokens=0, token_budget_final_reserve_tokens=0,
         token_budget_wrapup_event=event, shared_token_budget=budget,
     )
     result = model.invoke([HumanMessage(content="Continue")])
-    assert event.is_set() is expected_wrapup
+    assert not event.is_set()
     assert result.content == "Continue the investigation"
-    assert model.stop_reason == ("token_budget_wrapup" if expected_wrapup else None)
+    assert model.stop_reason is None
+    assert model.token_usage["total_tokens"] == consumed
 
 
 def test_final_synthesis_is_preserved_when_it_crosses_hard_budget(monkeypatch):
