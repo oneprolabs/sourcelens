@@ -865,12 +865,12 @@ class LensApiTests(TestCase):
             "skipped",
         )
 
-    def test_assistant_create_derives_unlimited_budget_from_max_rounds(self):
+    def test_assistant_create_derives_bounded_budget_from_max_rounds(self):
         response = self.client.post(
             "/api/lens/assistants/",
             {
-                "name": "Unlimited Budget",
-                "slug": "unlimited-budget",
+                "name": "Maximum Budget",
+                "slug": "maximum-budget",
                 "lensnode_uuid": str(self.lensnode.uuid),
                 "selected_task": "knowledge_qa",
                 "selected_dirs": [{"path": "/workspace/repo"}],
@@ -881,9 +881,9 @@ class LensApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        assistant = Assistant.objects.get(slug="unlimited-budget")
-        self.assertEqual(assistant.token_budget_profile, "unlimited")
-        self.assertEqual(response.data["token_budget_profile"], "unlimited")
+        assistant = Assistant.objects.get(slug="maximum-budget")
+        self.assertEqual(assistant.token_budget_profile, "max")
+        self.assertEqual(response.data["token_budget_profile"], "max")
 
     def test_assistant_update_derives_budget_from_agent_rounds(self):
         self.assistant.agent_rounds = "balanced"
@@ -904,8 +904,8 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assistant.refresh_from_db()
         self.assertEqual(self.assistant.agent_rounds, "max")
-        self.assertEqual(self.assistant.token_budget_profile, "unlimited")
-        self.assertEqual(response.data["token_budget_profile"], "unlimited")
+        self.assertEqual(self.assistant.token_budget_profile, "max")
+        self.assertEqual(response.data["token_budget_profile"], "max")
 
     def test_assistant_update_saves_description(self):
         response = self.client.patch(

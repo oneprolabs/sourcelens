@@ -2337,6 +2337,10 @@ TOKEN_BUDGET_PROFILES = {
         "max_tokens": 500000,
         "final_reserve_tokens": 75000,
     },
+    Assistant.TokenBudgetProfile.MAX: {
+        "max_tokens": 5000000,
+        "final_reserve_tokens": 250000,
+    },
     Assistant.TokenBudgetProfile.UNLIMITED: {
         "max_tokens": 0,
         "final_reserve_tokens": 0,
@@ -2348,7 +2352,7 @@ TOKEN_BUDGET_PROFILE_BY_AGENT_ROUNDS = {
     Assistant.AgentRounds.FAST: Assistant.TokenBudgetProfile.STANDARD,
     Assistant.AgentRounds.BALANCED: Assistant.TokenBudgetProfile.STANDARD,
     Assistant.AgentRounds.DEEP: Assistant.TokenBudgetProfile.DEEP,
-    Assistant.AgentRounds.MAX: Assistant.TokenBudgetProfile.UNLIMITED,
+    Assistant.AgentRounds.MAX: Assistant.TokenBudgetProfile.MAX,
 }
 
 RUN_TIMEOUT_SECONDS = 3600

@@ -14,7 +14,7 @@ from channels.testing import WebsocketCommunicator
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from django.core.management import call_command
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
@@ -307,7 +307,7 @@ class LensServiceTests(TransactionTestCase):
             "fast": ("standard", 200000, 40000),
             "balanced": ("standard", 200000, 40000),
             "deep": ("deep", 500000, 75000),
-            "max": ("unlimited", 0, 0),
+            "max": ("max", 5000000, 250000),
         }
 
         for agent_rounds, budget_values in expected.items():
@@ -321,6 +321,35 @@ class LensServiceTests(TransactionTestCase):
                     ),
                     budget_values,
                 )
+
+    def test_max_budget_migration_keeps_historical_execution_budgets(self):
+        """Only derived Assistant presets change; queued and completed runs keep their snapshot."""
+
+        self.assistant.agent_rounds = "max"
+        self.assistant.token_budget_profile = "unlimited"
+        self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
+        run = create_execution_run(session=self.session, question="Historical run", enqueue=False)
+        run.execution.token_budget_profile = "unlimited"
+        run.execution.token_budget_max_tokens = 0
+        run.execution.token_budget_final_reserve_tokens = 0
+        run.execution.save(update_fields=[
+            "token_budget_profile", "token_budget_max_tokens", "token_budget_final_reserve_tokens",
+        ])
+        migration = import_module("lens.migrations.0066_bounded_max_token_budget")
+
+        with connection.schema_editor() as editor:
+            migration.bound_max_assistants(apps, editor)
+        self.assistant.refresh_from_db()
+        run.execution.refresh_from_db()
+        self.assertEqual(self.assistant.token_budget_profile, "max")
+        self.assertEqual(run.execution.token_budget_profile, "unlimited")
+        self.assertEqual(run.execution.token_budget_max_tokens, 0)
+        self.assertEqual(run.execution.token_budget_final_reserve_tokens, 0)
+
+        with connection.schema_editor() as editor:
+            migration.restore_unlimited_assistants(apps, editor)
+        self.assistant.refresh_from_db()
+        self.assertEqual(self.assistant.token_budget_profile, "unlimited")
 
     def test_unbound_assistant_uses_least_loaded_compatible_lensnode(self):
         busy_run = create_execution_run(
@@ -1726,11 +1755,11 @@ class LensServiceTests(TransactionTestCase):
         self.assertEqual(run.execution.target_dirs, [])
         self.assertEqual(run.execution.agent_rounds, "max")
         self.assertEqual(run.execution.run_timeout_s, 3600)
-        self.assertEqual(run.execution.token_budget_profile, "unlimited")
-        self.assertEqual(run.execution.token_budget_max_tokens, 0)
+        self.assertEqual(run.execution.token_budget_profile, "max")
+        self.assertEqual(run.execution.token_budget_max_tokens, 5000000)
         self.assertEqual(
             run.execution.token_budget_final_reserve_tokens,
-            0,
+            250000,
         )
 
     def test_cancelled_queued_run_is_not_started_by_stale_task(self):
@@ -2216,7 +2245,7 @@ class LensServiceTests(TransactionTestCase):
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
-    def test_dispatch_sends_unlimited_profile_budget(
+    def test_dispatch_sends_bounded_max_profile_budget(
         self,
         get_channel_layer,
         mock_async_to_sync,
@@ -2227,22 +2256,22 @@ class LensServiceTests(TransactionTestCase):
         self.assistant.save(update_fields=["agent_rounds", "token_budget_profile"])
         run = create_execution_run(
             session=self.session,
-            question="Analyze without a token cap",
+            question="Analyze with the maximum bounded budget",
             enqueue=False,
         )
 
-        dispatch_run_to_lensnode(run, "Analyze without a token cap")
+        dispatch_run_to_lensnode(run, "Analyze with the maximum bounded budget")
 
         payload = sender.call_args.args[1]["payload"]
         self.assertEqual(
             payload["token_budget"],
             {
-                "profile": "unlimited",
-                "max_tokens": 0,
-                "final_reserve_tokens": 0,
+                "profile": "max",
+                "max_tokens": 5000000,
+                "final_reserve_tokens": 250000,
             },
         )
-        self.assertEqual(run.execution.token_budget_profile, "unlimited")
+        self.assertEqual(run.execution.token_budget_profile, "max")
 
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")

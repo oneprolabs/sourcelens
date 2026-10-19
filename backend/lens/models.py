@@ -133,6 +133,7 @@ class Assistant(TimestampedUUIDModel):
     class TokenBudgetProfile(models.TextChoices):
         STANDARD = "standard", "Standard"
         DEEP = "deep", "Deep"
+        MAX = "max", "Maximum"
         UNLIMITED = "unlimited", "Unlimited"
 
     class Capability(models.TextChoices):
