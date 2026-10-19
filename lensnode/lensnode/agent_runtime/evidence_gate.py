@@ -3,11 +3,13 @@
 import json
 import logging
 import posixpath
+import threading
 
 from contextlib import nullcontext
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 
 from ..gateway_model import RunCancelledError, RunTokenBudgetExhaustedError
 from .prompts import detect_answer_language, pick_text
@@ -119,6 +121,50 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.saw_final_answer = False
         self._last_verification = None
         self._last_tool_evidence = []
+        self._tool_results = {}
+        self._tool_results_lock = threading.Lock()
+
+    def wrap_tool_call(self, request, handler):
+        """Keep bounded source material before outer middleware evicts it to a file."""
+
+        result = handler(request)
+        self._remember_tool_result(request, result)
+        return result
+
+    async def awrap_tool_call(self, request, handler):
+        """Retain the same review material for asynchronous tool execution."""
+
+        result = await handler(request)
+        self._remember_tool_result(request, result)
+        return result
+
+    def _review_limit(self):
+        """Use the configured reviewer capacity for each retained source result."""
+
+        review_limit = getattr(self.policy, "review_evidence_limit", None)
+        return review_limit() if callable(review_limit) else 1200
+
+    def _remember_tool_result(self, request, result):
+        """Retain at most 32 bounded results without changing graph-visible messages."""
+
+        if not self._active():
+            return
+        if isinstance(result, Command):
+            results = (result.update or {}).get("messages", []) if isinstance(result.update, dict) else []
+        else:
+            results = [result]
+        for message in results:
+            call = request.tool_call
+            if getattr(message, "tool_call_id", None) != call.get("id"):
+                continue
+            material = _tool_evidence({"messages": [AIMessage(content="", tool_calls=[call]), message]},
+                                      limit=self._review_limit())
+            if not material:
+                continue
+            with self._tool_results_lock:
+                self._tool_results[call["id"]] = material[0]
+                while len(self._tool_results) > 32:
+                    self._tool_results.pop(next(iter(self._tool_results)))
 
     def _emit(self, event, payload):
         if event == "deepagents.evidence.verified":
@@ -136,8 +182,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def observe_tools(self, state):
         """Retain bounded graph material for a final answer produced outside the graph."""
 
-        review_limit = getattr(self.policy, "review_evidence_limit", None)
-        material = _tool_evidence(state, limit=review_limit() if callable(review_limit) else 1200)
+        with self._tool_results_lock:
+            retained = dict(self._tool_results)
+        material = _tool_evidence(state, limit=self._review_limit(), retained=retained)
         if material and material != self._last_tool_evidence:
             self._last_tool_evidence = material
             self._last_verification = None
@@ -482,7 +529,7 @@ def _source_coverage_incomplete(content):
     return payload.get("ok") is False or (isinstance(metadata, dict) and metadata.get("complete") is False)
 
 
-def _tool_evidence(state, limit=1200):
+def _tool_evidence(state, limit=1200, retained=None):
     """Return a bounded view of retrieved tool output for post-run review."""
 
     if not isinstance(state, dict):
@@ -541,6 +588,9 @@ def _tool_evidence(state, limit=1200):
                 or "[Output exceeded the capture size limit" in content
             ),
         }
+        original = (retained or {}).get(getattr(message, "tool_call_id", None))
+        if original is not None and original["tool"] == name:
+            item = dict(original)
         if operation is not None and operation[0] == name:
             if item["incomplete"]:
                 failures.setdefault(operation, []).append(item)

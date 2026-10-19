@@ -39,6 +39,12 @@ new observed tool material invalidates an older answer verdict. Truncation and
 source-coverage flags remain distinct. This is not an unbounded history store
 or proof that all original source data was read.
 
+The evidence middleware also captures at most 32 bounded source results inside
+the tool wrapper, before the outer filesystem middleware replaces a large result
+with a saved-file preview. Matching graph tool messages use those retained facts
+for review. Eviction alone therefore does not imply missing review material;
+source limits, genuinely oversized results and total review capacity still do.
+
 An unavailable final reviewer returns an inconclusive, partial result with
 `review_unavailable`, preserving existing output rather than dropping the answer
 or declaring it verified. This applies both to a raised review error and to an
