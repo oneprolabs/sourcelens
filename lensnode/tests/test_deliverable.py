@@ -253,9 +253,6 @@ def test_normalized_attachment_notice_preserves_graph_review_coverage():
         def evaluate_choice(self, *args, **kwargs):
             return "supported"
 
-        def default_verdict(self, *args):
-            return "unsupported"
-
     policy = GateDecisionPolicy(ControlDecisionPolicy(), Runner(), {"answer_supported": {"max_state_chars": 80000}})
     evidence = {"_deliverables": {"deliverables/report.html": "output-1"},
                 "evidence_completeness": "complete", "review_completeness": "complete"}

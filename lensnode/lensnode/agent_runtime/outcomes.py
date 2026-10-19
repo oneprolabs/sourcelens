@@ -82,6 +82,8 @@ def _finalize_runtime_outcome(
                 reason = "evidence_incomplete"
             elif decision_gates.get("review_completeness") == "incomplete":
                 reason = "review_material_incomplete"
+            elif decision_gates.get("review_available") is False:
+                reason = "review_unavailable"
             elif not _verdicts_supported(decision_gates):
                 reason = "evidence_insufficient"
             else:

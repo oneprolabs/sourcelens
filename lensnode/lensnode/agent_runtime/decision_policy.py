@@ -90,8 +90,8 @@ class GateDecisionPolicy(ControlDecisionPolicy):
 
     - ``fallback="model"`` — the inner policy keeps today's classifier as the
       default (``search_needed``, ``evidence_requirement``);
-    - ``fallback="fixed"`` — no model equivalent exists, so a constant
-      fail-safe applies (``evidence_sufficient``, ``answer_supported``).
+    - ``fallback="inconclusive"`` — no model equivalent exists, so an
+      unavailable review cannot certify the answer.
     """
 
     def __init__(self, inner, runner, gates):
@@ -138,7 +138,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         return _enforce_route_evidence_invariants(route)
 
     def post_run_checks(self, question, answer, evidence=None):
-        """Return advisory post-run gate verdicts; never blocking.
+        """Return answer-review verdicts, preserving unavailable checks as unknown.
 
         Only gates the binding actually declares are evaluated, so an
         unbound gate adds no traffic and no events.
@@ -174,9 +174,8 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 question=state_text,
             )
             if value is None or not isinstance(threshold, (int, float)):
-                verdicts["evidence_sufficient"] = self.runner.default_verdict(
-                    "evidence_sufficient"
-                )
+                verdicts["evidence_sufficient"] = None
+                verdicts["review_available"] = False
             else:
                 verdicts["evidence_sufficient"] = value >= threshold
         if "answer_supported" in self.gates:
@@ -184,19 +183,17 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 "answer_supported",
                 question=state_text,
             )
-            verdicts["answer_supported"] = (
-                option
-                or self.runner.default_verdict("answer_supported")
-            )
+            verdicts["answer_supported"] = option or "inconclusive"
+            if not option:
+                verdicts["review_available"] = False
         if "evidence_strength" in self.gates:
             option = self.runner.evaluate_choice(
                 "evidence_strength",
                 question=state_text,
             )
-            verdicts["evidence_strength"] = (
-                option
-                or self.runner.default_verdict("evidence_strength")
-            )
+            verdicts["evidence_strength"] = option or "unknown"
+            if not option:
+                verdicts["review_available"] = False
         return verdicts
 
     def review_evidence_limit(self):

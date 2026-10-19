@@ -169,7 +169,7 @@ def test_review_failure_retains_answer_as_unverified_instead_of_losing_output():
 
     assert result.answer == "Available findings are attached."
     assert result.outcome == "partial"
-    assert result.termination_detail["reason"] == "review_material_incomplete"
+    assert result.termination_detail["reason"] == "review_unavailable"
     assert result.termination_detail["decision_gates"]["answer_supported"] == "inconclusive"
     assert result.deliverables == {"deliverables/report.html": "output-1"}
 
@@ -249,3 +249,24 @@ def test_new_tool_evidence_invalidates_an_unchanged_answers_review():
 
     assert len(reviewed) == 2
     assert reviewed[-1]["retrieved_evidence"][0]["content"] == "Corrected evidence."
+
+
+def test_unavailable_gate_does_not_ask_the_model_to_rewrite_a_supported_answer():
+    """A failed reviewer is not evidence that the answer needs correction."""
+
+    class Policy:
+        def has_evidence_gates(self):
+            return True
+
+        def post_run_checks(self, *args):
+            return {"review_available": False, "answer_supported": "inconclusive"}
+
+    state = run_state()
+    state.decision_policy = Policy()
+    gate = EvidenceGateMiddleware(state.decision_policy, state.question, evidence=state.runtime_evidence)
+    state.evidence_middleware = gate
+    assert gate.after_model({"messages": [AIMessage(content="Available findings.")]}, None) is None
+    result = finalize_run(state, "Available findings.", truncated=False, termination_reason=None)
+
+    assert result.outcome == "partial"
+    assert result.termination_detail["reason"] == "review_unavailable"

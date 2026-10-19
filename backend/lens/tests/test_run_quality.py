@@ -34,6 +34,15 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(detail["reason"], "evidence_incomplete")
         self.assertNotIn("private content", str(detail))
 
+    def test_unavailable_reviewer_is_distinct_from_missing_review_material(self):
+        detail = sanitize_termination_detail(
+            {"reason": "review_unavailable", "error_type": "verification", "raw": "private content"}
+        )
+        self.assertEqual(detail["reason"], "review_unavailable")
+        self.assertIn("review service", detail["recovery"])
+        self.assertNotIn("Increase", detail["recovery"])
+        self.assertNotIn("private content", str(detail))
+
     def test_report_completion_codes_and_convergence_trigger_survive_sanitization(self):
         detail = sanitize_termination_detail({
             "reason": "review_material_incomplete", "trigger": "evidence_convergence_limit",

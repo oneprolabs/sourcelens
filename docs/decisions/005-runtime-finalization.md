@@ -39,9 +39,15 @@ new observed tool material invalidates an older answer verdict. Truncation and
 source-coverage flags remain distinct. This is not an unbounded history store
 or proof that all original source data was read.
 
-An unavailable final reviewer returns an inconclusive, partial result while
-preserving existing output, rather than dropping the answer or declaring it
-verified. Cancellation and hard gateway budget exceptions still propagate;
+An unavailable final reviewer returns an inconclusive, partial result with
+`review_unavailable`, preserving existing output rather than dropping the answer
+or declaring it verified. This applies both to a raised review error and to an
+individual configured Decision gate returning no verdict (including timeout,
+invalid response, low confidence or exhausted review-call budget). Unknown
+checks do not use positive defaults and do not request an answer rewrite unless
+another check actually contradicts the answer. `review_material_incomplete`
+continues to describe missing or truncated review material. Cancellation and
+hard gateway budget exceptions still propagate;
 cancellation is also checked after final review. The publication manifest is
 the canonical attachment state when reconciling it with runtime evidence.
 

@@ -4,6 +4,8 @@ en: >-
   Keep tool evidence available when reviewing a revised or budget-limited final
   answer. Unify answer and attachment completion checks, preserve source gaps,
   and retain available output as unverified when the final reviewer is unavailable.
+  Failed review calls no longer default to a passing verdict.
 zh-CN: >-
   最终答案改写或预算收尾后仍携带工具证据进行核验，统一回答和附件的完成判定，
-  保留真实来源缺口；最终审核服务不可用时保留已有产出并明确标记未完成核验。
+  保留真实来源缺口；最终审核服务不可用时保留已有产出并明确标记未完成核验，
+  审核调用失败不再默认通过。

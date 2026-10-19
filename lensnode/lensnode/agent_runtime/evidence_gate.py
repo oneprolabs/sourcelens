@@ -217,7 +217,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         scope = self.review_scope() if self.review_scope else nullcontext()
         with scope:
             verdicts = self._verify(answer)
-        return verdicts or {"review_completeness": "incomplete", "answer_supported": "inconclusive"}
+        return verdicts or {"review_available": False, "answer_supported": "inconclusive"}
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
@@ -389,9 +389,17 @@ class EvidenceGateMiddleware(AgentMiddleware):
             verdicts = self._verify(answer, state)
             if verdicts is None:
                 return None
-            contradicted = verdicts.get("answer_supported") == "unsupported" or verdicts.get("evidence_strength") in {
-                "unsupported", "contradicted",
-            }
+            contradicted = (
+                verdicts.get("evidence_sufficient") is False
+                or verdicts.get("answer_supported") == "unsupported"
+                or verdicts.get("evidence_strength") in {"unsupported", "contradicted"}
+            )
+            if verdicts.get("review_available") is False and not contradicted:
+                self._emit(
+                    "deepagents.evidence.verified",
+                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_unavailable"},
+                )
+                return None
             if verdicts.get("evidence_completeness") == "incomplete" and not contradicted:
                 self._emit(
                     "deepagents.evidence.verified",
@@ -563,6 +571,8 @@ def _evidence_signature(evidence):
 def _verdicts_supported(verdicts):
     """Return whether every reported verdict passed."""
 
+    if verdicts.get("review_available") is False:
+        return False
     if verdicts.get("evidence_sufficient") is False:
         return False
     option = verdicts.get("answer_supported")
