@@ -1,12 +1,20 @@
 """Preserve evidence and user input across real context compaction."""
 
 import asyncio
+import json
 
+import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from lensnode.agent_runtime.summarization import LensSummarizationMiddleware
+from lensnode.gateway_model import (
+    GatewayProtocolError,
+    LensGatewayChatModel,
+    RunCancelledError,
+    RunTokenBudgetExhaustedError,
+)
 
 
 def _conversation():
@@ -78,3 +86,82 @@ def test_invalid_summary_retains_original_history_and_emits_diagnostic(response,
     assert state["messages"] == messages
     assert events[-1][0] == "deepagents.summarization.failed"
     assert events[-1][1]["reason"] == "invalid_summary"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_protocol_failure_preserves_history_and_stops_retrying_compaction(monkeypatch, asynchronous):
+    middleware = _middleware("unused")
+    events = []
+    attempts = []
+    middleware._emit_event = lambda name, payload: events.append((name, payload))
+
+    def fail(*args, **kwargs):
+        attempts.append("summary")
+        raise GatewayProtocolError()
+
+    async def afail(*args, **kwargs):
+        return fail()
+
+    monkeypatch.setattr(middleware, "_create_summary", fail)
+    monkeypatch.setattr(middleware, "_acreate_summary", afail)
+    messages = _conversation()
+    state = {"messages": messages}
+    for _ in range(3):
+        result = (
+            asyncio.run(middleware.abefore_model(state, None)) if asynchronous else middleware.before_model(state, None)
+        )
+        assert result is None
+        assert state["messages"] == messages
+    assert attempts == ["summary"]
+    assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR"})]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("error", [RunCancelledError, RunTokenBudgetExhaustedError, RuntimeError])
+def test_summary_does_not_swallow_cancellation_budget_or_unexpected_errors(monkeypatch, asynchronous, error):
+    middleware = _middleware("unused")
+
+    def fail(*args, **kwargs):
+        raise error("stop")
+
+    async def afail(*args, **kwargs):
+        return fail()
+
+    monkeypatch.setattr(middleware, "_create_summary", fail)
+    monkeypatch.setattr(middleware, "_acreate_summary", afail)
+    with pytest.raises(error):
+        if asynchronous:
+            asyncio.run(middleware.abefore_model({"messages": _conversation()}, None))
+        else:
+            middleware.before_model({"messages": _conversation()}, None)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(asynchronous):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {
+            "content": '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="read_file">', "tool_calls": [],
+        }})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        model = LensGatewayChatModel(model_ref="summary-model", ai_gateway_url="http://gateway/ai/",
+                                     token="test", http_client=client)
+        middleware = _middleware("unused")
+        middleware._summary_model = model
+        events = []
+        middleware._emit_event = lambda name, payload: events.append((name, payload))
+        messages = _conversation()
+        state = {"messages": messages}
+        for _ in range(2):
+            result = (
+                asyncio.run(middleware.abefore_model(state, None)) if asynchronous
+                else middleware.before_model(state, None)
+            )
+            assert result is None
+        assert state["messages"] == messages
+        assert len(requests) == 1
+        assert not requests[0].get("tools")
+        assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR"})]

@@ -5,7 +5,7 @@ import re
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.messages import HumanMessage, RemoveMessage, trim_messages
 
-from ..gateway_model import LensGatewayChatModel
+from ..gateway_model import GatewayProtocolError, LensGatewayChatModel
 
 CONTINUATION_SUMMARY_PROMPT = (
     "You are compacting the context of an IN-PROGRESS investigation to "
@@ -61,6 +61,12 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
     (see _partition_messages and issue #60).
     """
 
+    def __init__(self, *args, **kwargs):
+        """Scope failed-compaction suppression to this run's middleware instance."""
+
+        super().__init__(*args, **kwargs)
+        self._summary_disabled = False
+
     def _partition_messages(self, conversation_messages, cutoff_index):
         """Keep human input verbatim; summarize only re-queryable turns.
 
@@ -115,21 +121,27 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
 
         return _validated_summary(await super()._acreate_summary(messages_to_summarize))
 
-    def _invalid_summary(self):
+    def _invalid_summary(self, reason="invalid_summary"):
         """Report skipped compaction without reporting evidence as successfully saved."""
 
+        self._summary_disabled = True
         emit = getattr(self, "_emit_event", None)
         if emit is not None:
-            emit("deepagents.summarization.failed", {"reason": "invalid_summary"})
+            emit("deepagents.summarization.failed", {"reason": reason})
 
     def before_model(self, state, runtime):
         """Summarize on threshold and report what was compacted."""
 
+        if self._summary_disabled:
+            return None
         before_tokens = self.token_counter(state["messages"])
         try:
             result = super().before_model(state, runtime)
         except InvalidSummaryError:
             self._invalid_summary()
+            return None
+        except GatewayProtocolError as exc:
+            self._invalid_summary(exc.code)
             return None
         self._report_compaction(before_tokens, result)
         return result
@@ -137,11 +149,16 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
     async def abefore_model(self, state, runtime):
         """Apply the same preservation and diagnostics to asynchronous agents."""
 
+        if self._summary_disabled:
+            return None
         before_tokens = self.token_counter(state["messages"])
         try:
             result = await super().abefore_model(state, runtime)
         except InvalidSummaryError:
             self._invalid_summary()
+            return None
+        except GatewayProtocolError as exc:
+            self._invalid_summary(exc.code)
             return None
         self._report_compaction(before_tokens, result)
         return result
