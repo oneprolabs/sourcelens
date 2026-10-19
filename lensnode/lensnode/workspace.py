@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from wcmatch import glob as wcglob
+
 from .path_rules import SIDECAR_SUFFIX
 
 LOGGER = logging.getLogger("lensnode")
@@ -127,7 +129,7 @@ def search_workspace(
         root = Path(item.get("path", ""))
         if root.exists() and root.is_dir():
             dirs.append((root, target_scope(item)))
-    allowed = _path_gate(dirs, policy)
+    allowed = _path_gate(dirs, policy, glob=glob)
 
     if output_mode == "files":
         files = []
@@ -208,7 +210,8 @@ def search_workspace(
             return result
 
     files = []
-    for path in glob_files(target_dirs, glob or "**/*", max_results=min(8, max_results), policy=policy):
+    navigation_glob = f"**/{glob}" if glob and "/" not in glob and not glob.startswith("!") else glob or "**/*"
+    for path in glob_files(target_dirs, navigation_glob, max_results=min(8, max_results), policy=policy):
         if sum(len(item) for item in files) + len(path) > 2000:
             break
         files.append(path)
@@ -268,8 +271,10 @@ def glob_files(target_dirs, pattern, max_results=None, policy=None):
             ]
             for name in filenames:
                 path = Path(current_root) / name
-                relative = path.relative_to(root).as_posix()
+                relative = citation_path(path).relative_to(root).as_posix()
                 if not _matches_glob_pattern(relative, pattern):
+                    continue
+                if not _source_matches_scope(root, citation_path(path), scope):
                     continue
                 if len(found) >= GLOB_SCAN_LIMIT:
                     break
@@ -474,7 +479,20 @@ def _path_allowed_in_dirs(path_value, dirs, policy):
     return False
 
 
-def _path_gate(dirs, policy):
+def _source_matches_scope(root, source, scope, glob=""):
+    """Intersect source-path include patterns with the requested file glob."""
+
+    try:
+        relative = source.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return (
+        any(_matches_search_glob(relative, pattern) for pattern in scope.get("include_paths") or ["**/*"])
+        and (not glob or _matches_search_glob(relative, glob))
+    )
+
+
+def _path_gate(dirs, policy, *, glob=""):
     """Return a per-call memoized allowlist predicate.
 
     ``_path_allowed_in_dirs`` re-resolves the same file once per matched
@@ -492,6 +510,7 @@ def _path_gate(dirs, policy):
             cache[key] = (
                 _path_allowed_in_dirs(path_value, dirs, policy)
                 and retrieval_path(path_value) == Path(path_value)
+                and any(_source_matches_scope(root, citation_path(path_value), scope, glob) for root, scope in dirs)
             )
         return cache[key]
 
@@ -586,11 +605,10 @@ def _run_rg(cmd):
 
 
 def _rg_glob_args(root, scope, policy, glob):
-    """Build ripgrep -g include/exclude args from scope and an extra glob.
+    """Search a superset of source globs and canonical conversion artifacts.
 
-    The trivial "**/*" include is skipped: ripgrep unions include globs,
-    so emitting it would defeat a narrower glob (e.g. "**/*.md").
-    Ripgrep's default already searches everything minus the excludes.
+    Ripgrep unions positive globs; the result gate intersects the scope and
+    request on source paths. Exclusions still apply to both physical paths.
     """
 
     args = []
@@ -600,8 +618,16 @@ def _rg_glob_args(root, scope, policy, glob):
         if pattern == "**/*":
             continue
         args.extend(["-g", pattern])
+        sidecar_pattern = pattern.lstrip("!")
+        sidecar_pattern = f"**/{sidecar_pattern}" if "/" not in sidecar_pattern else sidecar_pattern
+        exclusion = "!" if pattern.startswith("!") else ""
+        args.extend(["-g", f"{exclusion}{sidecar_pattern}{SIDECAR_SUFFIX}/content.md"])
     if glob:
         args.extend(["-g", glob])
+        sidecar_pattern = glob.lstrip("!")
+        sidecar_pattern = f"**/{sidecar_pattern}" if "/" not in sidecar_pattern else sidecar_pattern
+        exclusion = "!" if glob.startswith("!") else ""
+        args.extend(["-g", f"{exclusion}{sidecar_pattern}{SIDECAR_SUFFIX}/content.md"])
     for pattern in _exclude_globs(root, scope, policy):
         args.extend(["-g", f"!{pattern}"])
     for pattern in _excluded_symlink_globs(root):
@@ -906,9 +932,15 @@ def _python_line_matches(
 
     patterns = terms if case_sensitive else [term.lower() for term in terms]
     results = []
+    seen = set()
     for path in _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
-        if glob and not _matches_glob_pattern(path.relative_to(root).as_posix(), glob):
+        source = citation_path(path)
+        if not _source_matches_scope(root, source, scope, glob):
             continue
+        path = retrieval_path(source)
+        if path in seen or not is_path_allowed(root, path, scope, policy):
+            continue
+        seen.add(path)
         if _is_binary(path):
             continue
         text = _read_text(path)
@@ -974,7 +1006,7 @@ def _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
             paths = [Path(current_root) / name for name in filenames]
             for path in paths:
                 relative = path.relative_to(root).as_posix()
-                if not _matches_glob_pattern(relative, pattern):
+                if not _matches_search_glob(relative, pattern):
                     continue
                 if len(found) >= limit:
                     return sorted(set(found))[:limit]
@@ -1006,18 +1038,22 @@ def _option(scope, policy, key, default):
     return default
 
 
-def _matches_glob_pattern(relative, pattern):
-    """Match a relative path using the previous Path.glob semantics."""
+def _matches_search_glob(relative, pattern):
+    """Match slash-free search globs against basenames at every depth, like ripgrep."""
 
-    path = Path(relative)
-    if "/" not in pattern:
-        return path.parent == Path(".") and fnmatch.fnmatchcase(
-            path.name, pattern
-        )
-    patterns = [pattern]
-    if "**/" in pattern:
-        patterns.append(pattern.replace("**/", "", 1))
-    return any(path.match(candidate) for candidate in patterns)
+    if pattern.startswith("!"):
+        return not _matches_search_glob(relative, pattern[1:])
+    return wcglob.globmatch(relative, pattern, flags=wcglob.GLOBSTAR | wcglob.BRACE | wcglob.MATCHBASE | wcglob.DOTMATCH)
+
+
+def _matches_glob_pattern(relative, pattern):
+    """Match relative path segments with recursive Path.glob semantics."""
+
+    if pattern.startswith("!"):
+        return not _matches_search_glob(relative, pattern[1:])
+    if Path(pattern).is_absolute():
+        return False
+    return wcglob.globmatch(relative, pattern, flags=wcglob.GLOBSTAR | wcglob.BRACE | wcglob.DOTMATCH)
 
 
 def _symlink_boundary(root):
@@ -1148,7 +1184,9 @@ def is_path_excluded(root, path, scope, policy):
         return True
     max_depth = _option(scope, policy, "max_depth", None)
     if root is not None and max_depth is not None:
-        if len(relative.parts) > int(max_depth):
+        source = converted_source_path(path)
+        depth_path = source.relative_to(root) if source is not None else relative
+        if len(depth_path.parts) > int(max_depth):
             return True
     exclude_paths = _option(scope, policy, "exclude_paths", [])
     if root is None:

@@ -150,6 +150,7 @@ def _run_agent_with_turn_limit(
     delivery_grace_used = False
     delivery_write_grace_used = False
     pending_artifact_write = None
+    publication_model_id = None
     if not current_question:
         current_question = next(
             (
@@ -229,6 +230,12 @@ def _run_agent_with_turn_limit(
                 # Let after-model verification run and the graph finish naturally.
                 # A correction or pending tool state still stops at the reserve.
                 continue
+            latest_ai = next((message for message in reversed(current) if getattr(message, "type", "") == "ai"), None)
+            latest_ai_id = (getattr(latest_ai, "id", None) or id(latest_ai)) if latest_ai is not None else None
+            if publication_model_id is not None:
+                if latest_ai_id == publication_model_id:
+                    continue
+                publication_model_id = None
             if pending_artifact_write is not None:
                 recent = current[-1] if current else None
                 pending_id = pending_artifact_write
@@ -238,6 +245,7 @@ def _run_agent_with_turn_limit(
                     and _successful_artifact_write(recent)
                 ):
                     # Reserve one model call to publish a successfully written artifact.
+                    publication_model_id = latest_ai_id
                     continue
             pending_calls = getattr(current[-1], "tool_calls", None) if current else None
             if (

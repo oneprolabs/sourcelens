@@ -148,7 +148,7 @@ def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(as
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         model = LensGatewayChatModel(model_ref="summary-model", ai_gateway_url="http://gateway/ai/",
-                                     token="test", http_client=client)
+                                     token="test", http_client=client, observation_name="summarization")
         middleware = _middleware("unused")
         middleware._summary_model = model
         events = []

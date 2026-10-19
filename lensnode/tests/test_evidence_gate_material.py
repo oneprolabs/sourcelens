@@ -75,6 +75,44 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     assert json.loads(rebound)["evidence_completeness"] == "complete"
 
 
+def test_repeated_structured_evidence_is_losslessly_shared_before_truncation():
+    """Full ledgers and their tool pages must fit without dropping facts or claiming missing coverage."""
+
+    records = [{"id": index, "person": "Alice", "source": "https://example.test/team/repository",
+                "title": f"Change {index}", "role": "current assignee, not update actor",
+                "roles": {key: {"identity": "", "name": "", "verified": False}
+                          for key in ("author", "creator", "reporter", "merged_by", "closed_by")}}
+               for index in range(120)]
+    original = {"records": records, "$review_ref": "source-controlled key",
+                "retrieved_evidence": [{"tool": "read_activity_evidence",
+                                        "content": json.dumps({"records": records})}]}
+    evidence = {**original, "evidence_completeness": "incomplete", "review_completeness": "complete"}
+    assert len(json.dumps(evidence)) > 80000
+    material = json.loads(review_material("Question", "Answer", evidence, 80000))
+    assert material["review_completeness"] == "complete"
+    assert material["evidence_completeness"] == "incomplete"
+    packed = material["runtime_evidence"]
+
+    def expand(value):
+        if isinstance(value, dict):
+            if set(value) == {packed["reference_key"]}:
+                return expand(packed["values"][value[packed["reference_key"]]])
+            if set(value) == {packed["table_key"]}:
+                table = value[packed["table_key"]]
+                return [expand(dict(zip(table["columns"], row))) for row in table["rows"]]
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    restored = expand(packed["data"])
+    assert restored["records"] == records
+    assert restored["$review_ref"] == original["$review_ref"]
+    assert restored["retrieved_evidence"][0]["content"] == {"records": records}
+    assert original["retrieved_evidence"][0]["content"] == json.dumps({"records": records})
+    assert json.loads(bound_review_state(json.dumps(material), 80000)) == material
+
+
 def test_partial_source_coverage_still_reviews_available_facts():
     """Missing GitHub data must not disable checks against a known Jira resolution."""
 

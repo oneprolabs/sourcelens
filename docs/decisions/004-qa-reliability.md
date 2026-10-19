@@ -39,6 +39,12 @@ source paths and converted line numbers. Overlapping content hits are unique by
 source path and line; repeated text at different source locations is retained.
 All selected roots participate before ranking and limiting results.
 
+Source include paths and the requested glob are intersected on the original
+document path, including when canonical text lives in a conversion sidecar.
+Ripgrep searches a superset containing those artifacts; the result gate applies
+the intersection, retaining recursive, basename and brace-alternative glob semantics.
+Navigation applies the same scope before its result limit.
+
 A failed content search returns at most eight navigation paths with a combined
 2,000-character path budget and respects the requested glob. This sample is not
 answer evidence. Use `find_files` for a larger inventory. Its explicit results
@@ -84,6 +90,27 @@ Production acceptance still requires deploying both API and LensNode, verifying
 the previously merged review-budget/parser fixes in the actual images, and
 re-running representative questions against their configured sources.
 
+## Protocol recovery and bounded review material (2026-10-19)
+
+An unparsed DSML response is discarded before publication or tool execution.
+Ordinary model calls can retry once with the original valid conversation and an
+explicit native-tool-call correction; calls without tools request text only.
+The malformed response is never inserted as an assistant turn. Both streaming
+and non-streaming paths account for rejected-response usage, honor cancellation
+and the existing gateway budget, and record the protocol retry separately from
+length retries. A second protocol failure propagates. Control and summarization
+calls keep their existing failure/fallback behavior instead of retrying.
+
+When structured answer-review evidence exceeds its configured character limit,
+repeated values are shared through an explicit reference table and uniform
+object lists can use a column/row representation. JSON tool content is decoded
+as structured evidence with an encoding marker. The representation retains all
+facts and coverage flags; it does not summarize or select evidence. Reserved
+encoding keys avoid collisions with source keys. The original character limit
+still applies: evidence that cannot fit losslessly follows the existing
+incomplete-review path. Review completeness and source completeness remain
+independent.
+
 ## Activity-report follow-up (2026-10-19)
 
 Production activity reports exposed a separate compaction failure: a summary
@@ -106,3 +133,9 @@ Offline pagination replay of the four affected source snapshots (105–122 recor
 completed in 7–9 pages while retaining GitHub coverage gaps. This validates saved
 evidence traversal, not real-model report quality or recovery of missing sources.
 No production deployment or online rerun is implied by these local checks.
+
+Report validation failures occur before upload and do not consume transport
+capability retries. The feedback identifies rejected statements so the model can
+repair and revalidate the same file; every attempt still runs validation, and
+actual upload failures retain their retry limit. Publication grace tracks the
+latest response identity rather than a history count that compaction can reduce.

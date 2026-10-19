@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lensnode import workspace as workspace_module
 from lensnode.agent_tools import build_agent_tools
 from lensnode.workspace import (
@@ -1069,6 +1071,71 @@ def test_no_match_navigation_obeys_glob_and_stays_small(tmp_path):
     assert len(json.dumps(result, ensure_ascii=False)) < 4000
 
 
+@pytest.mark.parametrize("python_fallback", [False, True])
+def test_converted_search_applies_globs_to_source_paths(tmp_path, monkeypatch, python_fallback):
+    """Source globs must search canonical text and retain canonical line numbers."""
+
+    source, _ = _make_converted_document(tmp_path, "manual.txt")
+    source.write_text("Warranty period: obsolete.\n")
+    if python_fallback:
+        monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+    for mode in (("content",) if python_fallback else ("content", "files", "count")):
+        result = search_workspace(
+            [{"path": str(tmp_path), "retrieval_scope": {"include_paths": ["**/*.txt"]}}],
+            "Warranty period", glob="**/*.txt", output_mode=mode,
+        )
+        if mode == "content":
+            assert [(m["path"], m["line"], m["text"]) for m in result["matches"]] == [
+                (str(source), 3, "Warranty period: five years.")
+            ]
+        elif mode == "files":
+            assert result["files"] == [str(source)]
+        else:
+            assert result["counts"] == [{"path": str(source), "count": 1}]
+
+
+def test_search_intersects_scope_and_glob_before_navigation_limit(tmp_path):
+    """Neither real matches nor navigation may escape selected include paths."""
+
+    (tmp_path / "public").mkdir()
+    allowed = tmp_path / "public" / "answer.md"
+    allowed.write_text("needle")
+    (tmp_path / "public" / "noise.py").write_text("needle")
+    for index in range(12):
+        (tmp_path / f"private-{index}.md").write_text("needle")
+    dirs = [{"path": str(tmp_path), "retrieval_scope": {"include_paths": ["public/**"]}}]
+    for query in ("needle", "missing"):
+        result = search_workspace(dirs, query, glob="**/*.md")
+        paths = [m["path"] for m in result["matches"]] or result["files"]
+        assert paths == [str(allowed)]
+
+
+@pytest.mark.parametrize("scope", ["src/**", "**/src/**"])
+def test_scope_recursive_globs_keep_nested_matches_and_navigation(tmp_path, scope):
+    """Recursive include paths must retain descendants at any depth."""
+
+    nested = tmp_path / "src" / "deep" / "answer.md"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("needle")
+    dirs = [{"path": str(tmp_path), "retrieval_scope": {"include_paths": [scope]}}]
+    for query in ("needle", "missing"):
+        result = search_workspace(dirs, query, glob="**/*.md")
+        assert ([m["path"] for m in result["matches"]] or result["files"]) == [str(nested)]
+
+
+@pytest.mark.parametrize("glob", ["*.txt", "*.{txt,md}"])
+def test_basename_search_glob_matches_nested_canonical_content(tmp_path, glob):
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    source, _ = _make_converted_document(nested, "manual.txt")
+    dirs = [{"path": str(tmp_path)}]
+    for mode in ("content", "files", "count"):
+        result = search_workspace(dirs, "Warranty period", glob=glob, output_mode=mode)
+        items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
+        assert [item if isinstance(item, str) else item["path"] for item in items] == [str(source)]
+    assert search_workspace(dirs, "missing", glob=glob)["files"] == [str(source)]
+
+
 def test_python_search_obeys_literal_case_and_glob(tmp_path, monkeypatch):
     """Missing ripgrep must not silently broaden a restricted query."""
 
@@ -1080,3 +1147,57 @@ def test_python_search_obeys_literal_case_and_glob(tmp_path, monkeypatch):
         [{"path": str(tmp_path)}], "Exact Phrase", case_sensitive=True, glob="**/*.md"
     )
     assert [m["path"] for m in result["matches"]] == [str(tmp_path / "match.md")]
+
+
+@pytest.mark.parametrize("python_fallback", [False, True])
+def test_brace_search_filters_regular_and_canonical_files(tmp_path, monkeypatch, python_fallback):
+    """Keep ripgrep brace semantics when enforcing scope and search intersections."""
+
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    source, _ = _make_converted_document(nested, "manual.txt")
+    regular = nested / "answer.md"
+    regular.write_text("Warranty period: correct.\n")
+    (nested / "noise.py").write_text("Warranty period: unrelated.\n")
+    if python_fallback:
+        monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+    dirs = [{"path": str(tmp_path), "retrieval_scope": {"include_paths": ["src/**/*.{txt,md}"]}}]
+    for mode in (("content",) if python_fallback else ("content", "files", "count")):
+        result = search_workspace(dirs, "Warranty period", glob="*.{txt,md}", output_mode=mode)
+        items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
+        assert {item if isinstance(item, str) else item["path"] for item in items} == {str(source), str(regular)}
+
+
+@pytest.mark.parametrize("python_fallback", [False, True])
+@pytest.mark.parametrize("glob", ["!**/tests/**", "!*.py"])
+def test_exclusion_search_globs_keep_allowed_canonical_files(tmp_path, monkeypatch, python_fallback, glob):
+    """Exclusion-only globs must not become literal positive result filters."""
+
+    source, _ = _make_converted_document(tmp_path, "guide.md")
+    excluded = tmp_path / "tests" / "noise.py"
+    excluded.parent.mkdir()
+    excluded.write_text("Warranty period")
+    if python_fallback:
+        monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+    for mode in (("content",) if python_fallback else ("content", "files", "count")):
+        result = search_workspace([{"path": str(tmp_path)}], "Warranty period", glob=glob, output_mode=mode)
+        items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
+        assert [item if isinstance(item, str) else item["path"] for item in items] == [str(source)]
+    assert search_workspace([{"path": str(tmp_path)}], "missing", glob=glob)["files"] == [str(source)]
+
+
+@pytest.mark.parametrize("python_fallback", [False, True])
+def test_canonical_search_depth_is_measured_on_source_paths(tmp_path, monkeypatch, python_fallback):
+    """Conversion artifacts do not push a permitted document beyond its depth budget."""
+
+    source, _ = _make_converted_document(tmp_path, "guide.md")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    _make_converted_document(nested, "private.md")
+    if python_fallback:
+        monkeypatch.setattr(workspace_module, "_run_rg", lambda _cmd: None)
+    dirs = [{"path": str(tmp_path), "retrieval_scope": {"max_depth": 1}}]
+    for mode in (("content",) if python_fallback else ("content", "files", "count")):
+        result = search_workspace(dirs, "Warranty period", output_mode=mode)
+        items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
+        assert [item if isinstance(item, str) else item["path"] for item in items] == [str(source)]

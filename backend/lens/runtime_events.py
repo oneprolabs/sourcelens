@@ -88,6 +88,7 @@ PUBLIC_TERMINATION_REASONS = {
     "evidence_insufficient",
     "evidence_incomplete",
     "review_material_incomplete",
+    "evidence_convergence_limit",
     "execution_limit",
     "turn_limit",
     "soft_deadline",
@@ -399,6 +400,15 @@ def sanitize_termination_detail(detail):
     trigger = detail.get("trigger")
     if trigger in PUBLIC_TERMINATION_REASONS:
         output["trigger"] = trigger
+    completion_codes = {
+        "activity_evidence_unread", "activity_claim_unsupported", "completion_check_failed",
+    }
+    issues = detail.get("completion_issues")
+    if isinstance(issues, list):
+        public_issues = sorted({item.get("code") for item in issues
+                               if isinstance(item, dict) and item.get("code") in completion_codes})
+        if public_issues:
+            output["completion_issues"] = [{"code": code} for code in public_issues]
     capability = detail.get("capability")
     if capability in PUBLIC_CAPABILITIES:
         output["capability"] = capability

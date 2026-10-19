@@ -2,6 +2,7 @@
 
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 from langchain.agents import create_agent
@@ -16,6 +17,7 @@ from lensnode.agent_runtime.execution import (
     _synthesize_wrapup_answer,
 )
 from lensnode.gateway_model import RunTokenBudgetExhaustedError
+from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 
 
 class BudgetedAgent:
@@ -84,7 +86,8 @@ def test_budget_reserve_does_not_skip_after_model_correction():
 
 
 @pytest.mark.parametrize("hard_cap", [False, True])
-def test_real_graph_can_finish_pending_artifact_write_and_save_at_budget_reserve(hard_cap):
+@pytest.mark.parametrize("with_guidance", [False, True])
+def test_real_graph_can_finish_pending_artifact_write_and_save_at_budget_reserve(hard_cap, with_guidance):
     event = threading.Event()
     calls = []
     evidence = {"artifact_required": True, "_deliverables": {}}
@@ -115,10 +118,13 @@ def test_real_graph_can_finish_pending_artifact_write_and_save_at_budget_reserve
                 raise RunTokenBudgetExhaustedError("Hard cap reached")
             return super()._generate(*args, **kwargs)
 
+    middleware = [EvidenceGateMiddleware(
+        SimpleNamespace(has_evidence_gates=lambda: True), "Generate an HTML report", evidence=evidence, interval=2,
+    )] if with_guidance else []
     graph = create_agent(BudgetModel(responses=[
         AIMessage(content="", tool_calls=[{"name": "write_file", "args": {}, "id": "write"}]),
         AIMessage(content="", tool_calls=[{"name": "save_deliverable", "args": {}, "id": "save"}]),
-    ]), tools=[write_file, save_deliverable])
+    ]), tools=[write_file, save_deliverable], middleware=middleware)
     result = _run_agent_with_turn_limit(
         graph, [{"role": "user", "content": "Generate an HTML report"}], 26,
         model=SynthesisModel(), token_budget_wrapup_event=event, execution_evidence=evidence,
@@ -369,3 +375,25 @@ def test_wrapup_recovers_evidence_removed_by_graph_summarization():
     assert '"table": "invoices"' in text
     assert '"total": 260' in text
     assert "VMware agentless" in text
+
+
+def test_publication_grace_stops_on_new_response_after_history_compaction():
+    """A smaller replacement history must not grant extra model calls or unrelated tools."""
+
+    event = threading.Event()
+    history = [AIMessage(content="Earlier response", id=f"old-{index}") for index in range(5)]
+    write = AIMessage(content="", id="writer", tool_calls=[{"name": "write_file", "args": {}, "id": "write"}])
+    written = ToolMessage(name="write_file", tool_call_id="write", content="Updated file /report.html")
+    guidance = HumanMessage(content="Publish the report now")
+    unrelated = AIMessage(content="", id="next", tool_calls=[{"name": "search", "args": {}, "id": "search"}])
+    agent = BudgetedAgent(event, [
+        [*history, write], [*history, write, written], [write, written, guidance],
+        [write, written, guidance, unrelated],
+        [write, written, guidance, unrelated, ToolMessage(content="Must not execute", tool_call_id="search")],
+    ])
+    result = _run_agent_with_turn_limit(
+        agent, [{"role": "user", "content": "report"}], 26, model=SynthesisModel(),
+        token_budget_wrapup_event=event, execution_evidence={"artifact_required": True},
+    )
+    assert not agent.exhausted
+    assert result == ("Recovered answer", True, "token_budget_wrapup")

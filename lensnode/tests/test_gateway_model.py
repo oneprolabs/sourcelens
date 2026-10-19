@@ -103,6 +103,65 @@ def test_dsml_discussion_is_not_treated_as_a_tool_request():
     assert _message_from_gateway({"content": content}).content == content
 
 
+@pytest.mark.parametrize("streaming,tools", [(False, False), (False, True), (True, False), (True, True)])
+def test_protocol_retry_corrects_format_preserves_context_and_accounts_usage(monkeypatch, streaming, tools):
+    """Only a validated retry can reach the user or request execution."""
+
+    requests, outputs, frames = [], [], []
+    valid_calls = [{"id": "valid", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        text = '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="read_file">' if first else ("" if tools else "Recovered")
+        calls = valid_calls if tools and not first else []
+        usage = {"total_tokens": 5 if first else 7}
+        if streaming:
+            events = [{"type": "token", "kind": "content", "content": text},
+                      {"type": "done", "usage": usage, "tool_calls": calls, "finish_reason": "stop"}]
+            return httpx.Response(200, content="".join("data: " + json.dumps(e) + "\n\n" for e in events).encode())
+        return httpx.Response(200, json={"message": {"content": text, "tool_calls": calls}, "usage": usage})
+
+    _install_transport(monkeypatch, respond)
+    model = LensGatewayChatModel(model_ref="model", ai_gateway_url="http://gateway/ai/", token="test",
+                                emit_output=outputs.append if streaming else None,
+                                trajectory=RunTrajectory("recovery", frames.append))
+    kwargs = {"tools": [{"type": "function", "function": {"name": "read_file"}}]} if tools else {}
+    message = model._generate([HumanMessage(content="Original question")], **kwargs).generations[0].message
+    assert len(requests) == 2
+    assert requests[1]["messages"][:-1] == requests[0]["messages"]
+    assert "protocol validation" in requests[1]["messages"][-1]["content"]
+    assert not any("<｜｜DSML" in str(item) for item in requests[1]["messages"])
+    assert model.token_usage["total_tokens"] == 12
+    assert message.tool_calls == ([{"id": "valid", "name": "read_file", "args": {}, "type": "tool_call"}] if tools else [])
+    assert outputs == (["Recovered"] if streaming and not tools else [])
+    retries = [f["events"][0] for f in frames if f["events"][0]["event_type"].startswith("retry.")]
+    assert [e["event_type"] for e in retries] == ["retry.started", "retry.completed"]
+    assert all(e["payload"]["reason"] == "tool_protocol_error" for e in retries)
+
+
+@pytest.mark.parametrize("stop", ["cancel", "budget", "persistent"])
+def test_protocol_retry_is_bounded_by_cancellation_and_hard_budget(monkeypatch, stop):
+    requests = []
+    cancel = threading.Event()
+
+    def respond(request):
+        requests.append(request)
+        if stop == "cancel":
+            cancel.set()
+        return httpx.Response(200, json={"message": {"content": "<｜｜DSML｜｜ calls>"},
+                                        "usage": {"total_tokens": 5}})
+
+    _install_transport(monkeypatch, respond)
+    model = LensGatewayChatModel(model_ref="model", ai_gateway_url="http://gateway/ai/", token="test",
+                                cancel_event=cancel, token_budget_max_tokens=5 if stop == "budget" else 0)
+    with pytest.raises(RuntimeError) as caught:
+        model._generate([HumanMessage(content="Question")])
+    assert len(requests) == (2 if stop == "persistent" else 1)
+    assert caught.value.code == {"cancel": "RUN_CANCELLED", "budget": "RUN_TOKEN_BUDGET_EXHAUSTED",
+                                  "persistent": "MODEL_TOOL_PROTOCOL_ERROR"}[stop]
+
+
 def test_streaming_touches_activity_on_every_event(monkeypatch):
     captured = {}
     client_options = {}

@@ -58,6 +58,8 @@ def _finalize_runtime_outcome(
 
     runtime_evidence = runtime_evidence or {}
     limit_trigger = {"trigger": stop_reason} if truncated and stop_reason else {}
+    if runtime_evidence.get("convergence_exhausted"):
+        limit_trigger.setdefault("trigger", "evidence_convergence_limit")
     if runtime_evidence.get("completion_issues"):
         return "partial", {
             **limit_trigger,

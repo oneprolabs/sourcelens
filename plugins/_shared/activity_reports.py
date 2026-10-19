@@ -331,8 +331,8 @@ class _ReportText(HTMLParser):
             self.parts.append(data)
 
 
-def _contains_negative_activity_claim(answer):
-    """Detect high-risk personnel conclusions without judging ordinary prose."""
+def _negative_activity_claims(answer):
+    """Locate high-risk statements so the model can repair the rejected report."""
 
     parser = _ReportText()
     parser.feed(str(answer or ""))
@@ -341,16 +341,24 @@ def _contains_negative_activity_claim(answer):
         r"\b(?:completed nothing|zero[- ]completions?|low productivity|no activity|inactive|no work)\b",
         re.IGNORECASE,
     )
+    claims = []
     for sentence in re.split(r"[。！？.!?\n]", "".join(parser.parts)):
         sentence = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", sentence)
         for match in pattern.finditer(sentence):
             prefix = sentence[:match.start()]
             if not re.search(
-                r"(?:不能据此判断|无法判断|不代表|不能认定|cannot conclude|does not mean)"
+                r"(?:不能据此判断|无法判断|不代表|不推论为|不等于|不能认定|不含|删去|删除|移除|去掉|而非[\"“]?|cannot conclude|does not mean)"
                 r"[^，,；;]{0,40}$", prefix, re.IGNORECASE,
             ):
-                return True
-    return False
+                claims.append(sentence.strip()[:400])
+                break
+    return claims
+
+
+def _contains_negative_activity_claim(answer):
+    """Detect high-risk personnel conclusions without judging ordinary prose."""
+
+    return bool(_negative_activity_claims(answer))
 
 
 def _account(value, identity="", login=False):
@@ -514,6 +522,13 @@ def build_activity_evidence_tool(ledger, expected_tools):
                 page_complete=offset == 0 and end == len(records),
                 read_progress=ledger.read_progress(evidence, (offset, end), persist=False),
             )
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and not payload.get("coverage_details_omitted"):
+            payload["observed_events"] = []
+            payload["observed_events_omitted"] = True
+            payload["source_coverage"] = {
+                key: {"complete": value["complete"]} for key, value in evidence["source_coverage"].items()
+            }
+            payload["coverage_details_omitted"] = True
         if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE",
                           "message": "The evidence page exceeds the inline review limit; report this review gap."})
@@ -854,12 +869,14 @@ class ActivityReportExtension(AgentExtension):
                 "recovery": f"Call read_activity_evidence(offset={progress['next_offset']}) and follow every next_page. "
                             "After fixing the evidence, save all intended deliverables again.",
             })
-        if _contains_negative_activity_claim(answer):
+        claims = _negative_activity_claims(answer)
+        if claims:
             checks.append({
                 "code": "activity_claim_unsupported",
                 "message": "Activity counts cannot establish zero work, low productivity, or status duration.",
                 "recovery": "Remove the unsupported personnel conclusion. Report observed events with source IDs, "
-                            "roles and coverage limits. Save corrected deliverables again.",
+                            "roles and coverage limits. The following quoted statements need correction: "
+                            + _json(claims[:3]) + ". Save corrected deliverables again.",
             })
         return checks
 
@@ -926,7 +943,7 @@ class ActivityReportExtension(AgentExtension):
                                 "call_id": call_id,
                             },
                         )
-                    return cached
+                    return self._source_receipt(provider, tool_key, restored) if self.active else cached
                 encoded = executor(tool_key, arguments, runtime)
                 result = json.loads(encoded)
                 if result.get("ok") is True:
@@ -938,9 +955,31 @@ class ActivityReportExtension(AgentExtension):
                                 "tool": tool_key, "call_id": call_id,
                             }
                         )
+                    if self.active:
+                        return self._source_receipt(provider, tool_key, result)
                 return encoded
 
         return invoke
+
+    def _source_receipt(self, provider, tool_key, result):
+        """Keep raw snapshots private and direct report reading through canonical pages."""
+
+        evidence = self.ledger.report(self.expected_tools)
+        return _json({
+            "ok": True,
+            "provider": provider,
+            "tool": tool_key,
+            "since": result.get("since"),
+            "until": result.get("until"),
+            "evidence_saved": True,
+            "total_records": len(evidence["records"]),
+            "_evidence": {"complete": evidence["source_coverage"][tool_key]["complete"]},
+            "next_page": {"tool": "read_activity_evidence", "arguments": {"offset": 0}},
+            "message": "Source snapshot saved. After collecting all required sources, read every canonical "
+                       "evidence page via read_activity_evidence and follow next_page until read_progress.complete. "
+                       "Raw source JSON is not returned; do not use analyze_structured_output for this receipt. "
+                       "Source coverage gaps remain visible in the evidence pages.",
+        })
 
     def evidence(self):
         """Expose normalized facts and limits without writing a business answer."""
