@@ -300,6 +300,7 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
         run_span="run",
         capability_middleware=None,
         evidence_requirement=requirement,
+        evidence_middleware=None,
         required_capabilities=[],
         runtime_evidence={"source": "INC-42 remains open."},
         question="Was it resolved?",

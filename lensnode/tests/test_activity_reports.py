@@ -273,6 +273,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(
         emit_output=lambda text, **kwargs: outputs.append((text, kwargs)),
         runtime_evidence={"evidence_completeness": "incomplete"} if host_incomplete else {},
         evidence_requirement="artifact",
+        evidence_middleware=None,
         required_capabilities=[],
         capability_middleware=None,
         decision_policy=None,

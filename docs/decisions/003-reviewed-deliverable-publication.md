@@ -58,6 +58,39 @@ sharing, and history reuse. It validates the terminal manifest without reading
 the node's checkpoint storage. This supersedes the initially proposed explicit
 status column at the user's request to keep batch state in checkpoint.
 
+## Automatic host staging (2026-10-19)
+
+The model-visible `save_deliverable` tool is replaced by a final-output directory.
+Models use file tools to write `/deliverables/<filename>`; Shell commands use
+`deliverables/<filename>` relative to the Run cwd. Skill scripts retain their
+Skill cwd and receive `SOURCELENS_DELIVERABLE_DIR` in their environment. Structured
+script/transform arguments may use `{{SOURCELENS_DELIVERABLE_DIR}}/<filename>`;
+the host resolves this explicit placeholder without shell expansion. Scratch outside that
+directory stays private. Older Skill instructions mentioning the removed tool
+are superseded by the runtime's automatic-delivery contract.
+
+The host scans regular files before reviewing a proposed final answer and once
+more during terminal wrap-up. It retains content checks, staged uploads, UUID
+manifests and final-message publication. Unchanged uploads reuse their UUID but
+still recheck current evidence; changed and removed files invalidate old entries.
+Any collection, validation or upload failure withholds the whole batch and can
+request at most two model corrections. Final wrap-up can stage files after the
+last affordable model call without spending model tokens on a save operation.
+
+An answer recheck quarantines the previous output directory and clears its
+manifest and append receipts. The replacement answer must regenerate every
+intended attachment, preventing rejected files from entering the new batch.
+Collection rejects symlinks, uses the existing per-file size limit, and accepts
+at most 64 files. Failed/cancelled runs retain the backend's no-publication policy.
+No schema migration is required; this changes node-side selection and staging,
+not the existing backend publication and download contract.
+
+When the files have just passed their content checks but the separate chat
+notice introduces an unsupported personnel claim, replace that notice with a
+brief attachment-only message. Retain the checked files and all source/review
+coverage flags. Unsupported file content still requests bounded repair and
+cannot publish. Final Decision checks still run against the selected answer.
+
 Historical duplicate artifacts are not rewritten or deleted. Superseded bytes
 remain stored for audit; retention and cleanup are separate work. Large or
 compacted source material currently degrades review to inconclusive rather

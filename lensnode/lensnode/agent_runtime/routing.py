@@ -373,6 +373,11 @@ def _select_general_chat_route(
         "artifacts are readable through the runtime filesystem. A request "
         "to translate, revise, summarize, or regenerate one of those files "
         "requires direct_execute or plan_execute, never direct_answer.\n\n"
+        "When artifact_delivery is available, the host provides private filesystem tools "
+        "for generating files and automatically stages final outputs. Local file generation "
+        "does not require workspace evidence access or a separate save tool.\n\n"
+        "Available runtime capability families:\n"
+        f"{json.dumps(_available_route_capabilities(available_tools, has_bound_skills=has_bound_skills))}\n\n"
         "Bound Skill capability descriptions:\n"
         f"{skills or '- none'}\n\n"
         "Prior conversation artifacts:\n"
@@ -543,6 +548,10 @@ def _available_route_capabilities(available_tools, *, has_bound_skills):
         for tool in available_tools or []
     }
     available.discard(None)
+    if any(
+        (getattr(tool, "metadata", None) or {}).get("automatic_artifact_delivery") for tool in available_tools or []
+    ):
+        available.add("artifact_delivery")
     if not has_bound_skills:
         available.discard("skill")
     return [

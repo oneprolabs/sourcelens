@@ -619,7 +619,7 @@ def _report_execution_guidance(command):
             "If the report Skill requests zero-completion labels, long-review warnings, or productivity "
             "ratings that the evidence cannot establish, retain its layout but replace those conclusions "
             "with observed events and explicit unknowns. These evidence limits apply to every Skill section.",
-            "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
+            "- Write the requested final artifact in /deliverables/ for automatic host delivery, then provide a brief "
             "business summary and any material coverage limits. Keep verification diagnostics out of the "
             "business report unless they explain a real evidence gap.",
         )
@@ -715,7 +715,10 @@ def _apply_delivery_contract(decision, question, history, skills, tools, self_co
         return decision
     tool_names = {getattr(tool, "name", "") for tool in tools or []}
     has_report_tools = bool(tool_names & set(activity_tool_bindings(self_command)))
-    skill_delivers = any("save_deliverable" in str(skill) for skill in skills or [])
+    skill_delivers = any("save_deliverable" in str(skill) or "/deliverables/" in str(skill) for skill in skills or [])
+    delivery_available = "save_deliverable" in tool_names or any(
+        (getattr(tool, "metadata", None) or {}).get("automatic_artifact_delivery") for tool in tools or []
+    )
     prior_reports = False
     for turn in reversed((history or [])[-8:]):
         if not isinstance(turn, dict) or turn.get("role") != "user":
@@ -729,7 +732,7 @@ def _apply_delivery_contract(decision, question, history, skills, tools, self_co
     report_request = bool(ACTIVITY_REPORT_PATTERN.search(text)) or bool(
         prior_reports and DELIVERY_FOLLOWUP_PATTERN.search(text)
     )
-    if not (has_report_tools and "save_deliverable" in tool_names and skill_delivers and report_request):
+    if not (has_report_tools and delivery_available and skill_delivers and report_request):
         return decision
     capabilities = list(decision.get("required_capabilities") or [])
     for capability in ("skill", "plugin", "artifact_delivery"):

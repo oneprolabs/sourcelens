@@ -78,7 +78,7 @@ def test_convergence_reserves_a_bounded_delivery_window_and_records_exhaustion()
     assert gate.before_model(state, None)["messages"]
     delivery = gate.before_model(state, None)
     assert "jump_to" not in delivery
-    assert "save_deliverable" in delivery["messages"][0].content
+    assert "/deliverables/" in delivery["messages"][0].content
     for _ in range(7):
         assert gate.before_model(state, None) is None
     assert gate.before_model(state, None) == {"jump_to": "end"}
@@ -92,7 +92,7 @@ def test_final_answer_without_required_artifact_is_redirected_to_delivery():
     gate = EvidenceGateMiddleware(_Policy(), "report", evidence=evidence)
     correction = gate.after_model({"messages": [AIMessage(content="Here is the report.")]}, None)
     assert correction["jump_to"] == "model"
-    assert "save_deliverable" in correction["messages"][0].content
+    assert "/deliverables/" in correction["messages"][0].content
     evidence["_deliverables"]["report.html"] = "output-1"
     assert gate.after_model({"messages": [AIMessage(content="Report ready.")]}, None) is None
 

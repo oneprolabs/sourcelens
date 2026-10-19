@@ -1,13 +1,128 @@
-"""Middleware protecting append-based deliverables from redundant rewrites."""
+"""Host-owned final output staging and append-write deduplication."""
 
+import hashlib
 import json
+import os
 from pathlib import Path
+import uuid
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
 
 _APPEND_FILE_MANIFEST = ".sourcelens-append-chunks.json"
+DELIVERABLE_DIRECTORY = "deliverables"
+MAX_DELIVERABLE_FILES = 64
+
+
+class AutomaticDeliverables:
+    """Stage only final output files, independently of model tool selection."""
+
+    def __init__(self, command, resources, config, emit_event=None, *, evidence=None):
+        from ..agent_tools import _build_deliverable_stager
+
+        self.root = resources.root.resolve()
+        self.directory = self.root / DELIVERABLE_DIRECTORY
+        self.command = command
+        self.evidence = evidence if evidence is not None else {}
+        self.manifest = self.evidence.setdefault("_deliverables", command.setdefault("_deliverables", {}))
+        command["_deliverables"] = self.manifest
+        self.fingerprints = self.evidence.setdefault("_deliverable_fingerprints", {})
+        self.config = config
+        self.stage = _build_deliverable_stager(command, resources, config, emit_event)
+        if not self.directory.exists() and not self.directory.is_symlink():
+            self.directory.mkdir(exist_ok=True)
+
+    @staticmethod
+    def _issue(message):
+        """Return a bounded, model-readable delivery failure."""
+
+        return {"code": "artifact_delivery_failed", "message": message,
+                "recovery": message + " Correct the files in /deliverables/ and submit the final answer again."}
+
+    def _files(self):
+        """Discover regular outputs without traversing links or private scratch."""
+
+        if self.directory.is_symlink() or not self.directory.is_dir():
+            raise ValueError("The /deliverables/ output directory must be a regular directory.")
+        files = []
+
+        def raise_error(error):
+            raise error
+
+        for directory, directories, filenames in os.walk(self.directory, onerror=raise_error, followlinks=False):
+            for name in sorted(directories + filenames):
+                path = Path(directory) / name
+                if path.is_symlink():
+                    raise ValueError(
+                        "Remove symbolic links from /deliverables/; only generated regular files are accepted."
+                    )
+            for name in sorted(filenames):
+                path = Path(directory) / name
+                if not path.is_file():
+                    raise ValueError("Only regular files are accepted in /deliverables/.")
+                if path.stat().st_size > self.config.deliverable_max_bytes:
+                    raise ValueError("An output exceeds the attachment size limit. Reduce its size.")
+                files.append(path)
+                if len(files) > MAX_DELIVERABLE_FILES:
+                    raise ValueError(f"Keep at most {MAX_DELIVERABLE_FILES} final files in /deliverables/.")
+        return sorted(files)
+
+    def collect(self):
+        """Refresh candidates from current bytes and return any failed checks."""
+
+        from ..agent_tools import _deliverable_validation_issues
+
+        try:
+            files = self._files()
+            current = {path.relative_to(self.root).as_posix() for path in files}
+            for path in list(self.manifest):
+                if path not in current:
+                    self.manifest.pop(path, None)
+                    self.fingerprints.pop(path, None)
+            issues = []
+            for path in files:
+                relative = path.relative_to(self.root).as_posix()
+                with path.open("rb") as handle:
+                    digest = hashlib.file_digest(handle, "sha256").hexdigest()
+                if self.fingerprints.get(relative) == digest and self.manifest.get(relative):
+                    issues.extend(_deliverable_validation_issues(self.command, path.read_bytes(), path.name))
+                    continue
+                result = json.loads(self.stage(relative))
+                if result.get("ok"):
+                    self.fingerprints[relative] = digest
+                else:
+                    self.fingerprints.pop(relative, None)
+                    checks = result.get("checks") or [self._issue(
+                        f"Automatic attachment staging failed for {relative}: {result.get('error', 'DELIVERY_FAILED')}."
+                    )]
+                    issues.extend(checks)
+            if issues:
+                self.manifest.clear()
+            return issues
+        except (OSError, ValueError) as exc:
+            self.manifest.clear()
+            return [self._issue(str(exc) if isinstance(exc, ValueError) else "Could not read the output directory.")]
+
+    def discard(self):
+        """Quarantine a rejected batch so unchanged drafts cannot be republished."""
+
+        self.manifest.clear()
+        self.fingerprints.clear()
+        if self.directory.is_symlink():
+            self.directory.unlink()
+        elif self.directory.exists():
+            self.directory.rename(self.root / f".rejected-deliverables-{uuid.uuid4().hex}")
+        self.directory.mkdir(exist_ok=True)
+        append_manifest = self.root / _APPEND_FILE_MANIFEST
+        if append_manifest.is_file():
+            manifest = json.loads(append_manifest.read_text(encoding="utf-8"))
+            chunks = manifest.get("chunks", {})
+            manifest["chunks"] = {key: value for key, value in chunks.items()
+                                  if not key.startswith(f"{DELIVERABLE_DIRECTORY}/")}
+            temporary = append_manifest.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            temporary.write_text(json.dumps(manifest), encoding="utf-8")
+            temporary.replace(append_manifest)
 
 
 class AppendWriteDeduplicationMiddleware(AgentMiddleware):

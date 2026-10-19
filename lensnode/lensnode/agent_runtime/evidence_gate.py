@@ -9,6 +9,8 @@ from contextlib import nullcontext
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 
+from .prompts import detect_answer_language, pick_text
+
 LOGGER = logging.getLogger("lensnode")
 
 DEFAULT_INTERVAL = 8
@@ -35,8 +37,8 @@ _RECHECK_GUIDANCE = (
     "not a search log, evidence inventory, list of files to read, or a "
     "promise to investigate later. Keep the existing answer structure and "
     "focus on the user's question."
-    " The previous deliverable batch was discarded. Save every file intended "
-    "for the final answer again with save_deliverable, including unchanged files."
+    " The previous deliverable batch was moved out of /deliverables/. Regenerate every file intended "
+    "for the final answer in /deliverables/, including unchanged files. The host stages them automatically."
 )
 
 _CONVERGENCE_GUIDANCE = (
@@ -52,7 +54,7 @@ _CONVERGENCE_GUIDANCE = (
 )
 _DELIVERY_GUIDANCE = (
     "Stop broad searches and finish the required deliverable from the evidence already collected. "
-    "Write the requested final artifact and call save_deliverable before the final answer. "
+    "Write the requested final artifact in /deliverables/ before the final answer. The host stages it automatically. "
     "Disclose missing or truncated sources in the artifact. A text answer or a promise to create a file "
     "does not fulfill artifact delivery."
 )
@@ -94,6 +96,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         on_recheck=None,
         review_state=None,
         completion_check=None,
+        prepare_deliverables=None,
     ):
         self.policy = policy
         self.question = str(question or "")
@@ -106,6 +109,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.on_recheck = on_recheck
         self.review_state = review_state if review_state is not None else {}
         self.completion_check = completion_check
+        self.prepare_deliverables = prepare_deliverables
         self.model_calls = int(self.review_state.get("model_calls") or 0)
         self.answer_nudges = int(self.review_state.get("answer_nudges") or 0)
         self.convergence_nudges = int(self.review_state.get("convergence_nudges") or 0)
@@ -284,12 +288,43 @@ class EvidenceGateMiddleware(AgentMiddleware):
         answer = _message_text(last)
         if not answer.strip():
             return None
+        if self.prepare_deliverables is not None:
+            issues = self.prepare_deliverables() or []
+            if issues:
+                attempts = int(self.review_state.get("automatic_delivery_corrections") or 0)
+                if attempts >= 2:
+                    return None
+                self.review_state["automatic_delivery_corrections"] = attempts + 1
+                self.saw_final_answer = False
+                self.correction_calls_remaining = self.interval
+                self.review_state["correction_calls_remaining"] = self.correction_calls_remaining
+                recovery = "\n".join(str(issue.get("recovery") or issue.get("message") or issue.get("code"))
+                                     for issue in issues[:3])
+                return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
         if self.completion_check is not None:
             try:
                 checks = self.completion_check(answer) or []
             except Exception:
                 LOGGER.exception("Completion check failed")
                 checks = [{"code": "completion_check_failed", "recovery": "Completion verification failed. Retry once."}]
+            if (
+                checks
+                and self.prepare_deliverables is not None
+                and (self.evidence or {}).get("_deliverables")
+                and all(check.get("code") == "activity_claim_unsupported" for check in checks)
+            ):
+                # Files have passed the same content checks immediately above.
+                # A rejected chat-only claim must not invalidate those checked bytes.
+                notice = pick_text(
+                    "工作汇总已作为附件提供。请查看报告中的人员工作内容和来源覆盖说明。",
+                    "The work summary is attached. See the report for each person's work and source coverage limits.",
+                    detect_answer_language(answer),
+                )
+                self._emit("deepagents.answer.notice_normalized", {"reason": "unsupported_chat_claim"})
+                replacement = last.model_copy(update={"content": notice})
+                selected_state = {**state, "messages": [*messages[:-1], replacement]}
+                review = self._review_answer(notice, selected_state) or {}
+                return {**review, "messages": [replacement, *review.get("messages", [])]}
             seen = set(self.review_state.get("completion_check_codes") or [])
             checks = [check for check in checks if check.get("code") not in seen]
             if checks:
@@ -306,6 +341,11 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 )
                 recovery = checks[0].get("recovery") or checks[0].get("message") or "Correct the answer from the evidence."
                 return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
+        return self._review_answer(answer, state)
+
+    def _review_answer(self, answer, state):
+        """Review the selected text with its original graph evidence and coverage."""
+
         if not self._active():
             return None
         if (

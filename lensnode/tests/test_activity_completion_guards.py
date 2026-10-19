@@ -149,7 +149,7 @@ def test_empty_evidence_page_counts_as_reviewed(tmp_path):
     (True, "report.json", '{"conclusion":"Alice completed nothing."}'),
 ])
 def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monkeypatch, read_pages, filename, content):
-    from lensnode.agent_tools import _build_save_deliverable_tool
+    from lensnode.agent_tools import _build_deliverable_stager
 
     command, extensions, _ = report(tmp_path, partial=True)
     if read_pages:
@@ -162,9 +162,9 @@ def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monk
         raise AssertionError("Unsupported artifact must never reach the upload service")
 
     monkeypatch.setattr("lensnode.agent_tools.httpx.Client", no_network)
-    tool = _build_save_deliverable_tool(command, SimpleNamespace(root=tmp_path),
+    tool = _build_deliverable_stager(command, SimpleNamespace(root=tmp_path),
                                        SimpleNamespace(deliverable_max_bytes=10000), None)
-    result = json.loads(tool.invoke({"path": filename}))
+    result = json.loads(tool(filename))
     assert result["ok"] is False
     assert result["error"] == "COMPLETION_CHECK_FAILED"
     assert command["_deliverables"] == {}

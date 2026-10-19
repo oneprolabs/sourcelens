@@ -401,7 +401,7 @@ def sanitize_termination_detail(detail):
     if trigger in PUBLIC_TERMINATION_REASONS:
         output["trigger"] = trigger
     completion_codes = {
-        "activity_evidence_unread", "activity_claim_unsupported", "completion_check_failed",
+        "activity_evidence_unread", "activity_claim_unsupported", "completion_check_failed", "artifact_delivery_failed",
     }
     issues = detail.get("completion_issues")
     if isinstance(issues, list):

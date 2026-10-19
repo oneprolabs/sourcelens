@@ -66,7 +66,7 @@ from .decision_policy import (
     build_decision_policy,
     build_decision_ranker,
 )
-from .deliverable import AppendWriteDeduplicationMiddleware
+from .deliverable import AppendWriteDeduplicationMiddleware, AutomaticDeliverables
 from .direct_answer import (
     _answer_general_chat_directly,
     _contains_unfulfilled_action_promise,
@@ -226,7 +226,8 @@ def _build_evidence_middleware(state):
     policy = getattr(state, "decision_policy", None)
     checker = getattr(policy, "has_evidence_gates", None)
     extensions = getattr(state, "agent_extensions", AgentExtensions())
-    if not (checker is not None and checker()) and not extensions.extensions:
+    collector = getattr(state, "deliverable_collector", None)
+    if not (checker is not None and checker()) and not extensions.extensions and collector is None:
         return None
     command = getattr(state, "command", None) or {}
     question = str(
@@ -238,7 +239,10 @@ def _build_evidence_middleware(state):
     def discard_rejected_deliverables():
         """Start a new final-answer batch without publishing the rejected draft."""
 
-        command.get("_deliverables", {}).clear()
+        if collector is not None:
+            collector.discard()
+        else:
+            command.get("_deliverables", {}).clear()
         persist = getattr(state, "persist_execution_state", None)
         if persist is not None:
             persist()
@@ -249,6 +253,22 @@ def _build_evidence_middleware(state):
         _update_extension_evidence(state)
         return extensions.completion_checks(answer)
 
+    def prepare_deliverables():
+        """Validate and stage the latest final outputs before answer review."""
+
+        cancel_event = getattr(state, "cancel_event", None)
+        if cancel_event is not None and cancel_event.is_set():
+            raise RunCancelledError("Run was cancelled before attachment staging.")
+        _update_extension_evidence(state)
+        issues = collector.collect()
+        if not issues and runtime_evidence.get("artifact_required") and not command.get("_deliverables"):
+            issues = [collector._issue("The requested final file is missing from /deliverables/.")]
+        state.runtime_evidence["delivery_issues"] = issues
+        persist = getattr(state, "persist_execution_state", None)
+        if persist is not None:
+            persist()
+        return issues
+
     return EvidenceGateMiddleware(
         policy,
         question,
@@ -258,6 +278,7 @@ def _build_evidence_middleware(state):
         on_recheck=discard_rejected_deliverables,
         review_state=review_state,
         completion_check=completion_checks if extensions.extensions else None,
+        prepare_deliverables=prepare_deliverables if collector is not None else None,
     )
 
 
@@ -776,7 +797,7 @@ class LensDeepAgentRuntime:
             if event == "deepagents.summarization.compacted":
                 state.runtime_evidence["evidence_completeness"] = "incomplete"
             if event in {
-                "tool.save_deliverable.done",
+                "deepagents.artifact.stage.done",
                 "deepagents.evidence.verified",
                 "deepagents.evidence.convergence",
             } and hasattr(state, "persist_execution_state"):
@@ -1535,6 +1556,9 @@ class LensDeepAgentRuntime:
     def _build_agent(self, state):
         """Build the Deep Agents graph and configure its checkpoint."""
 
+        state.deliverable_collector = AutomaticDeliverables(
+            state.command, state.resources, self.config, state.emit_agent_event, evidence=state.runtime_evidence,
+        )
         state.trace_middleware = (
             TraceObservationMiddleware(
                 state.emit_trace_observation,
@@ -1857,6 +1881,10 @@ class LensDeepAgentRuntime:
                 current_question=state.question,
                 system_prompt=state.kwargs.get("system_prompt"),
                 execution_evidence=state.runtime_evidence,
+                finalize_deliverables=(
+                    state.evidence_middleware.prepare_deliverables
+                    if state.evidence_middleware is not None else None
+                ),
             )
         except BaseException as exc:
             state.emit_agent_event(
@@ -1880,7 +1908,10 @@ class LensDeepAgentRuntime:
         )
         state.exit_span(loop_span)
         _update_extension_evidence(state)
+        if state.cancel_event is not None and state.cancel_event.is_set():
+            raise RunCancelledError("Run was cancelled before attachment staging.")
         completion_issues = getattr(state, "agent_extensions", AgentExtensions()).completion_checks(answer)
+        completion_issues = list(completion_issues or []) + state.runtime_evidence.get("delivery_issues", [])
         if completion_issues:
             state.runtime_evidence["completion_issues"] = completion_issues
             state.command.get("_deliverables", {}).clear()
@@ -1998,6 +2029,12 @@ def _enforce_completion_status(answer, command, checks):
 
     if not checks:
         return answer
+    if any(check.get("code") == "artifact_delivery_failed" for check in checks):
+        return _pick_text(
+            "文件交付未完成，本次附件未发布。请重试生成。",
+            "File delivery is incomplete. The attachments were not published. Please retry.",
+            _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
+        )
     if any(check.get("code") == "activity_evidence_unread" for check in checks):
         return _pick_text(
             "结果核验未通过：尚有工作记录未完成核对，本次报告及附件未发布。请重试完成汇总。",

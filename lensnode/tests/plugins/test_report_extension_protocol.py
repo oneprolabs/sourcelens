@@ -14,6 +14,19 @@ from lensnode.trajectory import RunTrajectory
 support = load_plugin_support("activity_reports")
 
 
+def test_automatic_host_delivery_is_preserved_across_plugin_context(tmp_path):
+    """Sanitized Plugin context cannot drop the report's required file contract."""
+
+    cmd = command("github", question="总结昨天每个人的工作内容")
+    source = SimpleNamespace(name="github_activity_summary", metadata={"plugin_key": "github"})
+    append = SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True})
+    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Write the report in /deliverables/."],
+                                          tools=[source, append])
+    policy = extensions.apply_policy(extensions.preferred_route, [source, append, *extensions.tools])
+    assert policy.route["evidence_requirement"] == "artifact"
+    assert "artifact_delivery" in policy.route["required_capabilities"]
+
+
 def command(*sources, question="Summarize yesterday's work"):
     """Represent frozen assistant bindings, including a non-summary Tool."""
 

@@ -133,6 +133,8 @@ def _finalize_runtime_outcome(
         for capability in required_capabilities or []
         if capability in CAPABILITY_FAMILIES or capability == "tool"
     }
+    if runtime_evidence.get("_deliverables"):
+        successful.add("artifact_delivery")
     relevant_successes = successful & required
     failed = set(
         getattr(capability_middleware, "failed_capabilities", set())

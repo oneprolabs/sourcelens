@@ -61,6 +61,7 @@ def _run_agent_with_turn_limit(
     current_question="",
     system_prompt=None,
     execution_evidence=None,
+    finalize_deliverables=None,
 ):
     """Stream agent events and optionally stop after NEW AI turns.
 
@@ -292,6 +293,9 @@ def _run_agent_with_turn_limit(
         truncated = True
         truncation_reason = "evidence_convergence_limit"
 
+    if finalize_deliverables is not None:
+        finalize_deliverables()
+
     answer = _extract_final_answer(last_state or {})
     force_wrapup = truncation_reason in {
         "soft_deadline",
@@ -330,6 +334,12 @@ def _run_agent_with_turn_limit(
             system_prompt=system_prompt,
             retained_tools=observed_tools,
             user_context=user_context,
+        )
+    if not answer.strip() and (execution_evidence or {}).get("_deliverables"):
+        answer = _pick_text(
+            "生成的文件已作为本条回复的附件提供。",
+            "The generated files are attached to this reply.",
+            answer_language,
         )
     if not answer.strip():
         raise EmptyAgentResponseError(
@@ -812,9 +822,9 @@ def _synthesize_wrapup_answer(
         )
     instruction = (
         f"{instruction}\n\n"
-        "A file is delivered only when save_deliverable succeeded. Writing a local file "
-        "or requesting a tool call does not prove delivery. Never claim an attachment "
-        "exists unless its successful save result is present.\n\n"
+        "The host automatically validates and stages final files in /deliverables/ after execution. "
+        "Do not claim that a file elsewhere in private scratch is a downloadable attachment. "
+        "Do not invent download links or claim that rejected or failed uploads succeeded.\n\n"
         f"{_answer_evidence_guidance()}\n"
         "These are internal runtime controls, not a conversational user request. "
         "The final user message repeats the original request. Determine the "
