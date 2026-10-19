@@ -1,0 +1,5 @@
+type: fix
+audience: admin
+en: Notifications include the assistant, initiating user, UTC timestamps, and question context, with readable Feishu cards and working audience-specific detail links. Notification statistics can recover from loading failures.
+zh-CN: 通知补充助手、发起用户、UTC 时间和问题上下文，飞书使用清晰卡片并提供适合接收者权限的详情链接；通知统计支持加载失败后重试。
+es: Las notificaciones incluyen el asistente, el usuario, las horas UTC y la pregunta, con tarjetas de Feishu y enlaces adecuados para cada destinatario. Las estadísticas permiten reintentar las cargas fallidas.
