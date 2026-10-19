@@ -154,5 +154,3 @@ def _enforce_delivery_status(answer, command, evidence_requirement):
         "File delivery is incomplete. No downloadable attachment was saved for this run. Please retry.",
         _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
     )
-
-
