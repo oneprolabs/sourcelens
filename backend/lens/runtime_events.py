@@ -88,6 +88,8 @@ PUBLIC_TERMINATION_REASONS = {
     "evidence_insufficient",
     "evidence_incomplete",
     "review_material_incomplete",
+    "review_unavailable",
+    "evidence_convergence_limit",
     "execution_limit",
     "turn_limit",
     "soft_deadline",
@@ -399,6 +401,15 @@ def sanitize_termination_detail(detail):
     trigger = detail.get("trigger")
     if trigger in PUBLIC_TERMINATION_REASONS:
         output["trigger"] = trigger
+    completion_codes = {
+        "activity_evidence_unread", "activity_claim_unsupported", "completion_check_failed", "artifact_delivery_failed",
+    }
+    issues = detail.get("completion_issues")
+    if isinstance(issues, list):
+        public_issues = sorted({item.get("code") for item in issues
+                               if isinstance(item, dict) and item.get("code") in completion_codes})
+        if public_issues:
+            output["completion_issues"] = [{"code": code} for code in public_issues]
     capability = detail.get("capability")
     if capability in PUBLIC_CAPABILITIES:
         output["capability"] = capability
@@ -410,6 +421,8 @@ def sanitize_termination_detail(detail):
             output["recovery"] = "Review the missing or truncated source evidence and retry with complete coverage."
         elif reason == "review_material_incomplete" and error_type == "verification":
             output["recovery"] = "Increase the answer review budget or narrow the request, then retry verification."
+        elif reason == "review_unavailable" and error_type == "verification":
+            output["recovery"] = "Check the review service availability and retry verification."
     code = detail.get("code")
     if code in PUBLIC_RUNTIME_CODES:
         output["code"] = code

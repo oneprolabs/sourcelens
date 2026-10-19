@@ -326,7 +326,9 @@ def test_completed_run_hands_terminal_frame_to_outbox():
         await client._execute_command(run_uuid, {"run_uuid": run_uuid})
 
         assert run_uuid not in client.running_tasks
-        assert list(client._outbox) == [
+        frames = [dict(frame) for frame in client._outbox]
+        assert frames[1].pop("node_enqueued_at")
+        assert frames == [
             {
                 "type": "run_event",
                 "run_uuid": run_uuid,
@@ -527,3 +529,31 @@ def test_run_done_ack_waits_for_timed_out_worker_before_cleanup():
         "/missing-test-workspace",
         "timed-out-run",
     )
+
+
+def test_terminal_timestamps_distinguish_queue_wait_from_transmission():
+    """Retries keep the original queue time and report each actual send time."""
+
+    async def exercise():
+        from datetime import datetime, timezone
+
+        client = _make_client()
+        queued_at = datetime(2026, 10, 18, 1, 0, tzinfo=timezone.utc)
+        sent_at = datetime(2026, 10, 18, 1, 1, tzinfo=timezone.utc)
+        frame = {"type": "run_done", "run_uuid": "test-run", "status": "done"}
+        with patch("lensnode.main.utc_now", return_value=queued_at):
+            client._enqueue(frame)
+        ws = FakeWebSocket()
+        with patch("lensnode.main.utc_now", return_value=sent_at):
+            task = asyncio.create_task(client._send_loop(ws))
+            await _wait_until(lambda: bool(ws.sent))
+            client.stopping.set()
+            client._outbox_ready.set()
+            await task
+        delivered = json.loads(ws.sent[0])
+        assert delivered["node_enqueued_at"] == queued_at.isoformat()
+        assert delivered["node_sent_at"] == sent_at.isoformat()
+        assert client._pending_terminal_frames["test-run"]["node_enqueued_at"] == queued_at.isoformat()
+        assert "node_sent_at" not in client._pending_terminal_frames["test-run"]
+
+    asyncio.run(exercise())

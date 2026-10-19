@@ -57,7 +57,7 @@ GATE_REGISTRY = {
     },
     "evidence_sufficient": {
         "kind": "noul",
-        "fallback": "fixed",
+        "fallback": "inconclusive",
         "phase": "P3",
         "instructions": (
             "Does the answer rely only on evidence that was actually "
@@ -76,9 +76,8 @@ GATE_REGISTRY = {
     },
     "answer_supported": {
         "kind": "choice",
-        "fallback": "fixed",
+        "fallback": "inconclusive",
         "phase": "P3",
-        "pass_option": "supported",
         "instructions": (
             "Is the answer supported by the evidence that was retrieved? "
             "Check both positive and negative factual claims. A coverage gap in one source "
@@ -99,9 +98,8 @@ GATE_REGISTRY = {
     },
     "evidence_strength": {
         "kind": "choice",
-        "fallback": "fixed",
+        "fallback": "inconclusive",
         "phase": "P3",
-        "pass_option": "unknown",
         "instructions": (
             "What is the weakest evidence level of any material factual "
             "claim in the answer? Choose the weakest applicable level. "
@@ -289,14 +287,6 @@ class DecisionRunner:
             expect_choice=True,
         )
 
-    def default_verdict(self, gate):
-        """Return the fixed fail-safe verdict declared for one gate."""
-
-        spec = GATE_REGISTRY.get(gate) or {}
-        if spec.get("kind") == "choice":
-            return str(spec.get("pass_option") or "")
-        return True
-
     def _evaluate(self, gate, *, question, history, tools, expect_choice):
         started = time.monotonic()
         call_id = self._next_call_id(gate)
@@ -411,7 +401,7 @@ class DecisionRunner:
                 arguments,
                 call_id,
                 GATE_SOURCE,
-                GATE_TIMEOUT_S,
+                binding["timeout_seconds"] + 1 if binding.get("timeout_seconds") else GATE_TIMEOUT_S,
                 emit=self._tagged_emit,
             )
         plugin_key = str(binding.get("plugin_key") or "")

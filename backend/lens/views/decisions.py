@@ -1,7 +1,7 @@
 """Admin decision metadata and authenticated LensNode decision calls."""
 
 from agentcore_metering.adapters.django.models import LLMConfig
-from agentcore_metering.adapters.django.services.decisions import DecisionTracker, decision_error_detail
+from agentcore_metering.adapters.django.services.decisions import decision_error_detail
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from rest_framework.permissions import IsAdminUser
@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from lens.decisions import decision_catalog
 from lens.models import Run, RunExecution
+from lens.runtime_decisions import call_runtime_decision
 
 from .base import LensNodeAuthMixin
 from .gateway import LensNodeAIGatewayView
@@ -97,11 +98,11 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
             config = dict(model.config)
             config["request_timeout_seconds"] = (
                 definition["timeout_seconds"]
-                if source == "decision_score"
+                if definition.get("timeout_seconds")
                 else min(int(config.get("request_timeout_seconds") or 2), 2)
             )
             config["num_retries"] = 0
-            answers, usage = DecisionTracker.call_with_config(
+            answers, usage = call_runtime_decision(
                 provider=model.provider,
                 config=config,
                 config_uuid=model_ref,

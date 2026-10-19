@@ -1543,6 +1543,8 @@ function rowStatusClass(row) {
 }
 
 function rowStatusLabel(row) {
+  if (row?.span?.recoveryAction === 'preserve_history')
+    return t('lensRuns.trajectorySummaryHistoryPreserved')
   const status = row?.span?.status
   if (status === 'completed' && row?.span?.hasWarnings)
     return stateLabel('degraded')

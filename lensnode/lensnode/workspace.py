@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from wcmatch import glob as wcglob
+
 from .path_rules import SIDECAR_SUFFIX
 
 LOGGER = logging.getLogger("lensnode")
@@ -113,8 +115,8 @@ def search_workspace(
     - "files": the list of files that contain a match.
     - "count": per-file match counts.
 
-    `query` is treated as keywords (fixed-string, case-folded) by default;
-    set regex=True to pass a ripgrep regular expression instead. `glob`
+    `query` is a literal phrase (case-folded) by default; use | between
+    alternative phrases. Set regex=True for a regular expression. `glob`
     restricts the search to matching paths (e.g. "**/*.md", "*.py"). File
     size never gates a match — ripgrep streams, so any size is searchable.
     """
@@ -127,7 +129,7 @@ def search_workspace(
         root = Path(item.get("path", ""))
         if root.exists() and root.is_dir():
             dirs.append((root, target_scope(item)))
-    allowed = _path_gate(dirs, policy)
+    allowed = _path_gate(dirs, policy, glob=glob)
 
     if output_mode == "files":
         files = []
@@ -138,8 +140,6 @@ def search_workspace(
                     regex=regex, glob=glob, case_sensitive=case_sensitive,
                 )
             )
-            if len(files) >= max_results:
-                break
         files = _visible_paths(files, dirs, policy, allowed=allowed)
         return {"mode": "files", "files": files[:max_results]}
 
@@ -152,8 +152,6 @@ def search_workspace(
                     regex=regex, glob=glob, case_sensitive=case_sensitive,
                 )
             )
-            if len(counts) >= max_results:
-                break
         counts = _visible_counts(counts, dirs, policy, allowed=allowed)
         counts.sort(key=lambda item: (-item["count"], item["path"]))
         return {"mode": "count", "counts": counts[:max_results]}
@@ -168,18 +166,19 @@ def search_workspace(
         )
         matches.extend(
             _rg_line_matches(
-                root, query, terms, scope, policy, ctx,
+                root, query, scope, policy, ctx,
                 regex=regex, glob=glob, case_sensitive=case_sensitive,
             )
         )
-        if len(matches) >= max_results:
-            break
 
     if matches:
         matches = [match for match in matches if allowed(match["path"])]
         visible = {}
+        unique = {}
         for match in matches:
             match["path"] = _visible_value(match["path"], visible)
+            unique.setdefault((match["path"], match["line"]), match)
+        matches = list(unique.values())
         matches = _rank_matches(matches, terms)
         matches = _apply_rerank(matches, rerank)
         if matches:
@@ -211,27 +210,20 @@ def search_workspace(
             return result
 
     files = []
-    for root, scope in dirs:
-        files.extend(
-            _iter_scope_files(
-                root,
-                scope,
-                policy,
-                limit=DEFAULT_FILE_LIST_LIMIT - len(files),
-            )
-        )
-        if len(files) >= DEFAULT_FILE_LIST_LIMIT:
+    navigation_glob = f"**/{glob}" if glob and "/" not in glob and not glob.startswith("!") else glob or "**/*"
+    for path in glob_files(target_dirs, navigation_glob, max_results=min(8, max_results), policy=policy):
+        if sum(len(item) for item in files) + len(path) > 2000:
             break
+        files.append(path)
     note = (
-        "No matches in the selected workspace. Listing files in scope so "
-        "you can read them directly with read_workspace_file (use "
-        "offset/limit to page). Tip: try different keywords (the "
-        "documents' own terms), a regex, or find_files by name."
+        "No matching text. The small file sample is navigation only, not "
+        "evidence for an answer. Use find_files for more paths or read a "
+        "relevant file. Queries match literal phrases; use '|' for alternatives."
     )
     return {
         "mode": "content",
         "matches": [],
-        "files": _visible_paths(files, dirs, policy, allowed=allowed),
+        "files": files,
         "note": note,
     }
 
@@ -279,8 +271,10 @@ def glob_files(target_dirs, pattern, max_results=None, policy=None):
             ]
             for name in filenames:
                 path = Path(current_root) / name
-                relative = path.relative_to(root).as_posix()
+                relative = citation_path(path).relative_to(root).as_posix()
                 if not _matches_glob_pattern(relative, pattern):
+                    continue
+                if not _source_matches_scope(root, citation_path(path), scope):
                     continue
                 if len(found) >= GLOB_SCAN_LIMIT:
                     break
@@ -485,7 +479,20 @@ def _path_allowed_in_dirs(path_value, dirs, policy):
     return False
 
 
-def _path_gate(dirs, policy):
+def _source_matches_scope(root, source, scope, glob=""):
+    """Intersect source-path include patterns with the requested file glob."""
+
+    try:
+        relative = source.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    return (
+        any(_matches_search_glob(relative, pattern) for pattern in scope.get("include_paths") or ["**/*"])
+        and (not glob or _matches_search_glob(relative, glob))
+    )
+
+
+def _path_gate(dirs, policy, *, glob=""):
     """Return a per-call memoized allowlist predicate.
 
     ``_path_allowed_in_dirs`` re-resolves the same file once per matched
@@ -500,7 +507,11 @@ def _path_gate(dirs, policy):
     def allowed(path_value):
         key = str(path_value)
         if key not in cache:
-            cache[key] = _path_allowed_in_dirs(path_value, dirs, policy)
+            cache[key] = (
+                _path_allowed_in_dirs(path_value, dirs, policy)
+                and retrieval_path(path_value) == Path(path_value)
+                and any(_source_matches_scope(root, citation_path(path_value), scope, glob) for root, scope in dirs)
+            )
         return cache[key]
 
     return allowed
@@ -554,10 +565,8 @@ def _visible_counts(counts, dirs, policy, allowed=None):
 def _query_groups(query):
     """Split a query into OR-separated keyword groups.
 
-    `query` is a batch of alternatives joined by "|" (ASCII or full-width
-    "｜"). Whitespace inside a group is not a separator — the group is a
-    phrase that is still tokenized into terms below. A query with no "|" is
-    one single group, preserving the historical keyword behavior.
+    Whitespace and punctuation inside a group remain literal. Only an
+    explicit ASCII or full-width pipe separates alternatives.
     """
 
     text = str(query or "")
@@ -569,25 +578,9 @@ def _query_groups(query):
 
 
 def _query_terms(query):
-    """Extract lightweight search terms from a query (OR across groups)."""
+    """Return case-folded literal alternatives for deterministic ranking."""
 
-    terms = []
-    for group in _query_groups(query):
-        for term in re.findall(r"[\w一-鿿]+", group.lower()):
-            if len(term) < 2:
-                continue
-            terms.append(term)
-            if _contains_cjk(term):
-                terms.extend(_ngrams(term, 2))
-                terms.extend(_ngrams(term, 3))
-    seen = set()
-    unique_terms = []
-    for term in terms:
-        if term in seen:
-            continue
-        seen.add(term)
-        unique_terms.append(term)
-    return unique_terms
+    return list(dict.fromkeys(group.lower() for group in _query_groups(query) if group))
 
 
 def _run_rg(cmd):
@@ -612,11 +605,10 @@ def _run_rg(cmd):
 
 
 def _rg_glob_args(root, scope, policy, glob):
-    """Build ripgrep -g include/exclude args from scope and an extra glob.
+    """Search a superset of source globs and canonical conversion artifacts.
 
-    The trivial "**/*" include is skipped: ripgrep unions include globs,
-    so emitting it would defeat a narrower glob (e.g. "**/*.md").
-    Ripgrep's default already searches everything minus the excludes.
+    Ripgrep unions positive globs; the result gate intersects the scope and
+    request on source paths. Exclusions still apply to both physical paths.
     """
 
     args = []
@@ -626,8 +618,16 @@ def _rg_glob_args(root, scope, policy, glob):
         if pattern == "**/*":
             continue
         args.extend(["-g", pattern])
+        sidecar_pattern = pattern.lstrip("!")
+        sidecar_pattern = f"**/{sidecar_pattern}" if "/" not in sidecar_pattern else sidecar_pattern
+        exclusion = "!" if pattern.startswith("!") else ""
+        args.extend(["-g", f"{exclusion}{sidecar_pattern}{SIDECAR_SUFFIX}/content.md"])
     if glob:
         args.extend(["-g", glob])
+        sidecar_pattern = glob.lstrip("!")
+        sidecar_pattern = f"**/{sidecar_pattern}" if "/" not in sidecar_pattern else sidecar_pattern
+        exclusion = "!" if glob.startswith("!") else ""
+        args.extend(["-g", f"{exclusion}{sidecar_pattern}{SIDECAR_SUFFIX}/content.md"])
     for pattern in _exclude_globs(root, scope, policy):
         args.extend(["-g", f"!{pattern}"])
     for pattern in _excluded_symlink_globs(root):
@@ -651,21 +651,22 @@ def _excluded_symlink_globs(root):
     return excluded
 
 
-def _rg_patterns(query, terms, regex):
+def _rg_patterns(query, regex):
     """Return (patterns, fixed) for a search, or (None, _) when empty."""
 
     if regex:
         return ([query], False) if query else (None, False)
-    return (terms, True) if terms else (None, True)
+    patterns = [group for group in _query_groups(query) if group]
+    return (patterns, True) if patterns else (None, True)
 
 
 def _rg_line_matches(
-    root, query, terms, scope, policy, context_lines,
+    root, query, scope, policy, context_lines,
     *, regex=False, glob="", case_sensitive=False,
 ):
     """Return ripgrep line matches with context, or a Python fallback."""
 
-    patterns, fixed = _rg_patterns(query, terms, regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
 
@@ -699,7 +700,8 @@ def _rg_line_matches(
         if regex:
             return []
         return _python_line_matches(
-            root, terms, scope, policy, context_lines, max_per_file, max_line_chars
+            root, patterns, scope, policy, context_lines, max_per_file, max_line_chars,
+            glob=glob, case_sensitive=case_sensitive,
         )
     return _parse_rg_json(stdout, int(context_lines), max_line_chars)
 
@@ -709,7 +711,7 @@ def _rg_files_with_matches(
 ):
     """Return files in a directory that contain a match (rg -l)."""
 
-    patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
     cmd = ["rg", "--follow", "-l"]
@@ -732,7 +734,7 @@ def _rg_counts(
 ):
     """Return per-file match counts in a directory (rg -c)."""
 
-    patterns, fixed = _rg_patterns(query, _query_terms(query), regex)
+    patterns, fixed = _rg_patterns(query, regex)
     if not patterns:
         return []
     cmd = ["rg", "--follow", "-c"]
@@ -923,13 +925,22 @@ def _parse_rg_json(stdout, context_lines, max_line_chars):
 
 
 def _python_line_matches(
-    root, terms, scope, policy, context_lines, max_per_file, max_line_chars
+    root, terms, scope, policy, context_lines, max_per_file, max_line_chars,
+    *, glob="", case_sensitive=False,
 ):
     """Pure-Python line search fallback when ripgrep is unavailable."""
 
-    lowered = [term.lower() for term in terms]
+    patterns = terms if case_sensitive else [term.lower() for term in terms]
     results = []
+    seen = set()
     for path in _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
+        source = citation_path(path)
+        if not _source_matches_scope(root, source, scope, glob):
+            continue
+        path = retrieval_path(source)
+        if path in seen or not is_path_allowed(root, path, scope, policy):
+            continue
+        seen.add(path)
         if _is_binary(path):
             continue
         text = _read_text(path)
@@ -940,7 +951,8 @@ def _python_line_matches(
         for index, line in enumerate(lines):
             if count >= max_per_file:
                 break
-            if not any(term in line.lower() for term in lowered):
+            value = line if case_sensitive else line.lower()
+            if not any(term in value for term in patterns):
                 continue
             before = [
                 {"n": n + 1, "text": _truncate(lines[n], max_line_chars)}
@@ -994,7 +1006,7 @@ def _iter_scope_files(root, scope, policy, limit=DEFAULT_FILE_LIST_LIMIT):
             paths = [Path(current_root) / name for name in filenames]
             for path in paths:
                 relative = path.relative_to(root).as_posix()
-                if not _matches_glob_pattern(relative, pattern):
+                if not _matches_search_glob(relative, pattern):
                     continue
                 if len(found) >= limit:
                     return sorted(set(found))[:limit]
@@ -1026,18 +1038,22 @@ def _option(scope, policy, key, default):
     return default
 
 
-def _matches_glob_pattern(relative, pattern):
-    """Match a relative path using the previous Path.glob semantics."""
+def _matches_search_glob(relative, pattern):
+    """Match slash-free search globs against basenames at every depth, like ripgrep."""
 
-    path = Path(relative)
-    if "/" not in pattern:
-        return path.parent == Path(".") and fnmatch.fnmatchcase(
-            path.name, pattern
-        )
-    patterns = [pattern]
-    if "**/" in pattern:
-        patterns.append(pattern.replace("**/", "", 1))
-    return any(path.match(candidate) for candidate in patterns)
+    if pattern.startswith("!"):
+        return not _matches_search_glob(relative, pattern[1:])
+    return wcglob.globmatch(relative, pattern, flags=wcglob.GLOBSTAR | wcglob.BRACE | wcglob.MATCHBASE | wcglob.DOTMATCH)
+
+
+def _matches_glob_pattern(relative, pattern):
+    """Match relative path segments with recursive Path.glob semantics."""
+
+    if pattern.startswith("!"):
+        return not _matches_search_glob(relative, pattern[1:])
+    if Path(pattern).is_absolute():
+        return False
+    return wcglob.globmatch(relative, pattern, flags=wcglob.GLOBSTAR | wcglob.BRACE | wcglob.DOTMATCH)
 
 
 def _symlink_boundary(root):
@@ -1168,7 +1184,9 @@ def is_path_excluded(root, path, scope, policy):
         return True
     max_depth = _option(scope, policy, "max_depth", None)
     if root is not None and max_depth is not None:
-        if len(relative.parts) > int(max_depth):
+        source = converted_source_path(path)
+        depth_path = source.relative_to(root) if source is not None else relative
+        if len(depth_path.parts) > int(max_depth):
             return True
     exclude_paths = _option(scope, policy, "exclude_paths", [])
     if root is None:
@@ -1232,20 +1250,6 @@ def _normalize_extensions(values):
             extension = f".{extension}"
         extensions.add(extension)
     return extensions
-
-
-def _contains_cjk(value):
-    """Return whether a string contains CJK characters."""
-
-    return any("一" <= char <= "鿿" for char in value)
-
-
-def _ngrams(value, size):
-    """Return character n-grams for compact CJK query terms."""
-
-    if len(value) < size:
-        return []
-    return [value[index : index + size] for index in range(len(value) - size + 1)]
 
 
 def _truncate(text, max_chars):

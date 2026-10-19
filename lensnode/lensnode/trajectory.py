@@ -184,6 +184,9 @@ class RunTrajectory:
             name = str(payload.get("name") or "")
             suffix = (name if category == "step" else str(event_type)).rsplit(".", 1)[-1]
             boundary = category in {"model", "tool", "subtool", "run", "step"}
+            # Recovery annotates a closed failure without changing its lifecycle.
+            if event_type == "model.recovered":
+                boundary = False
             registered_category = self._call_categories.get(str(call_id))
             if registered_category and registered_category != category:
                 boundary = False

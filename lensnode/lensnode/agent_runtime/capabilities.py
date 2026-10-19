@@ -528,6 +528,9 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
         if payload.get("ok") is True:
             self._record_success(capability, tool_name, request, payload)
             return result
+        if tool_name == "save_deliverable" and payload.get("error") == "COMPLETION_CHECK_FAILED":
+            # Content validation happens before upload; the model may repair the same path.
+            return result
         if capability is None:
             return result
 

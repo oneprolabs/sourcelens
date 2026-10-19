@@ -3580,7 +3580,7 @@ def test_business_prompt_contract_covers_code_skills_and_collaboration():
     assert "read_workspace_file" in code_prompt
     assert "Never claim that a tool was called" in skill_prompt
     assert "Business facts must come from actual tool results" in skill_prompt
-    assert "save_deliverable(path)" in skill_prompt
+    assert "/deliverables/" in skill_prompt
     assert "必须分别委派给每个助手" in smart_prompt
     assert "可以并行" in smart_prompt
     assert "只根据实际返回的结果作答" in smart_prompt

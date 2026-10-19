@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.outcomes import _finalize_runtime_outcome
@@ -77,10 +77,49 @@ def test_qualified_absence_and_positive_observations_remain_reportable(tmp_path)
     extensions.tools[0].invoke({})
     assert extensions.completion_checks("Alice 名下有已解决工单。GitHub 来源不完整，不能据此判断零完成或产出偏低。") == []
     assert extensions.completion_checks("本次检索未观察到 Alice 的提交，不代表没有工作。") == []
+    assert extensions.completion_checks("未观察到完成类事件不推论为没有工作。") == []
+    assert extensions.completion_checks('全文不含“零完成”“产出明显偏低”等人事结论。') == []
+    assert extensions.completion_checks('已删去“零完成”等无依据表述。') == []
+    assert extensions.completion_checks('这只是“未观察到”而非“没有产出”，不下量化结论。') == []
+
+
+def test_rejected_report_feedback_identifies_the_statement_to_repair(tmp_path):
+    _, extensions, _ = report(tmp_path)
+    extensions.tools[0].invoke({})
+    issues = extensions.completion_checks("Alice 有已解决工单。Bob 的事项长期停滞。")
+    assert "Bob 的事项长期停滞" in issues[0]["recovery"]
+    assert "Alice 有已解决工单" not in issues[0]["recovery"]
+
+
+def test_report_repairs_can_revalidate_the_same_path_without_blocking_upload_capability():
+    from lensnode.agent_runtime.capabilities import CapabilityBoundaryMiddleware
+
+    boundary = CapabilityBoundaryMiddleware(required_capabilities=["artifact_delivery"])
+    request = SimpleNamespace(tool=SimpleNamespace(name="save_deliverable"), tool_call={
+        "name": "save_deliverable", "id": "save", "args": {"path": "report.html"},
+    })
+    calls = []
+
+    def reject(_request):
+        calls.append("rejected before upload")
+        return ToolMessage(name="save_deliverable", tool_call_id="save", status="error",
+                           content='{"ok":false,"error":"COMPLETION_CHECK_FAILED"}')
+
+    for _ in range(3):
+        assert json.loads(boundary.wrap_tool_call(request, reject).content)["error"] == "COMPLETION_CHECK_FAILED"
+    assert len(calls) == 3
+    assert not boundary.successful_capabilities
+    accepted = boundary.wrap_tool_call(request, lambda _request: ToolMessage(
+        name="save_deliverable", tool_call_id="save", content='{"ok":true,"uuid":"file"}',
+    ))
+    assert json.loads(accepted.content)["ok"] is True
+    assert "artifact_delivery" in boundary.successful_capabilities
 
 
 @pytest.mark.parametrize("text", [
     "来源不完整，不能据此判断 Bob。Alice 零完成。",
+    "报告不含附件，Alice 零完成。",
+    "已删除旧版。Alice 零完成。",
     "Alice completed nothing. There is no evidence about Bob.",
     "<p>不能据此判断 Bob</p><p>Alice <b>零</b>完成</p>",
 ])
@@ -110,7 +149,7 @@ def test_empty_evidence_page_counts_as_reviewed(tmp_path):
     (True, "report.json", '{"conclusion":"Alice completed nothing."}'),
 ])
 def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monkeypatch, read_pages, filename, content):
-    from lensnode.agent_tools import _build_save_deliverable_tool
+    from lensnode.agent_tools import _build_deliverable_stager
 
     command, extensions, _ = report(tmp_path, partial=True)
     if read_pages:
@@ -123,9 +162,9 @@ def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monk
         raise AssertionError("Unsupported artifact must never reach the upload service")
 
     monkeypatch.setattr("lensnode.agent_tools.httpx.Client", no_network)
-    tool = _build_save_deliverable_tool(command, SimpleNamespace(root=tmp_path),
+    tool = _build_deliverable_stager(command, SimpleNamespace(root=tmp_path),
                                        SimpleNamespace(deliverable_max_bytes=10000), None)
-    result = json.loads(tool.invoke({"path": filename}))
+    result = json.loads(tool(filename))
     assert result["ok"] is False
     assert result["error"] == "COMPLETION_CHECK_FAILED"
     assert command["_deliverables"] == {}
@@ -134,6 +173,51 @@ def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monk
 def test_activity_evidence_tool_is_marked_as_inline_bounded_result(tmp_path):
     _, extensions, _ = report(tmp_path)
     assert extensions.tools[0].metadata["bounded_inline_result"] is True
+
+
+def test_large_ledger_metadata_does_not_reduce_every_page_to_one_record(tmp_path, monkeypatch):
+    _, extensions, _ = report(tmp_path, count=122, partial=True)
+    ledger = extensions.extensions[0].ledger
+    evidence = ledger.report({"jira_activity_summary"})
+    evidence["observed_events"] = [{"detail": "event" * 10000}]
+    for coverage in evidence["source_coverage"].values():
+        coverage["details"] = "coverage" * 10000
+    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    offset = 0
+    pages = []
+    while offset is not None:
+        raw = extensions.tools[0].invoke({"offset": offset, "limit": 100})
+        assert len(raw) <= support.MAX_ACTIVITY_PAGE_CHARS
+        page = json.loads(raw)
+        assert page["ok"] is True
+        assert len(page["records"]) >= min(10, 122 - offset)
+        pages.append(page)
+        offset = page["next_offset"]
+    assert len(pages) <= 10
+    assert sum(len(page["records"]) for page in pages) == 122
+    assert pages[-1]["next_page"] is None
+    assert pages[-1]["read_progress"]["complete"] is True
+    assert extensions.completion_checks("已观察到 Alice 名下解决的工单，来源存在缺口。") == []
+
+
+def test_page_size_includes_progress_and_rejected_pages_do_not_mark_evidence_read(tmp_path, monkeypatch):
+    _, extensions, _ = report(tmp_path, count=1)
+    ledger = extensions.extensions[0].ledger
+    evidence = ledger.report({"jira_activity_summary"})
+    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    evidence["records"][0]["title"] = "x" * support.MAX_ACTIVITY_PAGE_CHARS
+    rejected = json.loads(extensions.tools[0].invoke({}))
+    assert rejected["error"] == "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE"
+    assert ledger.read_progress(evidence)["complete"] is False
+    evidence["records"][0]["title"] = ""
+    raw = extensions.tools[0].invoke({})
+    monkeypatch.setattr(support, "MAX_ACTIVITY_PAGE_CHARS", len(raw) - 1)
+    ledger.root.joinpath("review", "progress.json").unlink()
+    rejected = json.loads(extensions.tools[0].invoke({}))
+    if rejected["ok"]:
+        assert len(support._json(rejected)) <= support.MAX_ACTIVITY_PAGE_CHARS
+    else:
+        assert ledger.read_progress(evidence)["complete"] is False
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -189,6 +273,18 @@ def test_host_check_gets_one_bounded_repair_without_decision_gate():
     assert gate.after_model(state, None) is None
 
 
+def test_convergence_trigger_survives_unread_report_failure():
+    _, detail = _finalize_runtime_outcome(
+        capability_middleware=None, evidence_requirement="artifact", required_capabilities=[],
+        truncated=False, stop_reason=None, runtime_evidence={
+            "convergence_exhausted": True, "review_completeness": "incomplete",
+            "completion_issues": [{"code": "activity_evidence_unread"}],
+        },
+    )
+    assert detail["trigger"] == "evidence_convergence_limit"
+    assert detail["completion_issues"] == [{"code": "activity_evidence_unread"}]
+
+
 def test_report_middleware_exists_without_decision_gates_and_refreshes_progress(tmp_path):
     from lensnode.agent_runtime.runtime import _build_evidence_middleware
 
@@ -216,6 +312,31 @@ def test_failed_completion_check_cannot_repeat_the_rejected_assertion(answer):
     else:
         assert "核验未通过" in result
     assert _enforce_completion_status(answer, {}, []) == answer
+
+
+@pytest.mark.parametrize("stop_reason", ["token_budget_wrapup", "evidence_convergence_limit"])
+@pytest.mark.parametrize("evidence", [
+    {"completion_issues": [{"code": "activity_evidence_unread"}], "review_completeness": "incomplete"},
+    {"artifact_required": True},
+    {"review_completeness": "incomplete"},
+    {"evidence_completeness": "incomplete"},
+])
+def test_verification_failure_keeps_the_execution_limit_that_prevented_completion(stop_reason, evidence):
+    outcome, detail = _finalize_runtime_outcome(
+        capability_middleware=None, evidence_requirement="artifact", truncated=True,
+        stop_reason=stop_reason, execution_gate_enabled=False, runtime_evidence=evidence,
+    )
+    assert outcome == "partial"
+    assert detail["trigger"] == stop_reason
+    assert detail["error_type"] == "verification"
+
+
+def test_unread_evidence_failure_explains_why_the_report_was_withheld():
+    from lensnode.agent_runtime.runtime import _enforce_completion_status
+
+    result = _enforce_completion_status("报告已完成", {}, [{"code": "activity_evidence_unread"}])
+    assert "工作记录未完成核对" in result
+    assert "附件未发布" in result
 
 
 @pytest.mark.parametrize("provider,kind,event,actor_field", [
@@ -278,3 +399,34 @@ def test_provider_projections_preserve_available_event_actors_without_inventing_
     assert projected["creator_identity"] == "alice-id"
     assert projected["reporter_identity"] == "bob-id"
     assert not projected.get("updated_by")
+
+
+def test_single_record_page_drops_small_optional_metadata_before_rejecting(tmp_path, monkeypatch):
+    """A readable record must advance the cursor even when coverage metadata does not fit."""
+
+    _, extensions, _ = report(tmp_path, count=1)
+    ledger = extensions.extensions[0].ledger
+    evidence = ledger.report({"jira_activity_summary"})
+    evidence["records"][0]["title"] = "x" * 21000
+    evidence["observed_events"] = [{"detail": "x" * 4500}]
+    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    raw = extensions.tools[0].invoke({})
+    page = json.loads(raw)
+    assert page["ok"] is True
+    assert len(raw) <= support.MAX_ACTIVITY_PAGE_CHARS
+    assert page["records"] == evidence["records"]
+    assert page["coverage_details_omitted"] is True
+    assert page["read_progress"]["complete"] is True
+    assert ledger.read_progress(evidence)["complete"] is True
+
+@pytest.mark.parametrize("text", [
+    "可核实的只有两项故障受理及其当前状态；没有完成事件、没有描述与评论，质量与产出水平均无法评价。",
+    "本次台账没有任何完成记录，不能据此判断实际工作量。",
+    "Alice 没有完成证据，暂无法核验交付状态。",
+])
+def test_absence_of_completion_records_is_not_a_zero_work_claim(tmp_path, text):
+    """A record-level limitation must remain reportable after a report repair."""
+
+    _, extensions, _ = report(tmp_path, partial=True)
+    extensions.tools[0].invoke({})
+    assert extensions.completion_checks(text) == []

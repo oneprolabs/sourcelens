@@ -1,0 +1,10 @@
+type: fix
+audience: user
+en: >-
+  Automatically validate and attach final files generated in the output directory,
+  including files produced by document tools. Remove the separate save step,
+  retain evidence checks, and prevent rejected drafts or failed replacements
+  from appearing as downloadable results.
+zh-CN: >-
+  自动校验并交付输出目录中的最终文件，兼容文档工具生成的附件，无需额外调用保存工具。
+  保留证据核验，避免被拒草稿或替换失败的旧版本作为最终附件出现。

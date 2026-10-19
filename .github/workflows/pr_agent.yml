@@ -19,7 +19,7 @@ jobs:
       github.event.sender.type != 'Bot' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
       issues: write
@@ -42,16 +42,22 @@ jobs:
 
       - name: Review and describe pull request in English
         id: pr_agent
-        # v0.39.0
+        # v0.48.0
         uses: >-
-          The-PR-Agent/pr-agent@8e4d32e5497defd43c023a404f73560c62728961
+          The-PR-Agent/pr-agent@981344be2755e303df501e18e3f60b848a188a80
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_KEY: ${{ secrets.LLM_API_KEY }}
           OPENAI.API_BASE: ${{ secrets.LLM_BASE_URL }}
           CONFIG.MODEL: ${{ vars.LLM_MODEL || 'openai/deepseek-v3' }}
-          CONFIG.FALLBACK_MODELS: >-
-            ["${{ vars.LLM_MODEL || 'openai/deepseek-v3' }}"]
+          CONFIG.FALLBACK_MODELS: "[]"
+          CONFIG.AI_TIMEOUT: "300"
+          CONFIG.NUM_RETRIES: "0"
+          CONFIG.RETRY_SAME_MODEL_ON_TIMEOUT: "false"
+          LITELLM.CUSTOM_LLM_PROVIDER: openai
+          LITELLM.FORCE_STREAMING_CUSTOM_LLM_PROVIDER: openai
+          LITELLM.FORCE_STREAMING_API_BASE_SUBSTRINGS: >-
+            ["http://", "https://"]
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: >-
             ${{ vars.LLM_MODEL_MAX_TOKENS || '64000' }}
           CONFIG.RESPONSE_LANGUAGE: en-US

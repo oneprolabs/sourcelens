@@ -29,7 +29,13 @@ The current implementation is .github/workflows/pr_agent.yml.
   passed.
 - Each pull request has one active workflow run. A newer event cancels an
   older in-progress run.
-- The review job has a 20-minute timeout.
+- Model requests use streaming through the configured OpenAI-compatible
+  endpoint and have a 300-second inactivity timeout. Client retries are
+  disabled, and a timed-out request is not replayed on the same model. The
+  configured model is not repeated as its own fallback; PR-Agent retains
+  its bounded retries for other transient API errors.
+- The review job has a 35-minute timeout to allow the longer requests and
+  retries to finish and leave time for the result notification.
 
 Automatic describe may update the PR description before review. Generated
 description text is supporting context, not a new source of product

@@ -1420,3 +1420,33 @@ test('missing lifecycle and parent records are diagnosed only for complete data'
     []
   )
 })
+
+test('summary preservation marks only its exact failed call as degraded and keeps failed lifecycle', () => {
+  const event = (run, id, sequence, type, payload) => ({
+    trace_run_uuid: run,
+    call_id: id,
+    event_id: `${run}-${sequence}`,
+    sequence,
+    timestamp: new Date(sequence * 1000).toISOString(),
+    event_type: type,
+    payload
+  })
+  const events = [
+    event('parent', 'summary', 1, 'model.started', { name: 'model.summarization' }),
+    event('parent', 'summary', 2, 'model.failed', { error_type: 'GatewayProtocolError' }),
+    event('parent', 'agent', 3, 'model.started', { name: 'model.agent' }),
+    event('parent', 'agent', 4, 'model.failed', { error_type: 'GatewayProtocolError' }),
+    event('parent', 'summary', 5, 'model.recovered', { action: 'preserve_history' }),
+    event('child', 'summary', 1, 'model.started', { name: 'model.summarization' }),
+    event('child', 'summary', 2, 'model.failed', { error_type: 'GatewayProtocolError' })
+  ]
+  const spans = buildTrajectorySpans(events.filter((event) => eventCategory(event) === 'model'))
+  const recovered = spans.find((span) => span.callId === 'summary' && span.runKey === 'parent')
+  assert.equal(recovered.status, 'degraded')
+  assert.equal(recovered.lifecycle, 'failed')
+  assert.equal(recovered.recoveryAction, 'preserve_history')
+  assert.equal(recovered.events.filter((event) => event.event_type === 'model.failed').length, 1)
+  assert.equal(spans.find((span) => span.callId === 'agent').status, 'failed')
+  assert.equal(spans.find((span) => span.runKey === 'child').status, 'failed')
+  assert.equal(buildTrajectorySpans(events.slice(0, 2))[0].status, 'failed')
+})

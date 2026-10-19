@@ -14,6 +14,19 @@ from lensnode.trajectory import RunTrajectory
 support = load_plugin_support("activity_reports")
 
 
+def test_automatic_host_delivery_is_preserved_across_plugin_context(tmp_path):
+    """Sanitized Plugin context cannot drop the report's required file contract."""
+
+    cmd = command("github", question="总结昨天每个人的工作内容")
+    source = SimpleNamespace(name="github_activity_summary", metadata={"plugin_key": "github"})
+    append = SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True})
+    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Write the report in /deliverables/."],
+                                          tools=[source, append])
+    policy = extensions.apply_policy(extensions.preferred_route, [source, append, *extensions.tools])
+    assert policy.route["evidence_requirement"] == "artifact"
+    assert "artifact_delivery" in policy.route["required_capabilities"]
+
+
 def command(*sources, question="Summarize yesterday's work"):
     """Represent frozen assistant bindings, including a non-summary Tool."""
 
@@ -162,17 +175,48 @@ def test_identical_parallel_requests_share_a_single_source_snapshot(tmp_path):
     assert len(calls) == 1
 
 
+def test_active_report_returns_small_receipts_and_keeps_full_partial_sources(tmp_path):
+    """Fresh and cached calls direct the model to the ledger without losing source facts."""
+
+    cmd = command("jira")
+    extensions = prepare_agent_extensions(cmd, tmp_path)
+    extension = extensions.extensions[0]
+    extension.active = True
+    payload = {
+        **result(),
+        "items": [{"key": f"SL-{index}", "summary": "x" * 2000, "assignee": "Alice",
+                   "updated": "2026-10-12T08:00:00Z"} for index in range(80)],
+        "_evidence": {"complete": False},
+    }
+    calls = []
+    binding = cmd["loaded_plugins"][0]
+    invoke = extensions.wrap_executor(
+        binding, binding["tools"][0], lambda *args: calls.append(args) or json.dumps(payload)
+    )
+    receipts = [json.loads(invoke("jira_activity_summary", {}, SimpleNamespace(tool_call_id="source")))
+                for _ in range(2)]
+    assert receipts[0] == receipts[1]
+    assert len(json.dumps(receipts[0])) < 2000
+    assert receipts[0]["next_page"] == {"tool": "read_activity_evidence", "arguments": {"offset": 0}}
+    assert receipts[0]["total_records"] == 80
+    assert receipts[0]["_evidence"]["complete"] is False
+    assert "items" not in receipts[0]
+    assert len(calls) == 1
+    assert json.loads(extension.ledger.cached("jira", "connection-jira", "1.0.0", "jira_activity_summary", {})) == payload
+    assert extension.evidence()["review_completeness"] == "incomplete"
+
+
 def test_followup_preserves_named_source_scope_and_migrates_old_run_evidence(tmp_path):
     cmd = command("github", "jira", question="为什么没有生成 html 呢")
     cmd["history"] = [{"role": "user", "content": "总结昨天 GitHub 的工作内容"}]
     legacy = tmp_path / ".sourcelens" / "activity-evidence" / hashlib.sha256(cmd["run_uuid"].encode()).hexdigest()
     old = support.ActivityLedger(legacy)
     old.record("github", "connection-github", "1.0.0", "github_activity_summary", {}, result())
-    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Create a file and call save_deliverable."])
+    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Write the file to /deliverables/report.html."])
     assert not legacy.exists()
     assert len(extensions.extensions) == 1
     tools = [
-        SimpleNamespace(name="save_deliverable"),
+        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
         *extensions.tools,
         SimpleNamespace(name="github_activity_summary", metadata={"plugin_key": "github"}),
     ]
@@ -184,7 +228,8 @@ def test_followup_preserves_named_source_scope_and_migrates_old_run_evidence(tmp
     binding = cmd["loaded_plugins"][0]
     invoke = extensions.wrap_executor(binding, binding["tools"][0], lambda *args: pytest.fail("refetched old evidence"))
     restored = json.loads(invoke("github_activity_summary", {}, SimpleNamespace(tool_call_id="resume")))
-    assert restored == {**result(), "_evidence": {"complete": True}}
+    assert restored["next_page"]["tool"] == "read_activity_evidence"
+    assert restored["_evidence"]["complete"] is True
     assert extensions.evidence()["evidence_completeness"] == "complete"
 
 

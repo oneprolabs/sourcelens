@@ -238,18 +238,11 @@ def test_choice_gate_returns_the_winning_option(monkeypatch):
     assert events[1][1]["value"] == "supported"
 
 
-def test_unknown_choice_gate_falls_back_to_the_fixed_verdict():
-    runner = _runner(_command("answer_supported"))
+@pytest.mark.parametrize("gate", ["answer_supported", "evidence_strength"])
+def test_unavailable_choice_gate_returns_no_verdict(gate):
+    runner = _runner(_command(gate))
 
-    assert runner.evaluate_choice("answer_supported") is None
-    assert runner.default_verdict("answer_supported") == "supported"
-    assert runner.default_verdict("evidence_sufficient") is True
-
-
-def test_evidence_strength_uses_unknown_as_the_unavailable_verdict():
-    runner = _runner(_command("evidence_strength"))
-
-    assert runner.default_verdict("evidence_strength") == "unknown"
+    assert runner.evaluate_choice(gate) is None
 
 
 def test_bound_gate_without_a_tool_is_unknown():
@@ -616,7 +609,7 @@ def test_post_run_checks_report_evidence_strength(monkeypatch):
     }
 
 
-def test_post_run_checks_use_fixed_defaults_on_fallback(monkeypatch):
+def test_post_run_checks_are_inconclusive_when_the_reviewer_is_unavailable(monkeypatch):
     events = []
     monkeypatch.setattr(
         decision_gates,
@@ -633,8 +626,9 @@ def test_post_run_checks_use_fixed_defaults_on_fallback(monkeypatch):
     assert policy.post_run_checks(
         "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
     ) == {
-        "evidence_sufficient": True,
-        "answer_supported": "supported",
+        "evidence_sufficient": None,
+        "answer_supported": "inconclusive",
+        "review_available": False,
     }
 
 

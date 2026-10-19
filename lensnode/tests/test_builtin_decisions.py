@@ -97,6 +97,25 @@ def test_choice_preserves_selected_label_without_inventing_probabilities():
     assert not any("plugin" in event for event, _ in events)
 
 
+def test_gateway_waits_for_the_frozen_decision_timeout():
+    """The node must allow the backend to finish within the frozen model deadline."""
+
+    requests = []
+    selected = command()
+    selected["decision_model"]["gates"]["answer_supported"]["timeout_seconds"] = 10
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"answers": [
+            {"type": "choice", "name": "answer_supported", "choice": "supported"},
+        ]})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        runner = DecisionRunner(selected, config(), client)
+        assert runner.evaluate_choice("answer_supported", question="Review this answer") == "supported"
+    assert requests[0].extensions["timeout"]["read"] == 11
+
+
 @pytest.mark.parametrize(
     "answer",
     [

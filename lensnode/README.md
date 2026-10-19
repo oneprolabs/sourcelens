@@ -24,8 +24,9 @@ The standalone compose file only starts the LensNode service. Set
 `LENSNODE_SERVER_URL` to the existing SourceLens backend; LensNode derives the
 control WebSocket, AI Gateway, deliverable upload, and delegation endpoints.
 The individual endpoint variables remain available for non-standard routes.
-See [deployment configuration](../docs/reference/deployment-configuration.md)
-for optional runtime tuning and the root Compose stacks' address policy.
+In the root blue/green stack, use `http://nginx:80`; in the development and
+standalone stacks, use `http://backend-api:8000`. See [env.sample](../env.sample)
+for deployment inputs and [config.py](lensnode/config.py) for runtime defaults.
 
 ## TLS verification
 

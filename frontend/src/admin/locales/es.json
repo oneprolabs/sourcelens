@@ -26,6 +26,7 @@
     "trajectoryState_awaiting_user_input": "Esperando al usuario",
     "trajectoryState_timeout": "Alternativa por tiempo agotado",
     "trajectoryState_fallback": "Alternativa aplicada",
+    "trajectorySummaryHistoryPreserved": "Resumen fallido; historial conservado",
     "trajectoryState_degraded": "Con incidencias",
     "trajectoryState_healthy": "Normal",
     "trajectoryState_incomplete": "Sin cierre",

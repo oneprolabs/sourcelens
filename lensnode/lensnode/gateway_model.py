@@ -634,19 +634,22 @@ class LensGatewayChatModel(BaseChatModel):
                 kwargs.get("runtime_structured_output")
             )
             try:
-                result = self._generate_streaming(
-                    payload,
-                    publish_tokens=(
-                        not structured_output
-                        and (
-                            bool(kwargs.get("runtime_final_synthesis"))
-                            or completed_plan_followup
-                            or stream_control
-                        )
+                result = self._with_protocol_recovery(
+                    payload, kwargs, trajectory_call_id,
+                    lambda request: self._generate_streaming(
+                        request,
+                        publish_tokens=(
+                            not structured_output
+                            and (
+                                bool(kwargs.get("runtime_final_synthesis"))
+                                or completed_plan_followup
+                                or stream_control
+                            )
+                        ),
+                        suppress_output=structured_output,
+                        on_reasoning_delta=kwargs.get("on_reasoning_delta"),
+                        trajectory_call_id=trajectory_call_id,
                     ),
-                    suppress_output=structured_output,
-                    on_reasoning_delta=kwargs.get("on_reasoning_delta"),
-                    trajectory_call_id=trajectory_call_id,
                 )
             except Exception as exc:
                 self._finish_model_observation(
@@ -680,8 +683,13 @@ class LensGatewayChatModel(BaseChatModel):
 
         payload["return_message"] = True
         try:
-            message = self._non_streaming_call(payload, observation_id)
+            message = self._with_protocol_recovery(
+                payload, kwargs, trajectory_call_id,
+                lambda request: self._non_streaming_call(request, observation_id),
+            )
         except Exception as exc:
+            if isinstance(exc, (GatewayProtocolError, RunCancelledError, RunTokenBudgetExhaustedError)):
+                self._finish_model_observation(observation_id, "failed", exc)
             self._finish_trajectory_model_call(
                 trajectory_call_id,
                 "failed",
@@ -822,6 +830,8 @@ class LensGatewayChatModel(BaseChatModel):
                         call_id,
                     )
         if error is not None:
+            if isinstance(error, GatewayProtocolError):
+                error.trajectory_call_id = call_id
             payload = {
                 "error_type": type(error).__name__,
                 "error": str(error),
@@ -835,12 +845,13 @@ class LensGatewayChatModel(BaseChatModel):
         *,
         messages=None,
         error=None,
+        reason="model_length_capped",
     ):
-        """Record one model-length retry lifecycle event."""
+        """Record a bounded model retry lifecycle event."""
 
         if self.trajectory is None:
             return
-        payload = {"reason": "model_length_capped"}
+        payload = {"reason": reason}
         if messages is not None:
             payload["messages"] = messages
         if error is not None:
@@ -855,6 +866,51 @@ class LensGatewayChatModel(BaseChatModel):
             payload,
             call_id=call_id,
         )
+
+    def _with_protocol_recovery(self, payload, kwargs, call_id, invoke):
+        """Retry one unparsed response without replaying or executing its contents."""
+
+        try:
+            return invoke(payload)
+        except GatewayProtocolError:
+            if kwargs.get("runtime_control_call") or self.observation_name == "summarization":
+                raise
+            self._check_cancelled()
+            if self.stop_reason == "token_capped":
+                raise RunTokenBudgetExhaustedError()
+        instruction = (
+            "The previous response failed tool-call protocol validation and was discarded. "
+            "No tool from that response was executed. Do not output DSML or tool-call markup in content. "
+        )
+        if payload.get("tools"):
+            instruction += (
+                "When a tool is needed, use native structured tool_calls with a valid call id, "
+                "an available function name and JSON object arguments. Otherwise answer directly."
+            )
+        else:
+            instruction += "No tools are available for this call. Return only the requested answer as text."
+        request = {**payload, "messages": [*payload["messages"], {"role": "user", "content": instruction}]}
+        self._record_trajectory_retry("started", call_id, messages=request["messages"], reason="tool_protocol_error")
+        if self.on_model_retry is not None:
+            self.on_model_retry({"type": "retry", "code": "MODEL_TOOL_PROTOCOL_ERROR"})
+        try:
+            self._check_cancelled()
+            result = invoke(request)
+        except Exception as exc:
+            self._record_trajectory_retry("failed", call_id, error=exc, reason="tool_protocol_error")
+            raise
+        self._record_trajectory_retry("completed", call_id, reason="tool_protocol_error")
+        return result
+
+    def _parse_gateway_message(self, payload, usage):
+        """Account for rejected protocol responses before attempting recovery."""
+
+        try:
+            return _message_from_gateway(payload)
+        except GatewayProtocolError:
+            self._apply_token_budget(AIMessage(content=""), usage)
+            self._notify_runtime_state_change()
+            raise
 
     def _non_streaming_call(self, payload, observation_id):
         """POST a return_message payload and build its AIMessage.
@@ -881,7 +937,9 @@ class LensGatewayChatModel(BaseChatModel):
                 )
                 _raise_for_gateway_status(response)
                 data = response.json()
-            message = _message_from_gateway(data.get("message") or {})
+            message = self._parse_gateway_message(data.get("message") or {}, data.get("usage") or {})
+        except GatewayProtocolError:
+            raise
         except Exception as exc:
             self._finish_model_observation(
                 observation_id,
@@ -1102,7 +1160,7 @@ class LensGatewayChatModel(BaseChatModel):
                 for tc in tool_calls
             ],
         }
-        message = _message_from_gateway(gateway_message)
+        message = self._parse_gateway_message(gateway_message, usage)
 
         # A turn that issues tool calls contains intermediate reasoning, not
         # the final answer. Buffer the turn until its terminal event reveals

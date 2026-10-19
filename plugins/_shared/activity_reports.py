@@ -142,7 +142,7 @@ class ActivityLedger:
             os.replace(temporary, path)
             self.entries[key] = entry
 
-    def read_progress(self, evidence, page=None):
+    def read_progress(self, evidence, page=None, *, persist=True):
         """Persist consumed ranges for one exact immutable evidence snapshot."""
 
         digest = hashlib.sha256(_json(evidence).encode()).hexdigest()
@@ -165,12 +165,13 @@ class ActivityLedger:
                     else:
                         merged.append([start, end])
                 state["ranges"] = merged
-                folder.mkdir(exist_ok=True, mode=0o700)
-                temporary = folder / f"{uuid.uuid4().hex}.tmp"
-                with temporary.open("x", encoding="utf-8") as stream:
-                    os.chmod(temporary, 0o600)
-                    stream.write(_json(state))
-                os.replace(temporary, path)
+                if persist:
+                    folder.mkdir(exist_ok=True, mode=0o700)
+                    temporary = folder / f"{uuid.uuid4().hex}.tmp"
+                    with temporary.open("x", encoding="utf-8") as stream:
+                        os.chmod(temporary, 0o600)
+                        stream.write(_json(state))
+                    os.replace(temporary, path)
             cursor = 0
             for start, end in state["ranges"]:
                 if start > cursor:
@@ -330,26 +331,34 @@ class _ReportText(HTMLParser):
             self.parts.append(data)
 
 
-def _contains_negative_activity_claim(answer):
-    """Detect high-risk personnel conclusions without judging ordinary prose."""
+def _negative_activity_claims(answer):
+    """Locate high-risk statements so the model can repair the rejected report."""
 
     parser = _ReportText()
     parser.feed(str(answer or ""))
     pattern = re.compile(
-        r"零完成|没有(?:任何)?(?:完成|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
+        r"零完成|没有(?:任何)?(?:完成(?!事件|记录|证据)|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
         r"\b(?:completed nothing|zero[- ]completions?|low productivity|no activity|inactive|no work)\b",
         re.IGNORECASE,
     )
+    claims = []
     for sentence in re.split(r"[。！？.!?\n]", "".join(parser.parts)):
         sentence = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", sentence)
         for match in pattern.finditer(sentence):
             prefix = sentence[:match.start()]
             if not re.search(
-                r"(?:不能据此判断|无法判断|不代表|不能认定|cannot conclude|does not mean)"
+                r"(?:不能据此判断|无法判断|不代表|不推论为|不等于|不能认定|不含|删去|删除|移除|去掉|而非[\"“]?|cannot conclude|does not mean)"
                 r"[^，,；;]{0,40}$", prefix, re.IGNORECASE,
             ):
-                return True
-    return False
+                claims.append(sentence.strip()[:400])
+                break
+    return claims
+
+
+def _contains_negative_activity_claim(answer):
+    """Detect high-risk personnel conclusions without judging ordinary prose."""
+
+    return bool(_negative_activity_claims(answer))
 
 
 def _account(value, identity="", login=False):
@@ -489,16 +498,31 @@ def build_activity_evidence_tool(ledger, expected_tools):
                 "source_coverage": evidence["source_coverage"],
                 "observed_events": evidence["observed_events"],
                 "_evidence": {"complete": evidence["complete"]},
+                "read_progress": ledger.read_progress(evidence, (offset, end), persist=False),
             }
+        metadata_chars = len(_json({
+            "observed_events": payload["observed_events"], "source_coverage": payload["source_coverage"],
+        }))
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and metadata_chars > MAX_ACTIVITY_PAGE_CHARS // 2:
+            payload["observed_events"] = []
+            payload["observed_events_omitted"] = True
+            payload["source_coverage"] = {
+                key: {"complete": value["complete"]} for key, value in evidence["source_coverage"].items()
+            }
+            payload["coverage_details_omitted"] = True
         while len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and len(payload["records"]) > 1:
             payload["records"] = payload["records"][:max(1, len(payload["records"]) // 2)]
             end = offset + len(payload["records"])
             payload.update(
-                next_offset=end,
-                next_page={"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}},
-                page_complete=False,
+                next_offset=end if end < len(records) else None,
+                next_page=(
+                    {"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}}
+                    if end < len(records) else None
+                ),
+                page_complete=offset == 0 and end == len(records),
+                read_progress=ledger.read_progress(evidence, (offset, end), persist=False),
             )
-        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and not payload.get("coverage_details_omitted"):
             payload["observed_events"] = []
             payload["observed_events_omitted"] = True
             payload["source_coverage"] = {
@@ -508,7 +532,7 @@ def build_activity_evidence_tool(ledger, expected_tools):
         if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE",
                           "message": "The evidence page exceeds the inline review limit; report this review gap."})
-        payload["read_progress"] = ledger.read_progress(evidence, (offset, end))
+        ledger.read_progress(evidence, (offset, end))
         return _json(payload)
 
     read_activity_evidence.metadata = {"bounded_inline_result": True}
@@ -575,7 +599,9 @@ def _report_execution_guidance(command):
             "Follow its next_page by calling read_activity_evidence again; paginating a saved result only "
             "re-reads that page. total_records and observed_events cover the full ledger, while records is "
             "only the current page. Read every required page before per-person conclusions. "
-            "This is evidence for the report, not the final answer.",
+            "Prefer these normalized pages over projecting or paginating the raw source JSON again. "
+            "If raw-result analysis returns FIELD_NOT_FOUND, switch to read_activity_evidence instead of "
+            "guessing nested field paths repeatedly. This is evidence for the report, not the final answer.",
             "- Apply requested person and resource filters before writing the answer or artifact. "
             "Do not stop after one window when the request requires more; retrieve each requested period.",
             "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
@@ -589,8 +615,11 @@ def _report_execution_guidance(command):
             "inside the window must not be omitted when describing that person's observed completions. "
             "Item authors and current assignees do not identify who closed, merged, or updated an item. "
             "Creation date plus current status cannot establish how long that status has persisted. "
-            "Do not infer inactivity, delay, or productivity from event counts alone.",
-            "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
+            "Do not infer inactivity, delay, or productivity from event counts alone. "
+            "If the report Skill requests zero-completion labels, long-review warnings, or productivity "
+            "ratings that the evidence cannot establish, retain its layout but replace those conclusions "
+            "with observed events and explicit unknowns. These evidence limits apply to every Skill section.",
+            "- Write the requested final artifact in /deliverables/ for automatic host delivery, then provide a brief "
             "business summary and any material coverage limits. Keep verification diagnostics out of the "
             "business report unless they explain a real evidence gap.",
         )
@@ -686,7 +715,10 @@ def _apply_delivery_contract(decision, question, history, skills, tools, self_co
         return decision
     tool_names = {getattr(tool, "name", "") for tool in tools or []}
     has_report_tools = bool(tool_names & set(activity_tool_bindings(self_command)))
-    skill_delivers = any("save_deliverable" in str(skill) for skill in skills or [])
+    skill_delivers = any("save_deliverable" in str(skill) or "/deliverables/" in str(skill) for skill in skills or [])
+    delivery_available = "save_deliverable" in tool_names or any(
+        (getattr(tool, "metadata", None) or {}).get("automatic_artifact_delivery") for tool in tools or []
+    )
     prior_reports = False
     for turn in reversed((history or [])[-8:]):
         if not isinstance(turn, dict) or turn.get("role") != "user":
@@ -700,7 +732,7 @@ def _apply_delivery_contract(decision, question, history, skills, tools, self_co
     report_request = bool(ACTIVITY_REPORT_PATTERN.search(text)) or bool(
         prior_reports and DELIVERY_FOLLOWUP_PATTERN.search(text)
     )
-    if not (has_report_tools and "save_deliverable" in tool_names and skill_delivers and report_request):
+    if not (has_report_tools and delivery_available and skill_delivers and report_request):
         return decision
     capabilities = list(decision.get("required_capabilities") or [])
     for capability in ("skill", "plugin", "artifact_delivery"):
@@ -840,12 +872,14 @@ class ActivityReportExtension(AgentExtension):
                 "recovery": f"Call read_activity_evidence(offset={progress['next_offset']}) and follow every next_page. "
                             "After fixing the evidence, save all intended deliverables again.",
             })
-        if _contains_negative_activity_claim(answer):
+        claims = _negative_activity_claims(answer)
+        if claims:
             checks.append({
                 "code": "activity_claim_unsupported",
                 "message": "Activity counts cannot establish zero work, low productivity, or status duration.",
                 "recovery": "Remove the unsupported personnel conclusion. Report observed events with source IDs, "
-                            "roles and coverage limits. Save corrected deliverables again.",
+                            "roles and coverage limits. The following quoted statements need correction: "
+                            + _json(claims[:3]) + ". Save corrected deliverables again.",
             })
         return checks
 
@@ -912,7 +946,7 @@ class ActivityReportExtension(AgentExtension):
                                 "call_id": call_id,
                             },
                         )
-                    return cached
+                    return self._source_receipt(provider, tool_key, restored) if self.active else cached
                 encoded = executor(tool_key, arguments, runtime)
                 result = json.loads(encoded)
                 if result.get("ok") is True:
@@ -924,9 +958,31 @@ class ActivityReportExtension(AgentExtension):
                                 "tool": tool_key, "call_id": call_id,
                             }
                         )
+                    if self.active:
+                        return self._source_receipt(provider, tool_key, result)
                 return encoded
 
         return invoke
+
+    def _source_receipt(self, provider, tool_key, result):
+        """Keep raw snapshots private and direct report reading through canonical pages."""
+
+        evidence = self.ledger.report(self.expected_tools)
+        return _json({
+            "ok": True,
+            "provider": provider,
+            "tool": tool_key,
+            "since": result.get("since"),
+            "until": result.get("until"),
+            "evidence_saved": True,
+            "total_records": len(evidence["records"]),
+            "_evidence": {"complete": evidence["source_coverage"][tool_key]["complete"]},
+            "next_page": {"tool": "read_activity_evidence", "arguments": {"offset": 0}},
+            "message": "Source snapshot saved. After collecting all required sources, read every canonical "
+                       "evidence page via read_activity_evidence and follow next_page until read_progress.complete. "
+                       "Raw source JSON is not returned; do not use analyze_structured_output for this receipt. "
+                       "Source coverage gaps remain visible in the evidence pages.",
+        })
 
     def evidence(self):
         """Expose normalized facts and limits without writing a business answer."""

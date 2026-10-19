@@ -194,16 +194,17 @@ def build_agent_tools(
         {path, line, text, before, after}; "files" returns the files that
         match; "count" returns per-file match counts.
 
-        query is keywords (fixed-string, case-folded) by default; set
-        regex=True to pass a ripgrep regular expression. Batch alternative
-        keywords in ONE call with "|" (OR), e.g.
+        query is a literal phrase (fixed-string, case-folded), preserving
+        spaces, punctuation, and Chinese words; it is not split into words.
+        Set regex=True for a regular expression. Batch alternative
+        phrases in ONE call with "|" (OR), e.g.
         "昇腾|Ascend|910B|算力卡" — prefer this over several separate
         searches for the same idea. glob restricts the search by path/type
         (e.g. "**/*.md", "*.py"). Use keywords/terms as they appear in the
         files (translate names into the documents' language when needed).
         File size is not a constraint. In content mode, when nothing matches
-        a 'files' listing of the scope is returned so you can read files
-        directly with read_workspace_file. Converted documents are identified
+        a small 'files' navigation sample respecting glob is returned. It is
+        not content evidence; use find_files for more paths. Converted documents are identified
         by their original source paths, never by internal .sourcelens sidecar
         paths.
         """
@@ -629,10 +630,9 @@ def build_agent_tools(
         read_prior_run_result,
     ]
     if resources is not None and config is not None:
-        tools.append(_build_append_file_tool(resources, emit_event))
-        tools.append(
-            _build_save_deliverable_tool(command, resources, config, emit_event)
-        )
+        append = _build_append_file_tool(resources, emit_event)
+        append.metadata["automatic_artifact_delivery"] = True
+        tools.append(append)
     return _tolerate_tool_validation_errors(tools)
 
 
@@ -807,8 +807,29 @@ class _CallSkillApiArgs(BaseModel):
     )
 
 
-def _build_save_deliverable_tool(command, resources, config, emit_event):
-    """Build the save_deliverable tool bound to this run.
+def _deliverable_content_type(filename):
+    """Use a stable Markdown MIME type across Linux and macOS hosts."""
+
+    if Path(filename).suffix.lower() in {".md", ".markdown"}:
+        return "text/markdown"
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+
+def _deliverable_validation_issues(command, data, filename):
+    """Recheck artifact content against the current source evidence."""
+
+    validate = command.get("_validate_deliverable")
+    if not callable(validate):
+        return []
+    content_type = _deliverable_content_type(filename)
+    textual = content_type.startswith("text/") or content_type in {
+        "application/xhtml+xml", "application/json", "application/xml", "image/svg+xml",
+    }
+    return validate(data.decode("utf-8", errors="replace") if textual else "") or []
+
+
+def _build_deliverable_stager(command, resources, config, emit_event):
+    """Build the host-only attachment stager bound to this run.
 
     Uploads a file the agent produced to the control plane at produce
     time (same token/URL family as the AI gateway), so it reaches the
@@ -820,21 +841,10 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
         if emit_event is not None:
             emit_event(name, detail or {})
 
-    @tool("save_deliverable")
-    def save_deliverable(path: str) -> str:
-        """Deliver a file you produced to the user for download.
+    def stage_deliverable(path: str) -> str:
+        """Validate and upload a private candidate selected by the host."""
 
-        Write the finished artifact first (e.g. with write_file), then
-        call this with its path. The file is staged until the final answer
-        is selected. Only files passed here reach the user;
-        the private scratch directory is discarded when the run ends, so
-        it is the source for delivery, not a delivery target itself. Relative
-        paths resolve inside scratch. Absolute paths are virtual filesystem
-        paths and are also resolved inside scratch; host filesystem paths are
-        never accepted.
-        """
-
-        emit("tool.save_deliverable.start", {"path": path, "summary": path})
+        emit("deepagents.artifact.stage.start", {"path": path, "summary": path})
         root = resources.root.resolve()
         requested_path = Path(path)
         resolved = None
@@ -861,13 +871,13 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                 pass
 
         if not allowed:
-            emit("tool.save_deliverable.denied", {"path": path})
+            emit("deepagents.artifact.stage.denied", {"path": path})
             return _json({"ok": False, "error": "PATH_NOT_ALLOWED"})
         if resolved is not None:
             command.get("_deliverables", {}).pop(str(resolved.relative_to(root)), None)
         if resolved is None or not resolved.is_file():
             emit(
-                "tool.save_deliverable.done",
+                "deepagents.artifact.stage.done",
                 {"path": path, "summary": "not found"},
             )
             return _json(
@@ -875,15 +885,14 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                     "ok": False,
                     "error": "FILE_NOT_FOUND",
                     "message": (
-                        "No file at that path. Write it first, then call "
-                        "save_deliverable(path)."
+                        "No file at that path. Generate the final output in /deliverables/."
                     ),
                 }
             )
         byte_size = resolved.stat().st_size
         if byte_size > config.deliverable_max_bytes:
             emit(
-                "tool.save_deliverable.failed",
+                "deepagents.artifact.stage.failed",
                 {"path": path, "error": "TOO_LARGE"},
             )
             return _json(
@@ -898,17 +907,11 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
             )
         data = resolved.read_bytes()
         filename = resolved.name
-        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        validate = command.get("_validate_deliverable")
-        if callable(validate):
-            textual = content_type.startswith("text/") or content_type in {
-                "application/xhtml+xml", "application/json", "application/xml", "image/svg+xml",
-            }
-            text = data.decode("utf-8", errors="replace") if textual else ""
-            issues = validate(text)
-            if issues:
-                emit("tool.save_deliverable.failed", {"path": path, "error": "COMPLETION_CHECK_FAILED"})
-                return _json({"ok": False, "error": "COMPLETION_CHECK_FAILED", "checks": issues})
+        content_type = _deliverable_content_type(filename)
+        issues = _deliverable_validation_issues(command, data, filename)
+        if issues:
+            emit("deepagents.artifact.stage.failed", {"path": path, "error": "COMPLETION_CHECK_FAILED"})
+            return _json({"ok": False, "error": "COMPLETION_CHECK_FAILED", "checks": issues})
         try:
             with httpx.Client(
                 timeout=config.request_timeout_s,
@@ -932,13 +935,13 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
                     raise ValueError("Deliverable upload response did not include its UUID.")
         except Exception as exc:
             emit(
-                "tool.save_deliverable.failed",
+                "deepagents.artifact.stage.failed",
                 {"path": path, "error": str(exc)},
             )
             return _json({"ok": False, "error": "DELIVERY_FAILED", "message": str(exc)})
         command.setdefault("_deliverables", {})[str(resolved.relative_to(root))] = str(output_uuid)
         emit(
-            "tool.save_deliverable.done",
+            "deepagents.artifact.stage.done",
             {
                 "filename": filename,
                 "byte_size": len(data),
@@ -967,7 +970,7 @@ def _build_save_deliverable_tool(command, resources, config, emit_event):
             }
         )
 
-    return save_deliverable
+    return stage_deliverable
 
 
 def _build_append_file_tool(resources, emit_event):
@@ -1009,7 +1012,8 @@ def _build_append_file_tool(resources, emit_event):
         below 24 KiB. Use the same path and a unique ordered chunk_id such as
         translation-001, translation-002. Retrying a chunk with the same id
         and content is safe; changing content for an existing id is rejected.
-        Call save_deliverable only after all chunks have been appended.
+        Put final files in /deliverables/ and finish every chunk before
+        your final answer. The host stages completed outputs automatically.
         """
 
         relative = str(path or "").lstrip("/")
@@ -1840,9 +1844,9 @@ def build_general_chat_tools(
         )
         try:
             completed = subprocess.run(
-                [sys.executable, str(script_path), *args],
+                [sys.executable, str(script_path), *_skill_deliverable_arguments(args, resources.root)],
                 cwd=str(skill_dir),
-                env=_skill_script_environment(selected_environment),
+                env=_skill_script_environment(selected_environment, deliverable_directory=resources.root / "deliverables"),
                 input=raw,
                 capture_output=True,
                 check=False,
@@ -2000,6 +2004,9 @@ def build_general_chat_tools(
         many per-record calls. Per-run call and raw-output byte budgets
         apply. Analyze saved stdout_ref results instead of rerunning a
         script whose output was externalized.
+        For final files, scripts may read SOURCELENS_DELIVERABLE_DIR or receive
+        {{SOURCELENS_DELIVERABLE_DIR}}/filename in args. The host resolves that
+        placeholder to this Run's output directory and stages files automatically.
         """
 
         started = time.monotonic()
@@ -2073,10 +2080,11 @@ def build_general_chat_tools(
         )
         try:
             completed = _run_bounded_skill_script(
-                [*command_args, *args],
+                [*command_args, *_skill_deliverable_arguments(args, resources.root)],
                 cwd=str(skill_dir),
                 env=_skill_script_environment(
-                    resources.skill_environments.get(skill_dir.name, {})
+                    resources.skill_environments.get(skill_dir.name, {}),
+                    deliverable_directory=resources.root / "deliverables",
                 ),
                 stdin=stdin.encode("utf-8"),
                 timeout_s=timeout_s,
@@ -2217,9 +2225,9 @@ def build_general_chat_tools(
         run_skill_script,
     ]
     if config is not None:
-        tools.append(
-            _build_save_deliverable_tool(command, resources, config, emit_event)
-        )
+        append = _build_append_file_tool(resources, emit_event)
+        append.metadata["automatic_artifact_delivery"] = True
+        tools.append(append)
     return _tolerate_tool_validation_errors(tools)
 
 
@@ -2811,7 +2819,14 @@ def _skill_script_command(script_path):
     return None
 
 
-def _skill_script_environment(environment):
+def _skill_deliverable_arguments(arguments, root):
+    """Resolve an explicit host-owned output placeholder without shell expansion."""
+
+    directory = str(Path(root).resolve() / "deliverables")
+    return [str(value).replace("{{SOURCELENS_DELIVERABLE_DIR}}", directory) for value in arguments]
+
+
+def _skill_script_environment(environment, *, deliverable_directory=None):
     """Build an isolated subprocess environment for one loaded Skill."""
 
     allowed = {
@@ -2832,6 +2847,8 @@ def _skill_script_environment(environment):
         if key in allowed or key.startswith("LC_")
     }
     process_environment.update(environment or {})
+    if deliverable_directory is not None:
+        process_environment["SOURCELENS_DELIVERABLE_DIR"] = str(deliverable_directory.resolve())
     return process_environment
 
 

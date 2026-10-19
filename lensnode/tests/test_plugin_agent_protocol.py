@@ -517,6 +517,7 @@ def test_extension_subagent_prohibition_reaches_graph_assembly(monkeypatch, tmp_
     state = SimpleNamespace(
         command={"task": task, "question": "Collect events."},
         scenario={"prompt": "Collect events."},
+        runtime_evidence={},
         runtime_mode=SimpleNamespace(general_chat=task == "general_chat"),
         agent_extensions=extensions,
         route_decision={"route": "plan_execute"},

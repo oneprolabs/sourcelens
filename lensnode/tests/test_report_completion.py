@@ -31,8 +31,11 @@ def test_report_skill_requires_artifact_even_when_classifier_only_requires_data(
         },
         "帮我总结，每个人的本周五工作内容",
         [],
-        ["Generate an HTML report and call save_deliverable."],
-        [SimpleNamespace(name="github_activity_summary"), SimpleNamespace(name="save_deliverable")],
+        ["Write the HTML report to /deliverables/report.html."],
+        [
+            SimpleNamespace(name="github_activity_summary"),
+            SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
+        ],
     )
 
     assert decision["evidence_requirement"] == "artifact"
@@ -48,8 +51,11 @@ def test_missing_html_followup_executes_but_unrelated_html_question_does_not():
         "evidence_requirement": "none",
         "required_capabilities": [],
     }
-    skills = ["Generate an HTML report and call save_deliverable."]
-    tools = [SimpleNamespace(name="github_activity_summary"), SimpleNamespace(name="save_deliverable")]
+    skills = ["Write the HTML report to /deliverables/report.html."]
+    tools = [
+        SimpleNamespace(name="github_activity_summary"),
+        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
+    ]
     history = [{"role": "user", "content": "总结每个人的本周五工作内容"}]
     decision = _apply_delivery_contract(route, "为什么没有生成 html 呢", history, skills, tools)
 
@@ -69,7 +75,7 @@ class _Policy:
 
 
 def test_convergence_reserves_a_bounded_delivery_window_and_records_exhaustion():
-    """Search wrap-up leaves time for writing, saving, and a final answer."""
+    """Search wrap-up leaves time for writing, host staging, and a final answer."""
 
     evidence = {"artifact_required": True, "_deliverables": {}}
     gate = EvidenceGateMiddleware(_Policy(), "report", evidence=evidence, interval=2, max_convergence_nudges=1)
@@ -78,7 +84,7 @@ def test_convergence_reserves_a_bounded_delivery_window_and_records_exhaustion()
     assert gate.before_model(state, None)["messages"]
     delivery = gate.before_model(state, None)
     assert "jump_to" not in delivery
-    assert "save_deliverable" in delivery["messages"][0].content
+    assert "/deliverables/" in delivery["messages"][0].content
     for _ in range(7):
         assert gate.before_model(state, None) is None
     assert gate.before_model(state, None) == {"jump_to": "end"}
@@ -92,7 +98,7 @@ def test_final_answer_without_required_artifact_is_redirected_to_delivery():
     gate = EvidenceGateMiddleware(_Policy(), "report", evidence=evidence)
     correction = gate.after_model({"messages": [AIMessage(content="Here is the report.")]}, None)
     assert correction["jump_to"] == "model"
-    assert "save_deliverable" in correction["messages"][0].content
+    assert "/deliverables/" in correction["messages"][0].content
     evidence["_deliverables"]["report.html"] = "output-1"
     assert gate.after_model({"messages": [AIMessage(content="Report ready.")]}, None) is None
 
@@ -173,8 +179,11 @@ def test_delivery_contract_respects_text_only_and_unrelated_recent_task():
     """A report in older history cannot turn an unrelated continuation into a report."""
 
     route = {"route": "direct_answer", "evidence_requirement": "none"}
-    tools = [SimpleNamespace(name="github_activity_summary"), SimpleNamespace(name="save_deliverable")]
-    skills = ["call save_deliverable"]
+    tools = [
+        SimpleNamespace(name="github_activity_summary"),
+        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
+    ]
+    skills = ["Write /deliverables/report.html"]
     history = [{"role": "user", "content": "总结工作内容"}, {"role": "user", "content": "解释 Python 装饰器"}]
     assert _apply_delivery_contract(route, "继续", history, skills, tools) == route
     assert _apply_delivery_contract(route, "总结工作内容，仅用文字", [], skills, tools) == route

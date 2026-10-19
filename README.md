@@ -17,7 +17,6 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-4C1?style=flat-square)](https://github.com/oneprolabs/sourcelens/pulls)
 
 [**Quick Start**](#-quick-start) · [**Why SourceLens**](#why-sourcelens) · [**What We Believe**](#-what-we-believe) · [**Local Development**](#-local-development) · [**Community**](#-community--contact)
- · [**Documentation**](docs/README.md)
 
 </div>
 
@@ -120,7 +119,9 @@ tests the connection before saving. Skip with `--yes` and configure later at
 `/management/llm/config`.
 
 - **NAT VMs**: forward host TCP `10083` to guest TCP `10083`.
-- **Zero-downtime upgrades**: [`docs/operations/blue-green-deployment.md`](docs/operations/blue-green-deployment.md).
+- **Zero-downtime deployment from source**: use `scripts/install.sh <tag>` with `docker-compose.yml`;
+  check status or roll back with `scripts/sourcelensctl.sh status` or `rollback`.
+  Choose one production deployment mode per host; both modes share the same database and Compose project.
 
 </details>
 

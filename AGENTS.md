@@ -153,8 +153,15 @@ For Docker development tests, use `scripts/test-dev.sh [test labels/options]`
 for direct Compose usage, or `devctl test TARGET -- python manage.py test ...`
 for the shared development stack. Both report the actual container source;
 devctl also rejects mismatches. Use `devctl up [TARGET]` to start or switch the
-single stack; see `docs/worktree-development.md` for shared database/Redis,
-configuration, dependencies and cleanup behavior. Keep the configuration home fixed.
+single stack. All worktrees share PostgreSQL, Redis, runtime data and ports;
+switching source does not roll back the database. `main` means the primary Git
+checkout, regardless of its branch. Keep the configuration home fixed: the primary
+checkout owns `.env.dev`, routing, runtime data and frontend dependencies.
+Use `devctl up --build` when dependencies change; ordinary source switches reuse
+images. API/Vite reload source edits; use `devctl up` to recreate workers/LensNode.
+`devctl down` stops application services and `devctl clean` removes their
+containers; both retain infrastructure, data and worktrees. `devctl status` and
+`devctl list` show the actual mounted source.
 
 ### Django 管理命令
 ```bash
@@ -222,9 +229,6 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
 > 不跑 lensnode 测试。升级时需在 `lensnode/` 下手动执行
 > `.venv/bin/python -m pytest`（或 `uv run pytest`）。
 
-决策记录与已知上游变更（0.7 移除项、0.9.0 计划移除等）见
-[`docs/decisions/002-lensnode-runtime-contract.md`](docs/decisions/002-lensnode-runtime-contract.md)。
-
 ### 定时任务机制（Celery Beat）
 
 - **Task 发现**：`core/celery.py` 调用 `app.autodiscover_tasks()`，自动加载所有 INSTALLED_APPS 中各 app 的 `tasks.py`
@@ -289,9 +293,8 @@ agentcore 是独立维护并通过 Python 包索引安装的依赖，被当作 D
 nginx 流量路径上。升级时先起空闲色、健康门控、原子切换 nginx（`nginx -s reload`，
 不断连），观察一段时间后再退役旧色；回滚就是切回另一色。
 
-> 完整的**可复用规范**（架构、逐项适配清单、正确性必须项清单、验证协议，供其他
-> 项目移植）见 [`docs/operations/blue-green-deployment.md`](docs/operations/blue-green-deployment.md)。
-> 本节是 sourcelens 的速查；改动部署脚本/nginx 前先过一遍那份的「正确性清单」。
+改动部署脚本或 nginx 配置时，验证单飞锁、健康门控、切流失败回退、运行时状态
+落盘和旧版本回滚；切流前确保 worker/LensNode 与新旧 API 均兼容。
 
 ### 命令
 

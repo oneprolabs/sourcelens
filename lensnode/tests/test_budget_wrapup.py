@@ -1,6 +1,8 @@
 """Regression coverage for budget boundaries and final synthesis context."""
 
+import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 from langchain.agents import create_agent
@@ -78,6 +80,24 @@ def test_budget_reserve_does_not_skip_after_model_correction():
     )
 
     assert (answer, truncated, reason) == ("Recovered answer", True, "token_budget_wrapup")
+
+
+@pytest.mark.parametrize("artifact_required,status,content", [
+    (False, "success", "Updated file /report.html"),
+    (True, "error", "Error: permission denied"),
+])
+def test_budget_publication_stops_after_unrelated_or_failed_write(artifact_required, status, content):
+    event = threading.Event()
+    write = AIMessage(content="", tool_calls=[{"name": "write_file", "args": {}, "id": "write"}])
+    agent = BudgetedAgent(event, [[write], [write, ToolMessage(
+        name="write_file", tool_call_id="write", content=content, status=status,
+    )]])
+    result = _run_agent_with_turn_limit(
+        agent, [{"role": "user", "content": "report"}], 26, model=SynthesisModel(),
+        token_budget_wrapup_event=event, execution_evidence={"artifact_required": artifact_required},
+    )
+    assert not agent.exhausted
+    assert result == ("Recovered answer", True, "token_budget_wrapup")
 
 
 @pytest.mark.parametrize("needs_correction", [False, True])
@@ -234,3 +254,94 @@ def test_required_wrapup_retains_runtime_rules_and_original_question():
     assert model.messages[0].type == "system"
     assert model.messages[0].content == rules
     assert model.messages[-1].content == question
+
+
+def test_wrapup_retains_early_paginated_coverage_and_conversation_constraints():
+    """Large late evidence must not erase an earlier dataset or platform constraint."""
+
+    messages = [
+        HumanMessage(content="Use VMware agentless backups; compare quotes with invoices."),
+    ]
+    for offset in range(0, 127, 20):
+        messages.extend([
+            AIMessage(content="", tool_calls=[{
+                "id": f"invoice-{offset}", "name": "query_records",
+                "args": {"table": "invoices", "offset": offset},
+            }]),
+            ToolMessage(content=json.dumps({"result": [{"type": "text", "text": json.dumps({
+                "results": [{"id": n, "value": "row " * 100} for n in range(offset, min(offset + 20, 127))],
+                "total": 127, "offset": offset, "has_more": offset + 20 < 127,
+            })}]}), tool_call_id=f"invoice-{offset}"),
+        ])
+    messages.extend([
+        ToolMessage(content=json.dumps({"total": 260, "offset": 240, "has_more": False,
+                                       "results": [{"id": n, "value": "quote " * 500} for n in range(20)]}),
+                    tool_call_id="quotes"),
+        HumanMessage(content="Does the same window restriction still apply?"),
+        AIMessage(content="Latest provisional answer; verify against the sources."),
+    ])
+    compact = _compact_wrapup_messages(messages)
+    text = "\n".join(str(message.content) for message in compact)
+    assert "VMware agentless" in text
+    assert '"table": "invoices"' in text
+    assert '"total": 127' in text
+    assert '"offset": 120' in text
+    assert '"has_more": false' in text
+    assert '"total": 260' in text
+    assert "Latest provisional answer" in text
+    assert len(text) < 40000
+
+
+def test_wrapup_recovers_evidence_removed_by_graph_summarization():
+    """Keep observed tool metadata outside graph messages that middleware replaces."""
+
+    class SummarizingAgent:
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [
+                HumanMessage(content="VMware agentless; compare invoice and quote totals."),
+                AIMessage(content="", tool_calls=[{
+                    "id": "invoices", "name": "query_records", "args": {"table": "invoices"},
+                }]),
+                ToolMessage(content=json.dumps({"total": 127, "offset": 120, "has_more": False}),
+                            tool_call_id="invoices"),
+            ]}
+            event.set()
+            yield {"messages": [
+                HumanMessage(content="Conversation summarized; continue comparison."),
+                ToolMessage(content=json.dumps({"total": 260, "offset": 240, "has_more": False}),
+                            tool_call_id="quotes"),
+            ]}
+
+    event = threading.Event()
+    model = SynthesisModel()
+    _run_agent_with_turn_limit(
+        SummarizingAgent(), [{"role": "user", "content": "VMware agentless; compare invoice and quote totals."}],
+        26, model=model, token_budget_wrapup_event=event,
+    )
+    text = "\n".join(str(m.content) for m in model.messages)
+    assert '"total": 127' in text
+    assert '"table": "invoices"' in text
+    assert '"total": 260' in text
+    assert "VMware agentless" in text
+
+
+def test_publication_grace_stops_on_new_response_after_history_compaction():
+    """A smaller replacement history must not grant extra model calls or unrelated tools."""
+
+    event = threading.Event()
+    history = [AIMessage(content="Earlier response", id=f"old-{index}") for index in range(5)]
+    write = AIMessage(content="", id="writer", tool_calls=[{"name": "write_file", "args": {}, "id": "write"}])
+    written = ToolMessage(name="write_file", tool_call_id="write", content="Updated file /report.html")
+    guidance = HumanMessage(content="Publish the report now")
+    unrelated = AIMessage(content="", id="next", tool_calls=[{"name": "search", "args": {}, "id": "search"}])
+    agent = BudgetedAgent(event, [
+        [*history, write], [*history, write, written], [write, written, guidance],
+        [write, written, guidance, unrelated],
+        [write, written, guidance, unrelated, ToolMessage(content="Must not execute", tool_call_id="search")],
+    ])
+    result = _run_agent_with_turn_limit(
+        agent, [{"role": "user", "content": "report"}], 26, model=SynthesisModel(),
+        token_budget_wrapup_event=event, execution_evidence={"artifact_required": True},
+    )
+    assert not agent.exhausted
+    assert result == ("Recovered answer", True, "token_budget_wrapup")

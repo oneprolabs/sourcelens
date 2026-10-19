@@ -1,5 +1,6 @@
 """Regression coverage for evidence lost during final-answer verification."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -75,6 +76,44 @@ def test_rebounding_complete_material_is_idempotent_at_the_budget_boundary():
     assert json.loads(rebound)["evidence_completeness"] == "complete"
 
 
+def test_repeated_structured_evidence_is_losslessly_shared_before_truncation():
+    """Full ledgers and their tool pages must fit without dropping facts or claiming missing coverage."""
+
+    records = [{"id": index, "person": "Alice", "source": "https://example.test/team/repository",
+                "title": f"Change {index}", "role": "current assignee, not update actor",
+                "roles": {key: {"identity": "", "name": "", "verified": False}
+                          for key in ("author", "creator", "reporter", "merged_by", "closed_by")}}
+               for index in range(120)]
+    original = {"records": records, "$review_ref": "source-controlled key",
+                "retrieved_evidence": [{"tool": "read_activity_evidence",
+                                        "content": json.dumps({"records": records})}]}
+    evidence = {**original, "evidence_completeness": "incomplete", "review_completeness": "complete"}
+    assert len(json.dumps(evidence)) > 80000
+    material = json.loads(review_material("Question", "Answer", evidence, 80000))
+    assert material["review_completeness"] == "complete"
+    assert material["evidence_completeness"] == "incomplete"
+    packed = material["runtime_evidence"]
+
+    def expand(value):
+        if isinstance(value, dict):
+            if set(value) == {packed["reference_key"]}:
+                return expand(packed["values"][value[packed["reference_key"]]])
+            if set(value) == {packed["table_key"]}:
+                table = value[packed["table_key"]]
+                return [expand(dict(zip(table["columns"], row))) for row in table["rows"]]
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    restored = expand(packed["data"])
+    assert restored["records"] == records
+    assert restored["$review_ref"] == original["$review_ref"]
+    assert restored["retrieved_evidence"][0]["content"] == {"records": records}
+    assert original["retrieved_evidence"][0]["content"] == json.dumps({"records": records})
+    assert json.loads(bound_review_state(json.dumps(material), 80000)) == material
+
+
 def test_partial_source_coverage_still_reviews_available_facts():
     """Missing GitHub data must not disable checks against a known Jira resolution."""
 
@@ -127,6 +166,106 @@ def test_complete_tool_results_respect_the_configured_review_budget():
     assert len(reviewed) == 1
     assert reviewed[0]["runtime_evidence"]["retrieved_evidence"][0]["content"] == content
     assert reviewed[0]["evidence_completeness"] == "complete"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_offloaded_graph_preview_uses_retained_full_tool_result(asynchronous):
+    """Filesystem eviction must not remove source facts from answer review."""
+
+    reviewed = []
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            reviewed.append(json.loads(question))
+            return "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {}})
+    middleware = EvidenceGateMiddleware(policy, "What happened?")
+    call = {"id": "source", "name": "search_workspace", "args": {"query": "incident"}}
+    content = json.dumps({"matches": [{"text": "The migration failed. " * 1000}]})
+    original = ToolMessage(tool_call_id="source", name="search_workspace", content=content)
+    request = SimpleNamespace(tool_call=call)
+    if asynchronous:
+        async def handler(_request):
+            return original
+
+        result = asyncio.run(middleware.awrap_tool_call(request, handler))
+    else:
+        result = middleware.wrap_tool_call(request, lambda _request: original)
+    assert result is original
+    preview = original.model_copy(update={
+        "content": "Tool result too large, the result was saved in the filesystem. Preview: The migration failed.",
+    })
+    state = {"messages": [AIMessage(content="", tool_calls=[call]), preview]}
+
+    assert middleware._verify("The migration failed.", state) == {"answer_supported": "supported"}
+    assert reviewed[0]["runtime_evidence"]["retrieved_evidence"][0]["content"] == content
+    assert reviewed[0]["review_completeness"] == "complete"
+
+
+def test_retained_tool_result_still_respects_review_budget():
+    """Keeping raw output must not bypass the configured reviewer capacity."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "What happened?")
+    call = {"id": "source", "name": "search_workspace", "args": {"query": "incident"}}
+    original = ToolMessage(tool_call_id="source", name="search_workspace", content="Evidence. " * 2000)
+    middleware.wrap_tool_call(SimpleNamespace(tool_call=call), lambda _request: original)
+    preview = original.model_copy(update={"content": "Tool result too large, saved in the filesystem."})
+
+    middleware._verify("An incident occurred.", {"messages": [AIMessage(content="", tool_calls=[call]), preview]})
+
+    assert policy.materials[0]["review_completeness"] == "incomplete"
+    assert len(policy.materials[0]["retrieved_evidence"][0]["content"]) <= 1200
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_real_graph_reviews_full_sources_after_filesystem_eviction(tmp_path, asynchronous):
+    """Real middleware ordering must preserve offloading and complete review together."""
+
+    from deepagents.backends import FilesystemBackend
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+    from langchain.agents import create_agent
+    from langchain.tools import tool
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import HumanMessage
+
+    source = ("The migration failed. " * 100).strip()
+
+    @tool
+    def incident_search() -> str:
+        """Retrieve incident details."""
+
+        return source
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    policy = _ReviewPolicy()
+    policy.review_evidence_limit = lambda: 6000
+    gate = EvidenceGateMiddleware(policy, "What happened?")
+    graph = create_agent(
+        Model(responses=[
+            AIMessage(content="", tool_calls=[{"id": "source", "name": "incident_search", "args": {}}]),
+            AIMessage(content="The migration failed."),
+        ]),
+        tools=[incident_search],
+        middleware=[
+            FilesystemMiddleware(backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True),
+                                 tool_token_limit_before_evict=100),
+            gate,
+        ],
+    )
+    initial = {"messages": [HumanMessage(content="What happened?")]}
+    result = asyncio.run(graph.ainvoke(initial)) if asynchronous else graph.invoke(initial)
+
+    tool_result = next(message for message in result["messages"] if message.type == "tool")
+    assert tool_result.content.startswith("Tool result too large,")
+    assert policy.materials[0]["retrieved_evidence"][0]["content"] == source
+    assert policy.materials[0]["review_completeness"] == "complete"
+    assert gate.final_verdicts("The migration failed; the source confirms this.") == {"answer_supported": "supported"}
+    assert policy.materials[-1]["retrieved_evidence"][0]["content"] == source
 
 
 def test_default_review_budget_carries_a_normal_multi_source_knowledge_answer():
@@ -262,6 +401,7 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
         run_span="run",
         capability_middleware=None,
         evidence_requirement=requirement,
+        evidence_middleware=None,
         required_capabilities=[],
         runtime_evidence={"source": "INC-42 remains open."},
         question="Was it resolved?",

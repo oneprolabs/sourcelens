@@ -26,6 +26,7 @@
     "trajectoryState_awaiting_user_input": "Awaiting input",
     "trajectoryState_timeout": "Timeout fallback",
     "trajectoryState_fallback": "Fallback",
+    "trajectorySummaryHistoryPreserved": "Summary failed; history preserved",
     "trajectoryState_degraded": "Degraded",
     "trajectoryState_healthy": "Healthy",
     "trajectoryState_incomplete": "Incomplete",

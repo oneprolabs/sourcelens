@@ -153,7 +153,7 @@ def test_evidence_budget_keeps_partial_results_and_marks_lost_tail():
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_graph_continues_from_source_evidence_to_business_report(tmp_path, asynchronous):
+def test_graph_continues_from_source_evidence_to_business_report_file(tmp_path, asynchronous):
     import asyncio
 
     from langchain.agents import create_agent
@@ -162,7 +162,7 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
     from langchain_core.messages import AIMessage, HumanMessage
 
     ledger = ActivityLedger(tmp_path / "private")
-    delivered = []
+    report = tmp_path / "deliverables" / "report.html"
 
     @tool
     def jira_activity_summary() -> str:
@@ -173,11 +173,12 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
         return json.dumps(result)
 
     @tool
-    def save_deliverable(path: str) -> str:
-        """Stage the business report for final publication."""
+    def write_file(content: str) -> str:
+        """Generate the business report for automatic host delivery."""
 
-        delivered.append(path)
-        return json.dumps({"ok": True})
+        report.parent.mkdir(exist_ok=True)
+        report.write_text(content)
+        return "Updated file /deliverables/report.html"
 
     class Model(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
@@ -185,13 +186,18 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
 
             return self
 
-    answer = "Alice: work in progress; detailed report attached."
+    answer = "Alice: work in progress; detailed report generated."
     model = Model(
         responses=[
             AIMessage(content="", tool_calls=[{"id": "source", "name": "jira_activity_summary", "args": {}}]),
             AIMessage(content="", tool_calls=[{"id": "evidence", "name": "read_activity_evidence", "args": {}}]),
             AIMessage(
-                content="", tool_calls=[{"id": "deliver", "name": "save_deliverable", "args": {"path": "report.html"}}]
+                content="",
+                tool_calls=[{
+                    "id": "write",
+                    "name": "write_file",
+                    "args": {"content": "<h1>Alice: work in progress</h1>"},
+                }],
             ),
             AIMessage(content=answer),
         ]
@@ -201,13 +207,14 @@ def test_graph_continues_from_source_evidence_to_business_report(tmp_path, async
         tools=[
             jira_activity_summary,
             build_activity_evidence_tool(ledger, {"jira_activity_summary"}),
-            save_deliverable,
+            write_file,
         ],
     )
     initial = {"messages": [HumanMessage(content="总结 10/8，每个人的工作内容")]}
     result = asyncio.run(graph.ainvoke(initial)) if asynchronous else graph.invoke(initial)
     assert result["messages"][-1].content == answer
-    assert delivered == ["report.html"]
+    assert report.read_text() == "<h1>Alice: work in progress</h1>"
+    assert ledger.read_progress(ledger.report({"jira_activity_summary"}))["complete"] is True
 
 
 @pytest.mark.parametrize("coverage", ["missing", "complete", "partial"])
@@ -273,6 +280,7 @@ def test_terminal_runtime_preserves_business_report_and_deliverables(
         emit_output=lambda text, **kwargs: outputs.append((text, kwargs)),
         runtime_evidence={"evidence_completeness": "incomplete"} if host_incomplete else {},
         evidence_requirement="artifact",
+        evidence_middleware=None,
         required_capabilities=[],
         capability_middleware=None,
         decision_policy=None,
