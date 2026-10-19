@@ -1,13 +1,25 @@
 type: fix
 audience: user
 en: >-
-  Long investigations recover once from malformed context summaries instead of
-  disabling compaction, then return a partial result if recovery fails. Summary
-  tokens now count toward shared run usage and wrap-up reserves. Activity evidence
-  pagination fills unread gaps and stops after completion. Report wording is
-  judged by the model against evidence instead of keyword blocking. Maximum
-  execution retains unlimited token budgets.
+  Long runs recover from malformed summaries and share summary usage accounting.
+  Activity pagination fills unread gaps and stops when complete. Models judge report
+  wording without keyword blocking. Maximum execution keeps unlimited tokens and
+  bypasses the default tool-call ceiling while honoring explicit limits. Original
+  evidence survives compaction and checkpoints with retry order preserved. Review
+  capacities agree across API and runtime. Reviewers check current attachment bytes
+  against canonical source snapshots, replacing duplicate pages and stale draft reads.
+  Repairs receive the same evidence and candidate, keeping drafts editable within
+  bounded correction phases. Failed local diagnostics do not automatically mark
+  sources incomplete. GitHub retries transient errors, short rate limits and incomplete
+  search responses; unresolved source or review gaps still produce partial results.
 zh-CN: >-
   长任务的上下文摘要异常后会恢复一次，不再永久停用压缩；恢复失败时利用已有证据收尾并标记部分结果。
   摘要用量纳入共享 Run 统计及收尾预算。活动证据分页会优先补齐未读缺口，读完后停止。
   报告内容由模型结合证据判断，不再按关键词拦截。极限执行策略继续保持不限 token 预算。
+  原始证据跨摘要与断点恢复保留，重试结果按执行顺序审核；API 与运行时采用一致的审核容量。
+  报告准备、证据翻页和有界文件修订为交付保留轮次，审核未通过的草稿保留供修改。
+  GitHub 临时服务错误、短期限流和 HTTP 成功但结果不完整的搜索会先重试，恢复失败时仍如实标记来源缺口。
+  审核要求修订后获得独立、有界的修订阶段，不刷新全局纠正次数。
+  本地 shell 检查失败保留给模型审核，不再自动判为来源覆盖不完整。
+  极限执行不再继承默认工具次数上限，显式设置的工具额度仍然有效。
+  审核使用完整规范台账和当前附件正文，替换重复分页与旧草稿读取；修订请求携带同一份证据与候选内容。

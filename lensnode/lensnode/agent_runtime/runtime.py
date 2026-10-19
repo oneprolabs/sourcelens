@@ -191,10 +191,10 @@ def _build_evidence_middleware(state):
     review_state = runtime_evidence.setdefault("_answer_review", {}) if isinstance(runtime_evidence, dict) else {}
 
     def discard_rejected_deliverables():
-        """Start a new final-answer batch without publishing the rejected draft."""
+        """Withdraw publication candidates while retaining editable output drafts."""
 
         if collector is not None:
-            collector.discard()
+            collector.invalidate()
         else:
             command.get("_deliverables", {}).clear()
         persist = getattr(state, "persist_execution_state", None)
@@ -757,8 +757,6 @@ class LensDeepAgentRuntime:
         )
 
         def emit_agent_event(event, detail=None):
-            if event == "deepagents.summarization.compacted":
-                state.runtime_evidence["evidence_completeness"] = "incomplete"
             if event in {
                 "deepagents.artifact.stage.done",
                 "deepagents.evidence.verified",

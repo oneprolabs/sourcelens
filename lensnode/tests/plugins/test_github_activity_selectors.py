@@ -475,10 +475,11 @@ def test_issue_access_denied_is_ignored_without_discarding_collected_activity(st
         (500, {}, "GITHUB_REQUEST_FAILED"),
     ],
 )
-def test_issue_errors_other_than_access_denied_remain_coverage_gaps(status, headers, error):
+def test_issue_errors_other_than_access_denied_remain_coverage_gaps(monkeypatch, status, headers, error):
     """Skipping issue permissions must not conceal rate limits or provider failures."""
 
     permitted = ["oneprolabs/devify-deploy"]
+    monkeypatch.setattr("time.sleep", lambda delay: None)
 
     def handler(request):
         if request.url.path == "/search/issues":
@@ -489,3 +490,79 @@ def test_issue_errors_other_than_access_denied_remain_coverage_gaps(status, head
 
     assert result["repositories"][0]["errors"] == {"issues": error}
     assert result["source_coverage_complete"] is False
+
+
+@pytest.mark.parametrize("field", ["updated", "created", "closed"])
+@pytest.mark.parametrize("recovers", [True, False])
+def test_incomplete_issue_search_is_retried_before_declaring_a_coverage_gap(monkeypatch, field, recovers):
+    """HTTP 200 search timeouts may recover, while persistent incomplete results stay explicit."""
+
+    permitted = ["oneprolabs/a"]
+    attempts = []
+    delays = []
+    monkeypatch.setattr("time.sleep", delays.append)
+
+    def handler(request):
+        if request.url.path != "/search/issues":
+            return _empty_activity(request, permitted)
+        query = parse_qs(request.url.query.decode())["q"][0]
+        if f" {field}:" not in query:
+            return _empty_activity(request, permitted)
+        attempts.append(query)
+        incomplete = not recovers or len(attempts) == 1
+        return httpx.Response(200, json={
+            "total_count": 1,
+            "incomplete_results": incomplete,
+            "items": [{"number": 10, "title": "Visible issue", "updated_at": "2026-09-02T08:00:00Z"}],
+        })
+
+    result = _execute(permitted, permitted, handler)
+
+    assert len(attempts) == (2 if recovers else 3)
+    assert delays == ([0.25] if recovers else [0.25, 0.5])
+    assert result["source_coverage_complete"] is recovers
+    repository = result["repositories"][0]
+    assert [item["number"] for item in repository["issues"]] == [10]
+    assert repository["possibly_truncated"]["issues"] is not recovers
+
+
+@pytest.mark.parametrize("field,status", [
+    ("updated", 403), ("created", 403), ("closed", 403),
+    ("updated", 502), ("created", 502), ("closed", 502),
+    ("updated", "invalid_json"), ("updated", "invalid_schema"), ("updated", "timeout"),
+])
+def test_failed_search_retry_preserves_observed_partial_items_and_the_gap(monkeypatch, field, status):
+    """A failed retry cannot erase an earlier partial page or turn it into complete coverage."""
+
+    permitted = ["oneprolabs/a"]
+    attempts = []
+    monkeypatch.setattr("time.sleep", lambda delay: None)
+
+    def handler(request):
+        if request.url.path != "/search/issues":
+            return _empty_activity(request, permitted)
+        query = parse_qs(request.url.query.decode())["q"][0]
+        if f" {field}:" not in query:
+            return _empty_activity(request, permitted)
+        attempts.append(query)
+        if len(attempts) > 1:
+            if status == "invalid_json":
+                return httpx.Response(200, content=b"invalid JSON")
+            if status == "invalid_schema":
+                return httpx.Response(200, json={"total_count": 0, "incomplete_results": False, "items": None})
+            if status == "timeout":
+                raise httpx.ReadTimeout("Temporary timeout", request=request)
+            return httpx.Response(status, json={"message": "unavailable"})
+        return httpx.Response(200, json={
+            "total_count": 1,
+            "incomplete_results": True,
+            "items": [{"number": 10, "title": "Visible issue", "updated_at": "2026-09-02T08:00:00Z"}],
+        })
+
+    result = _execute(permitted, permitted, handler)
+
+    assert len(attempts) > 1
+    assert result["source_coverage_complete"] is False
+    repository = result["repositories"][0]
+    assert [item["number"] for item in repository["issues"]] == [10]
+    assert repository["possibly_truncated"]["issues"] is True

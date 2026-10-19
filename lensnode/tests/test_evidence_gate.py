@@ -147,6 +147,8 @@ def test_recheck_keeps_the_convergence_budget_active():
     assert middleware.before_model({}, None) is None
     assert middleware.before_model({}, None) is None
     assert middleware.before_model({}, None)["messages"]
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None)["messages"]
     assert middleware.before_model({}, None) == {"jump_to": "end"}
 
 
@@ -162,7 +164,12 @@ def test_convergence_budget_survives_checkpoint_resume():
     resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
     assert resumed.before_model({}, None) is None
     resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
+    assert resumed.before_model({}, None)["messages"]
+    resumed = EvidenceGateMiddleware(policy, "q", interval=1, max_convergence_nudges=1, review_state=review_state)
     assert resumed.before_model({}, None) == {"jump_to": "end"}
+    assert resumed.answer_nudges == 1
+    assert resumed.after_model(_answer_state(), None) is None
+    assert resumed.answer_nudges == 1
 
 
 def test_convergence_brake_can_be_disabled():
@@ -311,4 +318,6 @@ def test_verification_grace_expires_when_the_agent_keeps_searching():
     middleware.after_model(_answer_state(), None)
     assert middleware.before_model({}, None) is None
     assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None) is None
+    assert middleware.before_model({}, None)["messages"]
     assert middleware.before_model({}, None) == {"jump_to": "end"}

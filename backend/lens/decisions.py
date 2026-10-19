@@ -18,7 +18,7 @@ from .plugins.decisions import (
 from .plugins.registry import PluginRegistryError
 
 ALL_CAPABILITIES = ["general_chat", "knowledge_qa", "code_analysis"]
-DEFAULT_REVIEW_STATE_CHARS = 80000
+DEFAULT_REVIEW_STATE_CHARS = 128000
 DECISIONS = [
     {
         "key": key,

@@ -961,6 +961,9 @@ class ActivityReportExtension(AgentExtension):
                     "observed_events": evidence["observed_events"],
                 }
             },
+            "review_replacements": {
+                tool: "activity-report" for tool in (*self.expected_tools, "read_activity_evidence")
+            },
             "evidence_completeness": "complete" if evidence["complete"] else "incomplete",
             "review_completeness": "complete" if progress["complete"] else "incomplete",
         }

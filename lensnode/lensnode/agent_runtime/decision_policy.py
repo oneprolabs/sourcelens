@@ -94,6 +94,8 @@ class GateDecisionPolicy(ControlDecisionPolicy):
       unavailable review cannot certify the answer.
     """
 
+    retain_full_evidence = True
+
     def __init__(self, inner, runner, gates):
         self.inner = inner
         self.runner = runner

@@ -104,6 +104,12 @@ def test_rejected_request_is_not_cached_and_can_be_corrected(tmp_path):
     assert json.loads(invoke("github_activity_summary", {}, runtime))["ok"] is True
     assert json.loads(invoke("github_activity_summary", {}, runtime))["ok"] is True
     assert len(calls) == 2
+    extensions.extensions[0].active = True
+    snapshot = extensions.evidence()
+    assert snapshot["review_replacements"] == {
+        "github_activity_summary": "activity-report", "read_activity_evidence": "activity-report",
+    }
+    assert snapshot["plugin_evidence"]["activity-report"]["records"] == []
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab", "jira"])

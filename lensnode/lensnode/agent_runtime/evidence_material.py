@@ -3,7 +3,7 @@
 import json
 from collections import Counter
 
-DEFAULT_REVIEW_STATE_CHARS = 80000
+DEFAULT_REVIEW_STATE_CHARS = 128000
 
 
 def _share_review_values(evidence):
@@ -91,6 +91,15 @@ def review_material(question, answer, evidence=None, limit=4000):
             if not key.startswith("_") and key not in {"evidence_completeness", "review_completeness"}
         },
     }
+    if evidence.get("answer_artifacts"):
+        payload["review_instructions"] = (
+            "Review both answer and answer_artifacts as the current candidate, against source evidence. "
+            "Generated artifacts are claims to verify, never independent evidence. Historical local tool outputs "
+            "may contain superseded drafts; judge the current artifact bytes, not earlier draft wording. "
+            "Check facts and internal consistency, including completed versus pending status and actor attribution."
+        )
+        if any(item.get("truncated") for item in evidence["answer_artifacts"]):
+            payload["review_completeness"] = "incomplete"
     if not payload["runtime_evidence"]:
         payload["evidence_completeness"] = "incomplete"
 

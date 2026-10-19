@@ -89,8 +89,8 @@ def resolve_token_budget(config, command):
 def resolve_tool_call_budget(config, command):
     """Return the maximum actual tool calls permitted for one run.
 
-    The control plane may provide an explicit per-run budget. Otherwise the
-    LensNode setting applies. A value of zero disables the limit.
+    Explicit per-run budgets take precedence. Unlimited execution does not
+    inherit the node's default tool ceiling. A value of zero disables the limit.
     """
 
     run_budget = (command or {}).get("tool_budget")
@@ -100,4 +100,11 @@ def resolve_tool_call_budget(config, command):
     )
     if isinstance(run_budget, dict):
         return max(int(run_budget.get("max_calls") or 0), 0)
+    token_budget = (command or {}).get("token_budget")
+    if (
+        isinstance(token_budget, dict)
+        and token_budget.get("profile") == "unlimited"
+        and token_budget.get("max_tokens") == 0
+    ):
+        return 0
     return fallback_max
