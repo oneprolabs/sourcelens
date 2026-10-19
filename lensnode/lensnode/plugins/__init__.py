@@ -3,8 +3,7 @@
 Plugins contribute optional capabilities (MCP servers today, skills or
 tools later) behind a stable internal boundary. Built-in adapters ship
 inside this package. These in-process capability adapters are separate
-from the installed integration packages documented in
-docs/reference/plugin-protocol.md.
+from installed integration packages.
 """
 
 from dataclasses import dataclass
