@@ -149,8 +149,13 @@ def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(as
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         model = LensGatewayChatModel(model_ref="summary-model", ai_gateway_url="http://gateway/ai/",
                                      token="test", http_client=client, observation_name="summarization")
-        middleware = _middleware("unused")
-        middleware._summary_model = model
+        middleware = LensSummarizationMiddleware(
+            model=model,
+            token_counter=lambda messages: sum(len(str(message.content)) for message in messages),
+            trigger=("tokens", 100),
+            keep=("messages", 2),
+            trim_tokens_to_summarize=32000,
+        )
         events = []
         middleware._emit_event = lambda name, payload: events.append((name, payload))
         messages = _conversation()
@@ -165,3 +170,60 @@ def test_real_gateway_dsml_response_is_skipped_without_replacing_conversation(as
         assert len(requests) == 1
         assert not requests[0].get("tools")
         assert events == [("deepagents.summarization.failed", {"reason": "MODEL_TOOL_PROTOCOL_ERROR"})]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("error", [RunCancelledError, RunTokenBudgetExhaustedError, RuntimeError])
+def test_real_summary_wrapper_propagates_terminal_errors_without_retries(asynchronous, error):
+    """The upstream retry wrapper must not repeat cancelled or exhausted calls."""
+
+    attempts = []
+
+    class FailingModel(FakeListChatModel):
+        def _call(self, *args, **kwargs):
+            attempts.append("call")
+            raise error("stop")
+
+        async def _acall(self, *args, **kwargs):
+            return self._call()
+
+    middleware = LensSummarizationMiddleware(
+        model=FailingModel(responses=["unused"]),
+        token_counter=lambda messages: sum(len(str(message.content)) for message in messages),
+        trigger=("tokens", 100),
+        keep=("messages", 2),
+    )
+    with pytest.raises(error):
+        if asynchronous:
+            asyncio.run(middleware.abefore_model({"messages": _conversation()}, None))
+        else:
+            middleware.before_model({"messages": _conversation()}, None)
+    assert attempts == ["call"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_summary_still_retries_a_transient_network_timeout(asynchronous):
+    """Restricting retries must preserve recovery for a transport interruption."""
+
+    attempts = []
+
+    class RecoveringModel(FakeListChatModel):
+        def _call(self, *args, **kwargs):
+            attempts.append("call")
+            if len(attempts) == 1:
+                raise httpx.ReadTimeout("temporary")
+            return "Evidence: INC-42 was resolved. Remaining work: deliver report."
+
+        async def _acall(self, *args, **kwargs):
+            return self._call()
+
+    middleware = LensSummarizationMiddleware(
+        model=RecoveringModel(responses=["unused"]),
+        token_counter=lambda messages: sum(len(str(message.content)) for message in messages),
+        trigger=("tokens", 100),
+        keep=("messages", 2),
+    )
+    state = {"messages": _conversation()}
+    result = asyncio.run(middleware.abefore_model(state, None)) if asynchronous else middleware.before_model(state, None)
+    assert result is not None
+    assert attempts == ["call", "call"]

@@ -2,6 +2,7 @@
 
 import re
 
+import httpx
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.messages import HumanMessage, RemoveMessage, trim_messages
 
@@ -65,6 +66,8 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
         """Scope failed-compaction suppression to this run's middleware instance."""
 
         super().__init__(*args, **kwargs)
+        # Upstream retries every Exception, including protocol, cancellation and budget failures.
+        self._summary_model = self.model.with_retry(retry_if_exception_type=(httpx.TransportError,))
         self._summary_disabled = False
 
     def _partition_messages(self, conversation_messages, cutoff_index):

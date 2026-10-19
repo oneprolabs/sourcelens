@@ -7,9 +7,11 @@ en: >-
   Failed review calls no longer default to a passing verdict.
   Preserve bounded source results before large tool output is moved to files.
   Honor the configured decision timeout throughout the review gateway.
+  Skip malformed summaries immediately instead of repeating identical requests.
 zh-CN: >-
   最终答案改写或预算收尾后仍携带工具证据进行核验，统一回答和附件的完成判定，
   保留真实来源缺口；最终审核服务不可用时保留已有产出并明确标记未完成核验，
   审核调用失败不再默认通过。
   大工具结果转存文件前保留有界来源原文，避免仅用预览进行核验。
   审核网关与执行节点遵循配置的决策模型超时，避免被固定短超时提前中断。
+  摘要协议错误立即保留历史，不再重复发送相同的错误请求。

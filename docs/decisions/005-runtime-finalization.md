@@ -52,6 +52,14 @@ previous silent two-second backend cap and three-second node cap. Legacy
 snapshots without a deadline retain their previous behavior. Provider retries
 remain disabled, and timeout still produces an inconclusive review.
 
+The LensNode summarizer overrides the upstream retry wrapper: only transport
+exceptions are retried (at most three attempts). A protocol error skips
+compaction immediately and disables further compaction for that middleware
+instance, preserving history. Cancellation, exhausted budgets and unexpected
+errors propagate without repeated model calls. This prevents upstream's broad
+exception retry from issuing three identical malformed summary requests before
+the host can apply its preservation policy.
+
 An unavailable final reviewer returns an inconclusive, partial result with
 `review_unavailable`, preserving existing output rather than dropping the answer
 or declaring it verified. This applies both to a raised review error and to an
