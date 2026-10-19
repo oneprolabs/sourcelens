@@ -53,5 +53,10 @@ export const alertsAdminApi = {
     return apiClient
       .get('/lens/admin/alert-events/', { params })
       .then(extractResponseData)
+  },
+  getEvent(uuid) {
+    return apiClient
+      .get(`/lens/admin/alert-events/${uuid}/`)
+      .then(extractResponseData)
   }
 }

@@ -1,0 +1,5 @@
+type: improvement
+audience: admin
+en: Notification records show readable titles, event types, source users, channels, times, and concise statuses. A detail drawer provides context, delivery results, diagnosis, and navigation to the associated Run.
+zh-CN: 通知记录展示可读标题、事件类型、来源用户、通知渠道、时间和简短状态；详情抽屉提供上下文、投递结果、诊断及关联 Run 入口。
+es: Los registros muestran títulos legibles, tipos de evento, usuarios, canales, horas y estados breves. Un panel lateral ofrece contexto, resultados de envío, diagnóstico y acceso al Run asociado.
