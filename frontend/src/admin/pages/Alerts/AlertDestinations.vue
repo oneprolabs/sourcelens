@@ -8,6 +8,14 @@
         t('alertManagement.unified.addDestination')
       }}</BaseButton>
     </div>
+    <p v-if="!channels.length" class="text-sm text-theme-secondary">
+      {{ t('alertManagement.unified.noChannels') }}
+      <router-link
+        to="/management/notifier/channels"
+        class="text-primary-600 underline"
+        >{{ t('notificationManagement.channels.menuTitle') }}</router-link
+      >
+    </p>
     <p v-if="!modelValue.length" class="text-sm text-theme-muted">
       {{ t('alertManagement.unified.noDestinations') }}
     </p>
@@ -21,11 +29,7 @@
           t('alertManagement.unified.destinationNumber', { number: index + 1 })
         }}
       </legend>
-      <BaseInput
-        :model-value="item.name"
-        :label="t('alertManagement.rules.name')"
-        @update:model-value="change(index, 'name', $event)"
-      />
+
       <BaseSelect
         :label="t('alertManagement.rules.channel')"
         :model-value="item.channel_uuid"
@@ -45,15 +49,7 @@
           }})
         </option>
       </BaseSelect>
-      <BaseSelect
-        :label="t('alertManagement.diagnosis.language')"
-        :model-value="item.language || 'en-US'"
-        @update:model-value="change(index, 'language', $event)"
-      >
-        <option value="zh-CN">简体中文</option>
-        <option value="en-US">English</option>
-        <option value="es">Español</option>
-      </BaseSelect>
+
       <template
         v-if="
           channels.find((channel) => channel.uuid === item.channel_uuid)
@@ -70,28 +66,54 @@
             @input="change(index, 'email_recipients', $event.target.value)"
           />
         </label>
-        <AlertScopeSelect
-          :model-value="item.users"
-          :options="users"
-          :label="t('alertManagement.unified.users')"
-          @update:model-value="change(index, 'users', $event)"
-        />
-        <AlertScopeSelect
-          :model-value="item.groups"
-          :options="groups"
-          :label="t('alertManagement.unified.groups')"
-          @update:model-value="change(index, 'groups', $event)"
-        />
       </template>
-      <div class="flex items-center justify-between gap-2">
-        <label class="flex items-center gap-2 text-sm"
-          ><input
-            type="checkbox"
-            class="h-4 w-4 shrink-0 rounded border-line text-primary-600 focus:ring-primary-500"
-            :checked="item.enabled"
-            @change="change(index, 'enabled', $event.target.checked)"
-          />{{ t('alertManagement.rules.enabled') }}</label
-        >
+      <details class="rounded-lg bg-surface-sunken p-3">
+        <summary class="cursor-pointer text-xs text-theme-secondary">
+          {{ t('alertManagement.unified.channelOptions') }}
+        </summary>
+        <div class="mt-3 space-y-3">
+          <BaseInput
+            :model-value="item.name"
+            :label="t('alertManagement.rules.name')"
+            @update:model-value="change(index, 'name', $event)"
+          />
+          <BaseSelect
+            :label="t('alertManagement.diagnosis.language')"
+            :model-value="item.language || 'en-US'"
+            @update:model-value="change(index, 'language', $event)"
+          >
+            <option value="zh-CN">简体中文</option>
+            <option value="en-US">English</option>
+            <option value="es">Español</option>
+          </BaseSelect>
+          <template
+            v-if="
+              channels.find((channel) => channel.uuid === item.channel_uuid)
+                ?.channel_type === 'email'
+            "
+          >
+            <AlertScopeSelect
+              :model-value="item.users"
+              :options="users"
+              :label="t('alertManagement.unified.users')"
+              @update:model-value="change(index, 'users', $event)"
+            />
+            <AlertScopeSelect
+              :model-value="item.groups"
+              :options="groups"
+              :label="t('alertManagement.unified.groups')"
+              @update:model-value="change(index, 'groups', $event)"
+            />
+          </template>
+          <label class="flex items-center gap-2 text-sm"
+            ><BaseCheckbox
+              :model-value="item.enabled"
+              @change="change(index, 'enabled', $event)"
+            />{{ t('alertManagement.rules.enabled') }}</label
+          >
+        </div>
+      </details>
+      <div class="flex justify-end">
         <BaseButton
           type="button"
           variant="outline"
@@ -109,12 +131,14 @@
   </section>
 </template>
 <script setup>
+import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useI18n } from 'vue-i18n'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import AlertScopeSelect from './AlertScopeSelect.vue'
+import { createAlertDestination } from './alertOptions'
 const props = defineProps({
   modelValue: { type: Array, required: true },
   channels: { type: Array, required: true },
@@ -122,7 +146,7 @@ const props = defineProps({
   groups: { type: Array, required: true }
 })
 const emit = defineEmits(['update:modelValue'])
-const { t } = useI18n()
+const { t, locale } = useI18n()
 function change(index, key, value) {
   emit(
     'update:modelValue',
@@ -134,15 +158,7 @@ function change(index, key, value) {
 function add() {
   emit('update:modelValue', [
     ...props.modelValue,
-    {
-      name: '',
-      enabled: true,
-      language: 'en-US',
-      channel_uuid: '',
-      email_recipients: '',
-      users: [],
-      groups: []
-    }
+    createAlertDestination(locale.value)
   ])
 }
 </script>

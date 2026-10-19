@@ -1,0 +1,5 @@
+type: improvement
+audience: admin
+en: Event subscription editing groups events, receiving channels, scopes, and advanced settings, with consistent checkboxes, select-all controls, and preserved existing delivery settings.
+zh-CN: 事件订阅编辑按事件、接收渠道、资源范围和高级设置组织，统一复选框，支持全选，并保留已有投递配置。
+es: La edición de suscripciones agrupa eventos, canales, ámbitos y opciones avanzadas, con casillas uniformes, selección total y conservación de la configuración existente.
