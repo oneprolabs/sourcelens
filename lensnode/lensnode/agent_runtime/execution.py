@@ -12,6 +12,7 @@ from ..gateway_model import (
     RunCancelledError,
     RunTokenBudgetExhaustedError,
 )
+from .evidence_gate import _successful_artifact_write
 from .messages import (
     extract_streamed_plan_steps as _extract_streamed_plan_steps,
     extract_final_message as _extract_final_message,
@@ -147,6 +148,8 @@ def _run_agent_with_turn_limit(
     )
     budget_exhausted = False
     delivery_grace_used = False
+    delivery_write_grace_used = False
+    pending_artifact_write = None
     if not current_question:
         current_question = next(
             (
@@ -225,6 +228,30 @@ def _run_agent_with_turn_limit(
             if _is_budget_terminal_answer(current, model):
                 # Let after-model verification run and the graph finish naturally.
                 # A correction or pending tool state still stops at the reserve.
+                continue
+            if pending_artifact_write is not None:
+                recent = current[-1] if current else None
+                pending_id = pending_artifact_write
+                pending_artifact_write = None
+                if (
+                    getattr(recent, "tool_call_id", None) == pending_id
+                    and _successful_artifact_write(recent)
+                ):
+                    # Reserve one model call to publish a successfully written artifact.
+                    continue
+            pending_calls = getattr(current[-1], "tool_calls", None) if current else None
+            if (
+                not delivery_write_grace_used
+                and isinstance(execution_evidence, dict)
+                and execution_evidence.get("artifact_required")
+                and pending_calls
+                and len(pending_calls) == 1
+                and pending_calls[0].get("name") in {"write_file", "edit_file", "append_file"}
+            ):
+                delivery_write_grace_used = True
+                pending_artifact_write = pending_calls[0]["id"]
+                if emit_event is not None:
+                    emit_event("deepagents.agent.delivery_grace", {"stage": "write"})
                 continue
             if (
                 not delivery_grace_used
