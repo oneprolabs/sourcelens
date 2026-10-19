@@ -72,7 +72,7 @@ class BuiltinDecisionTests(TestCase):
 
     def test_authorized_decision_is_metered_with_run_correlation(self):
         with patch(
-            "lens.views.decisions.DecisionTracker.call_with_config",
+            "lens.views.decisions.call_runtime_decision",
             return_value=(
                 [{"type": "predicate", "name": "evidence_sufficient", "probability": 0.8}],
                 {"total_tokens": 3},
@@ -90,7 +90,7 @@ class BuiltinDecisionTests(TestCase):
 
     def test_gateway_rejects_other_models_before_spending(self):
         self.payload["model_ref"] = "00000000-0000-0000-0000-000000000001"
-        with patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+        with patch("lens.views.decisions.call_runtime_decision") as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
         self.assertEqual(response.status_code, 403)
         tracker.assert_not_called()
@@ -118,7 +118,7 @@ class BuiltinDecisionTests(TestCase):
         self.model.config["request_timeout_seconds"] = 1
         self.model.save(update_fields=["config"])
         with patch(
-            "lens.views.decisions.DecisionTracker.call_with_config",
+            "lens.views.decisions.call_runtime_decision",
             return_value=([{"type": "predicate", "name": "evidence_sufficient", "probability": 0.8}], {}),
         ) as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
@@ -141,7 +141,7 @@ class BuiltinDecisionTests(TestCase):
         self.model.config["request_timeout_seconds"] = 10
         self.model.save(update_fields=["config"])
         with patch(
-            "lens.views.decisions.DecisionTracker.call_with_config",
+            "lens.views.decisions.call_runtime_decision",
             return_value=([{"type": "predicate", "name": "evidence_sufficient", "probability": 0.8}], {}),
         ) as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
@@ -162,7 +162,7 @@ class BuiltinDecisionTests(TestCase):
             ],
         )
         with patch(
-            "lens.views.decisions.DecisionTracker.call_with_config",
+            "lens.views.decisions.call_runtime_decision",
             return_value=([{"type": "score", "name": "score", "score": 0.75}], {"total_tokens": 4}),
         ) as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
@@ -175,7 +175,7 @@ class BuiltinDecisionTests(TestCase):
         self.execution.runtime_snapshot["decision_model"].pop("score", None)
         self.execution.save(update_fields=["runtime_snapshot"])
         self.payload.update(source="decision_score", questions=[{"type": "score", "name": "score"}])
-        with patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+        with patch("lens.views.decisions.call_runtime_decision") as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
         self.assertEqual(response.status_code, 403)
         tracker.assert_not_called()
@@ -183,7 +183,7 @@ class BuiltinDecisionTests(TestCase):
     def test_score_rejects_invalid_rubrics_before_spending(self):
         self.payload.update(source="decision_score")
         for levels in ([{"label": "one"}], [{"label": ""}, {"label": "complete"}], [{"label": "x"}] * 11):
-            with self.subTest(levels=levels), patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+            with self.subTest(levels=levels), patch("lens.views.decisions.call_runtime_decision") as tracker:
                 self.payload["questions"] = [{"type": "score", "name": "score", "levels": levels}]
                 response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
                 self.assertEqual(response.status_code, 400)
@@ -203,7 +203,7 @@ class BuiltinDecisionTests(TestCase):
     def test_gateway_rejects_completed_runs(self):
         self.run.status = "done"
         self.run.save(update_fields=["status"])
-        with patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+        with patch("lens.views.decisions.call_runtime_decision") as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
         self.assertEqual(response.status_code, 409)
         tracker.assert_not_called()
@@ -211,7 +211,7 @@ class BuiltinDecisionTests(TestCase):
     def test_gateway_rejects_an_exhausted_parent_budget_before_spending(self):
         with (
             patch("lens.views.decisions.LensNodeAIGatewayView._acquire_parent_budget_lock", return_value="exhausted"),
-            patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker,
+            patch("lens.views.decisions.call_runtime_decision") as tracker,
         ):
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
         self.assertEqual(response.status_code, 429)
@@ -238,7 +238,7 @@ class BuiltinDecisionTests(TestCase):
         self.assertEqual(snapshot["model_refs"]["decision"], "")
         self.execution.runtime_snapshot = snapshot
         self.execution.save(update_fields=["runtime_snapshot"])
-        with patch("lens.views.decisions.DecisionTracker.call_with_config") as tracker:
+        with patch("lens.views.decisions.call_runtime_decision") as tracker:
             response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
         self.assertEqual(response.status_code, 403)
         tracker.assert_not_called()

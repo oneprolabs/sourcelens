@@ -9,6 +9,8 @@ en: >-
   Honor the configured decision timeout throughout the review gateway.
   Skip malformed summaries immediately instead of repeating identical requests.
   Show explicitly when a failed summary preserved the original history.
+  Keep large TypeSafe review evidence intact using extended context.
+  Accept report statements about missing completion records without treating them as zero-work claims.
 zh-CN: >-
   最终答案改写或预算收尾后仍携带工具证据进行核验，统一回答和附件的完成判定，
   保留真实来源缺口；最终审核服务不可用时保留已有产出并明确标记未完成核验，
@@ -16,3 +18,4 @@ zh-CN: >-
   大工具结果转存文件前保留有界来源原文，避免仅用预览进行核验。
   审核网关与执行节点遵循配置的决策模型超时，避免被固定短超时提前中断。
   摘要协议错误立即保留历史，不再重复发送相同的错误请求，并明确展示已保留历史的恢复状态。
+  大型 TypeSafe 审核使用长上下文保留证据；修正将缺少完成记录误判为无工作产出的报告拦截。

@@ -98,3 +98,18 @@ bound to that exact model call. The trajectory renders this as a degraded
 summary with an explicit history-preserved label, keeping the raw failure
 available. A completed Run alone is never sufficient to relabel a failure;
 legacy and unrelated failures retain their original status.
+
+Large TypeSafe reviews use the provider's documented long-context header instead
+of silently dropping source material. The runtime gateway conservatively uses
+UTF-8 bytes (including questions, with template headroom) to select this path
+near the normal 32k-token limit. Small requests and other providers continue
+through agentcore. The compatibility adapter reuses agentcore's configuration,
+answer validation and usage persistence; it does not modify the installed
+package or global SDK settings. Requests remain single-attempt and use the
+frozen timeout, with long-context usage explicitly tagged. Extended context can
+be slower and less accurate, and remains subject to provider capacity limits;
+a failed review is still inconclusive, never a positive default.
+
+Activity completion checks distinguish absence of completion events, records
+or evidence from a claim that someone completed no work. This preserves source
+limitations in repaired reports without disabling the personnel-claim guard.
