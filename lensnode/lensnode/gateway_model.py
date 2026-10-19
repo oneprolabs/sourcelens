@@ -374,6 +374,8 @@ class LensGatewayChatModel(BaseChatModel):
     def token_usage(self):
         """Return cumulative model usage for this run."""
 
+        if self.shared_token_budget is not None:
+            return self.shared_token_budget.usage
         with self._usage_lock:
             return dict(self._run_token_usage)
 
@@ -389,7 +391,11 @@ class LensGatewayChatModel(BaseChatModel):
 
         with self._usage_lock:
             return {
-                "run_token_usage": dict(self._run_token_usage),
+                "run_token_usage": (
+                    self.shared_token_budget.usage
+                    if self.shared_token_budget is not None
+                    else dict(self._run_token_usage)
+                ),
                 "stop_reason": self._stop_reason,
                 "tool_call_history": list(self._tool_call_history),
                 "tool_name_history": list(self._tool_name_history),
@@ -478,6 +484,8 @@ class LensGatewayChatModel(BaseChatModel):
                     ),
                     "total_tokens": _usage_int(usage, "total_tokens"),
                 }
+                if self.shared_token_budget is not None:
+                    self.shared_token_budget.restore(self._run_token_usage)
             self._tool_call_history.extend(fingerprints)
             self._tool_name_history.extend(tool_names)
             self._loop_warned.update(durable_state.get("loop_warned") or [])

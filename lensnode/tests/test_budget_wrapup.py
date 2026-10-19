@@ -65,6 +65,27 @@ def test_budget_reserve_preserves_naturally_completed_answer():
     assert agent.exhausted
 
 
+def test_repeated_compaction_failure_stops_the_graph_and_synthesizes_once():
+    """An invalid summarizer cannot leave the growing agent loop running."""
+
+    from lensnode.agent_runtime import summarization
+
+    class FailingAgent:
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [HumanMessage(content="Summarize work"), AIMessage(content="Observed INC-42")]}
+            raise summarization.ContextCompactionError("Invalid summary after recovery")
+
+    events = []
+    model = SynthesisModel()
+    answer, truncated, reason = _run_agent_with_turn_limit(
+        FailingAgent(), [{"role": "user", "content": "Summarize work"}], max_turns=100,
+        model=model, emit_event=lambda name, detail: events.append(name),
+    )
+    assert (answer, truncated, reason) == ("Recovered answer", True, "context_compaction_failed")
+    assert "Observed INC-42" in str(model.messages)
+    assert "deepagents.agent.context_compaction_failed" in events
+
+
 def test_budget_reserve_does_not_skip_after_model_correction():
     event = threading.Event()
     draft = [HumanMessage(content="Check the agent"), AIMessage(content="Unverified draft")]

@@ -14,6 +14,7 @@ from langchain_core.messages import (
 )
 
 from lensnode.agent_runtime import _build_summarization_middleware
+from lensnode.agent_runtime.limits import SharedTokenBudget
 from lensnode.agent_runtime.summarization import (
     build_summarization_middleware,
 )
@@ -1220,11 +1221,13 @@ def test_resume_restores_terminal_guardrail_reason(
     assert model.stop_reason == expected_reason
 
 
-def test_resume_reconciles_newer_message_usage_with_durable_state():
+@pytest.mark.parametrize("shared", [False, True])
+def test_resume_reconciles_newer_message_usage_with_durable_state(shared):
     model = LensGatewayChatModel(
         model_ref="model-ref",
         ai_gateway_url="http://gateway/ai/",
         token="token",
+        shared_token_budget=SharedTokenBudget(1000) if shared else None,
     )
     message = AIMessage(
         content="checkpointed answer",
@@ -1253,6 +1256,29 @@ def test_resume_reconciles_newer_message_usage_with_durable_state():
         "completion_tokens": 30,
         "total_tokens": 80,
     }
+    assert model.export_runtime_state()["run_token_usage"] == model.token_usage
+
+
+@pytest.mark.parametrize("consumed,expected_wrapup", [(2000000, False), (4800000, True)])
+def test_max_budget_keeps_normal_two_million_token_tasks_running(monkeypatch, consumed, expected_wrapup):
+    """The maximum preset starts wrapping up only when its 250K reserve is reached."""
+
+    event = threading.Event()
+    budget = SharedTokenBudget(5000000)
+    budget.consume(consumed - 100, 0, consumed - 100)
+    _install_transport(monkeypatch, lambda _: httpx.Response(200, json={
+        "message": {"content": "Continue the investigation"},
+        "usage": {"prompt_tokens": 90, "completion_tokens": 10, "total_tokens": 100},
+    }))
+    model = LensGatewayChatModel(
+        model_ref="agent", ai_gateway_url="http://gateway/ai/", token="token",
+        token_budget_max_tokens=5000000, token_budget_final_reserve_tokens=250000,
+        token_budget_wrapup_event=event, shared_token_budget=budget,
+    )
+    result = model.invoke([HumanMessage(content="Continue")])
+    assert event.is_set() is expected_wrapup
+    assert result.content == "Continue the investigation"
+    assert model.stop_reason == ("token_budget_wrapup" if expected_wrapup else None)
 
 
 def test_final_synthesis_is_preserved_when_it_crosses_hard_budget(monkeypatch):
@@ -1870,6 +1896,44 @@ def test_summarization_model_receives_gateway_client_and_tls_configuration():
         assert middleware.model.tls_ca_file == "/ignored/ca.crt"
     finally:
         shared_client.close()
+
+
+def test_summary_usage_is_shared_with_run_and_preserves_the_wrapup_reserve():
+    """A summary can trigger wrap-up and must appear in the parent run's usage."""
+
+    config = SimpleNamespace(
+        summary_trigger_tokens=1000,
+        summary_keep_tokens=500,
+        ai_gateway_url="https://gateway.example/ai/",
+        token="token",
+        request_timeout_s=30,
+    )
+    usage = SharedTokenBudget(1000)
+    usage.consume(700, 50, 750)
+    wrapup_event = threading.Event()
+    parent = LensGatewayChatModel(
+        model_ref="agent", ai_gateway_url=config.ai_gateway_url, token="token", shared_token_budget=usage,
+    )
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(
+        200,
+        json={"message": {"content": "INC-42 resolved; verify the report."},
+              "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}},
+    )))
+    try:
+        middleware = _build_summarization_middleware(
+            config, "summary", lambda *args: None, http_client=client,
+            shared_token_budget=usage,
+            token_budget={"max_tokens": 1000, "final_reserve_tokens": 200},
+            token_budget_wrapup_event=wrapup_event,
+        )
+        middleware.model.invoke([HumanMessage(content="Summarize INC-42")])
+    finally:
+        client.close()
+
+    assert usage.usage == {"prompt_tokens": 800, "completion_tokens": 60, "total_tokens": 860}
+    assert parent.token_usage == usage.usage
+    assert parent.export_runtime_state()["run_token_usage"] == usage.usage
+    assert wrapup_event.is_set()
 
 
 def test_summarization_window_ratio_caps_trigger_below_absolute(

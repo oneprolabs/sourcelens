@@ -375,6 +375,11 @@ def _build_summarization_middleware(
     trace_context=None,
     emit_observation=None,
     trajectory=None,
+    *,
+    shared_token_budget=None,
+    token_budget=None,
+    token_budget_wrapup_event=None,
+    on_runtime_state_change=None,
 ):
     """Build summarization while preserving facade monkeypatches."""
 
@@ -388,6 +393,10 @@ def _build_summarization_middleware(
         trace_context,
         emit_observation,
         trajectory,
+        shared_token_budget=shared_token_budget,
+        token_budget=token_budget,
+        token_budget_wrapup_event=token_budget_wrapup_event,
+        on_runtime_state_change=on_runtime_state_change,
         model_class=LensGatewayChatModel,
         middleware_class=LensSummarizationMiddleware,
     )
@@ -1096,9 +1105,6 @@ class LensDeepAgentRuntime:
                 state.resume_state.messages,
                 state.resume_state.guardrail_state,
             )
-            state.shared_token_budget.restore(
-                state.model.token_usage
-            )
         state.decision_ranker = build_decision_ranker(
             state.command,
             self.config,
@@ -1575,6 +1581,10 @@ class LensDeepAgentRuntime:
             trace_context=state.trace_context,
             emit_observation=state.emit_trace_observation,
             trajectory=state.trajectory,
+            shared_token_budget=state.shared_token_budget,
+            token_budget=state.token_budget,
+            token_budget_wrapup_event=state.token_budget_wrapup_event,
+            on_runtime_state_change=lambda _: state.persist_execution_state(),
         )
         state.evidence_middleware = _build_evidence_middleware(state)
         middleware = _agent_middleware(
