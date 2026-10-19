@@ -1,17 +1,17 @@
 <template>
   <AdminLayout>
-    <div class="w-full max-w-full p-6">
+    <div class="w-full max-w-full p-4 md:p-6">
       <div class="mb-4">
-        <h1 class="text-lg font-semibold text-gray-900">
+        <h1 class="admin-page-title">
           {{ t('notificationManagement.channels.title') }}
         </h1>
-        <p class="mt-1 text-sm text-gray-500">
+        <p class="admin-page-subtitle">
           {{ t('notificationManagement.channels.subtitle') }}
         </p>
       </div>
 
-      <div class="bg-white rounded-lg border border-gray-200 shadow-sm">
-        <div class="p-6">
+      <div class="admin-data-panel">
+        <div class="p-4 md:p-6">
           <div class="flex flex-wrap items-center justify-end gap-3 mb-6">
             <BaseButton
               variant="outline"
@@ -41,14 +41,6 @@
             </BaseButton>
           </div>
 
-          <TableBulkActions
-            :actions="bulkActions"
-            :loading-key="bulkLoadingKey"
-            :selected-count="selectedRows.length"
-            @action="runBulkDelete"
-            @clear="clearSelection"
-          />
-
           <BaseLoading v-if="loading" />
           <template v-else>
             <div
@@ -72,80 +64,54 @@
                 {{ t('notificationManagement.channels.noChannels') }}
               </p>
             </div>
-            <div
-              v-else
-              class="overflow-x-auto rounded-lg border border-gray-200"
-            >
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
+            <div v-else class="overflow-x-auto rounded-lg border border-line">
+              <table class="min-w-full divide-y divide-line text-sm leading-5">
+                <thead class="bg-surface-sunken">
                   <tr>
-                    <th class="w-12 px-4 py-3 text-left">
-                      <input
-                        type="checkbox"
-                        class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                        :aria-label="t('common.selectAll')"
-                        :checked="allSelected"
-                        :indeterminate="someSelected"
-                        @change="setAllSelected($event.target.checked)"
-                      />
-                    </th>
                     <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.channelType') }}
                     </th>
                     <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.name') }}
                     </th>
                     <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.scope') }}
                     </th>
                     <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.configSummary') }}
                     </th>
                     <th
-                      class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.isActive') }}
                     </th>
                     <th
-                      class="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider"
+                      class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-theme-muted"
                     >
                       {{ t('notificationManagement.channels.actions') }}
                     </th>
                   </tr>
                 </thead>
-                <tbody class="bg-white divide-y divide-gray-100">
+                <tbody
+                  class="divide-y divide-line bg-surface text-theme-secondary"
+                >
                   <tr
                     v-for="row in pagedList"
                     :key="row.uuid"
-                    class="hover:bg-gray-50"
+                    class="transition-colors hover:bg-surface-hover"
                   >
-                    <td class="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                        :aria-label="
-                          t('common.selectRow', { name: row.name || row.uuid })
-                        "
-                        :checked="selectedIds.has(row.uuid)"
-                        @change="setRowSelected(row, $event.target.checked)"
-                      />
-                    </td>
-                    <td
-                      class="px-4 py-3 whitespace-nowrap text-sm text-gray-900"
-                    >
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-theme">
                       {{ channelTypeLabel(row.channel_type) }}
                     </td>
-                    <td
-                      class="px-4 py-3 whitespace-nowrap text-sm text-gray-700"
-                    >
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">
                       {{ row.name || '–' }}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
@@ -159,9 +125,7 @@
                         row.user_display || '–'
                       }}</span>
                     </td>
-                    <td
-                      class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate"
-                    >
+                    <td class="px-4 py-3 text-sm max-w-xs truncate">
                       {{ configSummary(row) }}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
@@ -401,11 +365,7 @@
               <div class="space-y-3">
                 <div>
                   <label class="flex cursor-pointer items-center gap-3">
-                    <input
-                      v-model="form.config.merge_enabled"
-                      type="checkbox"
-                      class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                    />
+                    <BaseCheckbox v-model="form.config.merge_enabled" />
                     <span class="text-sm font-medium text-gray-700">{{
                       t('notificationManagement.channels.mergeEnabled')
                     }}</span>
@@ -540,21 +500,13 @@
                   </div>
                 </div>
                 <label class="flex cursor-pointer items-center gap-3">
-                  <input
-                    v-model="form.config.use_tls"
-                    type="checkbox"
-                    class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
+                  <BaseCheckbox v-model="form.config.use_tls" />
                   <span class="text-sm font-medium text-gray-700">{{
                     t('notificationManagement.channels.useTls')
                   }}</span>
                 </label>
                 <label class="flex cursor-pointer items-center gap-3">
-                  <input
-                    v-model="form.config.use_ssl"
-                    type="checkbox"
-                    class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
+                  <BaseCheckbox v-model="form.config.use_ssl" />
                   <span class="text-sm font-medium text-gray-700">{{
                     t('notificationManagement.channels.useSsl')
                   }}</span>
@@ -668,11 +620,7 @@
             <div class="space-y-3">
               <div>
                 <label class="flex cursor-pointer items-center gap-3">
-                  <input
-                    v-model="form.is_active"
-                    type="checkbox"
-                    class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
+                  <BaseCheckbox v-model="form.is_active" />
                   <span class="text-sm font-medium text-gray-700">{{
                     t('notificationManagement.channels.isActive')
                   }}</span>
@@ -790,6 +738,7 @@
 </template>
 
 <script setup>
+import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import { Pencil, Trash2 } from '@lucide/vue'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -806,8 +755,6 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import RowActionMenu from '@/components/ui/RowActionMenu.vue'
-import TableBulkActions from '@/components/ui/TableBulkActions.vue'
-import { useTableSelection } from '@/composables/useTableSelection'
 import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
@@ -823,7 +770,6 @@ const editingId = ref(null)
 const saving = ref(false)
 const validating = ref(false)
 const deleting = ref(false)
-const bulkLoadingKey = ref('')
 const deleteTarget = ref(null)
 const formMessage = ref('')
 const formMessageSuccess = ref(false)
@@ -906,16 +852,6 @@ const pagedList = computed(() => {
   return list.value.slice(start, start + pageSize.value)
 })
 
-const {
-  allSelected,
-  clearSelection,
-  selectedIds,
-  selectedRows,
-  setAllSelected,
-  setRowSelected,
-  someSelected
-} = useTableSelection(pagedList, (row) => row.uuid)
-
 const rowActions = computed(() => [
   {
     key: 'edit',
@@ -928,16 +864,6 @@ const rowActions = computed(() => [
     icon: Trash2,
     variant: 'danger',
     divider: true
-  }
-])
-
-const bulkActions = computed(() => [
-  {
-    key: 'delete',
-    label: t('common.delete'),
-    icon: Trash2,
-    variant: 'danger',
-    confirm: true
   }
 ])
 
@@ -1357,23 +1283,6 @@ async function doDelete() {
     )
   } finally {
     deleting.value = false
-  }
-}
-
-async function runBulkDelete() {
-  if (bulkLoadingKey.value) return
-  const targets = [...selectedRows.value]
-  bulkLoadingKey.value = 'delete'
-  try {
-    await notificationsAdminApi.bulkDeleteChannels(
-      targets.map((row) => row.uuid)
-    )
-    showSuccess(t('management.bulkDeleted', { count: targets.length }))
-    await loadList()
-  } catch (e) {
-    showError(e?.response?.data?.detail || e?.message || t('common.error'))
-  } finally {
-    bulkLoadingKey.value = ''
   }
 }
 

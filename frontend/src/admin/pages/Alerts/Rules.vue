@@ -3,17 +3,17 @@
     <div class="w-full max-w-full space-y-4 p-4 md:p-6">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 class="text-lg font-semibold text-theme">
+          <h1 class="admin-page-title">
             {{ t('alertManagement.rules.title') }}
           </h1>
-          <p class="mt-1 text-sm text-theme-muted">
+          <p class="admin-page-subtitle">
             {{ t('alertManagement.rules.subtitle') }}
           </p>
         </div>
       </div>
       <BaseCard class="[&>.card-body]:p-4 md:[&>.card-body]:p-6">
-        <div class="mb-6 flex justify-end">
-          <BaseButton :disabled="!ready" @click="edit(null)">{{
+        <div class="mb-6 flex flex-wrap items-center justify-end gap-3">
+          <BaseButton size="sm" :disabled="!ready" @click="edit(null)">{{
             t('alertManagement.rules.addRule')
           }}</BaseButton>
         </div>
@@ -32,25 +32,25 @@
           <div class="overflow-hidden rounded-lg border border-line bg-surface">
             <div class="overflow-x-auto">
               <table
-                class="min-w-[48rem] w-full divide-y divide-line text-left text-sm"
+                class="w-full min-w-[36rem] table-fixed divide-y divide-line text-left text-sm leading-5"
               >
+                <colgroup>
+                  <col class="w-[30%]" />
+                  <col />
+                  <col class="w-24" />
+                  <col class="w-48" />
+                </colgroup>
                 <thead class="bg-surface-sunken text-theme-muted">
                   <tr>
                     <th
-                      v-for="key in [
-                        'name',
-                        'events',
-                        'scope',
-                        'channel',
-                        'enabled',
-                        'actions'
-                      ]"
+                      v-for="key in ['name', 'channel', 'enabled', 'actions']"
                       :key="key"
-                      class="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-theme-secondary"
+                      class="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-theme-muted"
+                      :class="key === 'actions' ? 'text-right' : ''"
                     >
                       {{
-                        key === 'scope'
-                          ? t('alertManagement.unified.resourceScope')
+                        key === 'enabled'
+                          ? t('alertManagement.events.status')
                           : t(`alertManagement.rules.${key}`)
                       }}
                     </th>
@@ -64,48 +64,79 @@
                     :key="rule.uuid"
                     class="transition-colors hover:bg-surface-hover"
                   >
-                    <td class="px-4 py-3">
-                      <div class="font-medium text-theme">{{ rule.name }}</div>
+                    <td class="px-4 py-3 align-middle">
+                      <button
+                        type="button"
+                        class="block max-w-full truncate rounded text-left font-medium text-primary-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        :title="rule.name"
+                        @click="selectedRule = rule"
+                      >
+                        {{ rule.name }}
+                      </button>
                       <span class="text-xs text-theme-muted">{{
                         t(`alertManagement.unified.subjects.${rule.subject}`)
                       }}</span>
                     </td>
-                    <td class="max-w-xs px-4 py-3">
-                      {{
-                        rule.events
-                          .map((event) =>
-                            t(`alertManagement.unified.events.${event}`)
-                          )
-                          .join(' · ')
-                      }}
+                    <td class="px-4 py-3 align-middle">
+                      <div class="flex min-w-0 flex-wrap gap-1.5">
+                        <span
+                          v-for="channel in ruleChannels(rule)"
+                          :key="channel.uuid"
+                          :title="channel.name"
+                          class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs"
+                        >
+                          <span class="truncate">{{ channel.name }}</span>
+                          <span
+                            v-if="channel.channel_type"
+                            class="shrink-0 text-theme-muted"
+                            >{{
+                              notificationTargetLabel(channel.channel_type, t)
+                            }}</span
+                          >
+                        </span>
+                        <span
+                          v-if="
+                            !rule.subscriptions?.length &&
+                            !rule.personal_subscription_enabled
+                          "
+                          class="text-theme-muted"
+                          >{{ t('alertManagement.rules.noChannel') }}</span
+                        >
+                        <span
+                          v-if="rule.personal_subscription_enabled"
+                          class="rounded-md border border-line px-2 py-1 text-xs text-theme-muted"
+                          >{{
+                            t('alertManagement.unified.allowPersonal')
+                          }}</span
+                        >
+                      </div>
                     </td>
-                    <td class="max-w-xs break-words px-4 py-3">
-                      {{ scopeLabel(rule) }}
-                    </td>
-                    <td class="px-4 py-3">
-                      {{ rule.subscriptions.length
-                      }}<span v-if="rule.personal_subscription_enabled">
-                        · {{ t('alertManagement.unified.allowPersonal') }}</span
-                      >
-                    </td>
-                    <td class="px-4 py-3">
+                    <td class="px-4 py-3 align-middle">
                       <StatusBadge
                         :status="rule.enabled ? 'enabled' : 'disabled'"
                       />
                     </td>
-                    <td class="px-4 py-3">
-                      <div class="flex gap-2">
+                    <td class="px-4 py-3 align-middle">
+                      <div
+                        class="flex items-center justify-end gap-2 whitespace-nowrap"
+                      >
+                        <BaseButton
+                          variant="outline"
+                          size="sm"
+                          class="shrink-0 whitespace-nowrap"
+                          @click="edit(rule)"
+                          ><Pencil class="h-3.5 w-3.5" aria-hidden="true" />{{
+                            t('common.edit')
+                          }}</BaseButton
+                        >
                         <BaseButton
                           variant="ghost"
                           size="sm"
-                          @click="edit(rule)"
-                          >{{ t('common.edit') }}</BaseButton
-                        >
-                        <BaseButton
-                          variant="danger-outline"
-                          size="sm"
+                          class="shrink-0 whitespace-nowrap text-danger-700 hover:bg-danger-50 hover:text-danger-800"
                           @click="deleteTarget = rule"
-                          >{{ t('common.delete') }}</BaseButton
+                          ><Trash2 class="h-3.5 w-3.5" aria-hidden="true" />{{
+                            t('common.delete')
+                          }}</BaseButton
                         >
                       </div>
                     </td>
@@ -124,6 +155,13 @@
           />
         </template>
       </BaseCard>
+      <AlertRuleDetail
+        :rule="selectedRule"
+        :options="options"
+        :channels="channels"
+        @close="selectedRule = null"
+        @edit="edit"
+      />
       <AlertRuleEditor
         :show="showEditor"
         :value="editing"
@@ -154,6 +192,8 @@
 </template>
 <script setup>
 import { onMounted, ref } from 'vue'
+import { Pencil, Trash2 } from '@lucide/vue'
+import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import { useI18n } from 'vue-i18n'
 import { alertsAdminApi, managementApi } from '@/admin/api'
 import { listAssistants, listDataSources, listLensNodes } from '@/api/lens'
@@ -167,8 +207,11 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import AlertRuleEditor from './AlertRuleEditor.vue'
+import AlertRuleDetail from './AlertRuleDetail.vue'
 import { alertApiError } from './alertOptions'
 const { t } = useI18n()
+const channels = ref([])
+const selectedRule = ref(null)
 const rules = ref([]),
   catalog = ref({}),
   options = ref({
@@ -211,7 +254,7 @@ async function initialize() {
       assistants,
       datasources,
       lensnodes,
-      channels,
+      channelRows,
       users,
       groups
     ] = await Promise.all([
@@ -230,11 +273,12 @@ async function initialize() {
       managementApi.getAllGroups()
     ])
     catalog.value = events
+    channels.value = channelRows
     options.value = {
       assistants: choices(assistants),
       datasources: choices(datasources),
       lensnodes: choices(lensnodes),
-      channels: channels.filter(
+      channels: channelRows.filter(
         (row) =>
           row.is_active &&
           ['email', 'webhook', 'feishu', 'wecom', 'dingtalk'].includes(
@@ -268,22 +312,19 @@ async function changePage(value) {
     error.value = alertApiError(err)
   }
 }
-function scopeLabel(rule) {
-  if (rule.subject === 'message') return rule.topic
-  const resources = rule.subject === 'run' ? rule.assistants : rule.datasources
-  const available =
-    rule.subject === 'run'
-      ? options.value.assistants
-      : options.value.datasources
-  return resources.length
-    ? resources
-        .map(
-          (uuid) => available.find((row) => row.value === uuid)?.label || uuid
-        )
-        .join(', ')
-    : t('alertManagement.unified.allResources')
+function ruleChannels(rule) {
+  return [
+    ...new Set((rule.subscriptions || []).map((item) => item.channel_uuid))
+  ].map(
+    (uuid) =>
+      channels.value.find((channel) => channel.uuid === uuid) || {
+        uuid,
+        name: t('alertManagement.rules.noChannel')
+      }
+  )
 }
 function edit(rule) {
+  selectedRule.value = null
   editing.value = rule
   showEditor.value = true
 }
