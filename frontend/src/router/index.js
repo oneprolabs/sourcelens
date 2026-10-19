@@ -132,11 +132,11 @@ const routes = [
   },
   {
     path: '/notifier',
-    redirect: '/management/notifier/stats'
+    redirect: '/management/notifier/channels'
   },
   {
     path: '/notifier/stats',
-    redirect: '/management/notifier/stats'
+    redirect: '/management/notifier/channels'
   },
   {
     path: '/notifier/records',
@@ -156,7 +156,7 @@ const routes = [
   },
   {
     path: '/notifier/:pathMatch(.*)*',
-    redirect: '/management/notifier/stats'
+    redirect: '/management/notifier/channels'
   },
   ...adminRoutes,
   {

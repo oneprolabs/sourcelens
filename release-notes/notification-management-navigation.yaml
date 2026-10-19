@@ -1,0 +1,5 @@
+type: improvement
+audience: admin
+en: Notification management focuses on channels, event subscriptions, and records. Compact subscription tables open detailed event and scope information from the subscription name.
+zh-CN: 通知管理聚焦通知渠道、事件订阅和通知记录；订阅表格更加简洁，点击名称即可查看事件和范围详情。
+es: La gestión de notificaciones se centra en canales, suscripciones y registros. Las tablas compactas abren los detalles de eventos y ámbitos desde el nombre de la suscripción.

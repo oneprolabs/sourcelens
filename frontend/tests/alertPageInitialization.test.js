@@ -20,6 +20,7 @@ test('role operators load rules without calling the staff-only channel API', asy
     error: ref(''),
     ready: ref(false),
     catalog: ref({}),
+    channels: ref([]),
     options: ref({}),
     page: ref(1),
     pageSize: ref(20),
@@ -69,6 +70,7 @@ test('role operators load rules without calling the staff-only channel API', asy
   assert.equal(context.error.value, '')
   assert.equal(context.rules.value[0].uuid, 'rule')
   assert.equal(context.options.value.channels[0].uuid, 'mail')
+  assert.equal(context.channels.value[0].name, 'Email')
 })
 
 test('publication dialog opens on HTTP when randomUUID is unavailable', async () => {

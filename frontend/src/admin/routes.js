@@ -138,7 +138,7 @@ export const adminRoutes = [
   },
   {
     path: '/management/notifier',
-    redirect: '/management/notifier/stats'
+    redirect: '/management/notifier/channels'
   },
   {
     path: '/management/notifier/stats',

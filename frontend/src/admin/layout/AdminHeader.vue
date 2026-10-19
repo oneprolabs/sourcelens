@@ -221,6 +221,8 @@ const pageTitle = computed(() => {
     TaskManagementList: t('taskManagement.list.title'),
     TaskManagementStats: t('taskManagement.stats.title'),
     TaskManagementSettings: t('taskManagement.settings.title'),
+    AdminAlertRules: t('alertManagement.rules.title'),
+    AdminAlertEvents: t('alertManagement.events.title'),
     AdminNotificationsStats: t('notificationManagement.stats.title'),
     AdminNotificationsRecords: t('notificationManagement.records.title'),
     AdminNotificationsChannels: t('notificationManagement.channels.menuTitle'),
