@@ -3734,6 +3734,9 @@ def confirm_reconcile_orphan(run_uuid):
         if run_id:
             fail_running_steps_for_runs([run_id])
         if resume_by <= now:
+            from .alerts import schedule_run_alert_evaluation
+
+            schedule_run_alert_evaluation(run_uuid)
             RunExecution.objects.filter(
                 run_id=run_id,
                 status__in=[
@@ -3809,6 +3812,9 @@ def expire_awaiting_run(run_uuid):
     from .services import fail_running_steps_for_runs
 
     fail_running_steps_for_runs([run["id"]])
+    from .alerts import schedule_run_alert_evaluation
+
+    schedule_run_alert_evaluation(run_uuid)
     RunExecution.objects.filter(
         run_id=run["id"],
         status__in=[
@@ -4097,7 +4103,8 @@ def lensnode_cleanup_task():
         | Q(last_activity_at__isnull=True, started_at__lt=idle_cutoff)
         | Q(started_at__lt=abs_cutoff)
     )
-    stale_ids = list(stale.values_list("id", flat=True))
+    stale_runs = list(stale.values_list("id", "uuid"))
+    stale_ids = [run_id for run_id, _run_uuid in stale_runs]
     count = len(stale_ids)
     if count:
         from .services import fail_running_steps_for_runs
@@ -4109,13 +4116,19 @@ def lensnode_cleanup_task():
         finished_at=now,
         updated_at=now,
     )
+    if stale_runs:
+        from .alerts import schedule_run_alert_evaluation
+
+        for _run_id, run_uuid in stale_runs:
+            schedule_run_alert_evaluation(run_uuid)
     # Fail awaiting-resume runs whose node never came back before the resume
     # deadline (see services.get_awaiting_resume_ttl_hours).
     expired_resume = Run.objects.filter(
         status__in=[Run.Status.RUNNING, Run.Status.STREAMING],
         resume_by__lt=now,
     )
-    expired_resume_ids = list(expired_resume.values_list("id", flat=True))
+    expired_resume_runs = list(expired_resume.values_list("id", "uuid"))
+    expired_resume_ids = [run_id for run_id, _run_uuid in expired_resume_runs]
     expired_count = len(expired_resume_ids)
     if expired_count:
         from .services import fail_running_steps_for_runs
@@ -4128,6 +4141,11 @@ def lensnode_cleanup_task():
         finished_at=now,
         updated_at=now,
     )
+    if expired_resume_runs:
+        from .alerts import schedule_run_alert_evaluation
+
+        for _run_id, run_uuid in expired_resume_runs:
+            schedule_run_alert_evaluation(run_uuid)
     RunExecution.objects.filter(
         run__status=Run.Status.FAILED,
         status__in=[
@@ -4265,3 +4283,43 @@ def document_attachment_cleanup_task():
     from .document_attachments import cleanup_expired_document_files
 
     return cleanup_expired_document_files()
+
+
+@shared_task(name="lens.execute_alert_diagnosis", queue="lens")
+def execute_alert_diagnosis_task(diagnosis_uuid):
+    """Execute one analysis under the deadline supplied by its durable job."""
+
+    from .alert_diagnostics import execute_alert_diagnosis
+
+    return execute_alert_diagnosis(diagnosis_uuid)
+
+
+@shared_task(name="lens.dispatch_alerts", queue="lens")
+def dispatch_alerts_task():
+    """Recover durable occurrences and deliver a bounded batch of due alerts."""
+
+    from .alert_diagnostics import dispatch_alert_diagnoses
+    from .alerts import process_alert_outbox, reconcile_alert_sources, send_alert_delivery
+    from .models import AlertDelivery
+
+    reconcile_alert_sources()
+    process_alert_outbox()
+    dispatch_alert_diagnoses()
+    now = timezone.now()
+    exhausted = AlertDelivery.objects.filter(
+        status="sending", attempts__gte=5, claimed_at__lt=now - timedelta(minutes=5)
+    )
+    exhausted_events = list(exhausted.values_list("event_id", flat=True))
+    exhausted.update(status="failed", error_message="Delivery worker lease expired after final attempt")
+    if exhausted_events:
+        from .alerts import _refresh_event_status
+        from .models import AlertEvent
+
+        for event in AlertEvent.objects.filter(pk__in=exhausted_events):
+            _refresh_event_status(event)
+    due = AlertDelivery.objects.filter(
+        Q(status="pending", next_attempt_at__lte=now)
+        | Q(status="sending", claimed_at__lt=now - timedelta(minutes=5))
+    ).order_by("next_attempt_at")[:25]
+    for delivery_uuid in due.values_list("uuid", flat=True):
+        send_alert_delivery(delivery_uuid)

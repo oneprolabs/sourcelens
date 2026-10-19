@@ -314,9 +314,10 @@
                   </p>
                 </div>
 
-                <AnswerNotificationSettings
-                  v-if="activeSection === 'notifications'"
-                />
+                <div v-if="activeSection === 'notifications'" class="space-y-5">
+                  <AnswerNotificationSettings />
+                  <AlertSubscriptionSettings />
+                </div>
 
                 <AgentIntegrationSettings
                   v-if="activeSection === 'agent-integration'"
@@ -337,6 +338,7 @@
 </template>
 
 <script setup>
+import AlertSubscriptionSettings from './AlertSubscriptionSettings.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'

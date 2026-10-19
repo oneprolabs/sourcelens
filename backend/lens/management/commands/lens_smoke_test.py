@@ -6,6 +6,11 @@ from django.core.management.base import BaseCommand, CommandError
 from django.urls import reverse
 
 EXPECTED_MODELS = {
+    "AlertRule",
+    "AlertEvent",
+    "AlertOutbox",
+    "AlertSubscription",
+    "AlertDelivery",
     "Assistant",
     "AssistantAccess",
     "AssistantDataSourceBinding",

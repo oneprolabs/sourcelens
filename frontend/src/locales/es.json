@@ -850,6 +850,14 @@
     "profile": {
       "title": "Configuración del usuario",
       "subtitle": "Administrar tu perfil e información básica"
+    },
+    "alertSubscriptions": {
+      "title": "Mis suscripciones a alertas",
+      "description": "Elija alertas de sus consultas y temas publicados. Se enviarán al correo de su cuenta.",
+      "subscribe": "Suscribirse",
+      "unsubscribe": "Cancelar suscripción",
+      "empty": "No hay reglas disponibles. Pide al administrador que publique una regla y configure el correo.",
+      "failed": "No se pudieron actualizar las suscripciones."
     }
   },
   "dashboard": {

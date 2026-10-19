@@ -11,6 +11,8 @@ from django.utils.translation import get_language
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
+from .alert_serializers import AlertEventSerializer as AlertEventSerializer
+from .alert_serializers import AlertRuleSerializer as AlertRuleSerializer
 from .assistant_lifecycle import (
     AssistantNotRunnableError,
     SmartCollaborationModelNotConfiguredError,
