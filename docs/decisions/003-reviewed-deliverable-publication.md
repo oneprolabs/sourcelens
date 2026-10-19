@@ -21,8 +21,8 @@ not stored database fields. The runtime tracks an upload manifest by normalized 
 Saving the same path replaces its manifest entry; distinct paths support real
 multi-file answers.
 
-An evidence recheck clears the rejected batch and instructs the agent to save
-every intended final file again, including unchanged files. The manifest and
+An evidence recheck clears the rejected batch and instructs the agent to regenerate
+every intended final file, including unchanged files. The manifest and
 recheck count persist in runtime checkpoint evidence. A successful terminal
 frame supplies `deliverable_uuids`; the backend atomically validates and
 publishes only those candidates by associating them with the final answer.
@@ -37,12 +37,13 @@ access to candidates and superseded bytes for audit; the admin file list shows
 their status.
 
 Answer review uses bounded valid JSON, reserves evidence alongside the answer,
-and excludes file-write and artifact bookkeeping results. Truncation,
-offloaded previews, and context compaction explicitly mark review coverage
-incomplete. Incomplete coverage produces an inconclusive advisory result and
+and excludes file-write and artifact bookkeeping results. Missing or truncated
+review material produces an inconclusive advisory result and
 does not trigger regeneration or claim verification passed. Complete evidence
 can still trigger one recheck. A complete-evidence review that remains negative
 produces a partial outcome with verification diagnostics.
+Bounded source retention can recover material replaced by previews or compaction;
+see [Agent runtime](../reference/agent-runtime.md) for evidence and finalization rules.
 
 ## Rollout and limits
 
@@ -58,7 +59,7 @@ sharing, and history reuse. It validates the terminal manifest without reading
 the node's checkpoint storage. This supersedes the initially proposed explicit
 status column at the user's request to keep batch state in checkpoint.
 
-## Automatic host staging (2026-10-19)
+## Automatic host staging
 
 The model-visible `save_deliverable` tool is replaced by a final-output directory.
 Models use file tools to write `/deliverables/<filename>`; Shell commands use
@@ -77,6 +78,12 @@ Any collection, validation or upload failure withholds the whole batch and can
 request at most two model corrections. Final wrap-up can stage files after the
 last affordable model call without spending model tokens on a save operation.
 
+At the token reserve, an artifact request with one pending file write can finish
+that write and, if successful, make one further model call to complete the answer.
+The allowance tracks response identity, so compaction or inserted guidance cannot
+extend it. Failed or repeated writes and text-only requests receive no extension;
+the hard token cap and upload checks still apply.
+
 An answer recheck quarantines the previous output directory and clears its
 manifest and append receipts. The replacement answer must regenerate every
 intended attachment, preventing rejected files from entering the new batch.
@@ -92,9 +99,9 @@ coverage flags. Unsupported file content still requests bounded repair and
 cannot publish. Final Decision checks still run against the selected answer.
 
 Historical duplicate artifacts are not rewritten or deleted. Superseded bytes
-remain stored for audit; retention and cleanup are separate work. Large or
-compacted source material currently degrades review to inconclusive rather
-than performing claim-by-claim review.
+remain stored for audit; retention and cleanup are separate work. Material that
+still exceeds the review budget remains inconclusive rather than being silently
+discarded to obtain a positive verdict.
 
 ## Verification
 

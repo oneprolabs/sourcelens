@@ -3,10 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from langchain.agents import create_agent
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
-from langchain_core.tools import tool
 
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.execution import _run_agent_with_turn_limit
@@ -21,44 +18,6 @@ class Policy:
 
     def post_run_checks(self, *args):
         return {"answer_supported": "supported"}
-
-
-def test_real_graph_can_write_at_the_boundary_then_save_and_answer():
-    """The late write that previously lost its attachment reaches publication."""
-
-    evidence = {"artifact_required": True, "_deliverables": {}}
-    review = {"convergence_nudges": 2, "delivery_turns": 7}
-    calls = []
-
-    @tool
-    def write_file() -> str:
-        """Write the requested HTML report."""
-        calls.append("write")
-        return "Updated file /report.html"
-
-    @tool
-    def save_deliverable() -> str:
-        """Save the completed report for publication."""
-        calls.append("save")
-        evidence["_deliverables"]["report.html"] = "output-1"
-        return '{"ok":true}'
-
-    class Model(FakeMessagesListChatModel):
-        def bind_tools(self, *args, **kwargs):
-            """Allow the real graph to bind these local tools."""
-            return self
-
-    graph = create_agent(Model(responses=[
-        AIMessage(content="", tool_calls=[{"id": "write", "name": "write_file", "args": {}}]),
-        AIMessage(content="", tool_calls=[{"id": "save", "name": "save_deliverable", "args": {}}]),
-        AIMessage(content="The HTML report is attached."),
-    ]), tools=[write_file, save_deliverable], middleware=[
-        EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review)
-    ])
-    assert _run_agent_with_turn_limit(
-        graph, [{"role": "user", "content": "Generate the report"}], 0, execution_evidence=evidence
-    ) == ("The HTML report is attached.", False, None)
-    assert calls == ["write", "save"]
 
 
 def test_recent_file_write_preserves_a_bounded_publication_window():

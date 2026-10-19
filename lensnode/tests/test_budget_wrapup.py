@@ -9,15 +9,12 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
 
 from lensnode.agent_runtime.execution import (
     _compact_wrapup_messages,
     _run_agent_with_turn_limit,
     _synthesize_wrapup_answer,
 )
-from lensnode.gateway_model import RunTokenBudgetExhaustedError
-from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 
 
 class BudgetedAgent:
@@ -83,55 +80,6 @@ def test_budget_reserve_does_not_skip_after_model_correction():
     )
 
     assert (answer, truncated, reason) == ("Recovered answer", True, "token_budget_wrapup")
-
-
-@pytest.mark.parametrize("hard_cap", [False, True])
-@pytest.mark.parametrize("with_guidance", [False, True])
-def test_real_graph_can_finish_pending_artifact_write_and_save_at_budget_reserve(hard_cap, with_guidance):
-    event = threading.Event()
-    calls = []
-    evidence = {"artifact_required": True, "_deliverables": {}}
-
-    @tool
-    def write_file() -> str:
-        """Write a report from already reviewed evidence."""
-        calls.append("write")
-        return "Updated file /report.html"
-
-    @tool
-    def save_deliverable() -> str:
-        """Publish the written report."""
-        calls.append("save")
-        evidence["_deliverables"]["report.html"] = "output-1"
-        return '{"ok":true}'
-
-    class BudgetModel(FakeMessagesListChatModel):
-        def bind_tools(self, *args, **kwargs):
-            """Bind local tools for the real graph."""
-            return self
-
-        def _generate(self, *args, **kwargs):
-            """Cross the reserve while returning the pending write."""
-            event.set()
-            calls.append("model")
-            if hard_cap and calls.count("model") == 2:
-                raise RunTokenBudgetExhaustedError("Hard cap reached")
-            return super()._generate(*args, **kwargs)
-
-    middleware = [EvidenceGateMiddleware(
-        SimpleNamespace(has_evidence_gates=lambda: True), "Generate an HTML report", evidence=evidence, interval=2,
-    )] if with_guidance else []
-    graph = create_agent(BudgetModel(responses=[
-        AIMessage(content="", tool_calls=[{"name": "write_file", "args": {}, "id": "write"}]),
-        AIMessage(content="", tool_calls=[{"name": "save_deliverable", "args": {}, "id": "save"}]),
-    ]), tools=[write_file, save_deliverable], middleware=middleware)
-    result = _run_agent_with_turn_limit(
-        graph, [{"role": "user", "content": "Generate an HTML report"}], 26,
-        model=SynthesisModel(), token_budget_wrapup_event=event, execution_evidence=evidence,
-    )
-    assert calls == (["model", "write", "model"] if hard_cap else ["model", "write", "model", "save"])
-    assert evidence["_deliverables"] == ({} if hard_cap else {"report.html": "output-1"})
-    assert result == ("Recovered answer", True, "token_budget_wrapup")
 
 
 @pytest.mark.parametrize("artifact_required,status,content", [

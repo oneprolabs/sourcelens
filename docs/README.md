@@ -20,6 +20,8 @@
 | [数据源同步与转换](reference/datasource-processing.md) | 增量同步、兼容目录、转换生命周期和进度字段 |
 | [Agent 集成](reference/agent-integration.md) | 外部编码 Agent 的 REST 调用、身份、引用与授权范围 |
 | [Run 实时轨迹](reference/run-trajectory.md) | 查询检查点、SSE、事件顺序和运行诊断 |
+| [Agent 运行约定](reference/agent-runtime.md) | 检索语义、模型协议恢复、证据保留、预算与最终判定 |
+| [活动汇总契约](reference/activity-report-contract.md) | 来源覆盖、证据阅读、人员结论与报告交付 |
 | [提示词与证据边界](reference/prompt-boundaries.md) | 指令优先级、上传材料、引用和输出清理 |
 
 ## 运维与验证

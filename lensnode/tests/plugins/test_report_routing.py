@@ -95,7 +95,7 @@ def test_jira_or_gitlab_batch_tool_enables_high_confidence_report_route():
 
 
 def test_activity_report_hides_non_batch_github_tools():
-    builtin = SimpleNamespace(name="save_deliverable", metadata={})
+    builtin = SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True})
     batch = SimpleNamespace(
         name="github_activity_summary",
         metadata={"plugin_key": "github"},
@@ -124,7 +124,7 @@ def test_activity_report_hides_non_batch_github_tools():
 
 
 def test_activity_report_hides_non_batch_tools_for_each_batch_source():
-    builtin = SimpleNamespace(name="save_deliverable", metadata={})
+    builtin = SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True})
     jira_batch = SimpleNamespace(
         name="jira_activity_summary",
         metadata={"plugin_key": "jira"},

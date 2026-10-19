@@ -277,7 +277,8 @@ def test_normalized_attachment_notice_preserves_graph_review_coverage():
 
 
 @pytest.mark.parametrize("hard_cap", [False, True])
-def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatch, tmp_path, hard_cap):
+@pytest.mark.parametrize("with_guidance", [False, True])
+def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatch, tmp_path, hard_cap, with_guidance):
     """The host stages a pending write even when no further model call is affordable."""
 
     import threading
@@ -288,6 +289,7 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
     from lensnode.gateway_model import RunTokenBudgetExhaustedError
 
     event = threading.Event()
+    calls = []
     evidence = {"artifact_required": True}
     collector = AutomaticDeliverables({}, _resources(tmp_path), _config(), evidence=evidence)
     _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"uuid": "output-1"}))
@@ -296,6 +298,7 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
     def write_file() -> str:
         """Generate the final report."""
 
+        calls.append("write")
         (tmp_path / "deliverables" / "report.html").write_text("<h1>Report</h1>")
         return "Updated file /deliverables/report.html"
 
@@ -305,14 +308,20 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
 
         def _generate(self, *args, **kwargs):
             event.set()
+            calls.append("model")
             if hard_cap and (tmp_path / "deliverables" / "report.html").exists():
                 raise RunTokenBudgetExhaustedError("Hard cap reached")
             return super()._generate(*args, **kwargs)
 
+    policy = SimpleNamespace(has_evidence_gates=lambda: True,
+                             post_run_checks=lambda *args: {"answer_supported": "supported"})
+    state = SimpleNamespace(command=collector.command, runtime_evidence=evidence,
+                            question="Create a report", deliverable_collector=collector, decision_policy=policy)
+    middleware = [agent_runtime._build_evidence_middleware(state)] if with_guidance else []
     graph = create_agent(Model(responses=[
         AIMessage(content="", tool_calls=[{"id": "write", "name": "write_file", "args": {}}]),
         AIMessage(content="Report ready."),
-    ]), tools=[write_file])
+    ]), tools=[write_file], middleware=middleware)
     def exhausted_synthesis(*args, **kwargs):
         """Reproduce a gateway cap that also prevents the final synthesis call."""
 
@@ -324,12 +333,22 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
         model=SimpleNamespace(stop_reason=None, invoke=exhausted_synthesis),
         finalize_deliverables=collector.collect,
     )
-    assert result[0].strip()
+    assert calls == ["model", "write", "model"]
+    if hard_cap:
+        assert result[0].strip()
+        assert result[1:] == (True, "token_budget_wrapup")
+    else:
+        assert result == ("Report ready.", False, None)
+    if with_guidance:
+        assert evidence["_answer_review"]["model_calls"] == 2
     assert collector.command["_deliverables"] == {"deliverables/report.html": "output-1"}
 
 
 @pytest.mark.parametrize("unsupported_notice", [False, True])
-def test_real_graph_automatically_delivers_without_save_tool(monkeypatch, tmp_path, unsupported_notice):
+@pytest.mark.parametrize("at_delivery_limit", [False, True])
+def test_real_graph_automatically_delivers_without_save_tool(
+    monkeypatch, tmp_path, unsupported_notice, at_delivery_limit
+):
     """A generated file reaches the manifest when the model answers normally."""
 
     from langchain.agents import create_agent
@@ -363,8 +382,13 @@ def test_real_graph_automatically_delivers_without_save_tool(monkeypatch, tmp_pa
         def completion_checks(self, answer):
             return checks(answer)
 
+    if at_delivery_limit:
+        evidence["_answer_review"] = {"convergence_nudges": 2, "delivery_turns": 7}
+    policy = SimpleNamespace(has_evidence_gates=lambda: True,
+                             post_run_checks=lambda *args: {"answer_supported": "supported"})
     state = SimpleNamespace(command=command, runtime_evidence=evidence, question="Create a report",
-                            deliverable_collector=collector, agent_extensions=AgentExtensions((Extension(),)))
+                            deliverable_collector=collector, agent_extensions=AgentExtensions((Extension(),)),
+                            decision_policy=policy)
     graph = create_agent(Model(responses=[
         AIMessage(content="", tool_calls=[{"id": "write", "name": "write_file", "args": {}}]),
         AIMessage(content="Alice did zero work." if unsupported_notice else "The report is attached."),
@@ -376,9 +400,12 @@ def test_real_graph_automatically_delivers_without_save_tool(monkeypatch, tmp_pa
     else:
         assert result["messages"][-1].content == "The report is attached."
     assert command["_deliverables"] == {"deliverables/report.html": "output-1"}
+    if at_delivery_limit:
+        assert evidence["_answer_review"]["delivery_turns"] == 9
+        assert evidence["_answer_review"]["publication_grace_used"] == 1
 
 
-def test_save_deliverable_uploads_file(monkeypatch, tmp_path):
+def test_deliverable_stager_uploads_file(monkeypatch, tmp_path):
     (tmp_path / "report.html").write_text("<h1>ok</h1>", encoding="utf-8")
     captured = {}
     client_options = {}
@@ -476,7 +503,7 @@ def test_identical_write_after_append_is_deduplicated(tmp_path):
     )
 
 
-def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypatch, tmp_path):
+def test_deliverable_stager_stages_and_replaces_the_same_normalized_path(monkeypatch, tmp_path):
     report = tmp_path / "report.html"
     report.write_text("draft", encoding="utf-8")
     uploads = []
@@ -502,7 +529,7 @@ def test_save_deliverable_stages_and_replaces_the_same_normalized_path(monkeypat
     assert all(b'name="staged"\r\n\r\ntrue\r\n' in body for body in uploads)
 
 
-def test_save_deliverable_preserves_distinct_files_in_the_current_batch(monkeypatch, tmp_path):
+def test_deliverable_stager_preserves_distinct_files_in_the_current_batch(monkeypatch, tmp_path):
     (tmp_path / "report.md").write_text("report", encoding="utf-8")
     (tmp_path / "appendix.md").write_text("appendix", encoding="utf-8")
     uploads = []
@@ -521,7 +548,7 @@ def test_save_deliverable_preserves_distinct_files_in_the_current_batch(monkeypa
     assert command["_deliverables"] == {"report.md": "output-1", "appendix.md": "output-2"}
 
 
-def test_save_deliverable_requires_a_publication_uuid(monkeypatch, tmp_path):
+def test_deliverable_stager_requires_a_publication_uuid(monkeypatch, tmp_path):
     """A successful HTTP upload alone must not claim final delivery success."""
 
     (tmp_path / "report.md").write_text("report", encoding="utf-8")
@@ -587,7 +614,7 @@ def test_evidence_recheck_discards_draft_batch_and_persists_the_replacement(monk
     assert runtime_evidence["_deliverables"] == {"final.md": "output-2"}
 
 
-def test_save_deliverable_ignores_runtime_instance_id(monkeypatch, tmp_path):
+def test_deliverable_stager_ignores_runtime_instance_id(monkeypatch, tmp_path):
     (tmp_path / "report.html").write_text("ok", encoding="utf-8")
     captured = {}
 
@@ -613,7 +640,7 @@ def test_save_deliverable_ignores_runtime_instance_id(monkeypatch, tmp_path):
     assert b"parent-run-subagent-1" not in captured["body"]
 
 
-def test_save_deliverable_rejects_escape(monkeypatch, tmp_path):
+def test_deliverable_stager_rejects_escape(monkeypatch, tmp_path):
     def handler(request):
         raise AssertionError("upload must not be attempted")
 
@@ -631,7 +658,7 @@ def test_save_deliverable_rejects_escape(monkeypatch, tmp_path):
     assert payload["error"] == "PATH_NOT_ALLOWED"
 
 
-def test_save_deliverable_rejects_host_tmp_output(
+def test_deliverable_stager_rejects_host_tmp_output(
     monkeypatch, tmp_path
 ):
     output = Path("/tmp") / f"sourcelens-test-{tmp_path.name}.pptx"
@@ -660,7 +687,7 @@ def test_save_deliverable_rejects_host_tmp_output(
     assert captured == {}
 
 
-def test_save_deliverable_resolves_absolute_virtual_scratch_path(
+def test_deliverable_stager_resolves_absolute_virtual_scratch_path(
     monkeypatch, tmp_path
 ):
     virtual_output = tmp_path / "tmp" / "report.html"
@@ -686,7 +713,7 @@ def test_save_deliverable_resolves_absolute_virtual_scratch_path(
     assert b"<h1>scratch</h1>" in captured["body"]
 
 
-def test_save_deliverable_rejects_oversized(monkeypatch, tmp_path):
+def test_deliverable_stager_rejects_oversized(monkeypatch, tmp_path):
     (tmp_path / "big.html").write_text("x" * 100, encoding="utf-8")
 
     def handler(request):
@@ -708,7 +735,7 @@ def test_save_deliverable_rejects_oversized(monkeypatch, tmp_path):
     assert payload["error"] == "FILE_TOO_LARGE"
 
 
-def test_save_deliverable_missing_file(monkeypatch, tmp_path):
+def test_deliverable_stager_missing_file(monkeypatch, tmp_path):
     def handler(request):
         raise AssertionError("upload must not be attempted")
 

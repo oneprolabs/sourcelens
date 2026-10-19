@@ -212,11 +212,11 @@ def test_followup_preserves_named_source_scope_and_migrates_old_run_evidence(tmp
     legacy = tmp_path / ".sourcelens" / "activity-evidence" / hashlib.sha256(cmd["run_uuid"].encode()).hexdigest()
     old = support.ActivityLedger(legacy)
     old.record("github", "connection-github", "1.0.0", "github_activity_summary", {}, result())
-    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Create a file and call save_deliverable."])
+    extensions = prepare_agent_extensions(cmd, tmp_path, skills=["Write the file to /deliverables/report.html."])
     assert not legacy.exists()
     assert len(extensions.extensions) == 1
     tools = [
-        SimpleNamespace(name="save_deliverable"),
+        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
         *extensions.tools,
         SimpleNamespace(name="github_activity_summary", metadata={"plugin_key": "github"}),
     ]
