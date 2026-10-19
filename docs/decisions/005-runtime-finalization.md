@@ -31,6 +31,20 @@ attachments cannot satisfy an explicit artifact request.
 During execution, middleware can still request bounded corrections. Final
 acceptance does not restart the agent loop or grant additional retry budgets.
 
+The execution stream passes tool material to the evidence middleware even if a
+budget or turn limit prevents a first candidate answer. The middleware retains
+its latest nonempty bounded tool view outside the graph messages. A changed
+answer is reviewed against that material and the current extension evidence;
+new observed tool material invalidates an older answer verdict. Truncation and
+source-coverage flags remain distinct. This is not an unbounded history store
+or proof that all original source data was read.
+
+An unavailable final reviewer returns an inconclusive, partial result while
+preserving existing output, rather than dropping the answer or declaring it
+verified. Cancellation and hard gateway budget exceptions still propagate;
+cancellation is also checked after final review. The publication manifest is
+the canonical attachment state when reconciling it with runtime evidence.
+
 ## Validation
 
 Characterization tests cover source gaps, incomplete review material,

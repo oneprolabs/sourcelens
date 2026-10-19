@@ -62,6 +62,7 @@ def _run_agent_with_turn_limit(
     system_prompt=None,
     execution_evidence=None,
     finalize_deliverables=None,
+    on_review_state=None,
 ):
     """Stream agent events and optionally stop after NEW AI turns.
 
@@ -175,6 +176,8 @@ def _run_agent_with_turn_limit(
                 "Run was cancelled; stopping the agent loop."
             )
         last_state = state
+        if on_review_state is not None:
+            on_review_state(state)
         if on_checkpoint_state is not None:
             on_checkpoint_state()
         current = state.get("messages", [])

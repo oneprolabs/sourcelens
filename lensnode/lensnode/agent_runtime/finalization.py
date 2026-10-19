@@ -31,6 +31,8 @@ def finalize_run(state, answer, *, truncated, termination_reason):
 
     if state.cancel_event is not None and state.cancel_event.is_set():
         raise RunCancelledError("Run was cancelled before final acceptance.")
+    manifest = state.command.setdefault("_deliverables", state.runtime_evidence.get("_deliverables", {}))
+    state.runtime_evidence["_deliverables"] = manifest
     _update_extension_evidence(state)
     extensions = getattr(state, "agent_extensions", AgentExtensions())
     issues = list(extensions.completion_checks(answer) or [])
@@ -45,6 +47,8 @@ def finalize_run(state, answer, *, truncated, termination_reason):
     if not truncated and termination_reason is None and stop_reason == "token_budget_wrapup":
         stop_reason = None
     verdicts = _post_run_decision_gates(state, answer)
+    if state.cancel_event is not None and state.cancel_event.is_set():
+        raise RunCancelledError("Run was cancelled during final acceptance.")
     outcome, detail = _finalize_runtime_outcome(
         capability_middleware=state.capability_middleware,
         evidence_requirement=state.evidence_requirement,
@@ -74,11 +78,7 @@ def _update_extension_evidence(state):
 
 
 def _post_run_decision_gates(state, answer):
-    """Return advisory post-run gate verdicts, replaying resume metadata.
-
-    The verdicts never block: they are recorded for observability and
-    persisted so a resumed run replays them instead of calling out again.
-    """
+    """Review the final answer, reusing matching graph or checkpoint verdicts."""
 
     resume_state = getattr(state, "resume_state", None)
     if (
@@ -92,12 +92,9 @@ def _post_run_decision_gates(state, answer):
         return {}
     runtime_evidence = getattr(state, "runtime_evidence", None)
     evidence_middleware = getattr(state, "evidence_middleware", None)
-    verdicts = (
-        evidence_middleware.cached_verdicts(answer, runtime_evidence)
-        if evidence_middleware is not None
-        else None
-    )
-    if verdicts is None:
+    if evidence_middleware is not None:
+        verdicts = evidence_middleware.final_verdicts(answer)
+    else:
         verdicts = policy.post_run_checks(
             state.question,
             answer,

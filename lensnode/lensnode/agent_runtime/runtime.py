@@ -1839,6 +1839,10 @@ class LensDeepAgentRuntime:
                     state.evidence_middleware.prepare_deliverables
                     if state.evidence_middleware is not None else None
                 ),
+                on_review_state=(
+                    state.evidence_middleware.observe_tools
+                    if state.evidence_middleware is not None else None
+                ),
             )
         except BaseException as exc:
             state.emit_agent_event(

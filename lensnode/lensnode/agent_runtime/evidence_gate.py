@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 
+from ..gateway_model import RunCancelledError, RunTokenBudgetExhaustedError
 from .prompts import detect_answer_language, pick_text
 
 LOGGER = logging.getLogger("lensnode")
@@ -117,6 +118,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.correction_calls_remaining = int(self.review_state.get("correction_calls_remaining") or 0)
         self.saw_final_answer = False
         self._last_verification = None
+        self._last_tool_evidence = []
 
     def _emit(self, event, payload):
         if event == "deepagents.evidence.verified":
@@ -131,11 +133,21 @@ class EvidenceGateMiddleware(AgentMiddleware):
         checker = getattr(self.policy, "has_evidence_gates", None)
         return bool(checker is not None and checker())
 
+    def observe_tools(self, state):
+        """Retain bounded graph material for a final answer produced outside the graph."""
+
+        review_limit = getattr(self.policy, "review_evidence_limit", None)
+        material = _tool_evidence(state, limit=review_limit() if callable(review_limit) else 1200)
+        if material and material != self._last_tool_evidence:
+            self._last_tool_evidence = material
+            self._last_verification = None
+
     def _verify(self, answer, state=None):
         evidence = self.evidence
         base_signature = _evidence_signature(evidence)
-        review_limit = getattr(self.policy, "review_evidence_limit", None)
-        message_evidence = _tool_evidence(state, limit=review_limit() if callable(review_limit) else 1200)
+        if state is not None:
+            self.observe_tools(state)
+        message_evidence = self._last_tool_evidence
         if message_evidence:
             evidence = {
                 **(evidence if isinstance(evidence, dict) else {}),
@@ -170,6 +182,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
                     answer,
                     evidence,
                 )
+        except (RunCancelledError, RunTokenBudgetExhaustedError):
+            raise
         except Exception:
             LOGGER.exception("Evidence gate verification failed")
             return None
@@ -191,6 +205,19 @@ class EvidenceGateMiddleware(AgentMiddleware):
         if cached_answer != answer or base_signature != _evidence_signature(base_evidence):
             return None
         return dict(verdicts)
+
+    def final_verdicts(self, answer):
+        """Review final text with retained graph material, without restarting execution."""
+
+        if not self._active():
+            return {}
+        cached = self.cached_verdicts(answer, self.evidence)
+        if cached is not None:
+            return cached
+        scope = self.review_scope() if self.review_scope else nullcontext()
+        with scope:
+            verdicts = self._verify(answer)
+        return verdicts or {"review_completeness": "incomplete", "answer_supported": "inconclusive"}
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
