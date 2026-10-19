@@ -12,6 +12,56 @@ from lensnode.plugin_runtime import PluginRuntimeError
 GITHUB_RUNTIME = load_runtime_contract("github", "1.0.0")
 
 
+@pytest.mark.parametrize("status,headers,delay", [
+    (502, {}, 0.25),
+    (503, {"Retry-After": "2"}, 2.0),
+    (429, {"Retry-After": "3"}, 3.0),
+    (403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1010"}, 11.0),
+    (403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1060"}, 61.0),
+])
+def test_transient_http_failures_recover_after_server_backoff(monkeypatch, status, headers, delay):
+    """Provider failures and search throttling should recover without repeating the whole report."""
+
+    delays = []
+    attempts = []
+    monkeypatch.setattr("time.sleep", delays.append)
+    monkeypatch.setattr("time.time", lambda: 1000.0)
+
+    def handler(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(status, headers=headers)
+        return httpx.Response(200, json={"full_name": "HyperBDR/sourcelens"})
+
+    result = _execute("github_repository_get", {"repository": "HyperBDR/sourcelens"}, handler)
+
+    assert result["ok"] is True
+    assert len(attempts) == 2
+    assert delays == [delay]
+
+
+@pytest.mark.parametrize("status,headers", [
+    (403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "4600"}),
+    (429, {"Retry-After": "Thu, 01 Jan 1970 00:18:40 GMT"}),
+])
+def test_long_rate_limit_is_reported_without_sleeping_or_retrying_early(monkeypatch, status, headers):
+    """A long primary limit stays an explicit gap rather than blocking a tool indefinitely."""
+
+    delays = []
+    attempts = []
+    monkeypatch.setattr("time.sleep", delays.append)
+    monkeypatch.setattr("time.time", lambda: 1000.0)
+
+    def handler(request):
+        attempts.append(request)
+        return httpx.Response(status, headers=headers)
+
+    with pytest.raises(PluginRuntimeError, match="GITHUB_RATE_LIMITED"):
+        _execute("github_repository_get", {"repository": "HyperBDR/sourcelens"}, handler)
+    assert len(attempts) == 1
+    assert delays == []
+
+
 def test_anonymous_sync_does_not_inject_credentials():
     command = GITHUB_RUNTIME.build_datasource_command(
         {"resolved_config": {

@@ -213,15 +213,21 @@ class AgentExtensions:
             if not isinstance(evidence, dict):
                 raise PluginPackageLoadError("plugin evidence is invalid")
             if set(evidence) - {
-                "plugin_evidence", "evidence_completeness", "review_completeness",
+                "plugin_evidence", "evidence_completeness", "review_completeness", "review_replacements",
             }:
                 raise PluginPackageLoadError("plugin evidence envelope is invalid")
             for key, value in evidence.items():
                 if key in {"evidence_completeness", "review_completeness"} and combined.get(key) == "incomplete":
                     continue
-                if key == "plugin_evidence":
+                if key in {"plugin_evidence", "review_replacements"}:
                     if not isinstance(value, dict):
                         raise PluginPackageLoadError("plugin evidence envelope is invalid")
+                    if key == "review_replacements" and any(
+                        not isinstance(tool, str) or not tool or not isinstance(identity, str)
+                        or identity not in evidence.get("plugin_evidence", {})
+                        for tool, identity in value.items()
+                    ):
+                        raise PluginPackageLoadError("plugin review replacement is invalid")
                     payloads = combined.setdefault(key, {})
                     for identity, payload in value.items():
                         if identity in payloads and payloads[identity] != payload:

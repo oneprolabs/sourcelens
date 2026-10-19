@@ -191,10 +191,10 @@ def _build_evidence_middleware(state):
     review_state = runtime_evidence.setdefault("_answer_review", {}) if isinstance(runtime_evidence, dict) else {}
 
     def discard_rejected_deliverables():
-        """Start a new final-answer batch without publishing the rejected draft."""
+        """Withdraw publication candidates while retaining editable output drafts."""
 
         if collector is not None:
-            collector.discard()
+            collector.invalidate()
         else:
             command.get("_deliverables", {}).clear()
         persist = getattr(state, "persist_execution_state", None)
@@ -375,6 +375,11 @@ def _build_summarization_middleware(
     trace_context=None,
     emit_observation=None,
     trajectory=None,
+    *,
+    shared_token_budget=None,
+    token_budget=None,
+    token_budget_wrapup_event=None,
+    on_runtime_state_change=None,
 ):
     """Build summarization while preserving facade monkeypatches."""
 
@@ -388,6 +393,10 @@ def _build_summarization_middleware(
         trace_context,
         emit_observation,
         trajectory,
+        shared_token_budget=shared_token_budget,
+        token_budget=token_budget,
+        token_budget_wrapup_event=token_budget_wrapup_event,
+        on_runtime_state_change=on_runtime_state_change,
         model_class=LensGatewayChatModel,
         middleware_class=LensSummarizationMiddleware,
     )
@@ -748,8 +757,6 @@ class LensDeepAgentRuntime:
         )
 
         def emit_agent_event(event, detail=None):
-            if event == "deepagents.summarization.compacted":
-                state.runtime_evidence["evidence_completeness"] = "incomplete"
             if event in {
                 "deepagents.artifact.stage.done",
                 "deepagents.evidence.verified",
@@ -1095,9 +1102,6 @@ class LensDeepAgentRuntime:
             state.model.restore_runtime_state(
                 state.resume_state.messages,
                 state.resume_state.guardrail_state,
-            )
-            state.shared_token_budget.restore(
-                state.model.token_usage
             )
         state.decision_ranker = build_decision_ranker(
             state.command,
@@ -1575,6 +1579,10 @@ class LensDeepAgentRuntime:
             trace_context=state.trace_context,
             emit_observation=state.emit_trace_observation,
             trajectory=state.trajectory,
+            shared_token_budget=state.shared_token_budget,
+            token_budget=state.token_budget,
+            token_budget_wrapup_event=state.token_budget_wrapup_event,
+            on_runtime_state_change=lambda _: state.persist_execution_state(),
         )
         state.evidence_middleware = _build_evidence_middleware(state)
         middleware = _agent_middleware(

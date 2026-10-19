@@ -106,7 +106,29 @@ class BuiltinDecisionTests(TestCase):
         snapshot = build_assistant_decision_model(self.assistant)
         for gate in ("answer_supported", "evidence_sufficient", "evidence_strength"):
             with self.subTest(gate=gate):
-                self.assertEqual(snapshot["gates"][gate]["max_state_chars"], 80000)
+                self.assertEqual(snapshot["gates"][gate]["max_state_chars"], 128000)
+
+    def test_gateway_accepts_complete_review_at_default_capacity_and_rejects_larger_input(self):
+        """The transport must accommodate the capacity frozen into review gates."""
+
+        self.payload["input"] = "e" * 128000
+        with patch("lens.views.decisions.call_runtime_decision", return_value=([], {})) as tracker:
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(tracker.call_args.kwargs["input"], self.payload["input"])
+            tracker.reset_mock()
+            self.payload["input"] += "x"
+            response = self.client.post("/api/lens/lensnode/decision-gateway/", self.payload, format="json")
+            self.assertEqual(response.status_code, 400)
+            tracker.assert_not_called()
+
+    def test_manual_review_capacity_is_preserved(self):
+        """An explicit user limit must not be replaced by the automatic review default."""
+
+        self.assistant.decision_auto = False
+        self.assistant.decision_gates = {"answer_supported": {"max_state_chars": 4000}}
+        snapshot = build_assistant_decision_model(self.assistant)
+        self.assertEqual(snapshot["gates"]["answer_supported"]["max_state_chars"], 4000)
 
     def test_review_timeout_is_frozen_and_not_silently_shortened(self):
         """A configured ten-second reviewer must not be limited to two seconds."""

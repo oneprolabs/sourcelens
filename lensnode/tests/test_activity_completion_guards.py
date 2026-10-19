@@ -1,4 +1,4 @@
-"""Host checks for unread report evidence and unsupported personnel conclusions."""
+"""Host evidence-progress checks leave report semantics to the model."""
 
 import json
 from types import SimpleNamespace
@@ -62,33 +62,54 @@ def test_new_source_snapshot_invalidates_previously_consumed_pages(tmp_path):
     assert extensions.completion_checks("报告已完成")[0]["code"] == "activity_evidence_unread"
 
 
-@pytest.mark.parametrize("text", ["Alice 零完成。", "Alice completed nothing.", "Alice 的产出偏低。",
-                                      "<table><tr><td>Alice</td><td>零完成</td></tr></table>",
-                                      "Alice 长期未推进。", "Alice has low productivity."])
-def test_incomplete_evidence_does_not_support_unqualified_personnel_claims(tmp_path, text):
-    _, extensions, _ = report(tmp_path, partial=True)
+def test_evidence_continuation_fills_the_first_gap_and_stops_at_complete(tmp_path):
+    """A short page and speculative offsets cannot force a second full traversal."""
+
+    _, extensions, _ = report(tmp_path, count=8)
+    read = extensions.tools[0]
+    first = json.loads(read.invoke({"offset": 0, "limit": 2}))
+    later = json.loads(read.invoke({"offset": 3, "limit": 5}))
+    assert first["next_offset"] == 2
+    assert later["next_page"]["arguments"]["offset"] == 2
+    gap = json.loads(read.invoke(later["next_page"]["arguments"]))
+    assert len(gap["records"]) == 1
+    assert gap["read_progress"]["complete"] is True
+    assert gap["next_offset"] is None
+    assert gap["next_page"] is None
+    complete = json.loads(read.invoke({}))
+    assert complete["records"] == []
+    assert complete["read_progress"]["complete"] is True
+
+
+def test_default_evidence_read_continues_from_actual_bounded_page(tmp_path, monkeypatch):
+    """Omitting offset selects the first unread range, including after resume."""
+
+    command, extensions, _ = report(tmp_path, count=8)
+    monkeypatch.setattr(support, "MAX_ACTIVITY_PAGE_CHARS", 6000)
+    first = json.loads(extensions.tools[0].invoke({"limit": 100}))
+    assert 0 < len(first["records"]) < 8
+    restored = prepare_agent_extensions(command, tmp_path)
+    second = json.loads(restored.tools[0].invoke({"limit": 100}))
+    assert {r["id"] for r in first["records"]}.isdisjoint(r["id"] for r in second["records"])
+    assert second["read_progress"]["complete"] or (
+        second["read_progress"]["next_offset"] > first["read_progress"]["next_offset"]
+    )
+
+
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("answer", [
+    "Alice completed nothing.",
+    "Alice has low productivity.",
+    "This report cannot conclude that Alice completed nothing.",
+    "<table><tr><td>Alice</td><td>no activity</td></tr></table>",
+])
+def test_report_wording_is_owned_by_the_model_not_host_keyword_checks(tmp_path, partial, answer):
+    """Host checks depend on evidence progress, not semantic claims or negations."""
+
+    _, extensions, _ = report(tmp_path, partial=partial)
+    assert [issue["code"] for issue in extensions.completion_checks(answer)] == ["activity_evidence_unread"]
     extensions.tools[0].invoke({})
-    issues = extensions.completion_checks(text)
-    assert any(issue["code"] == "activity_claim_unsupported" for issue in issues)
-
-
-def test_qualified_absence_and_positive_observations_remain_reportable(tmp_path):
-    _, extensions, _ = report(tmp_path, partial=True)
-    extensions.tools[0].invoke({})
-    assert extensions.completion_checks("Alice 名下有已解决工单。GitHub 来源不完整，不能据此判断零完成或产出偏低。") == []
-    assert extensions.completion_checks("本次检索未观察到 Alice 的提交，不代表没有工作。") == []
-    assert extensions.completion_checks("未观察到完成类事件不推论为没有工作。") == []
-    assert extensions.completion_checks('全文不含“零完成”“产出明显偏低”等人事结论。') == []
-    assert extensions.completion_checks('已删去“零完成”等无依据表述。') == []
-    assert extensions.completion_checks('这只是“未观察到”而非“没有产出”，不下量化结论。') == []
-
-
-def test_rejected_report_feedback_identifies_the_statement_to_repair(tmp_path):
-    _, extensions, _ = report(tmp_path)
-    extensions.tools[0].invoke({})
-    issues = extensions.completion_checks("Alice 有已解决工单。Bob 的事项长期停滞。")
-    assert "Bob 的事项长期停滞" in issues[0]["recovery"]
-    assert "Alice 有已解决工单" not in issues[0]["recovery"]
+    assert extensions.completion_checks(answer) == []
 
 
 def test_report_repairs_can_revalidate_the_same_path_without_blocking_upload_capability():
@@ -116,25 +137,6 @@ def test_report_repairs_can_revalidate_the_same_path_without_blocking_upload_cap
     assert "artifact_delivery" in boundary.successful_capabilities
 
 
-@pytest.mark.parametrize("text", [
-    "来源不完整，不能据此判断 Bob。Alice 零完成。",
-    "报告不含附件，Alice 零完成。",
-    "已删除旧版。Alice 零完成。",
-    "Alice completed nothing. There is no evidence about Bob.",
-    "<p>不能据此判断 Bob</p><p>Alice <b>零</b>完成</p>",
-])
-def test_caveat_for_another_sentence_does_not_hide_a_negative_claim(tmp_path, text):
-    _, extensions, _ = report(tmp_path, partial=True)
-    extensions.tools[0].invoke({})
-    assert any(issue["code"] == "activity_claim_unsupported" for issue in extensions.completion_checks(text))
-
-
-def test_complete_activity_counts_still_do_not_establish_productivity_or_zero_work(tmp_path):
-    _, extensions, _ = report(tmp_path)
-    extensions.tools[0].invoke({})
-    assert extensions.completion_checks("Alice 零完成，产出偏低。")
-
-
 def test_empty_evidence_page_counts_as_reviewed(tmp_path):
     _, extensions, _ = report(tmp_path, count=0)
     assert extensions.evidence()["review_completeness"] == "incomplete"
@@ -142,24 +144,21 @@ def test_empty_evidence_page_counts_as_reviewed(tmp_path):
     assert extensions.evidence()["review_completeness"] == "complete"
 
 
-@pytest.mark.parametrize("read_pages,filename,content", [
-    (False, "report.html", "<p>Alice 名下已解决 SL-1。</p>"),
-    (True, "report.html", "<table><tr><td>Alice</td><td>零完成</td></tr></table>"),
-    (True, "report.xhtml", "<p>Alice 零完成。</p>"),
-    (True, "report.json", '{"conclusion":"Alice completed nothing."}'),
+@pytest.mark.parametrize("filename,content", [
+    ("report.html", "<p>Alice completed nothing.</p>"),
+    ("report.xhtml", "<p>Alice has low productivity.</p>"),
+    ("report.json", '{"conclusion":"Alice completed nothing."}'),
 ])
-def test_unread_or_unsupported_html_is_rejected_before_any_upload(tmp_path, monkeypatch, read_pages, filename, content):
+def test_unread_evidence_is_rejected_before_any_upload(tmp_path, monkeypatch, filename, content):
     from lensnode.agent_tools import _build_deliverable_stager
 
     command, extensions, _ = report(tmp_path, partial=True)
-    if read_pages:
-        extensions.tools[0].invoke({})
     command["_validate_deliverable"] = extensions.completion_checks
     command["_deliverables"] = {filename: "old-output"}
     (tmp_path / filename).write_text(content)
 
     def no_network(*args, **kwargs):
-        raise AssertionError("Unsupported artifact must never reach the upload service")
+        raise AssertionError("Unread evidence must never reach the upload service")
 
     monkeypatch.setattr("lensnode.agent_tools.httpx.Client", no_network)
     tool = _build_deliverable_stager(command, SimpleNamespace(root=tmp_path),
@@ -304,7 +303,7 @@ def test_report_middleware_exists_without_decision_gates_and_refreshes_progress(
 def test_failed_completion_check_cannot_repeat_the_rejected_assertion(answer):
     from lensnode.agent_runtime.runtime import _enforce_completion_status
 
-    checks = [{"code": "activity_claim_unsupported"}]
+    checks = [{"code": "completion_check_failed"}]
     result = _enforce_completion_status(answer, {"answer_language": "zh-CN"}, checks)
     assert answer not in result
     if answer.isascii():

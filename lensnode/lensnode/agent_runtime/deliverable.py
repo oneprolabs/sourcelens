@@ -9,6 +9,7 @@ import uuid
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
+from .evidence_material import DEFAULT_REVIEW_STATE_CHARS
 
 _APPEND_FILE_MANIFEST = ".sourcelens-append-chunks.json"
 DELIVERABLE_DIRECTORY = "deliverables"
@@ -28,6 +29,7 @@ class AutomaticDeliverables:
         self.manifest = self.evidence.setdefault("_deliverables", command.setdefault("_deliverables", {}))
         command["_deliverables"] = self.manifest
         self.fingerprints = self.evidence.setdefault("_deliverable_fingerprints", {})
+        self.rejected_fingerprints = self.evidence.setdefault("_rejected_deliverable_fingerprints", {})
         self.config = config
         self.stage = _build_deliverable_stager(command, resources, config, emit_event)
         if not self.directory.exists() and not self.directory.is_symlink():
@@ -71,8 +73,9 @@ class AutomaticDeliverables:
     def collect(self):
         """Refresh candidates from current bytes and return any failed checks."""
 
-        from ..agent_tools import _deliverable_validation_issues
+        from ..agent_tools import _deliverable_content_type, _deliverable_validation_issues
 
+        self.evidence["answer_artifacts"] = []
         try:
             files = self._files()
             current = {path.relative_to(self.root).as_posix() for path in files}
@@ -83,14 +86,29 @@ class AutomaticDeliverables:
             issues = []
             for path in files:
                 relative = path.relative_to(self.root).as_posix()
-                with path.open("rb") as handle:
-                    digest = hashlib.file_digest(handle, "sha256").hexdigest()
+                data = path.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                content_type = _deliverable_content_type(path.name)
+                if content_type.startswith("text/") or content_type in {"application/json", "application/xml"}:
+                    text = data.decode("utf-8", errors="replace")
+                    self.evidence["answer_artifacts"].append({
+                        "path": relative, "sha256": digest, "content_type": content_type,
+                        "content": text[:DEFAULT_REVIEW_STATE_CHARS],
+                        "truncated": len(text) > DEFAULT_REVIEW_STATE_CHARS,
+                    })
+                if self.rejected_fingerprints.get(relative) == digest:
+                    issues.append(self._issue(
+                        f"The rejected draft {relative} is unchanged. Correct the affected sections in place "
+                        "or remove the file if it is not intended for the final answer."
+                    ))
+                    continue
                 if self.fingerprints.get(relative) == digest and self.manifest.get(relative):
                     issues.extend(_deliverable_validation_issues(self.command, path.read_bytes(), path.name))
                     continue
                 result = json.loads(self.stage(relative))
                 if result.get("ok"):
                     self.fingerprints[relative] = digest
+                    self.rejected_fingerprints.pop(relative, None)
                 else:
                     self.fingerprints.pop(relative, None)
                     checks = result.get("checks") or [self._issue(
@@ -104,11 +122,21 @@ class AutomaticDeliverables:
             self.manifest.clear()
             return [self._issue(str(exc) if isinstance(exc, ValueError) else "Could not read the output directory.")]
 
+    def invalidate(self):
+        """Withdraw candidate uploads while keeping drafts available for local edits."""
+
+        self.rejected_fingerprints.update(self.fingerprints)
+        self.manifest.clear()
+        self.fingerprints.clear()
+        self.evidence["answer_artifacts"] = []
+
     def discard(self):
         """Quarantine a rejected batch so unchanged drafts cannot be republished."""
 
         self.manifest.clear()
         self.fingerprints.clear()
+        self.rejected_fingerprints.clear()
+        self.evidence["answer_artifacts"] = []
         if self.directory.is_symlink():
             self.directory.unlink()
         elif self.directory.exists():

@@ -25,6 +25,7 @@ from .prompts import (
     pick_text as _pick_text,
 )
 from .system_prompts import _answer_evidence_guidance
+from .summarization import ContextCompactionError
 
 LOGGER = logging.getLogger("lensnode")
 WRAPUP_MAX_CONTEXT_CHARS = 36000
@@ -149,6 +150,7 @@ def _run_agent_with_turn_limit(
         plan_state,
     )
     budget_exhausted = False
+    compaction_failed = False
     delivery_grace_used = False
     delivery_write_grace_used = False
     pending_artifact_write = None
@@ -164,11 +166,13 @@ def _run_agent_with_turn_limit(
         )
 
     def _iterate_states():
-        nonlocal budget_exhausted
+        nonlocal budget_exhausted, compaction_failed
         try:
             yield from state_stream
         except RunTokenBudgetExhaustedError:
             budget_exhausted = True
+        except ContextCompactionError:
+            compaction_failed = True
 
     for state in _iterate_states():
         if cancel_event is not None and cancel_event.is_set():
@@ -292,6 +296,12 @@ def _run_agent_with_turn_limit(
         if emit_event is not None:
             emit_event("deepagents.agent.token_budget", {})
 
+    if compaction_failed:
+        truncated = True
+        truncation_reason = "context_compaction_failed"
+        if emit_event is not None:
+            emit_event("deepagents.agent.context_compaction_failed", {})
+
     if not truncated and isinstance(execution_evidence, dict) and execution_evidence.get("convergence_exhausted"):
         truncated = True
         truncation_reason = "evidence_convergence_limit"
@@ -305,6 +315,7 @@ def _run_agent_with_turn_limit(
         "token_budget_wrapup",
         "turn_limit",
         "evidence_convergence_limit",
+        "context_compaction_failed",
     }
     needs_wrapup = force_wrapup or not answer.strip()
     if truncated and model is not None and needs_wrapup:

@@ -90,6 +90,7 @@ PUBLIC_TERMINATION_REASONS = {
     "review_material_incomplete",
     "review_unavailable",
     "evidence_convergence_limit",
+    "context_compaction_failed",
     "execution_limit",
     "turn_limit",
     "soft_deadline",
@@ -115,6 +116,7 @@ PUBLIC_ERROR_TYPES = {
 
 PUBLIC_RUNTIME_CODES = {
     "EMPTY_AGENT_RESPONSE",
+    "CONTEXT_COMPACTION_FAILED",
     "MODEL_STREAM_ERROR",
     "MODEL_TOOL_PROTOCOL_ERROR",
     "MODEL_UNAVAILABLE",

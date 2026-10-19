@@ -12,6 +12,28 @@ from lensnode.plugin_agent import AgentExecutionPolicy, AgentExtension, prepare_
 from lensnode.plugin_package_loader import PluginPackageLoadError
 
 
+@pytest.mark.parametrize("replacement,valid", [
+    ({"page_events": "ledger"}, True),
+    ({"page_events": "missing"}, False),
+    ({"page_events": []}, False),
+    ({"": "ledger"}, False),
+])
+def test_review_replacements_require_an_existing_source_snapshot(replacement, valid):
+    """Duplicate tool transport may be replaced only by actual Plugin evidence in the same envelope."""
+
+    class SnapshotExtension(AgentExtension):
+        def evidence(self):
+            return {"plugin_evidence": {"ledger": {"records": ["Original facts."]}},
+                    "review_replacements": replacement}
+
+    extensions = plugin_agent.AgentExtensions([SnapshotExtension()])
+    if valid:
+        assert extensions.evidence()["review_replacements"] == replacement
+    else:
+        with pytest.raises(PluginPackageLoadError, match="replacement"):
+            extensions.evidence()
+
+
 def _binding(plugin_key="custom_source", key="collect_events"):
     """Create a frozen model tool and a source-private internal tool."""
     return {
@@ -536,6 +558,9 @@ def test_extension_subagent_prohibition_reaches_graph_assembly(monkeypatch, tmp_
         trajectory=None,
         cancel_event=None,
         trace_context=None,
+        shared_token_budget=None,
+        token_budget={"max_tokens": 0, "final_reserve_tokens": 0},
+        token_budget_wrapup_event=None,
         run_uuid="run-1",
         run_span="run-span",
         emit_agent_event=lambda *args: None,

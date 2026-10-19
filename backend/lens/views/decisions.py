@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from lens.decisions import decision_catalog
 from lens.models import Run, RunExecution
+from lens.plugins.decisions import MAX_STATE_CHARS
 from lens.runtime_decisions import call_runtime_decision
 
 from .base import LensNodeAuthMixin
@@ -55,7 +56,7 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
         model = get_object_or_404(LLMConfig, uuid=model_ref, model_type="decision", scope="global", is_active=True)
         text = request.data.get("input")
         questions = request.data.get("questions")
-        if not isinstance(text, str) or not text.strip() or len(text) > 100000:
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_STATE_CHARS:
             return Response({"detail": "Decision input must be bounded non-empty text."}, status=400)
         source = request.data.get("source")
         if source == "decision_score":

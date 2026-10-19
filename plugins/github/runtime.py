@@ -4,6 +4,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
@@ -25,6 +26,7 @@ JSON_MAX_BYTES = 1_000_000
 BODY_MAX_CHARS = 12_000
 GET_MAX_ATTEMPTS = 3
 GET_RETRY_DELAY_SECONDS = 0.25
+GET_MAX_RETRY_WAIT_SECONDS = 65.0
 ACTIVITY_DEFAULT_PER_PAGE = 50
 ACTIVITY_MAX_PAGES = 10
 ACTIVITY_PULL_REQUEST_PER_PAGE = 10
@@ -582,35 +584,42 @@ def _activity_issues(
         query_seen = set()
         query = f"repo:{repository} is:issue {field}:{since}..{until}"
         for page in range(1, ACTIVITY_MAX_PAGES + 1):
+            partial_payload = None
             try:
-                payload = _json_get(
-                    client,
-                    "/search/issues",
-                    secret,
-                    {"q": query, "sort": "updated", "direction": "desc", "page": page, "per_page": page_size},
-                    max_bytes=SEARCH_MAX_BYTES,
-                )
+                for attempt in range(GET_MAX_ATTEMPTS):
+                    try:
+                        payload = _json_get(
+                            client,
+                            "/search/issues",
+                            secret,
+                            {"q": query, "sort": "updated", "direction": "desc", "page": page, "per_page": page_size},
+                            max_bytes=SEARCH_MAX_BYTES,
+                        )
+                        if (
+                            not isinstance(payload, dict)
+                            or type(payload.get("total_count")) is not int
+                            or payload["total_count"] < 0
+                            or not isinstance(payload.get("incomplete_results"), bool)
+                        ):
+                            raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
+                        _items(payload.get("items"))
+                    except (PluginRuntimeError, httpx.HTTPError):
+                        if partial_payload is None:
+                            raise
+                        payload = partial_payload
+                        break
+                    if not payload["incomplete_results"]:
+                        break
+                    partial_payload = payload
+                    if attempt + 1 < GET_MAX_ATTEMPTS:
+                        time.sleep(GET_RETRY_DELAY_SECONDS * (attempt + 1))
             except (PluginRuntimeError, httpx.HTTPError) as exc:
                 if isinstance(exc, PluginRuntimeError) and str(exc) == "GITHUB_ACCESS_DENIED":
                     return items[:result_limit], incomplete
                 if field == "updated" and page == 1:
                     raise
                 return items[:result_limit], True
-            if (
-                not isinstance(payload, dict)
-                or type(payload.get("total_count")) is not int
-                or payload["total_count"] < 0
-                or not isinstance(payload.get("incomplete_results"), bool)
-            ):
-                if field != "updated" or page > 1:
-                    return items[:result_limit], True
-                raise PluginRuntimeError("GITHUB_RESPONSE_INVALID")
-            try:
-                raw_items = _items(payload.get("items"))
-            except PluginRuntimeError:
-                if field == "updated" and page == 1:
-                    raise
-                return items[:result_limit], True
+            raw_items = _items(payload.get("items"))
             incomplete = incomplete or payload["incomplete_results"]
             new_count = 0
             for item in raw_items:
@@ -1485,6 +1494,8 @@ def _labels(value):
 
 
 def _get(client, url, token, params, accept, max_bytes, truncate):
+    """Retry transient failures within a bounded wait and preserve permanent errors."""
+
     for attempt in range(GET_MAX_ATTEMPTS):
         try:
             with client.stream(
@@ -1502,9 +1513,19 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
             ) as response:
                 if response.is_redirect:
                     raise PluginRuntimeError("GITHUB_REDIRECT_REJECTED")
-                if response.status_code == 403 and (
-                    response.headers.get("X-RateLimit-Remaining") == "0" or response.headers.get("Retry-After")
-                ):
+                rate_limited = response.status_code == 429 or (
+                    response.status_code == 403
+                    and (response.headers.get("X-RateLimit-Remaining") == "0" or response.headers.get("Retry-After"))
+                )
+                retryable = rate_limited or response.status_code in {408, 500, 502, 503, 504}
+                delay = GET_RETRY_DELAY_SECONDS * (attempt + 1)
+                if retryable:
+                    delay = _retry_delay(response.headers, delay, rate_limited)
+                    if attempt + 1 < GET_MAX_ATTEMPTS and delay <= GET_MAX_RETRY_WAIT_SECONDS:
+                        response.close()
+                        time.sleep(delay)
+                        continue
+                if rate_limited:
                     raise PluginRuntimeError("GITHUB_RATE_LIMITED")
                 if response.status_code >= 400:
                     return response.status_code, b"", False
@@ -1524,6 +1545,32 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
                 raise
             time.sleep(GET_RETRY_DELAY_SECONDS * (attempt + 1))
     raise AssertionError("unreachable")
+
+
+def _retry_delay(headers, fallback, rate_limited):
+    """Honor GitHub retry hints without polling before the indicated reset."""
+
+    delays = [fallback]
+    for key in (("Retry-After", "X-RateLimit-Reset") if rate_limited else ("Retry-After",)):
+        try:
+            hint = headers[key]
+        except KeyError:
+            continue
+        try:
+            value = int(hint)
+        except (TypeError, ValueError):
+            if key != "Retry-After":
+                continue
+            try:
+                value = parsedate_to_datetime(hint).timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if key == "X-RateLimit-Reset":
+            value = value - time.time() + 1
+        delays.append(value)
+    if rate_limited and len(delays) == 1:
+        delays.append(60.0)
+    return max(delays)
 
 
 def _status(status):

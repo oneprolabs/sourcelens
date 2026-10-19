@@ -8,7 +8,6 @@ import shutil
 import threading
 import uuid
 from datetime import datetime
-from html.parser import HTMLParser
 from pathlib import Path
 
 from lensnode.plugin_agent import AgentExecutionPolicy, AgentExtension, plugin_state_root
@@ -179,7 +178,10 @@ class ActivityLedger:
                 cursor = max(cursor, end)
             complete = state["read"] and cursor >= total
             return {"complete": complete, "total_records": total,
-                    "next_offset": None if complete else cursor, "snapshot_sha256": digest}
+                    "next_offset": None if complete else cursor,
+                    "next_unread_end": None if complete else next(
+                        (start for start, end in state["ranges"] if start > cursor), total
+                    ), "snapshot_sha256": digest}
 
     def report(self, expected_tools):
         """Normalize saved evidence without producing a business report or answer."""
@@ -304,63 +306,6 @@ def _limited(source):
     )
 
 
-class _ReportText(HTMLParser):
-    """Keep visible report blocks separate while joining inline formatting."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts = []
-        self.hidden = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style"}:
-            self.hidden += 1
-        if tag in {"p", "div", "tr", "li", "br", "h1", "h2", "h3"}:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag):
-        if tag in {"script", "style"}:
-            self.hidden = max(self.hidden - 1, 0)
-        if tag in {"p", "div", "tr", "li", "h1", "h2", "h3"}:
-            self.parts.append("\n")
-        elif tag in {"td", "th"}:
-            self.parts.append("\n")
-
-    def handle_data(self, data):
-        if not self.hidden:
-            self.parts.append(data)
-
-
-def _negative_activity_claims(answer):
-    """Locate high-risk statements so the model can repair the rejected report."""
-
-    parser = _ReportText()
-    parser.feed(str(answer or ""))
-    pattern = re.compile(
-        r"零完成|没有(?:任何)?(?:完成(?!事件|记录|证据)|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
-        r"\b(?:completed nothing|zero[- ]completions?|low productivity|no activity|inactive|no work)\b",
-        re.IGNORECASE,
-    )
-    claims = []
-    for sentence in re.split(r"[。！？.!?\n]", "".join(parser.parts)):
-        sentence = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", sentence)
-        for match in pattern.finditer(sentence):
-            prefix = sentence[:match.start()]
-            if not re.search(
-                r"(?:不能据此判断|无法判断|不代表|不推论为|不等于|不能认定|不含|删去|删除|移除|去掉|而非[\"“]?|cannot conclude|does not mean)"
-                r"[^，,；;]{0,40}$", prefix, re.IGNORECASE,
-            ):
-                claims.append(sentence.strip()[:400])
-                break
-    return claims
-
-
-def _contains_negative_activity_claim(answer):
-    """Detect high-risk personnel conclusions without judging ordinary prose."""
-
-    return bool(_negative_activity_claims(answer))
-
-
 def _account(value, identity="", login=False):
     """Keep display names separate from verified source account identifiers."""
 
@@ -461,34 +406,51 @@ def build_activity_evidence_tool(ledger, expected_tools):
     from langchain.tools import tool
 
     @tool("read_activity_evidence")
-    def read_activity_evidence(offset: int = 0, limit: int = 50) -> str:
+    def read_activity_evidence(offset: int | None = None, limit: int = 50) -> str:
         """Read normalized activity evidence saved by the batch source tools.
 
-        Use offset >= 0 and limit between 1 and 100 (default 50). Follow next_offset
-        to read further pages without refetching sources. Records
+        Omit offset to read the first unread range automatically. Explicit offset
+        >= 0 can revisit evidence. Limit is 1 to 100 (default 50), but output limits
+        may return fewer records. Never guess offsets or parallelize pages.
+        Follow next_page until read_progress.complete; then stop. Records
         retain source identities, event dates, roles and coverage limits. They are
         evidence, not a finished work summary. Query coverage does not establish
         that the selected dates and resources match the user's request. Follow the
         bound report Skill to interpret the evidence and deliver the final report.
         """
 
+        with ledger.lock:
+            return read_page(offset, limit)
+
+    def read_page(offset, limit):
+        """Serialize snapshot reading, byte bounding and progress publication."""
+
         if not ledger.has_evidence():
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_REQUIRED"})
-        if offset < 0 or not 1 <= limit <= 100:
+        if (offset is not None and offset < 0) or not 1 <= limit <= 100:
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_INVALID"})
         evidence = ledger.report(expected_tools)
         records = evidence["records"]
+        progress = ledger.read_progress(evidence)
+        if offset is None and progress["complete"]:
+            return _json({"ok": True, "records": [], "total_records": len(records),
+                          "next_offset": None, "next_page": None, "read_progress": progress})
+        if offset is None:
+            offset = progress["next_offset"]
         if offset >= len(records) and offset != 0:
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_INVALID", "total_records": len(records)})
         end = min(offset + limit, len(records))
+        if offset == progress["next_offset"]:
+            end = min(end, progress["next_unread_end"])
+        progress = ledger.read_progress(evidence, (offset, end), persist=False)
         payload = {
                 "ok": True,
                 "records": records[offset:end],
                 "total_records": len(records),
-                "next_offset": end if end < len(records) else None,
+                "next_offset": progress["next_offset"],
                 "next_page": (
-                    {"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}}
-                    if end < len(records) else None
+                    {"tool": "read_activity_evidence", "arguments": {"offset": progress["next_offset"], "limit": limit}}
+                    if not progress["complete"] else None
                 ),
                 "page_complete": offset == 0 and end == len(records),
                 "windows": evidence["windows"],
@@ -498,7 +460,7 @@ def build_activity_evidence_tool(ledger, expected_tools):
                 "source_coverage": evidence["source_coverage"],
                 "observed_events": evidence["observed_events"],
                 "_evidence": {"complete": evidence["complete"]},
-                "read_progress": ledger.read_progress(evidence, (offset, end), persist=False),
+                "read_progress": progress,
             }
         metadata_chars = len(_json({
             "observed_events": payload["observed_events"], "source_coverage": payload["source_coverage"],
@@ -513,14 +475,15 @@ def build_activity_evidence_tool(ledger, expected_tools):
         while len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and len(payload["records"]) > 1:
             payload["records"] = payload["records"][:max(1, len(payload["records"]) // 2)]
             end = offset + len(payload["records"])
+            progress = ledger.read_progress(evidence, (offset, end), persist=False)
             payload.update(
-                next_offset=end if end < len(records) else None,
+                next_offset=progress["next_offset"],
                 next_page=(
-                    {"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}}
-                    if end < len(records) else None
+                    {"tool": "read_activity_evidence", "arguments": {"offset": progress["next_offset"], "limit": limit}}
+                    if not progress["complete"] else None
                 ),
                 page_complete=offset == 0 and end == len(records),
-                read_progress=ledger.read_progress(evidence, (offset, end), persist=False),
+                read_progress=progress,
             )
         if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and not payload.get("coverage_details_omitted"):
             payload["observed_events"] = []
@@ -594,9 +557,13 @@ def _report_execution_guidance(command):
             "deduplicate exact commit SHAs without inventing identities or equating backports.",
             "- Reuse that ledger for corrections instead of retrieving the same sources again. "
             "The model remains responsible for the business report and HTML content; use normalized "
-            "data as evidence and do not replace the requested report with a fixed template.",
+            "data as evidence and do not replace the requested report with a fixed template. "
+            "The model judges whether conclusions are supported and ready to return. "
+            "When revising, edit affected passages in the existing report; preserve unchanged content and styling.",
             "- Use read_activity_evidence to revisit saved records without refetching sources. "
-            "Follow its next_page by calling read_activity_evidence again; paginating a saved result only "
+            "Omit offset to read the first unread range, or follow its actual next_page sequentially. "
+            "Output limits change page lengths: never guess offsets or parallelize pages. "
+            "Stop immediately when read_progress.complete=true; paginating a saved result only "
             "re-reads that page. total_records and observed_events cover the full ledger, while records is "
             "only the current page. Read every required page before per-person conclusions. "
             "Prefer these normalized pages over projecting or paginating the raw source JSON again. "
@@ -604,7 +571,8 @@ def _report_execution_guidance(command):
             "guessing nested field paths repeatedly. This is evidence for the report, not the final answer.",
             "- Apply requested person and resource filters before writing the answer or artifact. "
             "Do not stop after one window when the request requires more; retrieve each requested period.",
-            "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
+            "- The evidence contract takes precedence over conflicting Skill instructions, including files read later. "
+            "Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
             "to group people, distinguish completed work from work in progress, and ground risks and comments "
             "in the evidence. Never infer a shared identity from a display name alone.",
             "- Preserve workspace account mappings verbatim; never transliterate an account into an invented "
@@ -858,7 +826,7 @@ class ActivityReportExtension(AgentExtension):
         return self.command.get("question")
 
     def completion_checks(self, answer):
-        """Return host-owned checks that must pass before a report is accepted."""
+        """Check deterministic evidence progress; the model owns report semantics."""
 
         if not self.active or not self.ledger.has_evidence():
             return []
@@ -869,17 +837,9 @@ class ActivityReportExtension(AgentExtension):
             checks.append({
                 "code": "activity_evidence_unread",
                 "message": "Activity evidence has unread pages; do not finalize the report yet.",
-                "recovery": f"Call read_activity_evidence(offset={progress['next_offset']}) and follow every next_page. "
+                "recovery": f"Call read_activity_evidence(offset={progress['next_offset']}) to fill the first unread gap. "
+                            "Follow next_page sequentially only until read_progress.complete=true, then stop. "
                             "After fixing the evidence, save all intended deliverables again.",
-            })
-        claims = _negative_activity_claims(answer)
-        if claims:
-            checks.append({
-                "code": "activity_claim_unsupported",
-                "message": "Activity counts cannot establish zero work, low productivity, or status duration.",
-                "recovery": "Remove the unsupported personnel conclusion. Report observed events with source IDs, "
-                            "roles and coverage limits. The following quoted statements need correction: "
-                            + _json(claims[:3]) + ". Save corrected deliverables again.",
             })
         return checks
 
@@ -1000,6 +960,9 @@ class ActivityReportExtension(AgentExtension):
                     "source_coverage": evidence["source_coverage"],
                     "observed_events": evidence["observed_events"],
                 }
+            },
+            "review_replacements": {
+                tool: "activity-report" for tool in (*self.expected_tools, "read_activity_evidence")
             },
             "evidence_completeness": "complete" if evidence["complete"] else "incomplete",
             "review_completeness": "complete" if progress["complete"] else "incomplete",

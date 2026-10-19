@@ -1,6 +1,7 @@
 """Regression coverage for evidence lost during final-answer verification."""
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from lensnode.agent_runtime import runtime as runtime_module
 from lensnode.agent_runtime.decision_gates import _gate_arguments
 from lensnode.agent_runtime.decision_policy import GateDecisionPolicy, ModelDecisionPolicy, _post_run_state
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
-from lensnode.agent_runtime.evidence_material import bound_review_state, review_material
+from lensnode.agent_runtime.evidence_material import DEFAULT_REVIEW_STATE_CHARS, bound_review_state, review_material
 
 
 class _ReviewPolicy:
@@ -35,6 +36,148 @@ class _ReviewPolicy:
         if self.review_completeness is not None:
             result["review_completeness"] = self.review_completeness
         return result
+
+
+@pytest.mark.parametrize("source_completeness", ["complete", "incomplete"])
+def test_complete_long_documents_are_reviewed_without_losing_known_source_gaps(source_completeness):
+    """Reviewer capacity must not discard complete documents already retrieved."""
+
+    reviewed = []
+    contents = [
+        "\n".join(f"Document {index}, line {line}: {hashlib.sha256(f'{index}:{line}'.encode()).hexdigest()}"
+                  for line in range(300))
+        for index in range(4)
+    ]
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            reviewed.append(json.loads(question))
+            return "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {}})
+    middleware = EvidenceGateMiddleware(
+        policy, "Explain the incident.", evidence={"evidence_completeness": source_completeness}
+    )
+    messages = [
+        ToolMessage(name="read_workspace_file", tool_call_id=f"document-{index}", content=content)
+        for index, content in enumerate(contents)
+    ]
+
+    verdicts = middleware._verify("The retrieved records document the incident.", {"messages": messages})
+
+    assert verdicts.get("review_completeness", "complete") == "complete"
+    assert verdicts["answer_supported"] == "supported"
+    assert verdicts.get("evidence_completeness", "complete") == source_completeness
+    reviewed_contents = [
+        item["content"]
+        for material in reviewed
+        for item in material["runtime_evidence"]["retrieved_evidence"]
+    ]
+    assert set(reviewed_contents) == set(contents)
+    assert all(material["question"] == "Explain the incident." for material in reviewed)
+    assert all(material["answer"] == "The retrieved records document the incident." for material in reviewed)
+
+
+def test_long_review_checks_counterevidence_beyond_the_previous_capacity():
+    """Later contradictory evidence must participate in the final verdict."""
+
+    reviewed = []
+    contents = [
+        "\n".join(f"Document {index}, line {line}: {hashlib.sha256(f'{index}:{line}'.encode()).hexdigest()}"
+                  for line in range(300))
+        for index in range(4)
+    ]
+    contents[-1] += "\nThe final incident record confirms the incident remains open."
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            material = json.loads(question)
+            reviewed.append(material)
+            evidence = material["runtime_evidence"]["retrieved_evidence"]
+            contradicted = any("incident remains open" in item["content"] for item in evidence)
+            return "unsupported" if contradicted else "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {}})
+    middleware = EvidenceGateMiddleware(policy, "Was the incident resolved?")
+    messages = [
+        ToolMessage(name="read_workspace_file", tool_call_id=f"document-{index}", content=content)
+        for index, content in enumerate(contents)
+    ]
+
+    verdicts = middleware._verify("The incident was resolved.", {"messages": messages})
+
+    assert verdicts["answer_supported"] == "unsupported"
+    assert verdicts.get("review_completeness", "complete") == "complete"
+    assert any("incident remains open" in item["content"]
+               for material in reviewed for item in material["runtime_evidence"]["retrieved_evidence"])
+
+
+def test_source_beyond_default_review_capacity_remains_unverified():
+    """A larger default capacity must not certify genuinely incomplete review."""
+
+    reviewed = []
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            reviewed.append(question)
+            return "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {}})
+    middleware = EvidenceGateMiddleware(policy, "What happened?")
+    content = "\n".join(hashlib.sha256(str(line).encode()).hexdigest() for line in range(2500))
+
+    verdicts = middleware._verify("An incident happened.", {"messages": [
+        ToolMessage(name="read_workspace_file", tool_call_id="long-source", content=content),
+    ]})
+
+    assert not reviewed
+    assert verdicts["review_completeness"] == "incomplete"
+    assert verdicts["answer_supported"] == "inconclusive"
+    assert verdicts.get("evidence_completeness", "complete") == "complete"
+
+
+def test_long_search_results_fit_the_default_capacity_without_losing_any_match():
+    """Repeated paths can be shared while every unique search excerpt survives."""
+
+    retrieved = []
+    for page in range(16):
+        matches = [
+            {
+                "path": "/workspace/sessions/" + "source-prefix-" * 11 + f"/docs/file-{index}.md",
+                "line": page * 20 + index,
+                "text": "".join(hashlib.sha256(f"{page}:{index}:{part}".encode()).hexdigest() for part in range(5)),
+            }
+            for index in range(20)
+        ]
+        retrieved.append({"tool": "search_workspace", "content": json.dumps({"matches": matches}),
+                          "incomplete": False, "truncated": False})
+    evidence = {"retrieved_evidence": retrieved}
+    assert len(json.dumps(evidence)) > DEFAULT_REVIEW_STATE_CHARS
+
+    material = json.loads(review_material("Question", "Answer", evidence, DEFAULT_REVIEW_STATE_CHARS))
+
+    assert material["review_completeness"] == "complete"
+    packed = material["runtime_evidence"]
+    assert packed["encoding"] == "shared-values-v1"
+
+    def expand(value):
+        if isinstance(value, dict):
+            if set(value) == {packed["reference_key"]}:
+                return expand(packed["values"][value[packed["reference_key"]]])
+            if set(value) == {packed["table_key"]}:
+                table = value[packed["table_key"]]
+                return [expand(dict(zip(table["columns"], row))) for row in table["rows"]]
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    restored = expand(packed["data"])["retrieved_evidence"]
+    assert len(restored) == len(retrieved)
+    for original, actual in zip(retrieved, restored):
+        assert actual["content"] == json.loads(original["content"])
+        assert actual["incomplete"] is False
+        assert actual["truncated"] is False
 
 
 @pytest.mark.parametrize("budget,expected_calls", [(6000, 1), (4000, 0)])
@@ -602,6 +745,58 @@ def test_incomplete_review_never_accepts_a_claim_or_triggers_futile_rechecks():
     assert middleware.answer_nudges == 0
     assert events[-1]["action"] == "inconclusive"
     assert events[-1]["fallback_reason"] == "review_material_truncated"
+
+
+def test_source_coverage_gap_is_not_reported_as_review_truncation():
+    """A supported partial answer must identify the missing source, not the review budget."""
+
+    policy = _ReviewPolicy(verdict="supported", completeness="incomplete")
+    events = []
+    middleware = EvidenceGateMiddleware(policy, "What happened?", emit_event=lambda name, detail: events.append(detail))
+
+    assert middleware.after_model({"messages": [AIMessage(content="Available records are summarized.")]}, None) is None
+    assert events[-1]["action"] == "inconclusive"
+    assert events[-1]["fallback_reason"] == "evidence_incomplete"
+
+
+@pytest.mark.parametrize("failure", [
+    "Error executing command (UnicodeDecodeError): invalid UTF-8 after tail -c",
+    "0\n18\n0\nExit code: 1",
+])
+def test_shell_diagnostics_do_not_overwrite_complete_source_coverage(failure):
+    """The reviewer decides whether a failed shell check matters to a supported answer."""
+
+    policy = _ReviewPolicy(verdict="supported")
+    middleware = EvidenceGateMiddleware(policy, "Summarize the activity.")
+    state = {"messages": [
+        ToolMessage(name="github_activity_summary", tool_call_id="source",
+                    content='{"ok":true,"_evidence":{"complete":true},"records":[{"id":1}]}'),
+        ToolMessage(name="execute", tool_call_id="local-check", content=failure, status="error"),
+    ]}
+
+    verdicts = middleware._verify("The available activity is summarized.", state)
+
+    assert verdicts.get("evidence_completeness", "complete") == "complete"
+    material = policy.materials[-1]
+    assert material["evidence_completeness"] == "complete"
+    diagnostics = next(item for item in material["retrieved_evidence"] if item["tool"] == "execute")
+    assert diagnostics["content"] == failure
+    assert diagnostics["failed"] is True
+
+
+def test_failed_retrieval_still_declares_a_source_gap():
+    """A failed dedicated source read is still incomplete even if a shell check succeeds."""
+
+    policy = _ReviewPolicy(verdict="supported")
+    middleware = EvidenceGateMiddleware(policy, "Summarize the activity.")
+    state = {"messages": [
+        ToolMessage(name="read_workspace_file", tool_call_id="source", content="Permission denied", status="error"),
+        ToolMessage(name="execute", tool_call_id="local-check", content="Output file exists."),
+    ]}
+
+    verdicts = middleware._verify("The available activity is summarized.", state)
+
+    assert verdicts["evidence_completeness"] == "incomplete"
 
 
 def test_incomplete_review_material_does_not_regenerate_an_unsupported_answer():

@@ -169,6 +169,30 @@ def test_tool_call_budget_accepts_per_run_override():
     ) == 12
 
 
+def test_unlimited_execution_does_not_inherit_the_default_tool_ceiling():
+    """Maximum execution must retain file tools after lengthy evidence review."""
+
+    config = SimpleNamespace(tool_budget_max_calls=64)
+    command = {"token_budget": {"profile": "unlimited", "max_tokens": 0}, "tool_budget": None}
+
+    assert resolve_tool_call_budget(config, command) == 0
+    assert resolve_tool_call_budget(config, {**command, "tool_budget": {"max_calls": 12}}) == 12
+    middleware = agent_runtime.CapabilityBoundaryMiddleware(max_tool_calls=resolve_tool_call_budget(config, command))
+    for _ in range(65):
+        middleware._record_tool_call()
+    file_tool = SimpleNamespace(name="edit_file", metadata={})
+    assert middleware._filter_tools([file_tool]) == [file_tool]
+
+
+def test_finite_and_unprofiled_runs_keep_the_configured_tool_ceiling():
+    """An unlimited token count alone must not silently remove an explicit execution policy."""
+
+    config = SimpleNamespace(tool_budget_max_calls=64)
+    for token_budget in [{"max_tokens": 0}, {"profile": "standard", "max_tokens": 0},
+                         {"profile": "unlimited", "max_tokens": 1000}]:
+        assert resolve_tool_call_budget(config, {"token_budget": token_budget}) == 64
+
+
 def test_plan_outcome_uses_required_capability_failures():
     middleware = SimpleNamespace(
         successful_evidence=[],

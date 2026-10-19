@@ -34,6 +34,16 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(detail["reason"], "evidence_incomplete")
         self.assertNotIn("private content", str(detail))
 
+    def test_compaction_failure_preserves_the_public_stop_reason(self):
+        detail = sanitize_termination_detail({
+            "reason": "context_compaction_failed", "trigger": "context_compaction_failed",
+            "code": "CONTEXT_COMPACTION_FAILED", "raw": "private content",
+        })
+        self.assertEqual(detail["reason"], "context_compaction_failed")
+        self.assertEqual(detail["trigger"], "context_compaction_failed")
+        self.assertEqual(detail["code"], "CONTEXT_COMPACTION_FAILED")
+        self.assertNotIn("private content", str(detail))
+
     def test_unavailable_reviewer_is_distinct_from_missing_review_material(self):
         detail = sanitize_termination_detail(
             {"reason": "review_unavailable", "error_type": "verification", "raw": "private content"}

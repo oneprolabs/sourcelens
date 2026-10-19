@@ -14,15 +14,15 @@ from lensnode.agent_runtime.decision_gates import (
     GATE_REGISTRY,
     PHASE_ORDER,
 )
+from lensnode.agent_runtime.evidence_material import DEFAULT_REVIEW_STATE_CHARS
 
 
-def _backend_constant(name):
+def _backend_constant(name, path="plugins/decisions.py"):
     source = (
         Path(__file__).resolve().parents[2]
         / "backend"
         / "lens"
-        / "plugins"
-        / "decisions.py"
+        / path
     ).read_text()
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign) and any(
@@ -38,3 +38,11 @@ def test_backend_gate_phase_mirror_matches_the_host_registry():
         key: spec["phase"] for key, spec in GATE_REGISTRY.items()
     }
     assert _backend_constant("GATE_PHASE_ORDER") == PHASE_ORDER
+
+
+def test_backend_review_capacity_matches_runtime_and_fits_binding_validation():
+    """A backend-frozen default must not silently restore the old review truncation."""
+
+    assert _backend_constant("DEFAULT_REVIEW_STATE_CHARS", "decisions.py") == DEFAULT_REVIEW_STATE_CHARS
+    assert _backend_constant("MAX_STATE_CHARS") >= DEFAULT_REVIEW_STATE_CHARS
+    assert _backend_constant("DECISION_STATE_CHARS_MAX", "plugins/registry.py") >= DEFAULT_REVIEW_STATE_CHARS

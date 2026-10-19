@@ -92,17 +92,38 @@ def test_automatic_delivery_collects_only_final_directory_and_latest_bytes(monke
     collector = AutomaticDeliverables(command, _resources(tmp_path), _config(), evidence=evidence)
     assert collector.collect() == []
     assert command["_deliverables"] == {"deliverables/report.html": "output-1"}
+    assert evidence["answer_artifacts"][0]["content"] == "draft"
     assert collector.collect() == []
     assert len(uploads) == 1
     report.write_text("final")
     resumed = AutomaticDeliverables(command, _resources(tmp_path), _config(), evidence=evidence)
     assert resumed.collect() == []
     assert command["_deliverables"] == {"deliverables/report.html": "output-2"}
+    assert evidence["answer_artifacts"][0]["content"] == "final"
     assert b"final" in uploads[-1]
     assert all(b"private" not in body for body in uploads)
     report.unlink()
     assert resumed.collect() == []
     assert command["_deliverables"] == {}
+    assert evidence["answer_artifacts"] == []
+
+
+def test_large_artifact_snapshot_explicitly_prevents_a_complete_review(monkeypatch, tmp_path):
+    """A bounded candidate snapshot cannot silently certify omitted final text."""
+
+    from lensnode.agent_runtime.evidence_material import DEFAULT_REVIEW_STATE_CHARS, review_material
+
+    _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"uuid": "output-1"}))
+    collector = AutomaticDeliverables({"run_uuid": "run-123"}, _resources(tmp_path), _config())
+    (tmp_path / "deliverables" / "report.md").write_text("x" * (DEFAULT_REVIEW_STATE_CHARS + 1))
+    assert collector.collect() == []
+    artifact = collector.evidence["answer_artifacts"][0]
+    assert artifact["truncated"]
+    assert len(artifact["content"]) == DEFAULT_REVIEW_STATE_CHARS
+    material = json.loads(review_material("Report", "Attached.", collector.evidence, limit=256000))
+    assert material["review_completeness"] == "incomplete"
+    collector.invalidate()
+    assert collector.evidence["answer_artifacts"] == []
 
 
 def test_automatic_delivery_validation_can_recover_and_recheck_discards_batch(monkeypatch, tmp_path):
@@ -243,8 +264,8 @@ def test_failed_automatic_delivery_has_bounded_model_corrections(tmp_path):
     assert state.runtime_evidence["delivery_issues"][0]["code"] == "artifact_delivery_failed"
 
 
-def test_normalized_attachment_notice_preserves_graph_review_coverage():
-    """Host notice replacement must retain offloaded evidence at terminal review."""
+def test_answer_review_preserves_graph_evidence_coverage():
+    """Model answer review must retain offloaded evidence at terminal review."""
 
     from lensnode.agent_runtime.decision_policy import ControlDecisionPolicy, GateDecisionPolicy
     from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
@@ -256,18 +277,15 @@ def test_normalized_attachment_notice_preserves_graph_review_coverage():
     policy = GateDecisionPolicy(ControlDecisionPolicy(), Runner(), {"answer_supported": {"max_state_chars": 80000}})
     evidence = {"_deliverables": {"deliverables/report.html": "output-1"},
                 "evidence_completeness": "complete", "review_completeness": "complete"}
-    gate = EvidenceGateMiddleware(policy, "Create a report", evidence=evidence, prepare_deliverables=lambda: [],
-                                  completion_check=lambda answer: (
-                                      [{"code": "activity_claim_unsupported"}] if "zero work" in answer else []
-                                  ))
+    gate = EvidenceGateMiddleware(policy, "Create a report", evidence=evidence, prepare_deliverables=lambda: [])
     graph_state = {"messages": [
         ToolMessage(name="read_file", tool_call_id="read", content=(
             "Tool result too large, the result was saved in the filesystem. Preview: Alice updated PR 1."
         )),
-        AIMessage(content="Alice did zero work."),
+        AIMessage(content="The report is attached."),
     ]}
-    update = gate.after_model(graph_state, None)
-    notice = update["messages"][0].content
+    gate.after_model(graph_state, None)
+    notice = graph_state["messages"][-1].content
     state = SimpleNamespace(decision_policy=policy, runtime_evidence=evidence, evidence_middleware=gate,
                             question="Create a report")
     verdict = agent_runtime._post_run_decision_gates(state, notice)
@@ -344,10 +362,9 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
     assert collector.command["_deliverables"] == {"deliverables/report.html": "output-1"}
 
 
-@pytest.mark.parametrize("unsupported_notice", [False, True])
 @pytest.mark.parametrize("at_delivery_limit", [False, True])
 def test_real_graph_automatically_delivers_without_save_tool(
-    monkeypatch, tmp_path, unsupported_notice, at_delivery_limit
+    monkeypatch, tmp_path, at_delivery_limit
 ):
     """A generated file reaches the manifest when the model answers normally."""
 
@@ -356,12 +373,7 @@ def test_real_graph_automatically_delivers_without_save_tool(
     from langchain_core.tools import tool
 
     _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"uuid": "output-1"}))
-    def checks(text):
-        """Reject a chat-only claim while accepting the independently checked file."""
-
-        return [{"code": "activity_claim_unsupported"}] if "zero work" in text else []
-
-    command = {"run_uuid": "run-123", "_validate_deliverable": checks}
+    command = {"run_uuid": "run-123"}
     evidence = {"artifact_required": True}
     collector = AutomaticDeliverables(command, _resources(tmp_path), _config(), evidence=evidence)
 
@@ -380,7 +392,7 @@ def test_real_graph_automatically_delivers_without_save_tool(
 
     class Extension(AgentExtension):
         def completion_checks(self, answer):
-            return checks(answer)
+            return []
 
     if at_delivery_limit:
         evidence["_answer_review"] = {"convergence_nudges": 2, "delivery_turns": 7}
@@ -391,14 +403,10 @@ def test_real_graph_automatically_delivers_without_save_tool(
                             decision_policy=policy)
     graph = create_agent(Model(responses=[
         AIMessage(content="", tool_calls=[{"id": "write", "name": "write_file", "args": {}}]),
-        AIMessage(content="Alice did zero work." if unsupported_notice else "The report is attached."),
+        AIMessage(content="The report is attached."),
     ]), tools=[write_file], middleware=[agent_runtime._build_evidence_middleware(state)])
     result = graph.invoke({"messages": [{"role": "user", "content": "Create a report"}]})
-    if unsupported_notice:
-        assert "zero work" not in result["messages"][-1].content
-        assert "attached" in result["messages"][-1].content
-    else:
-        assert result["messages"][-1].content == "The report is attached."
+    assert result["messages"][-1].content == "The report is attached."
     assert command["_deliverables"] == {"deliverables/report.html": "output-1"}
     if at_delivery_limit:
         assert evidence["_answer_review"]["delivery_turns"] == 9
@@ -612,6 +620,56 @@ def test_evidence_recheck_discards_draft_batch_and_persists_the_replacement(monk
     assert middleware.after_model({"messages": [AIMessage(content="Supported final answer.")]}, None) is None
     assert manifest == {"final.md": "output-2"}
     assert runtime_evidence["_deliverables"] == {"final.md": "output-2"}
+
+
+def test_evidence_recheck_keeps_generated_files_for_local_corrections(monkeypatch, tmp_path):
+    """A review correction withdraws uploads without forcing the whole report to be rebuilt."""
+
+    _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"uuid": "output"}))
+    command = {"run_uuid": "run-123"}
+    evidence = {"artifact_required": True}
+    collector = AutomaticDeliverables(command, _resources(tmp_path), _config(), evidence=evidence)
+    report = tmp_path / "deliverables" / "report.html"
+    report.write_text("<h1>Report</h1><p>unsupported</p>")
+    policy = SimpleNamespace(has_evidence_gates=lambda: True,
+                             post_run_checks=lambda *args: {"answer_supported": "unsupported"})
+    state = SimpleNamespace(command=command, runtime_evidence=evidence, question="Report",
+                            deliverable_collector=collector, decision_policy=policy)
+    gate = agent_runtime._build_evidence_middleware(state)
+
+    result = gate.after_model({"messages": [AIMessage(content="Unsupported summary.")]}, None)
+
+    assert result["jump_to"] == "model"
+    assert command["_deliverables"] == {}
+    assert report.read_text() == "<h1>Report</h1><p>unsupported</p>"
+    report.write_text(report.read_text().replace("unsupported", "source-supported"))
+    policy.post_run_checks = lambda *args: {"answer_supported": "supported"}
+    assert gate.after_model({"messages": [AIMessage(content="Corrected summary.")]}, None) is None
+    assert command["_deliverables"] == {"deliverables/report.html": "output"}
+
+
+def test_unchanged_rejected_attachment_cannot_be_republished_with_only_a_new_chat_answer(monkeypatch, tmp_path):
+    """Keeping a draft editable does not authorize publishing its rejected bytes again."""
+
+    uploads = []
+
+    def handler(request):
+        uploads.append(request.read())
+        return httpx.Response(201, json={"uuid": "output"})
+
+    _install_transport(monkeypatch, handler)
+    collector = AutomaticDeliverables({}, _resources(tmp_path), _config())
+    report = tmp_path / "deliverables" / "report.html"
+    report.write_text("<p>Unsupported assertion.</p>")
+    assert collector.collect() == []
+    collector.invalidate()
+
+    issues = collector.collect()
+
+    assert issues[0]["code"] == "artifact_delivery_failed"
+    assert report.exists()
+    assert collector.manifest == {}
+    assert len(uploads) == 1
 
 
 def test_deliverable_stager_ignores_runtime_instance_id(monkeypatch, tmp_path):
