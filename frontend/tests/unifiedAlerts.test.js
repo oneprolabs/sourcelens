@@ -3,8 +3,67 @@ import test from 'node:test'
 import {
   alertRulePayload,
   alertApiError,
+  alertEventTitle,
+  alertEventSource,
   eventsForSubject
 } from '../src/admin/pages/Alerts/alertOptions.js'
+
+test('notification titles identify business content and fall back to named resources for older records', () => {
+  const t = (key) =>
+    ({
+      'alertManagement.unified.events.run_failed': '问答失败',
+      'alertManagement.unified.events.sync_failed': '同步失败',
+      'alertManagement.unified.events.message_published': '消息已发布'
+    })[key]
+  assert.equal(
+    alertEventTitle(
+      {
+        subject: 'run',
+        event_type: 'run_failed',
+        detail: {
+          question: '  请分析\n昨天的告警  ',
+          assistant_name: '运维助手'
+        }
+      },
+      t
+    ),
+    '请分析 昨天的告警'
+  )
+  assert.equal(
+    alertEventTitle(
+      {
+        subject: 'message',
+        event_type: 'message_published',
+        detail: { title: '版本发布完成' }
+      },
+      t
+    ),
+    '版本发布完成'
+  )
+  assert.equal(
+    alertEventTitle(
+      {
+        subject: 'sync',
+        event_type: 'sync_failed',
+        detail: { datasource_name: '工程知识库' }
+      },
+      t
+    ),
+    '工程知识库 · 同步失败'
+  )
+  assert.equal(
+    alertEventTitle(
+      {
+        subject: 'run',
+        event_type: 'run_failed',
+        detail: { assistant_name: '运维助手' }
+      },
+      t
+    ),
+    '运维助手 · 问答失败'
+  )
+  assert.equal(alertEventTitle({ event_type: 'run_failed' }, t), '问答失败')
+})
 
 test('running reminders exclude terminal failures and budget termination', () => {
   const catalog = {
@@ -123,4 +182,108 @@ test('message and running rules always use direct notification', () => {
       'direct'
     )
   }
+})
+
+test('new exception subscriptions start with failure events and a visible channel selector', async () => {
+  const { createAlertRuleForm } = await import(
+    '../src/admin/pages/Alerts/alertOptions.js'
+  )
+  const form = createAlertRuleForm(null, 'zh-CN')
+  assert.deepEqual(form.events, ['run_failed', 'run_partial', 'run_timeout'])
+  assert.equal(form.personal_subscription_enabled, false)
+  assert.equal(form.subscriptions.length, 1)
+  assert.equal(form.subscriptions[0].channel_uuid, '')
+  assert.equal(form.subscriptions[0].language, 'zh-CN')
+})
+
+test('simplified subscription edits preserve advanced settings, identities and languages', async () => {
+  const { createAlertRuleForm } = await import(
+    '../src/admin/pages/Alerts/alertOptions.js'
+  )
+  const existing = {
+    uuid: 'existing-rule',
+    subject: 'run',
+    events: ['run_token_limit'],
+    diagnosis_mode: 'notify_then_diagnose',
+    personal_subscription_enabled: true,
+    personal_channel_uuid: 'personal-mail',
+    subscriptions: [
+      {
+        uuid: 'destination',
+        channel_uuid: 'feishu',
+        language: 'es',
+        email_recipients: []
+      }
+    ]
+  }
+  const form = createAlertRuleForm(existing, 'zh-CN')
+  form.events.push('run_failed')
+  assert.deepEqual(existing.events, ['run_token_limit'])
+  const payload = alertRulePayload(form)
+  assert.equal(payload.diagnosis_mode, 'notify_then_diagnose')
+  assert.equal(payload.personal_subscription_enabled, true)
+  assert.equal(payload.subscriptions[0].uuid, 'destination')
+  assert.equal(payload.subscriptions[0].language, 'es')
+})
+
+test('selecting search results keeps hidden selections and avoids duplicates', async () => {
+  const { setAlertSelection } = await import(
+    '../src/admin/pages/Alerts/alertOptions.js'
+  )
+  assert.deepEqual(
+    setAlertSelection(['hidden', 'visible'], ['visible', 'second'], true),
+    ['hidden', 'visible', 'second']
+  )
+  assert.deepEqual(
+    setAlertSelection(
+      ['hidden', 'visible', 'second'],
+      ['visible', 'second'],
+      false
+    ),
+    ['hidden']
+  )
+  assert.deepEqual(setAlertSelection(['hidden'], [], true), ['hidden'])
+})
+
+test('notification sources identify the initiating user and preserve publisher and legacy fallbacks', () => {
+  const t = (key) =>
+    ({
+      'alertManagement.events.systemSource': '系统任务',
+      'alertManagement.events.unknownUser': '未知用户'
+    })[key]
+  assert.equal(
+    alertEventSource(
+      {
+        subject: 'run',
+        detail: {
+          user_display_name: '张三',
+          username: 'zhangsan',
+          assistant_name: '运维助手'
+        }
+      },
+      t
+    ),
+    '张三'
+  )
+  assert.equal(
+    alertEventSource({ subject: 'run', detail: { username: 'alice' } }, t),
+    'alice'
+  )
+  assert.equal(
+    alertEventSource(
+      { subject: 'message', detail: { publisher_name: 'operator' } },
+      t
+    ),
+    'operator'
+  )
+  for (const subject of ['sync', 'processing']) {
+    assert.equal(alertEventSource({ subject }, t), '系统任务')
+  }
+  assert.equal(
+    alertEventSource(
+      { subject: 'run', detail: { assistant_name: '运维助手' } },
+      t
+    ),
+    '未知用户'
+  )
 })
