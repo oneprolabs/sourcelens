@@ -83,3 +83,26 @@ sources. They validate synthesis behavior, not full production retrieval or UI.
 Production acceptance still requires deploying both API and LensNode, verifying
 the previously merged review-budget/parser fixes in the actual images, and
 re-running representative questions against their configured sources.
+
+## Activity-report follow-up (2026-10-19)
+
+Production activity reports exposed a separate compaction failure: a summary
+request without tools returned DSML text and the gateway rejected it. Summary
+protocol failures now emit `deepagents.summarization.failed`, retain the original
+history, and disable further compaction attempts for that middleware instance.
+Invalid or placeholder summaries take the same path. Main-agent protocol
+validation, cancellation, hard budget exhaustion, and unexpected exceptions
+continue to propagate. Retaining history can increase context size; this fallback
+does not guarantee that a long investigation fits the provider context window.
+
+Large ledger metadata previously reduced evidence pages to one record before it
+was omitted. Page sizing now budgets metadata before record reduction and includes
+read progress before persisting it. A pending artifact write at the token reserve
+gets one bounded write-and-publish opportunity, subject to the existing hard cap
+and upload checks. Skill formatting cannot justify unsupported personnel claims.
+See `docs/reference/activity-report-contract.md` for the detailed contracts.
+
+Offline pagination replay of the four affected source snapshots (105–122 records)
+completed in 7–9 pages while retaining GitHub coverage gaps. This validates saved
+evidence traversal, not real-model report quality or recovery of missing sources.
+No production deployment or online rerun is implied by these local checks.

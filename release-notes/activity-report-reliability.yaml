@@ -1,0 +1,11 @@
+type: fix
+audience: user
+en: >-
+  Fix activity reports stopping after invalid context summaries or reading only
+  one work record per page. Allow pending report files a bounded opportunity to
+  finish saving near the token limit, retain source coverage warnings, and explain
+  why reports with unreviewed evidence or unsupported conclusions are withheld.
+zh-CN: >-
+  修复工作汇总因上下文摘要异常中断、证据每页仅返回一条记录的问题。
+  接近 token 限额时，为已开始生成的报告文件保留有界保存机会，继续披露来源缺口，
+  并明确说明因证据未核对完或结论缺乏支持而未发布报告的原因。

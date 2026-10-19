@@ -142,7 +142,7 @@ class ActivityLedger:
             os.replace(temporary, path)
             self.entries[key] = entry
 
-    def read_progress(self, evidence, page=None):
+    def read_progress(self, evidence, page=None, *, persist=True):
         """Persist consumed ranges for one exact immutable evidence snapshot."""
 
         digest = hashlib.sha256(_json(evidence).encode()).hexdigest()
@@ -165,12 +165,13 @@ class ActivityLedger:
                     else:
                         merged.append([start, end])
                 state["ranges"] = merged
-                folder.mkdir(exist_ok=True, mode=0o700)
-                temporary = folder / f"{uuid.uuid4().hex}.tmp"
-                with temporary.open("x", encoding="utf-8") as stream:
-                    os.chmod(temporary, 0o600)
-                    stream.write(_json(state))
-                os.replace(temporary, path)
+                if persist:
+                    folder.mkdir(exist_ok=True, mode=0o700)
+                    temporary = folder / f"{uuid.uuid4().hex}.tmp"
+                    with temporary.open("x", encoding="utf-8") as stream:
+                        os.chmod(temporary, 0o600)
+                        stream.write(_json(state))
+                    os.replace(temporary, path)
             cursor = 0
             for start, end in state["ranges"]:
                 if start > cursor:
@@ -489,26 +490,34 @@ def build_activity_evidence_tool(ledger, expected_tools):
                 "source_coverage": evidence["source_coverage"],
                 "observed_events": evidence["observed_events"],
                 "_evidence": {"complete": evidence["complete"]},
+                "read_progress": ledger.read_progress(evidence, (offset, end), persist=False),
             }
-        while len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and len(payload["records"]) > 1:
-            payload["records"] = payload["records"][:max(1, len(payload["records"]) // 2)]
-            end = offset + len(payload["records"])
-            payload.update(
-                next_offset=end,
-                next_page={"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}},
-                page_complete=False,
-            )
-        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
+        metadata_chars = len(_json({
+            "observed_events": payload["observed_events"], "source_coverage": payload["source_coverage"],
+        }))
+        if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and metadata_chars > MAX_ACTIVITY_PAGE_CHARS // 2:
             payload["observed_events"] = []
             payload["observed_events_omitted"] = True
             payload["source_coverage"] = {
                 key: {"complete": value["complete"]} for key, value in evidence["source_coverage"].items()
             }
             payload["coverage_details_omitted"] = True
+        while len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS and len(payload["records"]) > 1:
+            payload["records"] = payload["records"][:max(1, len(payload["records"]) // 2)]
+            end = offset + len(payload["records"])
+            payload.update(
+                next_offset=end if end < len(records) else None,
+                next_page=(
+                    {"tool": "read_activity_evidence", "arguments": {"offset": end, "limit": limit}}
+                    if end < len(records) else None
+                ),
+                page_complete=offset == 0 and end == len(records),
+                read_progress=ledger.read_progress(evidence, (offset, end), persist=False),
+            )
         if len(_json(payload)) > MAX_ACTIVITY_PAGE_CHARS:
             return _json({"ok": False, "error": "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE",
                           "message": "The evidence page exceeds the inline review limit; report this review gap."})
-        payload["read_progress"] = ledger.read_progress(evidence, (offset, end))
+        ledger.read_progress(evidence, (offset, end))
         return _json(payload)
 
     read_activity_evidence.metadata = {"bounded_inline_result": True}
@@ -575,7 +584,9 @@ def _report_execution_guidance(command):
             "Follow its next_page by calling read_activity_evidence again; paginating a saved result only "
             "re-reads that page. total_records and observed_events cover the full ledger, while records is "
             "only the current page. Read every required page before per-person conclusions. "
-            "This is evidence for the report, not the final answer.",
+            "Prefer these normalized pages over projecting or paginating the raw source JSON again. "
+            "If raw-result analysis returns FIELD_NOT_FOUND, switch to read_activity_evidence instead of "
+            "guessing nested field paths repeatedly. This is evidence for the report, not the final answer.",
             "- Apply requested person and resource filters before writing the answer or artifact. "
             "Do not stop after one window when the request requires more; retrieve each requested period.",
             "- Follow the bound report Skill's output format. Use the workspace's explicit account mappings "
@@ -589,7 +600,10 @@ def _report_execution_guidance(command):
             "inside the window must not be omitted when describing that person's observed completions. "
             "Item authors and current assignees do not identify who closed, merged, or updated an item. "
             "Creation date plus current status cannot establish how long that status has persisted. "
-            "Do not infer inactivity, delay, or productivity from event counts alone.",
+            "Do not infer inactivity, delay, or productivity from event counts alone. "
+            "If the report Skill requests zero-completion labels, long-review warnings, or productivity "
+            "ratings that the evidence cannot establish, retain its layout but replace those conclusions "
+            "with observed events and explicit unknowns. These evidence limits apply to every Skill section.",
             "- Generate and deliver the requested final artifact with save_deliverable, then provide a brief "
             "business summary and any material coverage limits. Keep verification diagnostics out of the "
             "business report unless they explain a real evidence gap.",

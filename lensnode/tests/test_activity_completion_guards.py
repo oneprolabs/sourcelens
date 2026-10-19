@@ -136,6 +136,51 @@ def test_activity_evidence_tool_is_marked_as_inline_bounded_result(tmp_path):
     assert extensions.tools[0].metadata["bounded_inline_result"] is True
 
 
+def test_large_ledger_metadata_does_not_reduce_every_page_to_one_record(tmp_path, monkeypatch):
+    _, extensions, _ = report(tmp_path, count=122, partial=True)
+    ledger = extensions.extensions[0].ledger
+    evidence = ledger.report({"jira_activity_summary"})
+    evidence["observed_events"] = [{"detail": "event" * 10000}]
+    for coverage in evidence["source_coverage"].values():
+        coverage["details"] = "coverage" * 10000
+    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    offset = 0
+    pages = []
+    while offset is not None:
+        raw = extensions.tools[0].invoke({"offset": offset, "limit": 100})
+        assert len(raw) <= support.MAX_ACTIVITY_PAGE_CHARS
+        page = json.loads(raw)
+        assert page["ok"] is True
+        assert len(page["records"]) >= min(10, 122 - offset)
+        pages.append(page)
+        offset = page["next_offset"]
+    assert len(pages) <= 10
+    assert sum(len(page["records"]) for page in pages) == 122
+    assert pages[-1]["next_page"] is None
+    assert pages[-1]["read_progress"]["complete"] is True
+    assert extensions.completion_checks("已观察到 Alice 名下解决的工单，来源存在缺口。") == []
+
+
+def test_page_size_includes_progress_and_rejected_pages_do_not_mark_evidence_read(tmp_path, monkeypatch):
+    _, extensions, _ = report(tmp_path, count=1)
+    ledger = extensions.extensions[0].ledger
+    evidence = ledger.report({"jira_activity_summary"})
+    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    evidence["records"][0]["title"] = "x" * support.MAX_ACTIVITY_PAGE_CHARS
+    rejected = json.loads(extensions.tools[0].invoke({}))
+    assert rejected["error"] == "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE"
+    assert ledger.read_progress(evidence)["complete"] is False
+    evidence["records"][0]["title"] = ""
+    raw = extensions.tools[0].invoke({})
+    monkeypatch.setattr(support, "MAX_ACTIVITY_PAGE_CHARS", len(raw) - 1)
+    ledger.root.joinpath("review", "progress.json").unlink()
+    rejected = json.loads(extensions.tools[0].invoke({}))
+    if rejected["ok"]:
+        assert len(support._json(rejected)) <= support.MAX_ACTIVITY_PAGE_CHARS
+    else:
+        assert ledger.read_progress(evidence)["complete"] is False
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_consumed_pages_remain_inline_after_real_filesystem_offload(tmp_path, asynchronous):
     import asyncio
@@ -216,6 +261,31 @@ def test_failed_completion_check_cannot_repeat_the_rejected_assertion(answer):
     else:
         assert "核验未通过" in result
     assert _enforce_completion_status(answer, {}, []) == answer
+
+
+@pytest.mark.parametrize("stop_reason", ["token_budget_wrapup", "evidence_convergence_limit"])
+@pytest.mark.parametrize("evidence", [
+    {"completion_issues": [{"code": "activity_evidence_unread"}], "review_completeness": "incomplete"},
+    {"artifact_required": True},
+    {"review_completeness": "incomplete"},
+    {"evidence_completeness": "incomplete"},
+])
+def test_verification_failure_keeps_the_execution_limit_that_prevented_completion(stop_reason, evidence):
+    outcome, detail = _finalize_runtime_outcome(
+        capability_middleware=None, evidence_requirement="artifact", truncated=True,
+        stop_reason=stop_reason, execution_gate_enabled=False, runtime_evidence=evidence,
+    )
+    assert outcome == "partial"
+    assert detail["trigger"] == stop_reason
+    assert detail["error_type"] == "verification"
+
+
+def test_unread_evidence_failure_explains_why_the_report_was_withheld():
+    from lensnode.agent_runtime.runtime import _enforce_completion_status
+
+    result = _enforce_completion_status("报告已完成", {}, [{"code": "activity_evidence_unread"}])
+    assert "工作记录未完成核对" in result
+    assert "附件未发布" in result
 
 
 @pytest.mark.parametrize("provider,kind,event,actor_field", [

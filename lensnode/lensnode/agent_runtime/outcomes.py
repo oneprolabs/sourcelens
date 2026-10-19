@@ -57,19 +57,21 @@ def _finalize_runtime_outcome(
     """Resolve a run outcome after observing actual tool execution."""
 
     runtime_evidence = runtime_evidence or {}
+    limit_trigger = {"trigger": stop_reason} if truncated and stop_reason else {}
     if runtime_evidence.get("completion_issues"):
         return "partial", {
+            **limit_trigger,
             "reason": "review_material_incomplete" if runtime_evidence.get("review_completeness") == "incomplete"
                       else "evidence_insufficient",
             "error_type": "verification",
             "completion_issues": runtime_evidence["completion_issues"],
         }
     if runtime_evidence.get("artifact_required") and not runtime_evidence.get("_deliverables"):
-        return "partial", _evidence_termination_detail("artifact")
+        return "partial", {**limit_trigger, **_evidence_termination_detail("artifact")}
     if runtime_evidence.get("review_completeness") == "incomplete":
-        return "partial", {"reason": "review_material_incomplete", "error_type": "verification"}
+        return "partial", {**limit_trigger, "reason": "review_material_incomplete", "error_type": "verification"}
     if runtime_evidence.get("evidence_completeness") == "incomplete":
-        return "partial", {"reason": "evidence_incomplete", "error_type": "verification"}
+        return "partial", {**limit_trigger, "reason": "evidence_incomplete", "error_type": "verification"}
     if runtime_evidence.get("convergence_exhausted"):
         return "partial", {"reason": "evidence_convergence_limit", "error_type": "execution_limit"}
     required_sources = set(runtime_evidence.get("required_sources") or [])
