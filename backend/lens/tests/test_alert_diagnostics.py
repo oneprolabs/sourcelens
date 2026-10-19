@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from agentcore_notifier.adapters.django.models import NotificationChannel
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -158,6 +159,54 @@ class AlertDiagnosisTests(TestCase):
         self.assertEqual(AlertDiagnosis.objects.count(), 2)
         self.assertEqual(AlertDelivery.objects.filter(status="diagnosing").count(), 2)
         self.assertEqual(AlertDelivery.objects.filter(status="suppressed").count(), 1)
+
+    def test_different_diagnosis_policies_and_budgets_are_not_silently_deduplicated(self):
+        from lens.models import AlertDiagnosis
+
+        first = self.rule("diagnose_first")
+        first.diagnosis_max_tokens = 1024
+        first.save()
+        self.rule("diagnose_first")
+        self.rule("direct")
+        self.occurrence()
+        self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 1)
+        self.assertEqual(AlertDelivery.objects.filter(status="diagnosing").count(), 2)
+        self.assertEqual(AlertDelivery.objects.filter(status="suppressed").count(), 0)
+        self.assertEqual(set(AlertDiagnosis.objects.values_list("max_tokens", flat=True)), {1024, 2048})
+
+    def test_diagnosis_survives_multiple_revoked_duplicate_owners(self):
+        from lens.alert_diagnostics import advance_alert_diagnoses
+        from lens.models import AlertDiagnosis
+
+        for mode in ("diagnose_first", "notify_then_diagnose"):
+            with self.subTest(mode=mode), transaction.atomic():
+                for _ in range(3):
+                    self.rule(mode)
+                self.occurrence()
+                original = AlertDelivery.objects.exclude(status="suppressed").get()
+                duplicates = list(AlertDelivery.objects.filter(status="suppressed"))
+                AlertSubscription.objects.filter(
+                    pk__in=[original.subscription_id, duplicates[0].subscription_id]
+                ).update(enabled=False)
+                AlertDiagnosis.objects.update(status="completed", result={"summary": "Preserved diagnosis."})
+                advance_alert_diagnoses()
+                with patch("lens.alerts._send_notification", return_value={"success": True}) as send:
+                    for _ in range(3):
+                        send_alert_delivery(AlertDelivery.objects.get(status="pending").uuid)
+                    send.assert_called_once()
+                    if mode == "diagnose_first":
+                        self.assertIn("Preserved diagnosis.", send.call_args.kwargs["params"]["body"])
+                    else:
+                        advance_alert_diagnoses()
+                        advance_alert_diagnoses()
+                        supplement = AlertDelivery.objects.get(phase="diagnosis")
+                        send_alert_delivery(supplement.uuid)
+                        self.assertEqual(send.call_count, 2)
+                        self.assertIn("Preserved diagnosis.", send.call_args.kwargs["params"]["body"])
+                self.assertEqual(AlertDelivery.objects.filter(phase="initial", status="sent").count(), 1)
+                self.assertEqual(AlertDelivery.objects.filter(status="skipped").count(), 2)
+                self.assertEqual(AlertDiagnosis.objects.count(), 1)
+                transaction.set_rollback(True)
 
     def test_diagnosis_worker_is_bounded_idempotent_and_omits_private_content(self):
         from lens.alert_diagnostics import execute_alert_diagnosis

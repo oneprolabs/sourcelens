@@ -43,7 +43,10 @@ Keep bounded object/rule/destination snapshots, not raw credentials or model
 payloads. Disable or revoke destinations before delivery to prevent stale queued
 personal notifications. A rule's cooldown suppresses repeated scheduled failures
 for the same resource/destination; manual operations bypass cooldown. Keep
-suppressed delivery records for audit. Pending delivery rows are the durable queue.
+suppressed delivery records for audit. Diagnosis waits participate in cooldown.
+If the owning subscription is revoked before sending, a matching suppressed
+subscription takes over atomically and rechecks its current access before sending.
+Pending delivery rows are the durable queue.
 
 Legacy channel fields remain supported by the rule API. Migration `0065_alert_rules`
 creates the complete notification schema directly after `0064_builtin_decisions`.
@@ -57,6 +60,11 @@ No alert-data backfill is needed before the first release.
 3. For personal Q&A or message subscriptions, publish the rule and select the personal email channel.
    Users subscribe in Settings → Notifications → Alert subscriptions.
 4. Inspect Alert events for each destination's status and retry exhausted failures.
+
+Admin Console operators can select active supported targets through
+`GET /api/lens/admin/alert-rules/channels/`. This paginated endpoint returns only
+target identity, name, type and active status. Target configuration and credentials
+remain restricted to staff through the notification target management API.
 
 Deploy with migrations through `0065_alert_rules`, register periodic tasks,
 and restart Celery workers and the scheduler.
@@ -107,7 +115,8 @@ and assistant visibility checks.
 The existing outbox is the publication record and delivery queue. No separate
 message broker or topic registry is introduced. Rules subscribe to exact topics;
 users opt in through the existing personal subscription screen. Identical
-occurrence/channel/normalized-recipient-set destinations across rules are sent once;
+occurrence/channel/normalized-recipient-set destinations with matching language and
+diagnosis policy across rules are sent once;
 additional matches retain suppressed history referencing the first delivery. Partial
 recipient overlap across differently configured destinations is not merged.
 
@@ -164,8 +173,9 @@ diagnosis instructions and fallback explanations use that language. Resource nam
 rule names and error codes retain their original values. If a recipient changes
 language while diagnosis is queued, the initial notification falls back to a basic
 alert in the current language; an obsolete-language supplement is skipped.
-Identical destinations deduplicate separately by language and initial/supplement
-phase. History records the sending language, diagnosis status, validated conclusions
+Identical destinations deduplicate separately by language, initial/supplement phase,
+diagnosis mode and diagnosis budgets. Rules requesting different diagnostic behavior
+receive independent notifications. History records the sending language, diagnosis status, validated conclusions
 and independent supplement outcome. Sending rechecks subscription access and policy.
 
 Published business messages can optionally include operator-authored translations:

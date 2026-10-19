@@ -6,6 +6,11 @@ import apiClient from '@/api/index'
 import { extractResponseData } from '@/utils/api'
 
 export const alertsAdminApi = {
+  getChannels(params = {}) {
+    return apiClient
+      .get('/lens/admin/alert-rules/channels/', { params })
+      .then(extractResponseData)
+  },
   getMessages(params = {}) {
     return apiClient
       .get('/lens/admin/alert-messages/', { params })

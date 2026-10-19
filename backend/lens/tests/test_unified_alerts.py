@@ -595,6 +595,83 @@ class UnifiedAlertTests(TestCase):
         self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 1)
         self.assertEqual(AlertDelivery.objects.filter(status="suppressed").count(), 1)
 
+    def test_revoked_duplicate_owner_preserves_an_enabled_subscription(self):
+        for action in ("disable_subscription", "delete_subscription", "disable_rule", "delete_rule"):
+            with self.subTest(action=action), transaction.atomic():
+                other = AlertRule.objects.create(name="Duplicate rule", events=["run_failed"])
+                AlertSubscription.objects.create(
+                    rule=other, channel_uuid=self.channel.uuid, email_recipients=["ops@example.com"]
+                )
+                evaluate_run_alerts(self.run_event().uuid)
+                original = AlertDelivery.objects.get(status="pending")
+                subscription = original.subscription
+                if action == "disable_subscription":
+                    subscription.enabled = False
+                    subscription.save()
+                elif action == "delete_subscription":
+                    subscription.delete()
+                elif action == "disable_rule":
+                    subscription.rule.enabled = False
+                    subscription.rule.save()
+                else:
+                    subscription.rule.delete()
+                with patch("lens.alerts._send_notification", return_value={"success": True}) as send:
+                    send_alert_delivery(original.uuid)
+                    for delivery in AlertDelivery.objects.filter(status="pending"):
+                        send_alert_delivery(delivery.uuid)
+                    for delivery in AlertDelivery.objects.all():
+                        send_alert_delivery(delivery.uuid)
+                send.assert_called_once()
+                self.assertEqual(AlertDelivery.objects.filter(status="sent").count(), 1)
+                self.assertEqual(AlertEvent.objects.get(rule=self.rule).status, "sent")
+                transaction.set_rollback(True)
+
+    def test_diagnosing_scheduled_failure_honors_cooldown(self):
+        from lens.models import AlertDiagnosis, DataSource
+
+        self.rule.subject = "sync"
+        self.rule.events = ["sync_failed"]
+        self.rule.cooldown_seconds = 3600
+        self.rule.diagnosis_mode = "diagnose_first"
+        self.rule.save()
+        source = DataSource.objects.create(name="Scheduled source", source_type="git", lensnode=self.node)
+        self.task_event("diagnosing-first", trigger="scheduled", datasource_uuid=str(source.uuid))
+        process_alert_outbox()
+        self.task_event("diagnosing-second", trigger="scheduled", datasource_uuid=str(source.uuid))
+        process_alert_outbox()
+        self.assertEqual(AlertDelivery.objects.filter(status="diagnosing").count(), 1)
+        self.assertEqual(AlertDelivery.objects.filter(status="suppressed").count(), 1)
+        self.assertEqual(AlertDiagnosis.objects.count(), 1)
+
+    def test_role_operator_can_select_paginated_channels_without_secrets(self):
+        from django.contrib.auth.models import Group
+
+        from accounts.models import Role
+
+        group = Group.objects.create(name="Alert operators")
+        role = Role.objects.create(name="Alert operator", visible_features=["admin_console"])
+        role.groups.add(group)
+        self.user.groups.add(group)
+        native = NotificationChannel.objects.create(
+            name="Native", channel_type="feishu", config={"url": "private-url", "sign_secret": "private-secret"}
+        )
+        NotificationChannel.objects.create(name="Disabled", channel_type="email", is_active=False, config={})
+        NotificationChannel.objects.create(name="Unsupported", channel_type="sms", config={})
+        client = APIClient()
+        client.force_authenticate(self.user)
+        response = client.get("/api/lens/admin/alert-rules/channels/", {"page_size": 1})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 2)
+        self.assertIsNotNone(response.data["next"])
+        second = client.get("/api/lens/admin/alert-rules/channels/", {"page_size": 1, "page": 2})
+        channels = response.data["results"] + second.data["results"]
+        self.assertEqual({row["uuid"] for row in channels}, {str(self.channel.uuid), str(native.uuid)})
+        for channel in channels:
+            self.assertEqual(set(channel), {"uuid", "name", "channel_type", "is_active"})
+        self.assertEqual(client.get("/api/v1/admin/notifications/channels/").status_code, 403)
+        client.force_authenticate(get_user_model().objects.create_user(username="no-alert-role"))
+        self.assertEqual(client.get("/api/lens/admin/alert-rules/channels/").status_code, 403)
+
     def publish_message(self, **overrides):
         from lens.messages import publish_message
 

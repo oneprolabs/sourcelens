@@ -253,6 +253,7 @@ import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { alertApiError } from './alertOptions'
+import { generateUUID } from '@/utils/uuid'
 const { t } = useI18n()
 const messages = ref([]),
   topic = ref(''),
@@ -287,7 +288,7 @@ async function load(value = 1) {
 function openPublisher() {
   form.value = {
     topic: topic.value.trim(),
-    idempotency_key: crypto.randomUUID(),
+    idempotency_key: generateUUID(),
     title: '',
     body: '',
     translations: Object.fromEntries(

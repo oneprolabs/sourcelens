@@ -267,7 +267,12 @@ def subscription_destination(subscription):
         )
     from .alert_content import notification_language
 
+    rule = subscription.rule
+    diagnosis_policy = [rule.diagnosis_mode]
+    if rule.diagnosis_mode != "direct":
+        diagnosis_policy.extend([rule.diagnosis_max_tokens, rule.diagnosis_timeout_seconds])
     return {
+        "diagnosis_policy": diagnosis_policy,
         "language": notification_language(subscription),
         "name": subscription.name or (channel.name if channel else ""),
         "channel_uuid": str(channel_uuid or ""),
@@ -335,7 +340,7 @@ def _evaluate_occurrence(outbox, running=False):
                 recent = AlertDelivery.objects.filter(
                     subscription=subscription,
                     event__detail__datasource_uuid=payload.get("datasource_uuid"),
-                    status__in=["pending", "sending", "sent"],
+                    status__in=["pending", "diagnosing", "sending", "sent"],
                     created_at__gte=timezone.now() - timedelta(seconds=rule.cooldown_seconds),
                 )
                 if recent.exists():
@@ -493,6 +498,45 @@ def _delivery_result(delivery):
     )
 
 
+def _promote_duplicate_delivery(delivery):
+    """Transfer a skipped delivery's ownership in the finalization transaction."""
+
+    if not delivery.dedupe_key:
+        return
+    duplicates = list(
+        AlertDelivery.objects.select_for_update().filter(
+            status="suppressed", destination__deduplicated_by=str(delivery.uuid)
+        )
+    )
+    if not duplicates:
+        return
+    replacement = duplicates[0]
+    AlertDelivery.objects.filter(pk=delivery.pk).update(dedupe_key=None)
+    replacement.dedupe_key = delivery.dedupe_key
+    replacement.destination = {key: value for key, value in replacement.destination.items() if key != "deduplicated_by"}
+    replacement.diagnosis_id = delivery.diagnosis_id
+    replacement.status = "pending"
+    replacement.error_message = ""
+    replacement.next_attempt_at = timezone.now()
+    replacement.save(
+        update_fields=[
+            "dedupe_key",
+            "destination",
+            "diagnosis",
+            "status",
+            "error_message",
+            "next_attempt_at",
+            "updated_at",
+        ]
+    )
+    for duplicate in duplicates[1:]:
+        duplicate.destination = {**duplicate.destination, "deduplicated_by": str(replacement.uuid)}
+    if len(duplicates) > 1:
+        AlertDelivery.objects.bulk_update(duplicates[1:], ["destination"])
+    _refresh_event_status(replacement.event)
+    transaction.on_commit(_wake_dispatcher)
+
+
 def send_alert_delivery(delivery_uuid):
     """Claim a destination without holding a database lock during network I/O."""
 
@@ -522,15 +566,19 @@ def send_alert_delivery(delivery_uuid):
         status, error = "sent", ""
     else:
         status, error = ("failed" if attempts >= 5 else "pending"), "Notification provider rejected the delivery"
-    AlertDelivery.objects.filter(pk=delivery.pk, claim_token=token).update(
-        status=status,
-        attempts=attempts,
-        error_message=error[:500],
-        claim_token=None,
-        sent_at=timezone.now() if status == "sent" else None,
-        next_attempt_at=timezone.now() + timedelta(seconds=min(60 * 2 ** (attempts - 1), 3600)),
-    )
-    _refresh_event_status(delivery.event)
+    with transaction.atomic():
+        finalized = AlertDelivery.objects.filter(pk=delivery.pk, claim_token=token).update(
+            status=status,
+            attempts=attempts,
+            error_message=error[:500],
+            claim_token=None,
+            sent_at=timezone.now() if status == "sent" else None,
+            next_attempt_at=timezone.now() + timedelta(seconds=min(60 * 2 ** (attempts - 1), 3600)),
+        )
+        if finalized:
+            if status == "skipped":
+                _promote_duplicate_delivery(delivery)
+            _refresh_event_status(delivery.event)
 
 
 def reconcile_alert_sources(limit=100):

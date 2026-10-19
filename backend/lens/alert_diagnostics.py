@@ -17,7 +17,7 @@ FINAL_STATUSES = {"completed", "failed", "timed_out"}
 
 
 def delivery_identity(source_key, destination, phase="initial"):
-    """Separate locale and notification phase while merging identical recipients."""
+    """Merge identical recipients only when locale, phase and diagnosis policy agree."""
 
     identity = [
         source_key,
@@ -25,6 +25,7 @@ def delivery_identity(source_key, destination, phase="initial"):
         sorted({email.casefold() for email in destination["recipients"]}),
         destination.get("language", "en-US"),
         phase,
+        destination.get("diagnosis_policy", ["direct"]),
     ]
     return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
 

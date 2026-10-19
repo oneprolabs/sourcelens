@@ -155,11 +155,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  alertsAdminApi,
-  managementApi,
-  notificationsAdminApi
-} from '@/admin/api'
+import { alertsAdminApi, managementApi } from '@/admin/api'
 import { listAssistants, listDataSources, listLensNodes } from '@/api/lens'
 import { collectPaginatedResults } from '@/api/pagination'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
@@ -228,7 +224,7 @@ async function initialize() {
       ),
       availableScopes(listLensNodes()),
       collectPaginatedResults((page) =>
-        notificationsAdminApi.getChannels({ page, page_size: 100 })
+        alertsAdminApi.getChannels({ page, page_size: 100 })
       ),
       managementApi.getAllUsers(),
       managementApi.getAllGroups()

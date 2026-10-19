@@ -46,6 +46,28 @@ class AlertRuleViewSet(BaseAuthenticatedViewSet):
 
         return Response({key: sorted(values) for key, values in SUBJECT_EVENTS.items()})
 
+    @action(detail=False, methods=["get"])
+    def channels(self, request):
+        """Expose paginated channel choices without staff-only configuration secrets."""
+
+        from agentcore_notifier.adapters.django.models import NotificationChannel
+
+        channels = NotificationChannel.objects.filter(
+            is_active=True, channel_type__in=["email", "webhook", "feishu", "wecom", "dingtalk"]
+        ).order_by("created_at", "uuid")
+        page = self.paginate_queryset(channels)
+        return self.get_paginated_response(
+            [
+                {
+                    "uuid": str(channel.uuid),
+                    "name": channel.name,
+                    "channel_type": channel.channel_type,
+                    "is_active": True,
+                }
+                for channel in page
+            ]
+        )
+
 
 class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
     """Inspect occurrences and per-destination provider outcomes."""
