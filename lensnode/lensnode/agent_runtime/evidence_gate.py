@@ -12,7 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 from ..gateway_model import RunCancelledError, RunTokenBudgetExhaustedError
-from .prompts import detect_answer_language, pick_text
 
 LOGGER = logging.getLogger("lensnode")
 
@@ -381,24 +380,6 @@ class EvidenceGateMiddleware(AgentMiddleware):
             except Exception:
                 LOGGER.exception("Completion check failed")
                 checks = [{"code": "completion_check_failed", "recovery": "Completion verification failed. Retry once."}]
-            if (
-                checks
-                and self.prepare_deliverables is not None
-                and (self.evidence or {}).get("_deliverables")
-                and all(check.get("code") == "activity_claim_unsupported" for check in checks)
-            ):
-                # Files have passed the same content checks immediately above.
-                # A rejected chat-only claim must not invalidate those checked bytes.
-                notice = pick_text(
-                    "工作汇总已作为附件提供。请查看报告中的人员工作内容和来源覆盖说明。",
-                    "The work summary is attached. See the report for each person's work and source coverage limits.",
-                    detect_answer_language(answer),
-                )
-                self._emit("deepagents.answer.notice_normalized", {"reason": "unsupported_chat_claim"})
-                replacement = last.model_copy(update={"content": notice})
-                selected_state = {**state, "messages": [*messages[:-1], replacement]}
-                review = self._review_answer(notice, selected_state) or {}
-                return {**review, "messages": [replacement, *review.get("messages", [])]}
             seen = set(self.review_state.get("completion_check_codes") or [])
             checks = [check for check in checks if check.get("code") not in seen]
             if checks:

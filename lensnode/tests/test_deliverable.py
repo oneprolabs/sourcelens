@@ -243,8 +243,8 @@ def test_failed_automatic_delivery_has_bounded_model_corrections(tmp_path):
     assert state.runtime_evidence["delivery_issues"][0]["code"] == "artifact_delivery_failed"
 
 
-def test_normalized_attachment_notice_preserves_graph_review_coverage():
-    """Host notice replacement must retain offloaded evidence at terminal review."""
+def test_answer_review_preserves_graph_evidence_coverage():
+    """Model answer review must retain offloaded evidence at terminal review."""
 
     from lensnode.agent_runtime.decision_policy import ControlDecisionPolicy, GateDecisionPolicy
     from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
@@ -256,18 +256,15 @@ def test_normalized_attachment_notice_preserves_graph_review_coverage():
     policy = GateDecisionPolicy(ControlDecisionPolicy(), Runner(), {"answer_supported": {"max_state_chars": 80000}})
     evidence = {"_deliverables": {"deliverables/report.html": "output-1"},
                 "evidence_completeness": "complete", "review_completeness": "complete"}
-    gate = EvidenceGateMiddleware(policy, "Create a report", evidence=evidence, prepare_deliverables=lambda: [],
-                                  completion_check=lambda answer: (
-                                      [{"code": "activity_claim_unsupported"}] if "zero work" in answer else []
-                                  ))
+    gate = EvidenceGateMiddleware(policy, "Create a report", evidence=evidence, prepare_deliverables=lambda: [])
     graph_state = {"messages": [
         ToolMessage(name="read_file", tool_call_id="read", content=(
             "Tool result too large, the result was saved in the filesystem. Preview: Alice updated PR 1."
         )),
-        AIMessage(content="Alice did zero work."),
+        AIMessage(content="The report is attached."),
     ]}
-    update = gate.after_model(graph_state, None)
-    notice = update["messages"][0].content
+    gate.after_model(graph_state, None)
+    notice = graph_state["messages"][-1].content
     state = SimpleNamespace(decision_policy=policy, runtime_evidence=evidence, evidence_middleware=gate,
                             question="Create a report")
     verdict = agent_runtime._post_run_decision_gates(state, notice)
@@ -344,10 +341,9 @@ def test_automatic_delivery_survives_budget_reserve_without_save_call(monkeypatc
     assert collector.command["_deliverables"] == {"deliverables/report.html": "output-1"}
 
 
-@pytest.mark.parametrize("unsupported_notice", [False, True])
 @pytest.mark.parametrize("at_delivery_limit", [False, True])
 def test_real_graph_automatically_delivers_without_save_tool(
-    monkeypatch, tmp_path, unsupported_notice, at_delivery_limit
+    monkeypatch, tmp_path, at_delivery_limit
 ):
     """A generated file reaches the manifest when the model answers normally."""
 
@@ -356,12 +352,7 @@ def test_real_graph_automatically_delivers_without_save_tool(
     from langchain_core.tools import tool
 
     _install_transport(monkeypatch, lambda request: httpx.Response(201, json={"uuid": "output-1"}))
-    def checks(text):
-        """Reject a chat-only claim while accepting the independently checked file."""
-
-        return [{"code": "activity_claim_unsupported"}] if "zero work" in text else []
-
-    command = {"run_uuid": "run-123", "_validate_deliverable": checks}
+    command = {"run_uuid": "run-123"}
     evidence = {"artifact_required": True}
     collector = AutomaticDeliverables(command, _resources(tmp_path), _config(), evidence=evidence)
 
@@ -380,7 +371,7 @@ def test_real_graph_automatically_delivers_without_save_tool(
 
     class Extension(AgentExtension):
         def completion_checks(self, answer):
-            return checks(answer)
+            return []
 
     if at_delivery_limit:
         evidence["_answer_review"] = {"convergence_nudges": 2, "delivery_turns": 7}
@@ -391,14 +382,10 @@ def test_real_graph_automatically_delivers_without_save_tool(
                             decision_policy=policy)
     graph = create_agent(Model(responses=[
         AIMessage(content="", tool_calls=[{"id": "write", "name": "write_file", "args": {}}]),
-        AIMessage(content="Alice did zero work." if unsupported_notice else "The report is attached."),
+        AIMessage(content="The report is attached."),
     ]), tools=[write_file], middleware=[agent_runtime._build_evidence_middleware(state)])
     result = graph.invoke({"messages": [{"role": "user", "content": "Create a report"}]})
-    if unsupported_notice:
-        assert "zero work" not in result["messages"][-1].content
-        assert "attached" in result["messages"][-1].content
-    else:
-        assert result["messages"][-1].content == "The report is attached."
+    assert result["messages"][-1].content == "The report is attached."
     assert command["_deliverables"] == {"deliverables/report.html": "output-1"}
     if at_delivery_limit:
         assert evidence["_answer_review"]["delivery_turns"] == 9
