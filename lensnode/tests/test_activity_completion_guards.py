@@ -418,3 +418,15 @@ def test_single_record_page_drops_small_optional_metadata_before_rejecting(tmp_p
     assert page["coverage_details_omitted"] is True
     assert page["read_progress"]["complete"] is True
     assert ledger.read_progress(evidence)["complete"] is True
+
+@pytest.mark.parametrize("text", [
+    "可核实的只有两项故障受理及其当前状态；没有完成事件、没有描述与评论，质量与产出水平均无法评价。",
+    "本次台账没有任何完成记录，不能据此判断实际工作量。",
+    "Alice 没有完成证据，暂无法核验交付状态。",
+])
+def test_absence_of_completion_records_is_not_a_zero_work_claim(tmp_path, text):
+    """A record-level limitation must remain reportable after a report repair."""
+
+    _, extensions, _ = report(tmp_path, partial=True)
+    extensions.tools[0].invoke({})
+    assert extensions.completion_checks(text) == []

@@ -337,7 +337,7 @@ def _negative_activity_claims(answer):
     parser = _ReportText()
     parser.feed(str(answer or ""))
     pattern = re.compile(
-        r"零完成|没有(?:任何)?(?:完成|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
+        r"零完成|没有(?:任何)?(?:完成(?!事件|记录|证据)|产出|工作)|低产出|产出(?:偏低|很低)|长期未推进|长期停滞|"
         r"\b(?:completed nothing|zero[- ]completions?|low productivity|no activity|inactive|no work)\b",
         re.IGNORECASE,
     )
