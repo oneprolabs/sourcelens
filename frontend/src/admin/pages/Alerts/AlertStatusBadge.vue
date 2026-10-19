@@ -2,8 +2,15 @@
   <span
     class="inline-flex items-center whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium"
     :class="tone"
+    :title="
+      compact ? t(`alertManagement.unified.statuses.${status}`) : undefined
+    "
   >
-    {{ t(`alertManagement.unified.statuses.${status}`) }}
+    {{
+      t(
+        `alertManagement.${compact ? 'events.compactStatuses' : 'unified.statuses'}.${status}`
+      )
+    }}
   </span>
 </template>
 
@@ -11,7 +18,10 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps({ status: { type: String, required: true } })
+const props = defineProps({
+  status: { type: String, required: true },
+  compact: { type: Boolean, default: false }
+})
 const { t } = useI18n()
 const tone = computed(
   () =>
