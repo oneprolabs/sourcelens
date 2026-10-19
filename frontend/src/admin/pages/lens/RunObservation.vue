@@ -2243,6 +2243,7 @@ function openDetail(uuid) {
   previewFile.value = null
   questionCanExpand.value = false
   questionExpanded.value = false
+  void fetchDetail()
 }
 
 function closeDetail() {
@@ -2301,21 +2302,24 @@ async function fetchRuns() {
 }
 
 async function fetchDetail(background = false) {
-  if (!selectedUuid.value) return
+  const uuid = selectedUuid.value
+  if (!uuid) return
   if (!background) {
     detailLoading.value = true
     detail.value = null
   }
   try {
-    detail.value = await getAdminRun(selectedUuid.value)
+    const result = await getAdminRun(uuid)
+    if (selectedUuid.value !== uuid) return
+    detail.value = result
     questionExpanded.value = false
   } catch (e) {
-    if (!background) {
+    if (!background && selectedUuid.value === uuid) {
       showError(extractErrorMessage(e, t('common.error')))
       detail.value = null
     }
   } finally {
-    if (!background) {
+    if (!background && selectedUuid.value === uuid) {
       detailLoading.value = false
       await measureQuestionOverflow()
     }
@@ -2359,9 +2363,14 @@ onMounted(() => {
   ])
 })
 
-watch(detailVisible, (visible) => {
-  if (visible && selectedUuid.value) fetchDetail()
-})
+watch(
+  () => route.query.run,
+  (uuid) => {
+    if (typeof uuid === 'string' && uuid && uuid !== selectedUuid.value)
+      openDetail(uuid)
+  },
+  { immediate: true }
+)
 
 watch(
   [detailVisible, () => detail.value?.status],

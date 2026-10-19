@@ -152,7 +152,24 @@
         <BaseLoading v-if="loading && !statsData" />
 
         <div
-          v-if="!loading && !statsData"
+          v-if="statsError"
+          data-testid="notification-stats-error"
+          role="alert"
+          class="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center shadow-sm"
+        >
+          <h2 class="text-sm font-semibold text-gray-900">
+            {{ t('notificationManagement.stats.loadErrorTitle') }}
+          </h2>
+          <p class="mt-1 text-sm text-gray-500">
+            {{ t('notificationManagement.stats.loadErrorDescription') }}
+          </p>
+          <BaseButton class="mt-5" size="sm" @click="fetchStats">
+            {{ t('notificationManagement.stats.retry') }}
+          </BaseButton>
+        </div>
+
+        <div
+          v-else-if="!loading && !statsData"
           class="py-16 text-center rounded-2xl border border-gray-200 bg-white shadow-sm"
         >
           <svg
@@ -441,7 +458,10 @@ import {
 } from 'chart.js'
 import { notificationsAdminApi, llmAdminApi } from '@/admin/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
-import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
+import {
+  notificationChannelStats,
+  notificationTargetLabel
+} from '@/admin/utils/notificationTargets'
 import { hasStatisticsData } from '@/admin/utils/statisticsState'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -474,6 +494,8 @@ const hasStatsData = computed(() =>
   hasStatisticsData(statsData.value?.summary?.total)
 )
 const loading = ref(false)
+const statsError = ref(false)
+let statsRequestId = 0
 const granularity = ref('day')
 const userScope = ref('')
 const userOptions = ref([])
@@ -599,43 +621,15 @@ const seriesChartOptions = computed(() => ({
   }
 }))
 
-const totalForChannel = computed(() => {
-  const list = statsData.value?.by_provider
-  if (!Array.isArray(list)) return 0
-  return list.reduce((sum, r) => sum + Number(r.count || 0), 0)
-})
-
 const CHANNEL_COLORS = ['#3b82f6', '#22c55e', '#eab308', '#a855f7']
 
-const ALL_CHANNELS = ['feishu', 'wecom', 'wechat', 'dingtalk', 'email']
-
-const channelBarData = computed(() => {
-  const list = statsData.value?.by_provider
-  const byType = Array.isArray(list)
-    ? Object.fromEntries(
-        list.map((r) => [
-          r.provider_type,
-          {
-            count: Number(r.count ?? 0),
-            label: r.provider_display_name || r.provider_type
-          }
-        ])
-      )
-    : {}
-  const total = totalForChannel.value || 1
-  return ALL_CHANNELS.map((ch, i) => {
-    const data = byType[ch]
-    const count = data ? data.count : 0
-    const label = notificationTargetLabel(ch, t)
-    return {
-      provider_type: ch,
-      label,
-      count,
-      percent: total > 0 ? Math.round((count / total) * 100) : 0,
-      color: CHANNEL_COLORS[i % CHANNEL_COLORS.length]
-    }
-  })
-})
+const channelBarData = computed(() =>
+  notificationChannelStats(statsData.value?.by_provider).map((row, i) => ({
+    ...row,
+    label: notificationTargetLabel(row.provider_type, t),
+    color: CHANNEL_COLORS[i % CHANNEL_COLORS.length]
+  }))
+)
 
 const SOURCE_PIE_COLORS = [
   '#3b82f6',
@@ -790,21 +784,27 @@ function selectGranularity(g) {
 }
 
 async function fetchStats() {
+  const requestId = ++statsRequestId
   if (!startDate.value || !endDate.value) {
     setDefaultDates()
   }
   loading.value = true
+  statsError.value = false
+  statsData.value = null
   try {
     const params = { granularity: granularity.value }
     if (startDate.value) params.start_date = startDate.value
     if (endDate.value) params.end_date = endDate.value
     if (userScope.value) params.user_id = userScope.value
     const data = await notificationsAdminApi.getStats(params)
+    if (requestId !== statsRequestId) return
     statsData.value = data ?? null
   } catch {
+    if (requestId !== statsRequestId) return
     statsData.value = null
+    statsError.value = true
   } finally {
-    loading.value = false
+    if (requestId === statsRequestId) loading.value = false
   }
 }
 
