@@ -18,6 +18,7 @@ from .plugins.decisions import (
 from .plugins.registry import PluginRegistryError
 
 ALL_CAPABILITIES = ["general_chat", "knowledge_qa", "code_analysis"]
+DEFAULT_REVIEW_STATE_CHARS = 80000
 DECISIONS = [
     {
         "key": key,
@@ -35,9 +36,14 @@ DECISIONS = [
             {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000},
         ),
         ("evidence_requirement", "noul", ["general_chat"], {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}),
-        ("evidence_sufficient", "noul", ALL_CAPABILITIES, {"threshold": 0.5, "margin": 0.1, "max_state_chars": 4000}),
-        ("answer_supported", "choice", ALL_CAPABILITIES, {"max_state_chars": 4000}),
-        ("evidence_strength", "choice", ALL_CAPABILITIES, {"max_state_chars": 6000}),
+        (
+            "evidence_sufficient",
+            "noul",
+            ALL_CAPABILITIES,
+            {"threshold": 0.5, "margin": 0.1, "max_state_chars": DEFAULT_REVIEW_STATE_CHARS},
+        ),
+        ("answer_supported", "choice", ALL_CAPABILITIES, {"max_state_chars": DEFAULT_REVIEW_STATE_CHARS}),
+        ("evidence_strength", "choice", ALL_CAPABILITIES, {"max_state_chars": DEFAULT_REVIEW_STATE_CHARS}),
     ]
 ] + [
     {

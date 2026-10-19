@@ -15,7 +15,7 @@ from ..plugin_package_loader import (
 )
 from ..plugin_tools import _execute_plugin_tool
 from .builtin_decisions import call_builtin_decision
-from .evidence_material import bound_review_state
+from .evidence_material import DEFAULT_REVIEW_STATE_CHARS, bound_review_state
 
 GATE_SOURCE = "decision_gate"
 GATE_PHASE = "P3"
@@ -500,12 +500,12 @@ def _gate_arguments(gate, question, history, tools, max_state_chars):
     instructions = spec.get("instructions")
     if not instructions:
         return None
-    limit = (
-        max_state_chars
-        if type(max_state_chars) is int and max_state_chars > 0
-        else DEFAULT_MAX_STATE_CHARS
-    )
-    state = _state_text(question, history, max_state_chars)
+    limit = DEFAULT_MAX_STATE_CHARS
+    if gate in {"answer_supported", "evidence_sufficient", "evidence_strength"}:
+        limit = DEFAULT_REVIEW_STATE_CHARS
+    if type(max_state_chars) is int and max_state_chars > 0:
+        limit = max_state_chars
+    state = _state_text(question, history, limit)
     if not state or len(state) > limit:
         return None
     if gate == "evidence_requirement":

@@ -100,6 +100,14 @@ class BuiltinDecisionTests(TestCase):
         self.assertEqual(snapshot["analyses"], {})
         self.assertEqual(snapshot["score"]["kind"], "score")
 
+    def test_auto_review_gates_allow_complete_multi_source_material(self):
+        """Automatic review must accommodate searches and full document excerpts."""
+
+        snapshot = build_assistant_decision_model(self.assistant)
+        for gate in ("answer_supported", "evidence_sufficient", "evidence_strength"):
+            with self.subTest(gate=gate):
+                self.assertEqual(snapshot["gates"][gate]["max_state_chars"], 80000)
+
     def test_explicit_score_uses_the_frozen_model_and_user_rubric(self):
         self.payload.update(
             source="decision_score",

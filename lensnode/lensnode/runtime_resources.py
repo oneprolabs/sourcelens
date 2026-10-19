@@ -532,13 +532,14 @@ def _run_document_conversion(
     process_context = multiprocessing.get_context("spawn")
     result_queue = process_context.Queue(maxsize=1)
     progress_queue = process_context.Queue(maxsize=128)
+    conversion_cancel_event = process_context.Event()
     process = process_context.Process(
         target=_conversion_worker,
         args=(
             target,
             path,
             item,
-            context,
+            {**context, "cancel_event": conversion_cancel_event},
             result_queue,
             progress_queue,
         ),
@@ -576,6 +577,9 @@ def _run_document_conversion(
             raise RuntimeError(payload.get("error") or "CONVERSION_FAILED")
         return payload.get("result")
     finally:
+        if started and process.is_alive():
+            conversion_cancel_event.set()
+            process.join(timeout=1)
         if started and process.is_alive():
             process.terminate()
             process.join(timeout=1)

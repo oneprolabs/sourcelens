@@ -129,6 +129,43 @@ def test_complete_tool_results_respect_the_configured_review_budget():
     assert reviewed[0]["evidence_completeness"] == "complete"
 
 
+def test_default_review_budget_carries_a_normal_multi_source_knowledge_answer():
+    """Search results and two document reads must reach the reviewer intact."""
+
+    reviewed = []
+
+    class Runner:
+        def evaluate_choice(self, gate, *, question):
+            reviewed.append(json.loads(question))
+            return "supported"
+
+    policy = GateDecisionPolicy(ModelDecisionPolicy(), Runner(), {"answer_supported": {}})
+    middleware = EvidenceGateMiddleware(policy, "Introduce the product and two capabilities.")
+    sources = [
+        ("search_workspace", 17958),
+        ("search_workspace", 15262),
+        ("read_workspace_file", 8994),
+        ("read_workspace_file", 2974),
+        ("search_workspace", 3845),
+    ]
+    messages = [
+        ToolMessage(name=name, tool_call_id=str(index), content="E" * size)
+        for index, (name, size) in enumerate(sources)
+    ]
+    messages.insert(0, ToolMessage(name="find_files", tool_call_id="navigation", content="P" * 10373))
+    messages.insert(3, ToolMessage(name="find_files", tool_call_id="inventory", content="P" * 3823))
+
+    verdicts = middleware._verify("A" * 1224, {"messages": messages})
+
+    assert verdicts == {"answer_supported": "supported"}
+    assert len(reviewed) == 1
+    evidence = reviewed[0]["runtime_evidence"]["retrieved_evidence"]
+    assert [(item["tool"], len(item["content"])) for item in evidence] == [
+        ("find_files", 10373), *sources[:2], ("find_files", 3823), *sources[2:],
+    ]
+    assert reviewed[0]["review_completeness"] == "complete"
+
+
 def test_score_results_are_judgments_not_retrieval_evidence():
     policy = _ReviewPolicy()
     middleware = EvidenceGateMiddleware(policy, "Was it completed?")
@@ -137,6 +174,33 @@ def test_score_results_are_judgments_not_retrieval_evidence():
         AIMessage(content="Completion could not be verified."),
     ]}, None)
     assert not (policy.materials[0] or {}).get("retrieved_evidence")
+
+
+def test_file_discovery_is_preserved_when_it_is_the_only_evidence():
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "Which files are available?")
+    middleware._verify("report.md", {"messages": [
+        ToolMessage(name="find_files", tool_call_id="files", content='{"files":["report.md"]}'),
+    ]})
+    evidence = policy.materials[0]["retrieved_evidence"]
+    assert len(evidence) == 1
+    assert evidence[0]["tool"] == "find_files"
+
+
+def test_file_inventory_is_preserved_alongside_document_content():
+    """Mixed inventory and summary questions need both kinds of evidence."""
+
+    policy = _ReviewPolicy()
+    middleware = EvidenceGateMiddleware(policy, "List all reports and summarize the first.")
+    inventory = '{"files":["first.md","second.md"]}'
+    middleware._verify("first.md and second.md; the first reports growth.", {"messages": [
+        ToolMessage(name="find_files", tool_call_id="files", content=inventory),
+        ToolMessage(name="read_workspace_file", tool_call_id="read", content="The first reports growth."),
+    ]})
+
+    evidence = policy.materials[0]["retrieved_evidence"]
+    assert [item["tool"] for item in evidence] == ["find_files", "read_workspace_file"]
+    assert evidence[0]["content"] == inventory
 
 
 def test_skill_instructions_do_not_make_complete_source_evidence_inconclusive():
