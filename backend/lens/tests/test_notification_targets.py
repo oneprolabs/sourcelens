@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -208,3 +209,51 @@ class NotificationTargetTests(TestCase):
             self.assertNotIn("<@all>", text)
             self.assertNotIn("](https://evil.test)", text)
             self.assertIn("…", text)
+
+    def test_run_action_is_clickable_and_survives_bounded_untrusted_content(self):
+        url = "https://lens.example.test/management/lens/runs?run=123"
+        label = "查看 Run 详情"
+        for provider in URLS:
+            with self.subTest(provider=provider):
+                payload = build_payload(
+                    provider,
+                    "[SourceLens] 问答失败",
+                    "<at id=all></at> [fake](https://evil.test)\n" + "长问题" * 10000,
+                    action_url=url,
+                    action_label=label,
+                )
+                if provider == "feishu":
+                    action = next(item for item in payload["card"]["elements"] if item["tag"] == "action")
+                    self.assertEqual(action["actions"][0]["url"], url)
+                    self.assertEqual(action["actions"][0]["text"]["content"], label)
+                    text = payload["card"]["elements"][0]["text"]["content"]
+                else:
+                    text = payload["markdown"]["content" if provider == "wecom" else "text"]
+                    self.assertIn(f"[{label}]({url})", text)
+                    self.assertLessEqual(len(text.encode()), 4096 if provider == "wecom" else 12000)
+                self.assertNotIn("](https://evil.test)", text)
+                self.assertNotIn("<at", text)
+
+    def test_structured_feishu_card_bounds_and_escapes_every_user_content_region(self):
+        untrusted = "<at id=all></at> [fake](https://evil.test) " + "长内容" * 10000
+        payload = build_payload(
+            "feishu",
+            "Title",
+            "Plain text fallback",
+            action_url="https://lens.example.test/management/lens/runs?run=123",
+            card_content={
+                "color": "red",
+                "summary": untrusted,
+                "fields": [("Assistant", untrusted), ("User", untrusted)],
+                "metrics": [("Tokens", "12500"), ("Threshold", "10000")],
+                "sections": [("Question", untrusted), ("Diagnosis", untrusted)],
+                "reference": untrusted,
+            },
+        )
+        self.assertEqual(payload["card"]["schema"], "2.0")
+        text = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn("<at", text)
+        self.assertNotIn("](https://evil.test)", text)
+        self.assertLess(len(text.encode()), 28000)
+        self.assertIn("…", text)
+        self.assertIn("https://lens.example.test/management/lens/runs?run=123", text)

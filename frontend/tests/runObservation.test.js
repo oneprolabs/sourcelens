@@ -306,3 +306,68 @@ test('run statuses are localized consistently across list and detail', async () 
     /statusText\(\s*detail\.executor_status\s*\|\|\s*detail\.status\s*\)/s
   )
 })
+
+test('opening a run from a notification loads that run even when the drawer is already open', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await source()
+  const start = contents.indexOf('function openDetail(uuid)')
+  const end = contents.indexOf('\n}', start) + 2
+  const ref = (value) => ({ value })
+  const loaded = []
+  const context = vm.createContext({
+    selectedUuid: ref('previous-run'),
+    detailVisible: ref(true),
+    detail: ref({ uuid: 'previous-run' }),
+    activeDetailTab: ref('execution'),
+    activeExecutionView: ref('diagnosis'),
+    previewFile: ref({}),
+    questionCanExpand: ref(true),
+    questionExpanded: ref(true),
+    fetchDetail: async () => loaded.push(context.selectedUuid.value)
+  })
+  vm.runInContext(contents.slice(start, end), context)
+  context.openDetail('notification-run')
+  assert.equal(context.selectedUuid.value, 'notification-run')
+  assert.equal(context.detailVisible.value, true)
+  assert.equal(context.detail.value, null)
+  assert.equal(context.activeDetailTab.value, 'overview')
+  assert.deepEqual(loaded, ['notification-run'])
+})
+
+test('a previous run request cannot replace the selected run or end its loading state', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await source()
+  const start = contents.indexOf('async function fetchDetail(')
+  const end = contents.indexOf('\n}', start) + 2
+  for (const failed of [false, true]) {
+    let resolveRequest, rejectRequest
+    const errors = []
+    const context = vm.createContext({
+      selectedUuid: { value: 'previous-run' },
+      detail: { value: null },
+      detailLoading: { value: false },
+      questionExpanded: { value: false },
+      getAdminRun: () =>
+        new Promise((resolve, reject) => {
+          resolveRequest = resolve
+          rejectRequest = reject
+        }),
+      showError: (message) => errors.push(message),
+      extractErrorMessage: (error) => error.message,
+      t: (key) => key,
+      measureQuestionOverflow: async () => {}
+    })
+    vm.runInContext(contents.slice(start, end), context)
+    const pending = context.fetchDetail()
+    context.selectedUuid.value = 'notification-run'
+    const current = { uuid: 'notification-run' }
+    context.detail.value = current
+    context.detailLoading.value = true
+    if (failed) rejectRequest(new Error('Previous request failed'))
+    else resolveRequest({ uuid: 'previous-run' })
+    await pending
+    assert.equal(context.detail.value, current)
+    assert.equal(context.detailLoading.value, true)
+    assert.deepEqual(errors, [])
+  }
+})

@@ -80,9 +80,12 @@ def _run_payload(run):
     """Snapshot safe routing context; measure usage only when matching a rule."""
 
     assistant = run.session.assistant
+    user = run.session.user
+    question = run.input_message.content if run.input_message_id else ""
     termination = run.termination_detail or {}
     return {
         "occurred_at": (run.finished_at or timezone.now()).isoformat(),
+        "started_at": (run.started_at or run.created_at).isoformat(),
         "run_uuid": str(run.uuid),
         "assistant_uuid": str(assistant.uuid),
         "assistant_name": assistant.name,
@@ -92,7 +95,9 @@ def _run_payload(run):
             else (str(assistant.lensnode.uuid) if assistant.lensnode_id else "")
         ),
         "user_id": run.session.user_id,
-        "username": run.session.user.username,
+        "username": user.username,
+        "user_display_name": user.get_full_name() or user.username,
+        "question": question[:2000] + ("…" if len(question) > 2000 else ""),
         "status": run.status,
         "outcome": run.outcome,
         "error": _error_code(run.error),
@@ -123,7 +128,7 @@ def schedule_run_alert_evaluation(run_uuid):
     """Persist alert work synchronously and wake Celery only after commit."""
 
     run = (
-        Run.objects.select_related("session__assistant__lensnode", "session__user", "lensnode")
+        Run.objects.select_related("session__assistant__lensnode", "session__user", "lensnode", "input_message")
         .filter(uuid=run_uuid)
         .first()
     )
@@ -447,7 +452,13 @@ def _delivery_result(delivery):
         "dingtalk",
     }:
         return {"skipped": True, "reason": "Notification channel unavailable"}
-    from .alert_content import notification_language, render_notification
+    from .alert_content import (
+        notification_card_content,
+        notification_language,
+        render_notification,
+        run_detail_url,
+        run_link_label,
+    )
 
     language = notification_language(subscription)
     if delivery.phase == "diagnosis" and (
@@ -459,6 +470,9 @@ def _delivery_result(delivery):
     delivery.destination = {**delivery.destination, "language": language}
     AlertDelivery.objects.filter(pk=delivery.pk).update(destination=delivery.destination)
     title, body = render_notification(delivery, language)
+    action_url = run_detail_url(delivery.event, personal=subscription.personal)
+    action_label = run_link_label(language, personal=subscription.personal)
+    card_content = notification_card_content(delivery, language)
     if channel.channel_type in {"feishu", "wecom", "dingtalk"}:
         from core.services.notification_targets import send_target
 
@@ -469,6 +483,9 @@ def _delivery_result(delivery):
             source_id=str(delivery.uuid),
             warning=delivery.event.subject != "message",
             language=language,
+            action_url=action_url,
+            action_label=action_label,
+            card_content=card_content,
         )
     if channel.channel_type == "email":
         recipients = sorted(set(destination["recipients"]) & set(delivery.destination.get("recipients") or []))
@@ -486,6 +503,9 @@ def _delivery_result(delivery):
                 f"{(channel.config or {}).get('message_prefix', '')} {title}".strip(),
                 body,
                 warning=delivery.event.subject != "message",
+                action_url=action_url,
+                action_label=action_label,
+                card_content=card_content,
             ),
         }
     return _send_notification(
@@ -602,7 +622,9 @@ def reconcile_alert_sources(limit=100):
                 .exclude(alert_uuid__in=known)
                 .order_by("finished_at")[:limit]
             )
-            for run in sources.select_related("session__assistant__lensnode", "session__user", "lensnode"):
+            for run in sources.select_related(
+                "session__assistant__lensnode", "session__user", "lensnode", "input_message"
+            ):
                 capture_run_alert(run)
         else:
             module = next(key for key, value in TASK_SUBJECTS.items() if value == subject)
@@ -632,7 +654,9 @@ def reconcile_alert_sources(limit=100):
             )
             .order_by("checked_at", "pk")[:limit]
         )
-        for run in completed.select_related("session__assistant__lensnode", "session__user", "lensnode"):
+        for run in completed.select_related(
+            "session__assistant__lensnode", "session__user", "lensnode", "input_message"
+        ):
             outbox = capture_run_alert(run)
             AlertOutbox.objects.filter(pk=outbox.pk).update(updated_at=timezone.now())
     if AlertRule.objects.filter(enabled=True, subject="run", evaluation_mode="running").exists():
@@ -648,7 +672,7 @@ def reconcile_alert_sources(limit=100):
                 alert_uuid=Replace(Cast("uuid", CharField()), Value("-"), Value("")),
                 checked_at=Coalesce(Subquery(checked, output_field=DateTimeField()), "created_at"),
             )
-            .select_related("session__assistant__lensnode", "session__user", "lensnode")
+            .select_related("session__assistant__lensnode", "session__user", "lensnode", "input_message")
             .order_by("checked_at", "pk")[:limit]
         )
         for run in runs:
