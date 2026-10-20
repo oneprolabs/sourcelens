@@ -1,0 +1,4 @@
+type: improvement
+audience: user
+en: Q&A alerts show a chronological task time interval and place the question above diagnosis results. Long questions use a short excerpt, and details links replace repeated Run identifiers.
+zh-CN: 问答告警合并展示任务时间区间，用户问题放在诊断结果上方；长问题显示摘要，通过详情链接查看完整内容，不再重复展示 Run 编号。

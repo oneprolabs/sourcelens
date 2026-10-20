@@ -148,8 +148,9 @@ def _feishu_card(title, content, action_url, action_label):
                 },
             ]
         )
-    reference = text(content.get("reference") or "SourceLens", 400)
-    elements.append({"tag": "markdown", "content": f"<font color='grey'>{reference}</font>"})
+    if content.get("reference"):
+        reference = text(content["reference"], 400)
+        elements.append({"tag": "markdown", "content": f"<font color='grey'>{reference}</font>"})
     color = content.get("color")
     return {
         "msg_type": "interactive",
