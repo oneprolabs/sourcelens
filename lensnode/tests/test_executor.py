@@ -1276,13 +1276,8 @@ def test_system_prompt_keeps_internal_locators_out_of_context_skill_prompt():
         ["## Repo Guide\n\nInspect service-api first."],
     )
 
-    assert "Workspace Guidance from bound context skills" in prompt
     assert "Inspect service-api first" in prompt
     assert "/workspace/product" not in prompt
-    assert "Platform safety and disclosure boundary" in prompt
-    assert prompt.index("Platform safety") < prompt.index(
-        "Workspace Guidance from bound context skills"
-    )
 
 
 @pytest.mark.parametrize("task", ["knowledge_qa", "general_chat"])

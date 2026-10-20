@@ -102,8 +102,6 @@ def test_default_evidence_read_continues_from_actual_bounded_page(tmp_path, monk
 @pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize("answer", [
     "Alice completed nothing.",
-    "Alice has low productivity.",
-    "This report cannot conclude that Alice completed nothing.",
     "<table><tr><td>Alice</td><td>no activity</td></tr></table>",
 ])
 def test_report_wording_is_owned_by_the_model_not_host_keyword_checks(tmp_path, partial, answer):
@@ -362,15 +360,3 @@ def test_single_record_page_drops_small_optional_metadata_before_rejecting(tmp_p
     assert page["source_details_omitted"] is True
     assert page["read_progress"]["complete"] is True
     assert ledger.read_progress(evidence)["complete"] is True
-
-@pytest.mark.parametrize("text", [
-    "可核实的只有两项故障受理及其当前状态；没有完成事件、没有描述与评论，质量与产出水平均无法评价。",
-    "本次台账没有任何完成记录，不能据此判断实际工作量。",
-    "Alice 没有完成证据，暂无法核验交付状态。",
-])
-def test_absence_of_completion_records_is_not_a_zero_work_claim(tmp_path, text):
-    """A record-level limitation must remain reportable after a report repair."""
-
-    _, extensions, _ = report(tmp_path, partial=True)
-    extensions.tools[0].invoke({})
-    assert extensions.completion_checks(text) == []

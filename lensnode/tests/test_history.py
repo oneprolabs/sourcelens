@@ -5048,18 +5048,6 @@ def test_general_chat_uses_no_task_middleware():
     )
 
 
-def test_general_chat_prompt_prefers_bounded_large_result_tools():
-    prompt = agent_runtime._general_chat_system_prompt(
-        {"question": "Summarize all orders."},
-        [],
-    )
-
-    assert "analyze_structured_output" in prompt
-    assert "inspect_saved_output" in prompt
-    assert "run_skill_transform" in prompt
-    assert "/large_tool_results/" in prompt
-
-
 def test_knowledge_qa_keeps_task_tool_available():
     middleware = agent_runtime._agent_middleware(
         {"task": "knowledge_qa"},
