@@ -16,6 +16,8 @@ from django.http import (
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.http import content_disposition_header
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -23,6 +25,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import AGENT_SCOPE_CLAIM, AGENT_TOKEN_SCOPE
 from accounts.models import normalize_answer_language
 from lens.assistant_lifecycle import AssistantNotRunnableError
 from lens.attachments import AttachmentError, store_message_attachment
@@ -73,6 +76,7 @@ from lens.serializers import (
     RunCreateSerializer,
     RunClarificationAnswerSerializer,
     RunFeedbackSerializer,
+    RunOutputFileSerializer,
     RunSerializer,
     SessionCreateSerializer,
     SessionSerializer,
@@ -543,7 +547,9 @@ class RunOutputFileDownloadView(APIView):
     inline in the app origin; preview is handled separately later.
 
     Authorization is DELIBERATELY private: only the session owner (or a
-    staff admin) may download. Sharing a run (SharedQA) copies the Q&A
+    staff admin with a web credential) may download. Agent credentials
+    always require ownership and a published message link.
+    Sharing a run (SharedQA) copies the Q&A
     text only and does NOT expose output files or this URL, so shared
     viewers cannot reach deliverables. If public sharing of a deliverable
     is ever wanted, do NOT relax this owner check -- add a separate
@@ -552,17 +558,20 @@ class RunOutputFileDownloadView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={(200, "application/octet-stream"): OpenApiTypes.BINARY})
     def get(self, request, uuid):
         """Return the file bytes for the session owner or a staff admin."""
 
+        is_agent = request.auth is not None and request.auth.get(AGENT_SCOPE_CLAIM) == AGENT_TOKEN_SCOPE
+        can_audit = request.user.is_staff and not is_agent
         output = get_object_or_404(
             RunOutputFile.objects.select_related("session").filter(
-                **({} if request.user.is_staff else {"message__isnull": False})
+                **({} if can_audit else {"message__isnull": False})
             ),
             uuid=uuid,
         )
         is_owner = output.session.user_id == request.user.id
-        if not is_owner and not request.user.is_staff:
+        if not is_owner and not can_audit:
             raise PermissionDenied("You do not have access to this file.")
         response = FileResponse(
             output.file.open("rb"),
@@ -570,7 +579,7 @@ class RunOutputFileDownloadView(APIView):
             filename=output.filename,
             content_type=output.content_type or "application/octet-stream",
         )
-        response["Cache-Control"] = "private, max-age=3600"
+        response["Cache-Control"] = "private, no-store" if is_agent else "private, max-age=3600"
         return response
 
 
@@ -609,14 +618,32 @@ class RunViewSet(BaseAuthenticatedViewSet):
         "input_message",
         "output_message",
         "lensnode",
-    ).prefetch_related("steps")
+    ).prefetch_related("steps", "output_message__output_files")
     serializer_class = RunSerializer
 
     def get_queryset(self):
         """Limit run access to the current user's sessions."""
 
         queryset = super().get_queryset()
+        if self.action == "output_files":
+            queryset = queryset.prefetch_related(None)
         return queryset.filter(session__user=self.request.user)
+
+    @extend_schema(responses=RunOutputFileSerializer(many=True))
+    @action(detail=True, methods=["get"], url_path="output-files", serializer_class=RunOutputFileSerializer)
+    def output_files(self, request, uuid=None):
+        """List published attachments of the run's final answer, with pagination."""
+
+        run = self.get_object()
+        files = (
+            run.output_message.output_files.all()
+            if run.output_message_id is not None
+            else RunOutputFile.objects.none()
+        )
+        page = self.paginate_queryset(files)
+        if page is not None:
+            return self.get_paginated_response(self.get_serializer(page, many=True).data)
+        return Response(self.get_serializer(files, many=True).data)
 
     @action(detail=True, methods=["patch"])
     def feedback(self, request, uuid=None):

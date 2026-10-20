@@ -22,7 +22,7 @@ from .password import (
 )
 from .user import CustomUserDetailsView
 from .scenes import GetAvailableScenesView
-from .agent_token import AgentTokenView
+from .agent_token import AgentTokenListView, AgentTokenRevokeView, AgentTokenView
 
 __all__ = [
     'CompleteGoogleSetupView',
@@ -38,4 +38,6 @@ __all__ = [
     'CustomUserDetailsView',
     'GetAvailableScenesView',
     'AgentTokenView',
+    'AgentTokenListView',
+    'AgentTokenRevokeView',
 ]

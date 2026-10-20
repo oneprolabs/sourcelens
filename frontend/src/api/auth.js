@@ -43,6 +43,14 @@ export const authApi = {
     })
   },
 
+  listAgentTokens() {
+    return api.get('/v1/auth/agent/tokens')
+  },
+
+  revokeAgentToken(id) {
+    return api.delete(`/v1/auth/agent/tokens/${id}`)
+  },
+
   // Reset password - Send reset email
   resetPassword(email) {
     return api.post('/v1/auth/password/reset', { email })
@@ -91,6 +99,8 @@ export const {
   logout,
   refreshToken,
   generateAgentToken,
+  listAgentTokens,
+  revokeAgentToken,
   resetPassword,
   confirmPasswordReset,
   changePassword,

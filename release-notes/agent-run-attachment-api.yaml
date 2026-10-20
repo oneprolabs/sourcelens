@@ -1,0 +1,9 @@
+type: feature
+audience: user
+en: >-
+  Add a paginated Run attachment endpoint for Agent clients, with documented
+  metadata and private downloads. Agent credentials issued by staff also
+  require session ownership and cannot download unpublished files.
+zh-CN: >-
+  新增面向 Agent 的 Run 附件分页清单接口，提供文件元信息和私有下载说明。
+  管理员签发的 Agent 凭证同样受会话归属与附件发布状态限制。

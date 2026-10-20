@@ -104,16 +104,17 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
 }
 
-# Long-lived JWT for external agent clients (Codex / Claude CLI).
+# Revocable access credentials for external agent clients (Codex / Claude CLI).
 #
 # Those clients cannot run an interactive refresh flow, so the token is
-# minted once from the user settings page and reused until it expires.
+# minted from the user settings page with finite or permanent validity.
 # Override the lifetime with AGENT_TOKEN_LIFETIME_DAYS; a non-positive value
-# disables the minting endpoint. SimpleJWT blacklisting is not enabled, so
-# an issued token cannot be revoked individually before it expires.
+# disables the minting endpoint. New credentials are stored as hashes and
+# can be individually revoked. Previously issued JWTs retain their expiry.
 AGENT_TOKEN_LIFETIME_DAYS = int(os.getenv("AGENT_TOKEN_LIFETIME_DAYS", "30"))
 
 # Validity choices (in months) the user may pick when minting a token.
+# Zero is a separate opt-in for permanent validity without an expiry date.
 # The requested value, when present, overrides AGENT_TOKEN_LIFETIME_DAYS;
 # each month is treated as AGENT_TOKEN_DAYS_PER_MONTH days.
 AGENT_TOKEN_LIFETIME_MONTHS_OPTIONS = (1, 3, 6)
@@ -121,12 +122,14 @@ AGENT_TOKEN_DAYS_PER_MONTH = 30
 
 # Routes an agent-scoped token may reach. The token exists for read-only Q&A,
 # so it is confined to the session/run endpoints the CLI drives and the
-# assistant catalog it needs to choose an assistant. Everything else is
+# assistant catalog and published deliverables it needs to read. Everything else is
 # rejected with AGENT_TOKEN_SCOPE_RESTRICTED, including admin endpoint reads.
 AGENT_TOKEN_ALLOWED_ROUTES = (
     ("POST", r"/api/lens/sessions/?"),
     ("POST", r"/api/lens/sessions/[0-9A-Fa-f-]{36}/runs/?"),
     ("GET", r"/api/lens/runs/[0-9A-Fa-f-]{36}/?"),
+    ("GET", r"/api/lens/runs/[0-9A-Fa-f-]{36}/output-files/?"),
+    ("GET", r"/api/lens/output-files/[0-9A-Fa-f-]{36}/?"),
     ("GET", r"/api/lens/assistants/?"),
     ("GET", r"/api/lens/assistants/[0-9A-Fa-f-]{36}/?"),
 )

@@ -8,6 +8,7 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import get_language
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
@@ -4149,12 +4150,12 @@ class RunOutputFileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_url(self, obj):
+    def get_url(self, obj) -> str:
         """Return the authenticated download path for the file bytes."""
 
         return reverse("lens-output-file", kwargs={"uuid": obj.uuid})
 
-    def get_status(self, obj):
+    def get_status(self, obj) -> str:
         """Derive publication state from the existing message link and Run."""
 
         if obj.message_id is not None:
@@ -4410,6 +4411,18 @@ class RunSerializer(serializers.ModelSerializer):
     citations = serializers.SerializerMethodField()
     planned_evidence = serializers.SerializerMethodField()
     answer = serializers.SerializerMethodField()
+    output_files = serializers.SerializerMethodField()
+
+    @extend_schema_field(RunOutputFileSerializer(many=True))
+    def get_output_files(self, obj):
+        """Expose only the published files linked to the final answer."""
+
+        if obj.output_message_id is None:
+            return []
+        return RunOutputFileSerializer(
+            obj.output_message.output_files.all(),
+            many=True,
+        ).data
 
     def get_termination_detail(self, obj):
         """Return allowlisted terminal metadata only."""
@@ -4449,6 +4462,7 @@ class RunSerializer(serializers.ModelSerializer):
             "citations",
             "planned_evidence",
             "answer",
+            "output_files",
             "feedback",
             "feedback_updated_at",
             "started_at",

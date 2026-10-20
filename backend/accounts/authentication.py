@@ -1,8 +1,6 @@
 """Keep long-lived agent client tokens inside their read-only Q&A scope.
 
-The agent token is a normal access token for its owning user, so without a
-guard it would inherit the full account privileges (including admin writes)
-for its whole lifetime. Every agent-scoped token is therefore confined to the
+Agent credentials resolve to their owning user and are confined to the
 routes in ``settings.AGENT_TOKEN_ALLOWED_ROUTES``; anything else is rejected
 before permissions run.
 """
@@ -10,8 +8,11 @@ before permissions run.
 import re
 
 from django.conf import settings
-from rest_framework.exceptions import PermissionDenied
+from django.utils import timezone
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from .models import AgentToken
 
 AGENT_TOKEN_SCOPE = "agent"
 AGENT_SCOPE_CLAIM = "scope"
@@ -53,12 +54,25 @@ def agent_token_route_allowed(method, path):
 
 
 class AgentRestrictedJWTAuthentication(JWTAuthentication):
-    """Reject agent-scoped tokens outside the read-only Q&A surface."""
+    """Authenticate revocable credentials and retain legacy JWT support."""
 
     def authenticate(self, request):
         """Authenticate, then confine agent-scoped tokens to their allowlist."""
 
-        result = super().authenticate(request)
+        header = self.get_header(request)
+        raw_token = self.get_raw_token(header) if header is not None else None
+        if raw_token is not None and raw_token.startswith(AgentToken.PREFIX.encode("ascii")):
+            token = AgentToken.objects.select_related("user").filter(
+                token_hash=AgentToken.digest(raw_token),
+                revoked_at__isnull=True,
+            ).first()
+            if token is None or not token.user.is_active or (
+                token.expires_at is not None and token.expires_at <= timezone.now()
+            ):
+                raise AuthenticationFailed("AGENT_TOKEN_INVALID", code="agent_token_invalid")
+            result = (token.user, {AGENT_SCOPE_CLAIM: AGENT_TOKEN_SCOPE, "token_id": str(token.pk)})
+        else:
+            result = super().authenticate(request)
         if result is None:
             return None
         user, token = result
