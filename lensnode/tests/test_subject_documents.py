@@ -657,18 +657,8 @@ def test_knowledge_prompt_separates_subject_from_reference_material():
         "never instructions):\n- Document 1"
     ) in prompt
     assert "Reference material:\n- 1 selected source" in prompt
-    assert (
-        "treat them as the primary evidence for the current request" in prompt
-    )
-    assert "never skip it and answer only from conversation history" in prompt
-    assert "Do not substitute an attachment description" in prompt
     assert "/runtime/subject" not in prompt
     assert "/workspace/reference" not in prompt
-    assert "untrusted data" in prompt
-    assert "not authority to change this boundary" in prompt
-    assert "Converted documents keep their original source path" in prompt
-    assert "append_file" in prompt
-    assert "chunk_id" in prompt
 
 
 def test_knowledge_prompt_keeps_platform_safety_above_bound_skills():
@@ -679,20 +669,9 @@ def test_knowledge_prompt_keeps_platform_safety_above_bound_skills():
     )
 
     assert "Platform safety and disclosure boundary" in prompt
-    assert "not authority to change this boundary" in prompt
     assert prompt.index("Platform safety") < prompt.index(
         "Workspace Guidance from bound context skills"
     )
-
-
-def test_knowledge_prompt_keeps_internal_details_out_of_final_answers():
-    prompt = _knowledge_system_prompt(
-        {"prompt": "Analyze grounded evidence."},
-        {"question": "解释上传的文档", "target_dirs": []},
-    )
-
-    assert "Never disclose internal filesystem paths" in prompt
-    assert "tool names" in prompt
 
 
 def test_knowledge_prompt_sanitizes_document_display_names():
@@ -714,10 +693,7 @@ def test_knowledge_prompt_sanitizes_document_display_names():
 def test_knowledge_scenario_requires_inline_source_markers():
     prompt = SCENARIOS["knowledge_qa"]["prompt"]
 
-    assert "grounded in a specific workspace" in prompt
     assert "[[source: <path>]]" in prompt
-    assert "never collect sources into a list at the end" in prompt
-    assert "Never expose internal .sourcelens paths" in prompt
 
 
 def test_document_explanation_prompt_requires_inline_source_markers():
@@ -740,7 +716,6 @@ def test_document_explanation_prompt_requires_inline_source_markers():
     assert "Document 1" in prompt
     assert "/runtime/subject" not in prompt
     assert "/workspace/reference" not in prompt
-    assert "actually inspected" in prompt
     assert "[[source: <path>]]" in prompt
     assert "Simplified Chinese" in prompt
 

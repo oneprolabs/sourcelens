@@ -42,6 +42,8 @@ class LensNodeConfig:
     node_options: str = ""
     reasoning_effort: str | None = None
     planning_reasoning_effort: str | None = "medium"
+    execution_reasoning_effort: str | None = "none"
+    summary_reasoning_effort: str | None = "none"
     planner_repair_enabled: bool = False
     execution_backend: str = "trusted_container"
     delegation_base_url: str = ""
@@ -227,6 +229,8 @@ def load_config():
         planner_repair_enabled=_env_bool(
             "LENSNODE_PLANNER_REPAIR_ENABLED", default=False
         ),
+        execution_reasoning_effort=os.getenv("LENSNODE_EXECUTION_REASONING_EFFORT", "none") or None,
+        summary_reasoning_effort=os.getenv("LENSNODE_SUMMARY_REASONING_EFFORT", "none") or None,
         execution_backend=os.getenv(
             "LENSNODE_EXECUTION_BACKEND", "trusted_container"
         ).strip().lower(),

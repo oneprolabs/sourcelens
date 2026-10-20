@@ -144,13 +144,13 @@ def test_report_preparation_and_advancing_pages_leave_time_to_write_the_file():
         content = json.dumps({"records": [{"id": index}], "read_progress": {
             "snapshot_sha256": "source", "next_offset": index + 1, "complete": False,
         }})
-        _, _, state = tool_state("read_activity_evidence", {"offset": index}, content, f"page-{index}")
+        _, _, state = tool_state("read_tool_evidence", {"offset": index}, content, f"page-{index}")
         assert gate.before_model(state, None) is None
     assert gate.convergence_nudges == 0
     content = json.dumps({"records": [{"id": 10}], "read_progress": {
         "snapshot_sha256": "source", "next_offset": None, "complete": True,
     }})
-    _, _, state = tool_state("read_activity_evidence", {"offset": 10}, content, "last-page")
+    _, _, state = tool_state("read_tool_evidence", {"offset": 10}, content, "last-page")
     guidance = gate.before_model(state, None)
     assert "/deliverables/" in guidance["messages"][0].content
     for index in range(3):
@@ -168,7 +168,7 @@ def test_repeated_report_reads_still_exhaust_the_convergence_budget():
     gate = EvidenceGateMiddleware(Policy(), "Report", evidence={"artifact_required": True}, interval=1,
                                   max_convergence_nudges=1)
     content = json.dumps({"read_progress": {"snapshot_sha256": "source", "complete": True, "next_offset": None}})
-    _, _, state = tool_state("read_activity_evidence", {"offset": 0}, content, "same-page")
+    _, _, state = tool_state("read_tool_evidence", {"offset": 0}, content, "same-page")
     for _ in range(20):
         result = gate.before_model(state, None)
         if result == {"jump_to": "end"}:
@@ -311,7 +311,7 @@ def test_formal_correction_has_a_fresh_bounded_phase_after_initial_delivery_is_e
                                          "new_string": "corrected"}, '{"ok":true}', "edit")
     assert gate.before_model(edit, None) is None
     for index in range(3):
-        _, _, read = tool_state("read_activity_evidence", {"offset": 0}, json.dumps({"read_progress": {
+        _, _, read = tool_state("read_tool_evidence", {"offset": 0}, json.dumps({"read_progress": {
             "snapshot_sha256": "source", "next_offset": None, "complete": True,
         }}), f"reread-{index}")
         assert gate.before_model(read, None) != {"jump_to": "end"}

@@ -1314,15 +1314,6 @@ def test_system_prompt_includes_assistant_workspace_guide():
     assert "Use the configured engineering scope." in prompt
 
 
-def test_system_prompt_omits_codegraph_guidance_by_default():
-    prompt = _system_prompt(
-        {"prompt": "Analyze code."},
-        {"target_dirs": [{"path": "/workspace/product"}]},
-    )
-
-    assert "CodeGraph is available" not in prompt
-
-
 def test_system_prompt_injects_codegraph_guidance_when_available():
     prompt = _system_prompt(
         {"prompt": "Analyze code."},
@@ -1334,53 +1325,8 @@ def test_system_prompt_injects_codegraph_guidance_when_available():
         ),
     )
 
-    assert "CodeGraph is available" in prompt
     assert "mcp__codegraph__codegraph_explore" in prompt
-    assert "MUST call mcp__codegraph__codegraph_explore before any" in prompt
     assert "mcp__codegraph__codegraph_trace" not in prompt
-
-
-def test_system_prompt_prioritizes_codegraph_over_workspace_search():
-    prompt = _system_prompt(
-        {"prompt": "Analyze code."},
-        {"target_dirs": [{"path": "/workspace/product"}]},
-        runtime_guidance=(
-            "CodeGraph is available through exactly one MCP tool: "
-            "mcp__codegraph__codegraph_explore. MUST call "
-            "mcp__codegraph__codegraph_explore before any workspace tool.",
-        ),
-    )
-
-    codegraph_position = prompt.index("CodeGraph is available")
-    search_position = prompt.index("FIRST workspace action")
-
-    assert codegraph_position < search_position
-
-
-def test_code_analysis_prompt_forces_workspace_fallback_after_graph_failure():
-    prompt = _system_prompt(
-        {"prompt": "Analyze code."},
-        {
-            "task": "code_analysis",
-            "target_dirs": [{"path": "/workspace/product"}],
-        },
-    )
-
-    assert "CodeGraph is optional" in prompt
-    assert "empty, unavailable, or fails" in prompt
-    assert "search_workspace" in prompt
-    assert "read_workspace_file" in prompt
-    assert "relative to the selected resource directory" in prompt
-    assert "Never expose the LensNode mount prefix" in prompt
-    assert "current entry point and branch conditions" in prompt
-    assert "Do not inspect planner or planned-evidence helpers" in prompt
-    assert "Do not repeat an equivalent query" in prompt
-    assert "Once entry routing, implementation, and caller context" in prompt
-    assert "do not infer a project-wide analysis" in prompt
-    assert "do not answer from general or training knowledge" in prompt
-    assert "只解释概念" in prompt
-    assert "at most two distinct CodeGraph queries" in prompt
-    assert "stop after two independent searches" in prompt
 
 
 def test_code_analysis_paths_are_relative_to_resource_directories():

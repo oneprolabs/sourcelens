@@ -2,11 +2,32 @@
 
 import json
 
+from langchain_core.messages import HumanMessage
+
 
 MAX_STREAMED_PLAN_ARGUMENT_CHARS = 262_144
 CLASSIFIER_CONTEXT_MAX_TURNS = 8
 CLASSIFIER_CONTEXT_MAX_CHARS = 4000
 _CLASSIFIER_CONTEXT_LABELS = {"user": "User", "assistant": "Assistant"}
+
+
+def runtime_message(content: str, *, phase: str | None = None) -> HumanMessage:
+    """Mark agent feedback as compressible runtime data, never as user input."""
+
+    metadata = {"lensnode_source": "runtime", "hide_from_ui": True}
+    if phase is not None:
+        metadata["lensnode_phase"] = phase
+    return HumanMessage(content=content, additional_kwargs=metadata)
+
+
+def is_user_message(message: object) -> bool:
+    """Preserve unmarked user messages for compatibility with existing checkpoints."""
+
+    return (
+        isinstance(message, HumanMessage)
+        and message.additional_kwargs.get("lc_source") != "summarization"
+        and message.additional_kwargs.get("lensnode_source") != "runtime"
+    )
 
 
 def extract_final_message(response):

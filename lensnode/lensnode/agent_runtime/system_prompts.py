@@ -37,9 +37,9 @@ def _system_prompt(
         )
     if mcp_deferred:
         prompt += (
-            "\n\nRemote MCP tool schemas are deferred to conserve context. "
-            "Call tool_search with a focused capability query when a remote "
-            "integration may help; matching tools will be available on the "
+            "\n\nAdditional Plugin and MCP tool schemas are deferred to conserve context. "
+            "Call tool_search with English capability terms or exact tool names from the bound instructions "
+            "when an integration may help; matching tools will be available on the "
             "next turn."
         )
     return prompt + "\n\n" + _agent_operating_guidance()
@@ -76,6 +76,14 @@ def _answer_evidence_guidance():
         "Distinguish reported totals, returned rows and verified unique coverage. "
         "Omitted excerpts do not mean no records were retrieved; do not deny an "
         "earlier successful result merely because later context contains another dataset.\n"
+        "- Ground each claim's subject, action, object and time together. An item's creator, "
+        "author or current owner is not necessarily the person who updated, resolved, closed "
+        "or merged it. A current status is not proof of when it changed. Use all applicable "
+        "retrieved evidence, including linked records, comments and audit logs, to establish "
+        "the relationship; a missing field alone neither proves nor disproves it. If the "
+        "performer is unknown, describe the observed event and ownership separately. Apply "
+        "this distinction to every sentence and generated artifact; a general disclaimer "
+        "does not qualify a contradictory claim elsewhere.\n"
     )
 
 

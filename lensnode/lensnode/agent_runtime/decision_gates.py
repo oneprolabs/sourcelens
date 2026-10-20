@@ -67,11 +67,15 @@ GATE_REGISTRY = {
             "Every positive factual claim is backed by retrieved or provided "
             "evidence. A clearly scoped statement that the available evidence "
             "does not establish actual execution is also sufficient if the "
-            "answer does not assert that execution occurred."
+            "answer does not assert that execution occurred. Evidence must support the "
+            "claimed relationship between the subject, action, object and time, not just "
+            "mention the same person and item."
         ),
         "criteria_false": (
             "The answer asserts facts that were not retrieved and are not "
-            "present in the provided material."
+            "present in the provided material, including an action attributed to an "
+            "owner or author without evidence that they performed it. A general "
+            "disclaimer does not repair a specific unsupported assertion."
         ),
     },
     "answer_supported": {
@@ -84,7 +88,15 @@ GATE_REGISTRY = {
             "does not invalidate facts from another source and cannot prove absence of activity. "
             "Reject zero-completion claims contradicted by observed resolutions or merges. "
             "Current owners or item authors do not establish who performed an update, close, or merge. "
-            "Creation date and current status do not establish how long that status persisted."
+            "Creation date and current status do not establish how long that status persisted. "
+            "For each material claim, match subject, action, object and time against all applicable "
+            "source evidence, including comments, audit logs and linked records. Missing fields "
+            "alone do not make a claim false: another source may establish the relationship. "
+            "However, mentioning a person as owner alongside a completed item is insufficient "
+            "to conclude that person completed it. Review each explicit claim in both the answer "
+            "and current artifacts; a broad caveat elsewhere does not repair that claim. "
+            "One material unsupported attribution makes the candidate unsupported even if "
+            "its other claims and overall topic are correct."
         ),
         "criteria": {
             "supported": (
@@ -92,7 +104,9 @@ GATE_REGISTRY = {
                 "accurately limits a conclusion to what those materials show."
             ),
             "unsupported": (
-                "The answer goes beyond or contradicts the evidence."
+                "At least one material claim goes beyond or contradicts the evidence, "
+                "including an asserted subject-action or temporal relationship that "
+                "the sources do not establish."
             ),
         },
     },
@@ -113,7 +127,9 @@ GATE_REGISTRY = {
             ),
             "derived": (
                 "The material factual claims are reasonable conclusions "
-                "from multiple retrieved or provided facts."
+                "from multiple retrieved or provided facts. Every claimed subject-action "
+                "and temporal relationship must be supported; assigning an event to an "
+                "item's owner without evidence of that action is unsupported, not derived."
             ),
             "qualified_weak": (
                 "The answer explicitly says the available material shows only "

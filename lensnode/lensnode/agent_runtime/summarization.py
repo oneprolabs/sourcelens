@@ -7,6 +7,7 @@ from langchain.agents.middleware import SummarizationMiddleware
 from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, get_buffer_string, trim_messages
 
 from ..gateway_model import GatewayProtocolError, LensGatewayChatModel
+from .messages import is_user_message
 
 CONTINUATION_SUMMARY_PROMPT = (
     "You are compacting the context of an IN-PROGRESS investigation to "
@@ -20,9 +21,13 @@ CONTINUATION_SUMMARY_PROMPT = (
     "empty:\n\n"
     "## EVIDENCE GATHERED SO FAR\n"
     "Concrete findings already discovered, with file paths and the key "
-    "facts/identifiers/values they contain. Be specific.\n\n"
+    "facts/identifiers/values they contain. Preserve evidence_id references, confirmed identity mappings, "
+    "event attribution and uncertainty, source coverage gaps, and saved draft paths. Retain the relationships "
+    "between claims and their evidence IDs; do not replace them with a list of IDs alone. Be specific.\n\n"
     "## STILL TO DO\n"
-    "What evidence is still missing to fully answer the question.\n\n"
+    "What evidence is still missing to fully answer the question, and which specific saved records need rechecking. "
+    "Preserve completed read progress and outstanding corrections so the agent can continue from its draft "
+    "without restarting all source pages.\n\n"
     "Do NOT write a final answer here. Do NOT imply the task is complete "
     "or already answered. This is a working note to yourself so you can "
     "keep investigating, then produce the final answer in a later step.\n\n"
@@ -76,6 +81,15 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
         self._summary_model = self.model.with_retry(retry_if_exception_type=(httpx.TransportError,))
         self._summary_recovery = False
 
+    def _determine_cutoff_index(self, messages):
+        """Avoid re-summarizing only a summary when retained user input is oversized."""
+
+        cutoff = super()._determine_cutoff_index(messages)
+        older, _ = self._partition_messages(messages, cutoff)
+        if not any(message.additional_kwargs.get("lc_source") != "summarization" for message in older):
+            return 0
+        return cutoff
+
     def _partition_messages(self, conversation_messages, cutoff_index):
         """Keep human input verbatim; summarize only re-queryable turns.
 
@@ -92,7 +106,7 @@ class LensSummarizationMiddleware(SummarizationMiddleware):
         human_anchors = [
             message
             for message in to_summarize
-            if isinstance(message, HumanMessage) and message.additional_kwargs.get("lc_source") != "summarization"
+            if is_user_message(message)
         ]
         if not human_anchors:
             return to_summarize, preserved
@@ -267,6 +281,7 @@ def build_summarization_middleware(
         trace_context=trace_context or {},
         emit_observation=emit_observation,
         observation_name="summarization",
+        reasoning_effort=getattr(config, "summary_reasoning_effort", "none"),
         trajectory=trajectory,
         shared_token_budget=shared_token_budget,
         token_budget_gates_enabled=bool(budget.get("max_tokens")),

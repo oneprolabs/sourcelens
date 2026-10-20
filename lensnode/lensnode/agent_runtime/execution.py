@@ -18,6 +18,7 @@ from .messages import (
     extract_final_message as _extract_final_message,
     extract_final_answer as _extract_final_answer,
     normalize_plan_steps as _normalize_plan_steps,
+    runtime_message,
     tool_call_summary as _tool_call_summary,
 )
 from .prompts import (
@@ -446,14 +447,13 @@ def _stream_agent_states_with_invalid_tool_recovery(
                 "deepagents.tool_call.recovering",
                 {"tool": "write_todos", "reason": "invalid_arguments"},
             )
-        correction = HumanMessage(
-            content=(
+        correction = runtime_message(
+            (
                 "The previous write_todos call had invalid JSON arguments. "
                 "Retry write_todos once using a complete JSON object with a "
                 "todos array; do not execute business tools until the call "
                 "is valid."
             ),
-            additional_kwargs={"hide_from_ui": True},
         )
         if thread is None:
             retry_input = {

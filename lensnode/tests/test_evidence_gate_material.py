@@ -228,7 +228,7 @@ def test_repeated_structured_evidence_is_losslessly_shared_before_truncation():
                           for key in ("author", "creator", "reporter", "merged_by", "closed_by")}}
                for index in range(120)]
     original = {"records": records, "$review_ref": "source-controlled key",
-                "retrieved_evidence": [{"tool": "read_activity_evidence",
+                "retrieved_evidence": [{"tool": "read_tool_evidence",
                                         "content": json.dumps({"records": records})}]}
     evidence = {**original, "evidence_completeness": "incomplete", "review_completeness": "complete"}
     assert len(json.dumps(evidence)) > 80000
@@ -508,7 +508,7 @@ def test_skill_instructions_do_not_make_complete_source_evidence_inconclusive():
         ("complete", "partial", "none", None),
         ("incomplete", "partial", "none", None),
         ("incomplete", "partial", "artifact", None),
-        ("complete", "partial", "none", "incomplete"),
+        ("complete", "completed", "none", "incomplete"),
     ],
 )
 def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
@@ -562,10 +562,12 @@ def test_terminal_outcome_distinguishes_failed_review_from_incomplete_coverage(
         assert result["termination_detail"]["reason"] == "evidence_unavailable"
         assert result["termination_detail"]["capability"] == "artifact_delivery"
     elif completeness == "incomplete" and requirement == "none":
-        assert result["termination_detail"]["reason"] == "evidence_incomplete"
+        assert result["termination_detail"]["reason"] == "evidence_insufficient"
+        assert result["termination_detail"]["warnings"] == ["evidence_incomplete"]
         assert result["termination_detail"]["error_type"] == "verification"
     elif review_completeness == "incomplete":
-        assert result["termination_detail"]["reason"] == "review_material_incomplete"
+        assert result["termination_detail"]["warnings"] == ["review_material_incomplete"]
+        assert result["termination_detail"]["assessment"]["review"] == "inconclusive"
         assert result["termination_detail"]["decision_gates"]["evidence_completeness"] == "complete"
     elif expected == "partial":
         assert result["termination_detail"]["reason"] == "evidence_insufficient"
@@ -755,8 +757,8 @@ def test_source_coverage_gap_is_not_reported_as_review_truncation():
     middleware = EvidenceGateMiddleware(policy, "What happened?", emit_event=lambda name, detail: events.append(detail))
 
     assert middleware.after_model({"messages": [AIMessage(content="Available records are summarized.")]}, None) is None
-    assert events[-1]["action"] == "inconclusive"
-    assert events[-1]["fallback_reason"] == "evidence_incomplete"
+    assert events[-1]["action"] == "accept"
+    assert events[-1]["verdicts"]["evidence_completeness"] == "incomplete"
 
 
 @pytest.mark.parametrize("failure", [
@@ -913,3 +915,60 @@ def test_only_the_same_retried_operation_restores_substantive_answer_review(retr
         assert result["jump_to"] == "model"
         assert policy.materials[-1]["evidence_completeness"] == "incomplete"
     assert messages[1].status == "error"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_tool_result_route_can_finish_advancing_evidence_pages_before_convergence(asynchronous):
+    """Local evidence consumption must not be mistaken for a runaway remote search."""
+
+    from langchain.agents import create_agent
+    from langchain.tools import tool
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import HumanMessage
+
+    pages = []
+
+    @tool
+    def read_tool_evidence(offset: int) -> str:
+        """Read one advancing local source page."""
+
+        pages.append(offset)
+        complete = offset == 19
+        return json.dumps(
+            {
+                "ok": True,
+                "read_progress": {
+                    "snapshot_sha256": "stable",
+                    "next_offset": None if complete else offset + 1,
+                    "complete": complete,
+                },
+            }
+        )
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    model = Model(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"id": f"page-{offset}", "name": "read_tool_evidence", "args": {"offset": offset}}],
+            )
+            for offset in range(20)
+        ]
+        + [AIMessage(content="Finished all source pages")]
+    )
+    evidence = {"artifact_required": False}
+    middleware = EvidenceGateMiddleware(_ReviewPolicy(), "Analyze source facts", evidence=evidence)
+    graph = create_agent(model, tools=[read_tool_evidence], middleware=[middleware])
+    initial = {"messages": [HumanMessage(content="Analyze source facts")]}
+    result = (
+        asyncio.run(graph.ainvoke(initial, {"recursion_limit": 150}))
+        if asynchronous
+        else graph.invoke(initial, {"recursion_limit": 150})
+    )
+    assert result["messages"][-1].content == "Finished all source pages"
+    assert pages == list(range(20))
+    assert not evidence.get("convergence_exhausted")
+    assert evidence["artifact_required"] is False

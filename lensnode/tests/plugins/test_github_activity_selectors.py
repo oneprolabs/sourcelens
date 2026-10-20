@@ -566,3 +566,38 @@ def test_failed_search_retry_preserves_observed_partial_items_and_the_gap(monkey
     repository = result["repositories"][0]
     assert [item["number"] for item in repository["issues"]] == [10]
     assert repository["possibly_truncated"]["issues"] is True
+
+
+def test_shared_pool_does_not_wait_for_a_slow_repository_batch(monkeypatch):
+    import threading
+
+    module = GITHUB_RUNTIME.execute_tool.__globals__
+    later_repository_started = threading.Event()
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+    repositories = [f'owner/repo{index}' for index in range(51)]
+
+    def resource(client, repository, kind, *args):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if repository == repositories[0] and kind == 'commits':
+                assert later_repository_started.wait(3), 'Later repositories were blocked behind a batch barrier'
+            if repository == repositories[-1]:
+                later_repository_started.set()
+            return [], False
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setitem(module, '_activity_resource', resource)
+    result = _execute(['*'], repositories, lambda request: pytest.fail('Finite scope needs no discovery'))
+    assert result['source_coverage_complete'] is True
+    assert [item['repository'] for item in result['repositories']] == repositories
+    assert 1 <= peak <= 8
+    assert all(set(item['resource_duration_ms']) == {'commits', 'pull_requests', 'issues'}
+               for item in result['repositories'])
+    assert result['performance']['total_ms'] >= result['performance']['discovery_ms']

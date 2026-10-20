@@ -123,11 +123,11 @@ def _enforce_completion_status(answer, command, checks):
             "File delivery is incomplete. The attachments were not published. Please retry.",
             _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
         )
-    if any(check.get("code") == "activity_evidence_unread" for check in checks):
+    if any(check.get("code") in {"tool_evidence_unread", "activity_evidence_unread"} for check in checks):
         return _pick_text(
-            "结果核验未通过：尚有工作记录未完成核对，本次报告及附件未发布。请重试完成汇总。",
-            "The result could not be verified. Some activity records remain unread; the report and attachments "
-            "were not published. Please retry the summary.",
+            "结果核验未通过：尚有来源记录未完成核对，本次结果及附件未发布。请补齐证据后重试。",
+            "The result could not be verified. Some source records remain unread; the result and attachments "
+            "were not published. Complete the evidence review and retry.",
             _detect_answer_language(answer) if answer.strip() else _command_answer_language(command),
         )
     return _pick_text(

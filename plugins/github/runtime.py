@@ -3,6 +3,7 @@
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import ContextVar
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import PurePosixPath
@@ -17,7 +18,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "github"
 PLUGIN_VERSION = "1.0.0"
-TOOL_METADATA = {"github_activity_summary": {"activity_report": True}}
+TOOL_METADATA = {"github_activity_summary": {"durable_evidence": True}}
 API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 READ_MAX_BYTES = 200_000
@@ -32,7 +33,6 @@ ACTIVITY_MAX_PAGES = 10
 ACTIVITY_PULL_REQUEST_PER_PAGE = 10
 ACTIVITY_PULL_REQUEST_MAX_PAGES = 50
 ACTIVITY_MAX_REPOSITORIES = 500
-ACTIVITY_REPOSITORY_BATCH_SIZE = 50
 ACTIVITY_DISCOVERY_MAX_PAGES = 20
 ACTIVITY_DISCOVERY_PAGE_SIZE = 100
 ACTIVITY_RESOURCE_MAX = {
@@ -40,6 +40,7 @@ ACTIVITY_RESOURCE_MAX = {
     "pull_requests": 500,
     "issues": 500,
 }
+_REQUEST_METRICS = ContextVar("github_request_metrics", default=None)
 TOOL_KEYS = frozenset(
     {
         "github_read_file",
@@ -282,7 +283,9 @@ def execute_tool(key, client, arguments, secret, endpoint, config):
 def _activity_summary(client, arguments, secret, config):
     """Return compact activity from approved repositories in one Tool call."""
 
+    started = time.monotonic()
     repositories, coverage = _resolve_activity_repositories(client, arguments["repositories"], secret, config)
+    discovery_ms = int((time.monotonic() - started) * 1000)
     since = arguments["since"]
     until = arguments["until"]
     per_page = _page_value(
@@ -302,27 +305,26 @@ def _activity_summary(client, arguments, secret, config):
         }
         for repository in repositories
     }
-    for offset in range(0, len(repositories), ACTIVITY_REPOSITORY_BATCH_SIZE):
-        batch = repositories[offset : offset + ACTIVITY_REPOSITORY_BATCH_SIZE]
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {
-                executor.submit(_activity_resource, client, repository, resource, since, until, per_page, secret): (
-                    repository,
-                    resource,
-                )
-                for repository in batch
-                for resource in ("commits", "pull_requests", "issues")
-            }
-            for future in as_completed(futures):
-                repository, resource = futures[future]
-                try:
-                    items, possibly_truncated = future.result()
-                except (PluginRuntimeError, httpx.HTTPError) as exc:
-                    error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
-                    results[repository].setdefault("errors", {})[resource] = error
-                    continue
-                results[repository][resource] = items
-                results[repository]["possibly_truncated"][resource] = possibly_truncated
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_timed_activity_resource, client, repository, resource, since, until, per_page, secret): (
+                repository, resource,
+            )
+            for repository in repositories
+            for resource in ("commits", "pull_requests", "issues")
+        }
+        for future in as_completed(futures):
+            repository, resource = futures[future]
+            try:
+                items, possibly_truncated, metrics = future.result()
+            except (PluginRuntimeError, httpx.HTTPError) as exc:
+                error = str(exc) if isinstance(exc, PluginRuntimeError) else "GITHUB_REQUEST_FAILED"
+                results[repository].setdefault("errors", {})[resource] = error
+                continue
+            results[repository][resource] = items
+            results[repository]["possibly_truncated"][resource] = possibly_truncated
+            results[repository].setdefault("resource_duration_ms", {})[resource] = metrics["duration_ms"]
+            results[repository].setdefault("request_metrics", {})[resource] = metrics
     source_complete = not coverage["repositories_truncated"] and all(
         not result.get("errors") and not any(result["possibly_truncated"].values()) for result in results.values()
     )
@@ -335,6 +337,7 @@ def _activity_summary(client, arguments, secret, config):
         "repositories_truncated": coverage["repositories_truncated"],
         "source_coverage_complete": source_complete,
         "coverage": coverage,
+        "performance": {"discovery_ms": discovery_ms, "total_ms": int((time.monotonic() - started) * 1000)},
     }
 
 
@@ -484,6 +487,20 @@ def _resolve_activity_repositories(client, selectors, secret, config):
     return coverage["resolved_repositories"], coverage
 
 
+def _timed_activity_resource(*args):
+    """Measure execution separately from waiting in the bounded shared pool."""
+
+    started = time.monotonic()
+    metrics = {"requests": 0, "rate_limits": 0, "retry_wait_ms": 0}
+    token = _REQUEST_METRICS.set(metrics)
+    try:
+        items, truncated = _activity_resource(*args)
+        metrics["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return items, truncated, metrics
+    finally:
+        _REQUEST_METRICS.reset(token)
+
+
 def _activity_resource(
     client,
     repository,
@@ -612,7 +629,7 @@ def _activity_issues(
                         break
                     partial_payload = payload
                     if attempt + 1 < GET_MAX_ATTEMPTS:
-                        time.sleep(GET_RETRY_DELAY_SECONDS * (attempt + 1))
+                        _retry_wait(GET_RETRY_DELAY_SECONDS * (attempt + 1))
             except (PluginRuntimeError, httpx.HTTPError) as exc:
                 if isinstance(exc, PluginRuntimeError) and str(exc) == "GITHUB_ACCESS_DENIED":
                     return items[:result_limit], incomplete
@@ -1497,6 +1514,9 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
     """Retry transient failures within a bounded wait and preserve permanent errors."""
 
     for attempt in range(GET_MAX_ATTEMPTS):
+        metrics = _REQUEST_METRICS.get()
+        if metrics is not None:
+            metrics["requests"] += 1
         try:
             with client.stream(
                 "GET",
@@ -1517,13 +1537,15 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
                     response.status_code == 403
                     and (response.headers.get("X-RateLimit-Remaining") == "0" or response.headers.get("Retry-After"))
                 )
+                if rate_limited and metrics is not None:
+                    metrics["rate_limits"] += 1
                 retryable = rate_limited or response.status_code in {408, 500, 502, 503, 504}
                 delay = GET_RETRY_DELAY_SECONDS * (attempt + 1)
                 if retryable:
                     delay = _retry_delay(response.headers, delay, rate_limited)
                     if attempt + 1 < GET_MAX_ATTEMPTS and delay <= GET_MAX_RETRY_WAIT_SECONDS:
                         response.close()
-                        time.sleep(delay)
+                        _retry_wait(delay)
                         continue
                 if rate_limited:
                     raise PluginRuntimeError("GITHUB_RATE_LIMITED")
@@ -1543,8 +1565,17 @@ def _get(client, url, token, params, accept, max_bytes, truncate):
         except httpx.TransportError:
             if attempt + 1 == GET_MAX_ATTEMPTS:
                 raise
-            time.sleep(GET_RETRY_DELAY_SECONDS * (attempt + 1))
+            _retry_wait(GET_RETRY_DELAY_SECONDS * (attempt + 1))
     raise AssertionError("unreachable")
+
+
+def _retry_wait(delay):
+    """Record provider-required waits without changing retry policy."""
+
+    metrics = _REQUEST_METRICS.get()
+    if metrics is not None:
+        metrics["retry_wait_ms"] += int(delay * 1000)
+    time.sleep(delay)
 
 
 def _retry_delay(headers, fallback, rate_limited):
@@ -1581,18 +1612,19 @@ def _status(status):
     raise PluginRuntimeError(errors.get(status, "GITHUB_REQUEST_FAILED"))
 
 
-def agent_extensions():
-    """Register Plugin-owned agent behavior through the generic host protocol."""
-
-    from lensnode.plugin_package_loader import load_plugin_support
-
-    support = load_plugin_support("activity_reports")
-    return (("activity-report", support.prepare_activity_report),)
-
-
 def project_tool_result(tool_key, result, max_bytes):
     """Declare source evidence coverage without host-side provider knowledge."""
 
     from lensnode.plugin_package_loader import load_plugin_support
 
-    return load_plugin_support("activity_reports").project_activity_result(tool_key, result, max_bytes, TOOL_METADATA)
+    return load_plugin_support("activity_evidence").project_activity_result(
+        tool_key, result, max_bytes, TOOL_METADATA
+    )
+
+
+def project_tool_evidence(tool_key, result, connection_uuid):
+    """Interpret source events without prescribing report analysis or output."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    return load_plugin_support("activity_evidence").activity_evidence(PLUGIN_KEY, result, connection_uuid)

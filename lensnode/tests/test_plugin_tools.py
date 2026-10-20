@@ -275,7 +275,7 @@ def test_plugin_events_report_actual_runtime_and_shared_source_identity():
         digest = hashlib.sha256(source.read()).hexdigest()
     identity = tool.metadata["runtime_identity"]
     assert identity["runtime_sha256"] == digest
-    assert len(identity["support_sha256"]["_shared/activity_reports.py"]) == 64
+    assert len(identity["support_sha256"]["_shared/activity_evidence.py"]) == 64
     assert set(identity) == {"runtime_sha256", "support_sha256", "manifest_sha256"}
     for name in ("tool.plugin.start", "tool.plugin.done"):
         payload = next(payload for event, payload in events if event == name)
@@ -497,6 +497,7 @@ def test_plugin_runtime_failure_is_returned_as_a_stable_error():
     def fail_handler(*_args):
         raise RuntimeError("secret detail")
 
+    events = []
     result = _execute_plugin_tool(
         _command("github_read_file"),
         _config(),
@@ -508,11 +509,17 @@ def test_plugin_runtime_failure_is_returned_as_a_stable_error():
         SimpleNamespace(tool_call_id="failure-1"),
         {"repository": "owner/repository", "path": "README.md"},
         fail_handler,
-        None,
+        lambda name, detail: events.append((name, detail)),
     )
 
     payload = json.loads(result)
     assert payload == {"ok": False, "error": "PLUGIN_EXECUTION_FAILED"}
+    diagnostic = events[-1][1]
+    assert diagnostic["exception_type"] == "RuntimeError"
+    assert diagnostic["exception_frames"][-1]["function"] == "fail_handler"
+    assert diagnostic["exception_frames"][-1]["file"] == "test_plugin_tools.py"
+    assert "secret detail" not in json.dumps(events)
+    assert "github-secret" not in json.dumps(events)
 
 
 def test_plugin_result_has_a_total_model_context_limit():

@@ -979,3 +979,28 @@ def test_runtime_rejects_scope_and_path_escape_even_with_a_valid_snapshot():
             },
             handler,
         )
+
+
+def test_activity_metrics_attribute_rate_limit_wait_to_the_resource(monkeypatch):
+    module = GITHUB_RUNTIME.execute_tool.__globals__
+    attempts = []
+    waits = []
+    monkeypatch.setattr('time.sleep', waits.append)
+
+    def handler(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(429, headers={'Retry-After': '3'})
+        return httpx.Response(200, json=[])
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        items, truncated, metrics = module['_timed_activity_resource'](
+            client, 'owner/repo', 'commits', '2026-10-15T00:00:00Z', '2026-10-16T00:00:00Z', 50, 'secret'
+        )
+    assert items == []
+    assert truncated is False
+    assert metrics['requests'] == 2
+    assert metrics['rate_limits'] == 1
+    assert metrics['retry_wait_ms'] == 3000
+    assert waits == [3.0]
+    assert module['_REQUEST_METRICS'].get() is None

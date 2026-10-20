@@ -1,0 +1,12 @@
+type: fix
+audience: user
+en: >-
+  Separate execution completion, source coverage and answer review. Limited
+  coverage and unavailable reviews remain visible as warnings, while missing
+  requirements and unsupported answers still produce partial results. Use one
+  authoritative answer review when configured to avoid conflicting decisions
+  and redundant model calls.
+zh-CN: >-
+  分别记录执行完成情况、来源覆盖与答案审核。普通覆盖缺口或审核不可用以警告保留，
+  未完成要求和明确缺乏证据支持的答案仍标记为部分完成。已配置答案支持度审核时，
+  使用单一审核结论，避免重复模型调用与矛盾判定。

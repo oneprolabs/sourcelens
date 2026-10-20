@@ -3,7 +3,13 @@ import json
 import sys
 from types import ModuleType, SimpleNamespace
 
+import pytest
+from langchain.agents import create_agent
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import StructuredTool
+from pydantic import Field
 
 from lensnode.mcp_tools import (
     DeferredMCPToolMiddleware,
@@ -480,6 +486,77 @@ def test_deferred_mcp_tools_keep_codegraph_visible():
         "mcp__codegraph__codegraph_explore",
         "tool_search",
     }
+
+
+class _DiscoveryModel(BaseChatModel):
+    """Exercise discovery and execution through actual framework model turns."""
+
+    visible: list[list[str]] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self):
+        return "deferred-integration-test"
+
+    def bind_tools(self, tools, **kwargs):
+        return self.bind(tools=list(tools), **kwargs)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        names = [tool.name for tool in kwargs["tools"]]
+        assert len(names) == len(set(names))
+        self.visible.append(names)
+        results = [message for message in messages if isinstance(message, ToolMessage)]
+        if not results:
+            name, args = "tool_search", {"query": "plugin_activity_summary"}
+        elif results[-1].name == "tool_search":
+            name, args = "plugin_activity_summary", {"query": "authorized-project"}
+            assert name in names
+        else:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=results[-1].content))])
+        message = AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": f"call-{len(results)}"}])
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("revoke", [False, True])
+def test_plugin_discovery_executes_original_bound_tool_in_real_graph(asynchronous, revoke):
+    calls = []
+
+    def lookup(query: str):
+        """Read activity from the frozen authorized connection."""
+
+        calls.append(query)
+        if revoke:
+            middleware.restrict_tools({"tool_search", "core_lookup"})
+        return "authorized activity"
+
+    plugin = StructuredTool.from_function(lookup, name="plugin_activity_summary")
+    other = StructuredTool.from_function(lookup, name="plugin_unrelated")
+    core = StructuredTool.from_function(lookup, name="core_lookup")
+    registered, middleware = build_deferred_mcp_tools([], additional_tools=[plugin, other], threshold=1)
+    assert middleware is not None
+    model = _DiscoveryModel()
+    graph = create_agent(model=model, tools=[core, plugin, other, *registered], middleware=[middleware])
+    inputs = {"messages": [{"role": "user", "content": "Read authorized activity."}]}
+
+    result = asyncio.run(graph.ainvoke(inputs)) if asynchronous else graph.invoke(inputs)
+
+    assert result["messages"][-1].content == "authorized activity"
+    assert calls == ["authorized-project"]
+    assert set(model.visible[0]) == {"core_lookup", "tool_search"}
+    assert set(model.visible[1]) == {"core_lookup", "tool_search", plugin.name}
+    assert set(model.visible[2]) == {"core_lookup", "tool_search", *([] if revoke else [plugin.name])}
+    if revoke:
+        assert json.loads(middleware.search_tool.invoke({"query": plugin.name}))["tools"] == []
+
+
+def test_small_combined_catalog_keeps_tools_visible_without_duplicate_registration():
+    plugin = _remote_tool("plugin_lookup")
+    remote = _remote_tool("mcp__catalog__lookup")
+
+    registered, middleware = build_deferred_mcp_tools([remote], additional_tools=[plugin], threshold=2)
+
+    assert registered == [remote]
+    assert middleware is None
 
 
 def test_codegraph_first_middleware_restores_tools_after_codegraph_call():

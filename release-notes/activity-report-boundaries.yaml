@@ -1,0 +1,4 @@
+type: fix
+audience: user
+en: Keep report composition and HTML formatting in the selected Skill, while source Plugins provide facts and the runtime preserves evidence and delivery checks.
+zh-CN: 报告分析与 HTML 格式由所选技能负责，数据源插件提供事实，运行时统一保留证据及交付检查。

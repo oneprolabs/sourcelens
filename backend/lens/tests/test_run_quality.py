@@ -27,6 +27,42 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(detail["code"], "MODEL_TOOL_PROTOCOL_ERROR")
         self.assertNotIn("private content", str(detail))
 
+    def test_independent_result_assessment_survives_public_sanitization(self):
+        detail = sanitize_termination_detail({
+            "assessment": {"execution": "completed", "coverage": "incomplete", "review": "supported",
+                           "raw": "private content"},
+            "warnings": ["evidence_incomplete", "private content", {"raw": "private content"}],
+            "blocking_reasons": ["turn_limit", "evidence_insufficient", "turn_limit", "private content"],
+        })
+        self.assertEqual(detail["assessment"], {
+            "execution": "completed", "coverage": "incomplete", "review": "supported",
+        })
+        self.assertEqual(detail["warnings"], ["evidence_incomplete"])
+        self.assertEqual(detail["blocking_reasons"], ["turn_limit", "evidence_insufficient"])
+        self.assertNotIn("private content", str(detail))
+        self.assertNotIn("error_type", detail)
+
+    def test_invalid_result_assessment_values_are_not_exposed(self):
+        self.assertEqual(sanitize_termination_detail({
+            "assessment": {"execution": "private content", "coverage": {}, "review": []},
+            "warnings": "private content", "blocking_reasons": "private content",
+        }), {})
+
+    def test_completed_run_can_expose_limited_coverage_without_a_failure(self):
+        finish_lensnode_run(
+            self.run.uuid, Run.Status.DONE, outcome=Run.Outcome.COMPLETED,
+            termination_detail={
+                "assessment": {"execution": "completed", "coverage": "incomplete", "review": "supported"},
+                "warnings": ["evidence_incomplete"],
+            },
+            final_content="Available records are summarized; the source coverage is limited.",
+        )
+        self.run.refresh_from_db()
+        self.assertEqual(self.run.outcome, Run.Outcome.COMPLETED)
+        self.assertEqual(self.run.termination_detail["assessment"]["coverage"], "incomplete")
+        self.assertNotIn("reason", self.run.termination_detail)
+        self.assertNotIn("error_type", self.run.termination_detail)
+
     def test_incomplete_evidence_reason_survives_public_sanitization(self):
         detail = sanitize_termination_detail(
             {"reason": "evidence_incomplete", "error_type": "verification", "raw": "private content"}

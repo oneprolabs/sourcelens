@@ -7,62 +7,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 from lensnode.agent_runtime.capabilities import CapabilityBoundaryMiddleware
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.outcomes import _finalize_runtime_outcome
-from lensnode.plugin_package_loader import load_plugin_support
-
-_report_support = load_plugin_support("activity_reports")
-def _apply_delivery_contract(decision, question, history, skills, tools):
-    """Exercise the Plugin contract with an actual bound source."""
-
-    command = {"loaded_plugins": [{"plugin_key": "github", "plugin_version": "1.0.0",
-                                   "tools": [{"key": "github_activity_summary"}]}]}
-    return _report_support._apply_delivery_contract(decision, question, history, skills, tools, command)
-
-
-
-def test_report_skill_requires_artifact_even_when_classifier_only_requires_data():
-    """The selected Skill's file contract remains part of task completion."""
-
-    decision = _apply_delivery_contract(
-        {
-            "route": "plan_execute",
-            "intent": "action",
-            "evidence_requirement": "tool_result",
-            "required_capabilities": ["plugin", "skill"],
-        },
-        "帮我总结，每个人的本周五工作内容",
-        [],
-        ["Write the HTML report to /deliverables/report.html."],
-        [
-            SimpleNamespace(name="github_activity_summary"),
-            SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
-        ],
-    )
-
-    assert decision["evidence_requirement"] == "artifact"
-    assert "artifact_delivery" in decision["required_capabilities"]
-
-
-def test_missing_html_followup_executes_but_unrelated_html_question_does_not():
-    """A complaint about the requested missing report resumes delivery."""
-
-    route = {
-        "route": "direct_answer",
-        "intent": "clarification",
-        "evidence_requirement": "none",
-        "required_capabilities": [],
-    }
-    skills = ["Write the HTML report to /deliverables/report.html."]
-    tools = [
-        SimpleNamespace(name="github_activity_summary"),
-        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
-    ]
-    history = [{"role": "user", "content": "总结每个人的本周五工作内容"}]
-    decision = _apply_delivery_contract(route, "为什么没有生成 html 呢", history, skills, tools)
-
-    assert decision["route"] == "plan_execute"
-    assert decision["evidence_requirement"] == "artifact"
-    assert _apply_delivery_contract(route, "HTML 是什么？", history, skills, tools) == route
-
 
 class _Policy:
     """Enable grounding middleware without a remote model."""
@@ -173,20 +117,6 @@ def test_delivery_budget_survives_checkpoint_resume():
         _Policy(), "report", evidence=evidence, review_state=review, interval=1, max_convergence_nudges=1
     )
     assert restored.before_model({}, None) == {"jump_to": "end"}
-
-
-def test_delivery_contract_respects_text_only_and_unrelated_recent_task():
-    """A report in older history cannot turn an unrelated continuation into a report."""
-
-    route = {"route": "direct_answer", "evidence_requirement": "none"}
-    tools = [
-        SimpleNamespace(name="github_activity_summary"),
-        SimpleNamespace(name="append_file", metadata={"automatic_artifact_delivery": True}),
-    ]
-    skills = ["Write /deliverables/report.html"]
-    history = [{"role": "user", "content": "总结工作内容"}, {"role": "user", "content": "解释 Python 装饰器"}]
-    assert _apply_delivery_contract(route, "继续", history, skills, tools) == route
-    assert _apply_delivery_contract(route, "总结工作内容，仅用文字", [], skills, tools) == route
 
 
 def test_complete_retry_recovers_same_request_coverage():

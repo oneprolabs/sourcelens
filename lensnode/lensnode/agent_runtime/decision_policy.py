@@ -116,6 +116,9 @@ class GateDecisionPolicy(ControlDecisionPolicy):
 
     def select_route(self, model, question, **context):
         route = self.inner.select_route(model, question, **context)
+        # A boolean gate cannot refine an already required evidence contract.
+        if route.get("evidence_requirement") in {"tool_result", "artifact"}:
+            return route
         value = self.runner.evaluate(
             "evidence_requirement",
             question=question,
@@ -149,11 +152,12 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         if not self.has_evidence_gates():
             return {}
         verdicts = {}
+        gates = self._review_gates()
         limits = [
             config["max_state_chars"]
             if type(config.get("max_state_chars")) is int and config["max_state_chars"] > 0
             else DEFAULT_REVIEW_STATE_CHARS
-            for key, config in self.gates.items()
+            for key, config in gates.items()
             if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
         ]
         state_text = _post_run_state(
@@ -167,8 +171,8 @@ class GateDecisionPolicy(ControlDecisionPolicy):
             verdicts["evidence_completeness"] = "incomplete"
         if material.get("review_completeness") == "incomplete":
             return {**verdicts, "review_completeness": "incomplete", "answer_supported": "inconclusive"}
-        if "evidence_sufficient" in self.gates:
-            threshold = (self.gates.get("evidence_sufficient") or {}).get(
+        if "evidence_sufficient" in gates:
+            threshold = (gates.get("evidence_sufficient") or {}).get(
                 "threshold"
             )
             value = self.runner.evaluate(
@@ -180,7 +184,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
                 verdicts["review_available"] = False
             else:
                 verdicts["evidence_sufficient"] = value >= threshold
-        if "answer_supported" in self.gates:
+        if "answer_supported" in gates:
             option = self.runner.evaluate_choice(
                 "answer_supported",
                 question=state_text,
@@ -188,7 +192,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
             verdicts["answer_supported"] = option or "inconclusive"
             if not option:
                 verdicts["review_available"] = False
-        if "evidence_strength" in self.gates:
+        if "evidence_strength" in gates:
             option = self.runner.evaluate_choice(
                 "evidence_strength",
                 question=state_text,
@@ -204,13 +208,21 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         return min(
             (
                 config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS)
-                for key, config in self.gates.items()
+                for key, config in self._review_gates().items()
                 if key in {"evidence_sufficient", "answer_supported", "evidence_strength"}
                 and type(config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS)) is int
                 and config.get("max_state_chars", DEFAULT_REVIEW_STATE_CHARS) > 0
             ),
             default=DEFAULT_REVIEW_STATE_CHARS,
         )
+
+    def _review_gates(self):
+        """Prefer one grounding decision while retaining legacy-only bindings."""
+
+        if "answer_supported" in self.gates:
+            return {"answer_supported": self.gates["answer_supported"]}
+        return {key: config for key, config in self.gates.items()
+                if key in {"evidence_sufficient", "evidence_strength"}}
 
     def has_evidence_gates(self):
         """Return whether an answer-grounding gate is bound."""

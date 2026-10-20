@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from functools import lru_cache, update_wrapper
 from pathlib import Path
 
-
 PLUGIN_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 PLUGIN_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 TOOL_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -66,6 +65,7 @@ class PluginRuntimeContract:
     agent_extensions: object = None
     tool_metadata: object = None
     project_tool_result: object = None
+    project_tool_evidence: object = None
     runtime_sha256: str = ""
     support_sha256: object = None
     manifest_sha256: str = ""
@@ -150,9 +150,7 @@ def _runtime_contract(path, plugin_key, plugin_version, root, manifest):
         source = resolved.read_bytes()
         content_digest = hashlib.sha256(source).hexdigest()
     except OSError as exc:
-        raise PluginPackageLoadError(
-            "plugin runtime entrypoint is required"
-        ) from exc
+        raise PluginPackageLoadError("plugin runtime entrypoint is required") from exc
     if not resolved.is_file() or size > MAX_RUNTIME_BYTES:
         raise PluginPackageLoadError("plugin runtime entrypoint is invalid")
     _verify_manifest_entry(root, resolved, manifest, source)
@@ -184,9 +182,7 @@ def _runtime_contract(path, plugin_key, plugin_version, root, manifest):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
     if build_tool is not None and not callable(build_tool):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
-    if build_datasource_command is not None and not callable(
-        build_datasource_command
-    ):
+    if build_datasource_command is not None and not callable(build_datasource_command):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
     if sync_datasource is not None and not callable(sync_datasource):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
@@ -203,7 +199,8 @@ def _runtime_contract(path, plugin_key, plugin_version, root, manifest):
         raise PluginPackageLoadError("plugin runtime contract is invalid")
     agent_extensions = getattr(module, "agent_extensions", None)
     project_tool_result = getattr(module, "project_tool_result", None)
-    for hook in (agent_extensions, project_tool_result):
+    project_tool_evidence = getattr(module, "project_tool_evidence", None)
+    for hook in (agent_extensions, project_tool_result, project_tool_evidence):
         if hook is not None and not callable(hook):
             raise PluginPackageLoadError("plugin agent contract is invalid")
     tool_metadata = getattr(module, "TOOL_METADATA", {})
@@ -216,6 +213,13 @@ def _runtime_contract(path, plugin_key, plugin_version, root, manifest):
         )
     ):
         raise PluginPackageLoadError("plugin tool metadata is invalid")
+    if any(
+        "durable_evidence" in value and not isinstance(value["durable_evidence"], bool)
+        for value in tool_metadata.values()
+    ):
+        raise PluginPackageLoadError("plugin tool metadata is invalid")
+    if any(value.get("durable_evidence") is True for value in tool_metadata.values()) and project_tool_evidence is None:
+        raise PluginPackageLoadError("plugin evidence projection is required")
     return PluginRuntimeContract(
         plugin_key=plugin_key,
         plugin_version=plugin_version,
@@ -229,6 +233,7 @@ def _runtime_contract(path, plugin_key, plugin_version, root, manifest):
         agent_extensions=_bind_export(agent_extensions, source_context),
         tool_metadata=tool_metadata,
         project_tool_result=_bind_export(project_tool_result, source_context),
+        project_tool_evidence=_bind_export(project_tool_evidence, source_context),
         runtime_sha256=content_digest,
         support_sha256=support_sha256,
         manifest_sha256=manifest["digest"] if manifest else "",
