@@ -1,0 +1,14 @@
+type: feature
+audience: user
+en: >-
+  Agent Integration offers revocable access tokens with 1, 3, or 6 months of validity,
+  or no expiration. View active authorizations in settings and revoke individual
+  tokens immediately. Previously issued JWTs remain valid until their original expiry.
+zh-CN: >-
+  智能体集成支持可撤销的访问令牌，有效期可选 1、3、6 个月或永不过期。
+  可在设置中查看有效授权并单独撤销，撤销后立即失效。
+  旧版本已签发的 JWT 仍按原有效期失效。
+es: >-
+  La integración de agentes ofrece tokens revocables con validez de 1, 3 o 6 meses,
+  o sin caducidad. Consulta las autorizaciones activas y revoca cada token al instante.
+  Los JWT anteriores conservan su fecha de caducidad original.

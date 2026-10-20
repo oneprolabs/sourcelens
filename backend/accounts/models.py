@@ -23,6 +23,11 @@ Other methods to extend the User model:
     - Subclassing User: Create a custom user model with your own fields.
     - Using a ForeignKey: Establish a many-to-one relationship for extensions.
 """
+import hashlib
+import secrets
+import uuid
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models
 
@@ -30,6 +35,43 @@ from accounts.access import normalize_feature_keys, normalize_platform_key
 
 
 DEFAULT_ANSWER_LANGUAGE = 'en-US'
+
+
+class AgentToken(models.Model):
+    """Store revocable agent credentials without retaining the plaintext."""
+
+    PREFIX = "sl_agent_"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="agent_tokens")
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    token_hint = models.CharField(max_length=32, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    @staticmethod
+    def digest(raw_token):
+        """Hash a high-entropy credential for indexed server-side lookup."""
+
+        value = raw_token.encode("utf-8") if isinstance(raw_token, str) else raw_token
+        return hashlib.sha256(value).hexdigest()
+
+    @classmethod
+    def issue(cls, user, expires_at):
+        """Persist authorization and return its plaintext credential once."""
+
+        raw_token = cls.PREFIX + secrets.token_urlsafe(32)
+        token = cls.objects.create(
+            user=user,
+            token_hash=cls.digest(raw_token),
+            token_hint=f"{raw_token[:12]}...{raw_token[-4:]}",
+            expires_at=expires_at,
+        )
+        return token, raw_token
 
 
 def normalize_answer_language(value):

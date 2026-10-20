@@ -5,11 +5,16 @@
     </p>
 
     <div class="space-y-3 rounded-xl border border-line px-4 py-4">
-      <div class="flex items-center justify-between gap-4">
+      <div
+        class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+      >
         <div class="min-w-0">
-          <div class="text-sm font-medium text-theme">
+          <label
+            for="agent-integration-validity"
+            class="block text-sm font-medium text-theme"
+          >
             {{ t('settings.modal.agentIntegrationValidity') }}
-          </div>
+          </label>
           <p class="mt-1 text-xs leading-5 text-theme-muted">
             {{ t('settings.modal.agentIntegrationValidityDesc') }}
           </p>
@@ -17,9 +22,9 @@
         <BaseSelect
           id="agent-integration-validity"
           v-model="lifetimeMonths"
-          class="w-32 shrink-0"
+          class="w-full shrink-0 sm:w-40"
           :full-width="false"
-          size="sm"
+          :menu-min-width="160"
           :aria-label="t('settings.modal.agentIntegrationValidity')"
         >
           <option
@@ -55,9 +60,7 @@
         <div
           class="flex flex-wrap items-center justify-between gap-2 text-xs text-theme-muted"
         >
-          <span>{{
-            t('settings.modal.agentIntegrationExpires', { date })
-          }}</span>
+          <span>{{ validityText }}</span>
           <button
             type="button"
             class="font-medium text-primary-600 transition-colors hover:text-primary-700"
@@ -76,6 +79,8 @@
         >
       </div>
     </div>
+
+    <AgentTokenList ref="tokenList" @revoked="handleRevoked" />
   </div>
 </template>
 
@@ -84,6 +89,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { generateAgentToken } from '@/api/auth'
+import AgentTokenList from '@/components/settings/AgentTokenList.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
@@ -94,17 +100,20 @@ const { t, locale } = useI18n()
 const { showError } = useToast()
 
 const prompt = ref('')
-const expiresAt = ref(0)
+const expiresAt = ref(null)
 const generating = ref(false)
 const copied = ref(false)
 const lifetimeMonths = ref(1)
+const tokenList = ref(null)
+const currentTokenId = ref(null)
 
-const validityOptions = computed(() =>
-  [1, 3, 6].map((months) => ({
+const validityOptions = computed(() => [
+  ...[1, 3, 6].map((months) => ({
     value: months,
     label: t('settings.modal.agentIntegrationValidityMonths', { months })
-  }))
-)
+  })),
+  { value: 0, label: t('settings.modal.agentIntegrationNeverExpires') }
+])
 
 const actionLabel = computed(() => {
   if (generating.value) return t('settings.modal.agentIntegrationGenerating')
@@ -112,10 +121,12 @@ const actionLabel = computed(() => {
   return t('settings.modal.agentIntegrationGenerate')
 })
 
-const date = computed(() =>
-  expiresAt.value
-    ? new Date(expiresAt.value * 1000).toLocaleDateString(locale.value)
-    : ''
+const validityText = computed(() =>
+  expiresAt.value === null
+    ? t('settings.modal.agentIntegrationNeverExpires')
+    : t('settings.modal.agentIntegrationExpires', {
+        date: new Date(expiresAt.value * 1000).toLocaleDateString(locale.value)
+      })
 )
 
 async function generatePrompt() {
@@ -125,18 +136,28 @@ async function generatePrompt() {
       await generateAgentToken(lifetimeMonths.value)
     )
     expiresAt.value = payload.expires_at
+    currentTokenId.value = payload.id
     copied.value = false
     prompt.value = t('settings.modal.agentIntegrationPrompt', {
       url: publicBaseUrl(),
       token: payload.access,
-      date: date.value
+      validity: validityText.value
     })
+    await tokenList.value?.refresh()
   } catch (error) {
     showError(
       extractErrorMessage(error, t('settings.modal.agentIntegrationFailed'))
     )
   } finally {
     generating.value = false
+  }
+}
+
+function handleRevoked(id) {
+  if (currentTokenId.value === id) {
+    prompt.value = ''
+    copied.value = false
+    currentTokenId.value = null
   }
 }
 

@@ -9,6 +9,8 @@ from accounts.urls import CustomLoginView
 from accounts.views import (
     CustomUserDetailsView,
     AgentTokenView,
+    AgentTokenListView,
+    AgentTokenRevokeView,
     VerifyLoginCodeView,
 )
 from accounts.views.management import (
@@ -53,6 +55,8 @@ urlpatterns = [
     ),
     path("api/v1/auth/probe", AuthenticatedProbeView.as_view()),
     path("api/v1/auth/agent/token", AgentTokenView.as_view()),
+    path("api/v1/auth/agent/tokens", AgentTokenListView.as_view()),
+    path("api/v1/auth/agent/tokens/<uuid:token_id>", AgentTokenRevokeView.as_view()),
     path(
         "api/v1/management/users/",
         ManagementUserListView.as_view(),

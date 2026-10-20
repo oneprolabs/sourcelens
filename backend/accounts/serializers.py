@@ -110,8 +110,8 @@ class AgentTokenRequestSerializer(serializers.Serializer):
     """
     lifetime_months = serializers.IntegerField(
         required=False,
-        min_value=1,
-        help_text=_("Requested token validity in months"),
+        min_value=0,
+        help_text=_("Requested token validity in months; 0 means never expires"),
     )
 
 
@@ -119,22 +119,38 @@ class AgentTokenResponseSerializer(serializers.Serializer):
     """
     Long-lived token response for external agent clients.
     """
-    access = serializers.CharField(
-        help_text=_("Long-lived JWT access token")
-    )
+    id = serializers.UUIDField(help_text=_("Authorization ID for revocation"))
+    access = serializers.CharField(help_text=_("Agent access token; returned only at issuance"))
     token_type = serializers.CharField(
         default="Bearer",
         help_text=_("Authorization scheme for the token"),
     )
     scope = serializers.CharField(
-        help_text=_("Marker claim identifying the agent scope")
+        help_text=_("Authorization scope of the agent token")
     )
     expires_in = serializers.IntegerField(
-        help_text=_("Remaining validity in seconds")
+        allow_null=True,
+        help_text=_("Remaining validity in seconds; null means never expires")
     )
     expires_at = serializers.IntegerField(
-        help_text=_("Expiry as a Unix timestamp")
+        allow_null=True,
+        help_text=_("Expiry as a Unix timestamp; null means never expires")
     )
+
+
+class AgentTokenListSerializer(serializers.Serializer):
+    """Expose authorization metadata without any secret or credential hash."""
+
+    id = serializers.UUIDField()
+    token_hint = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class AgentTokenListResponseSerializer(serializers.Serializer):
+    """Wrap the current user's active agent authorizations."""
+
+    tokens = AgentTokenListSerializer(many=True)
 
 
 class UsernameAvailabilityResponseSerializer(serializers.Serializer):

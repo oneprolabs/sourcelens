@@ -1,0 +1,9 @@
+type: fix
+audience: user
+en: >-
+  Include published output files in Q&A run responses and allow agent credentials
+  to download them through the existing private file endpoint. Session ownership
+  and draft publication checks remain enforced.
+zh-CN: >-
+  问答 Run 响应增加已发布交付附件清单，允许 Agent 凭证通过已有私有接口下载文件，
+  保留会话归属和草稿发布状态校验。

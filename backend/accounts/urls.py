@@ -19,6 +19,8 @@ from accounts.views import (
     CustomUserDetailsView,
     GetAvailableScenesView,
     AgentTokenView,
+    AgentTokenListView,
+    AgentTokenRevokeView,
     SendLoginCodeView,
     SendPasswordResetEmailView,
     SendRegistrationEmailView,
@@ -103,12 +105,14 @@ urlpatterns = [
         TokenRefreshView.as_view(),
         name='token_refresh'
     ),
-    # Long-lived JWT for external agent clients (Codex / Claude)
+    # Revocable credentials for external agent clients (Codex / Claude)
     path(
         'api/v1/auth/agent/token',
         AgentTokenView.as_view(),
         name='agent_token'
     ),
+    path('api/v1/auth/agent/tokens', AgentTokenListView.as_view(), name='agent_token_list'),
+    path('api/v1/auth/agent/tokens/<uuid:token_id>', AgentTokenRevokeView.as_view(), name='agent_token_revoke'),
     # Passwordless email verification-code login
     path(
         'api/v1/auth/login/send-code',
