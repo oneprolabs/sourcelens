@@ -102,11 +102,12 @@ LABEL_TEXT = {
         "Assistant",
         "User",
         "Occurred at",
-        "Started at",
+        "Q&A task time",
         "Question",
         "View Run details",
         "Threshold",
         "View conversation",
+        "(as of alert)",
     ),
     "zh-CN": (
         "订阅",
@@ -128,11 +129,12 @@ LABEL_TEXT = {
         "助手",
         "用户",
         "发生时间",
-        "开始时间",
+        "问答任务时间",
         "用户问题",
         "查看 Run 详情",
         "触发阈值",
         "查看会话",
+        "（截至告警触发）",
     ),
     "es": (
         "Suscripción",
@@ -154,11 +156,12 @@ LABEL_TEXT = {
         "Asistente",
         "Usuario",
         "Fecha del evento",
-        "Hora de inicio",
+        "Periodo de la consulta",
         "Pregunta",
         "Ver detalles del Run",
         "Umbral",
         "Ver conversación",
+        "(hasta la alerta)",
     ),
 }
 LABEL_KEYS = (
@@ -181,11 +184,12 @@ LABEL_KEYS = (
     "assistant",
     "user",
     "occurred_at",
-    "started_at",
+    "run_time",
     "question",
     "view_run",
     "threshold",
     "view_conversation",
+    "as_of_alert",
 )
 
 
@@ -232,6 +236,19 @@ def _event_time(value) -> str:
     return parsed.astimezone(datetime_timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _notification_time_field(event, labels):
+    """Show a Run's start-to-occurrence interval from its immutable alert snapshot."""
+
+    detail = event.detail
+    occurred_at = _event_time(detail.get("occurred_at") or event.created_at)
+    if event.subject != "run":
+        return labels["occurred_at"], occurred_at
+    interval = f"{_event_time(detail.get('started_at'))} ～ {occurred_at}"
+    if detail.get("status") in {"queued", "running"}:
+        interval = f"{interval} {labels['as_of_alert']}"
+    return labels["run_time"], interval
+
+
 def notification_language(subscription):
     """Personal mail follows the current profile; managed targets choose a locale."""
 
@@ -266,6 +283,14 @@ def _diagnosis_sections(delivery, language):
     return sections
 
 
+def _question_excerpt(detail, *, has_diagnosis):
+    """Keep question context short enough to leave room for the following diagnosis."""
+
+    question = str(detail.get("question") or "-")
+    limit = 200 if has_diagnosis else 2000
+    return question if len(question) <= limit else question[:limit] + "…"
+
+
 def notification_card_content(delivery, language):
     """Describe business fields and sections without parsing user-authored plain text."""
 
@@ -286,9 +311,7 @@ def notification_card_content(delivery, language):
         sections.append(("", translated.get("body") or str(detail.get("body") or "")))
     else:
         fields.append((labels["resource"], detail.get("datasource_name") or "-"))
-    fields.append((labels["occurred_at"], _event_time(detail.get("occurred_at") or event.created_at)))
-    if event.subject == "run":
-        fields.append((labels["started_at"], _event_time(detail.get("started_at"))))
+    fields.append(_notification_time_field(event, labels))
     fields.append((labels["rule"], event.rule_snapshot.get("name") or "-"))
     metrics = [
         (labels[key], str(detail[key]))
@@ -304,9 +327,10 @@ def notification_card_content(delivery, language):
         metrics.append((labels["threshold"], str(detail[threshold_key])))
     if detail.get("error"):
         sections.append((labels["error"], detail["error"]))
-    sections.extend(_diagnosis_sections(delivery, language))
+    diagnosis_sections = _diagnosis_sections(delivery, language)
     if event.subject == "run":
-        sections.append((labels["question"], str(detail.get("question") or "-")[:2001]))
+        sections.append((labels["question"], _question_excerpt(detail, has_diagnosis=bool(diagnosis_sections))))
+    sections.extend(diagnosis_sections)
     return {
         "color": (
             "blue"
@@ -317,7 +341,7 @@ def notification_card_content(delivery, language):
         "fields": fields,
         "metrics": metrics,
         "sections": sections,
-        "reference": f"SourceLens · {'Run' if event.subject == 'run' else labels['operation']}: {event.source_uuid}",
+        "reference": "" if event.subject == "run" else f"SourceLens · {labels['operation']}: {event.source_uuid}",
     }
 
 
@@ -331,25 +355,20 @@ def render_notification(delivery, language):
     translated = (detail.get("translations") or {}).get(language, {}) if event.subject == "message" else {}
     heading = translated.get("title") or detail.get("title") or events.get(event.event_type, event.event_type)
     title = f"[SourceLens] {heading}"
+    time_label, time_value = _notification_time_field(event, labels)
     lines = [
         title,
         f"{labels['rule']}: {event.rule_snapshot.get('name', '')}",
         f"{labels['assistant'] if event.subject == 'run' else labels['resource']}: "
         f"{detail.get('assistant_name') or detail.get('datasource_name') or '-'}",
-        f"{labels['occurred_at']}: {_event_time(detail.get('occurred_at') or event.created_at)}",
+        f"{time_label}: {time_value}",
         f"{labels['conditions']}: {', '.join(events.get(value, value) for value in detail.get('matched_events', []))}",
     ]
     if event.subject == "run":
         username = detail.get("username") or ""
         display_name = detail.get("user_display_name") or username or "-"
         user = f"{display_name} ({username})" if username and display_name != username else display_name
-        lines.extend(
-            [
-                f"{labels['user']}: {user}",
-                f"{labels['started_at']}: {_event_time(detail.get('started_at'))}",
-                f"Run: {detail.get('run_uuid') or event.source_uuid}",
-            ]
-        )
+        lines.append(f"{labels['user']}: {user}")
     else:
         lines.append(f"{labels['operation']}: {event.source_uuid}")
     if event.subject == "message":
@@ -362,13 +381,13 @@ def render_notification(delivery, language):
         if detail.get(key) is not None and detail.get(key) != "":
             lines.append(f"{labels[key]}: {detail[key]}")
     diagnosis_sections = _diagnosis_sections(delivery, language)
+    if event.subject == "run":
+        question = _question_excerpt(detail, has_diagnosis=bool(diagnosis_sections))
+        lines.extend(["", f"{labels['question']}:\n{question}"])
     if diagnosis_sections:
         if delivery.diagnosis.status == "completed" and delivery.diagnosis.language == language:
             title = f"{title} · {labels['diagnosis']}"
         lines.extend(["", *(f"{label}: {content}" for label, content in diagnosis_sections)])
-    if event.subject == "run":
-        # Keep alert details ahead of question excerpts when transports truncate the body.
-        lines.extend(["", f"{labels['question']}:\n{str(detail.get('question') or '-')[:2001]}"])
     lines[0] = title
     personal = bool(delivery.subscription and delivery.subscription.personal)
     url = run_detail_url(event, personal=personal)

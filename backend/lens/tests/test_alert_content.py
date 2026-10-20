@@ -44,13 +44,29 @@ class AlertContentTests(TestCase):
         for value in (
             "助手: Engineering assistant",
             "用户: Alice Chen (alice)",
-            "发生时间: 2026-10-19 07:35:00 UTC",
-            "开始时间: 2026-10-19 07:30:00 UTC",
+            "问答任务时间: 2026-10-19 07:30:00 UTC ～ 2026-10-19 07:35:00 UTC",
             "用户问题:\nWhy did yesterday's sync fail?",
             "RUN_TIMEOUT",
             f"https://lens.example.test/portal/management/lens/runs?run={self.run.uuid}",
         ):
             self.assertIn(value, body)
+        self.assertNotIn("发生时间:", body)
+        self.assertNotIn("开始时间:", body)
+        self.assertNotIn("Run: ", body)
+        content = notification_card_content(self.delivery, "zh-CN")
+        self.assertIn(
+            ("问答任务时间", "2026-10-19 07:30:00 UTC ～ 2026-10-19 07:35:00 UTC"), content["fields"]
+        )
+
+    def test_running_alert_interval_ends_at_snapshot_time_in_both_formats(self):
+        self.delivery.event.detail.update(
+            status="running", started_at="2026-10-19T15:30:00+08:00", occurred_at="2026-10-19T15:32:00+08:00"
+        )
+        expected = "2026-10-19 07:30:00 UTC ～ 2026-10-19 07:32:00 UTC （截至告警触发）"
+        _, body = render_notification(self.delivery, "zh-CN")
+        self.assertIn(f"问答任务时间: {expected}", body)
+        content = notification_card_content(self.delivery, "zh-CN")
+        self.assertIn(("问答任务时间", expected), content["fields"])
 
     def test_question_is_bounded_at_capture_and_link_survives_a_long_excerpt(self):
         self.run.input_message.content = "长问题" * 10000
@@ -96,6 +112,8 @@ class AlertContentTests(TestCase):
             f"management/lens/runs?run={self.run.uuid}",
         ):
             self.assertIn(value, text)
+        self.assertLess(text.index("用户问题:"), text.index("诊断结果:"))
+        self.assertIn("长问题" * 66 + "长问…", text)
         self.assertLessEqual(len(text.encode("utf-8")), 4096)
 
     def test_feishu_diagnosis_is_not_displaced_by_a_long_question(self):
@@ -121,6 +139,19 @@ class AlertContentTests(TestCase):
         )
         for value in ("诊断" * 480, "原因" * 450, "检查工具状态后重试。", "长问题"):
             self.assertIn(value, text)
+        self.assertLess(text.index("用户问题"), text.index("诊断结果"))
+        self.assertIn("长问题" * 66 + "长问…", text)
+
+    def test_question_precedes_diagnosis_fallback_in_both_formats(self):
+        self.delivery.phase = "diagnosis"
+        for status in ("failed", "timed_out"):
+            with self.subTest(status=status):
+                self.delivery.diagnosis = AlertDiagnosis(status=status, language="zh-CN")
+                _, body = render_notification(self.delivery, "zh-CN")
+                self.assertLess(body.index("\n用户问题:"), body.index("\n诊断结果:"))
+                sections = notification_card_content(self.delivery, "zh-CN")["sections"]
+                labels = [label for label, value in sections]
+                self.assertLess(labels.index("用户问题"), labels.index("诊断结果"))
 
     def test_personal_notification_links_to_the_owned_conversation(self):
         self.user.email = "alice@example.test"
@@ -157,6 +188,7 @@ class AlertContentTests(TestCase):
         self.assertIn("Legacy assistant", body)
         self.assertIn(f"management/lens/runs?run={self.run.uuid}", body)
         self.assertNotIn("None", body)
+        self.assertIn("Q&A task time: - ～ ", body)
 
     def test_actual_feishu_delivery_contains_context_and_a_detail_button(self):
         self.channel.channel_type = "feishu"
@@ -176,6 +208,9 @@ class AlertContentTests(TestCase):
         self.assertIn("Alice Chen", str(elements))
         self.assertIn("alice", str(elements))
         self.assertIn("Why did yesterday's sync fail?", str(elements))
+        self.assertNotIn("SourceLens · Run:", str(elements))
+        self.assertNotIn(str(self.run.uuid), str([item for item in elements if item["tag"] != "button"]))
+        self.assertEqual(elements[-1]["tag"], "button")
         action = next(item for item in elements if item["tag"] == "button")
         self.assertEqual(
             action["behaviors"][0]["default_url"],
@@ -186,8 +221,8 @@ class AlertContentTests(TestCase):
 
     def test_labels_follow_the_recipient_language(self):
         for language, labels in (
-            ("en-US", ("Assistant:", "User:", "Question:", "View Run details:")),
-            ("es", ("Asistente:", "Usuario:", "Pregunta:", "Ver detalles del Run:")),
+            ("en-US", ("Assistant:", "User:", "Question:", "View Run details:", "Q&A task time:")),
+            ("es", ("Asistente:", "Usuario:", "Pregunta:", "Ver detalles del Run:", "Periodo de la consulta:")),
         ):
             with self.subTest(language=language):
                 _, body = render_notification(self.delivery, language)
@@ -212,6 +247,8 @@ class AlertContentTests(TestCase):
         content = notification_card_content(self.delivery, "zh-CN")
         self.assertEqual(content["color"], "blue")
         self.assertIn(("消息主题", "release.ready"), content["fields"])
+        self.assertTrue(any(label == "发生时间" for label, value in content["fields"]))
+        self.assertFalse(any(label == "问答任务时间" for label, value in content["fields"]))
         self.assertEqual(content["sections"], [("", "发布已完成，请检查结果。")])
 
     @override_settings(FRONTEND_URL="javascript:alert(1)")
