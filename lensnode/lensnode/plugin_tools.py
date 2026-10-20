@@ -3,7 +3,9 @@
 import json
 import threading
 import time
+import traceback
 import uuid
+from pathlib import Path
 
 import httpx
 
@@ -208,6 +210,7 @@ def _execute_plugin_tool(
     )
     material = None
     error = ""
+    diagnostic = {}
     try:
         if not call_id:
             raise PluginRuntimeError("PLUGIN_TOOL_CALL_ID_REQUIRED")
@@ -295,9 +298,16 @@ def _execute_plugin_tool(
     except (httpx.HTTPError, PluginHttpClientError):
         error = "PLUGIN_REQUEST_FAILED"
         result = {"ok": False, "error": error}
-    except Exception:
+    except Exception as exc:
         error = "PLUGIN_EXECUTION_FAILED"
         result = {"ok": False, "error": error}
+        diagnostic = {
+            "exception_type": type(exc).__name__,
+            "exception_frames": [
+                {"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+                for frame in traceback.extract_tb(exc.__traceback__)
+            ],
+        }
     finally:
         if material is not None:
             material["value"] = ""
@@ -316,6 +326,7 @@ def _execute_plugin_tool(
                 "ok": not error,
                 "error": error,
                 "duration_ms": int((time.monotonic() - started) * 1000),
+                **diagnostic,
             },
         )
     encoded = _json(result)

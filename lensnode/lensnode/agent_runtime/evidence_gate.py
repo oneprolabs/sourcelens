@@ -9,11 +9,12 @@ import threading
 from contextlib import nullcontext
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from ..gateway_model import RunCancelledError, RunTokenBudgetExhaustedError
 from .evidence_material import DEFAULT_REVIEW_STATE_CHARS, review_material
+from .messages import runtime_message
 
 LOGGER = logging.getLogger("lensnode")
 
@@ -29,6 +30,13 @@ _RECHECK_GUIDANCE = (
     "memory. Reuse retrieved source results and any saved evidence ledger "
     "first; correct unsupported claims using that evidence. Do not repeat "
     "the same retrieval requests or treat truncated results as complete. "
+    "Compare the candidate's specific assertions with the saved facts, identify the "
+    "unsupported passage and the evidence that limits it, then correct that passage "
+    "in both the answer and any artifact. Check who performed each action and when; "
+    "ownership or authorship alone does not establish performance. Use corroborating "
+    "records when available; otherwise separate the observed event from its unknown "
+    "performer. Adding a general caveat while retaining the unsupported assertion "
+    "does not correct it. "
     "If specific missing facts can be retrieved with available tools, batch "
     'alternative keywords with "|" in ONE search_workspace call (for '
     'example "昇腾|Ascend|910B") and read the most relevant matched files '
@@ -43,6 +51,9 @@ _RECHECK_GUIDANCE = (
     "focus on the user's question."
     " Existing deliverable drafts remain in /deliverables/. Correct the affected sections in place; "
     "reuse the existing formatting. Rejected files must be corrected before publication. "
+    "For several corrections to the same file, prefer one execute script that verifies each exact old "
+    "passage occurs once, applies all replacements in memory and writes the file once after all checks pass. "
+    "Do not run concurrent writes to the same file or use one model turn per person. "
     "The host stages the final files automatically."
 )
 
@@ -57,11 +68,22 @@ _CONVERGENCE_GUIDANCE = (
     "specific missing fact, using batched keywords (\"a|b|c\") and a "
     "narrower glob; do not repeat queries you already ran."
 )
+_ANALYSIS_GUIDANCE = (
+    "The saved source evidence has been read. Analyze the facts and coverage gaps, then finish the requested "
+    "output using the bound Skill instructions and the user's output preferences. Reuse saved evidence; "
+    "do not repeat source requests. Use the available tools to create any requested files before answering."
+)
 _DELIVERY_GUIDANCE = (
     "Stop broad searches and finish the required deliverable from the evidence already collected. "
+    "Analyze the evidence before writing and preserve the requested scope. Distinguish supported facts "
+    "from inferences and disclose uncertainty. Follow the selected Skill's content requirements. "
+    "Re-read the bound output-format instructions before writing. If they provide a template, reuse its "
+    "structure and styling from the file and fill its content slots rather than redesigning the page. "
     "Write the requested final artifact in /deliverables/ before the final answer. The host stages it automatically. "
     "Disclose missing or truncated sources in the artifact. A text answer or a promise to create a file "
-    "does not fulfill artifact delivery."
+    "does not fulfill artifact delivery. If the artifact contains the full requested details, use the final "
+    "chat response for its filename, key findings and coverage limits; avoid duplicating the entire report "
+    "unless the user requested the full report inline."
 )
 
 
@@ -316,15 +338,15 @@ class EvidenceGateMiddleware(AgentMiddleware):
             return None
         self.model_calls += 1
         self.review_state["model_calls"] = self.model_calls
-        if (
-            isinstance(self.evidence, dict)
-            and self.evidence.get("artifact_required")
-            and self.convergence_nudges < self.max_convergence_nudges
-        ):
+        if self.convergence_nudges < self.max_convergence_nudges:
             progress = self._artifact_progress(state or {})
             if progress:
                 if progress == "deliver":
-                    return {"messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
+                    artifact_required = isinstance(self.evidence, dict) and self.evidence.get("artifact_required")
+                    guidance = _DELIVERY_GUIDANCE if artifact_required else _ANALYSIS_GUIDANCE
+                    return {"messages": [runtime_message(
+                        guidance, phase="delivery" if artifact_required else "analysis"
+                    )]}
                 return None
         self.convergence_calls += 1
         self.review_state["convergence_calls"] = self.convergence_calls
@@ -365,7 +387,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                     },
                 )
                 if self.delivery_turns == 1:
-                    return {"messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
+                    return {"messages": [runtime_message(_DELIVERY_GUIDANCE, phase="delivery")]}
                 return None
             if isinstance(self.evidence, dict):
                 self.evidence["convergence_exhausted"] = True
@@ -385,10 +407,12 @@ class EvidenceGateMiddleware(AgentMiddleware):
         guidance = _CONVERGENCE_GUIDANCE
         if isinstance(self.evidence, dict) and self.evidence.get("artifact_required"):
             guidance = _DELIVERY_GUIDANCE
-        return {"messages": [HumanMessage(content=guidance)]}
+        return {"messages": [runtime_message(
+            guidance, phase="delivery" if guidance == _DELIVERY_GUIDANCE else "analysis",
+        )]}
 
     def _artifact_progress(self, state):
-        """Do not spend search-convergence rounds on setup, advancing pages, or writes."""
+        """Do not count bounded setup, advancing local evidence pages, or writes as stalled searches."""
 
         calls = {
             call["id"]: call
@@ -422,7 +446,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 if output.startswith("/deliverables/"):
                     progress = [name, args]
                     allowance = "writing"
-            elif name == "read_activity_evidence":
+            elif name == "read_tool_evidence":
                 try:
                     payload = json.loads(_message_text(message))
                 except (TypeError, ValueError):
@@ -494,8 +518,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 self.review_state["automatic_delivery_corrections"] = attempts + 1
                 self._begin_correction()
                 recovery = "\n".join(str(issue.get("recovery") or issue.get("message") or issue.get("code"))
-                                     for issue in issues[:3])
-                return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
+                                     for issue in issues)
+                return {"jump_to": "model", "messages": [runtime_message(recovery)]}
         if self.completion_check is not None:
             try:
                 checks = self.completion_check(answer) or []
@@ -505,17 +529,21 @@ class EvidenceGateMiddleware(AgentMiddleware):
             seen = set(self.review_state.get("completion_check_codes") or [])
             checks = [check for check in checks if check.get("code") not in seen]
             if checks:
-                seen.add(checks[0].get("code", "completion_check"))
+                seen.update(check.get("code", "completion_check") for check in checks)
                 self.review_state["completion_check_codes"] = sorted(seen)
                 self._begin_correction()
                 if self.on_recheck is not None:
                     self.on_recheck()
                 self._emit(
                     "deepagents.evidence.verified",
-                    {"action": "recheck", "fallback_reason": checks[0].get("code", "completion_check")},
+                    {"action": "recheck", "fallback_reason": checks[0].get("code", "completion_check"),
+                     "check_codes": [check.get("code", "completion_check") for check in checks]},
                 )
-                recovery = checks[0].get("recovery") or checks[0].get("message") or "Correct the answer from the evidence."
-                return {"jump_to": "model", "messages": [HumanMessage(content=recovery)]}
+                recovery = "\n".join(
+                    check.get("recovery") or check.get("message") or "Correct the answer from the evidence."
+                    for check in checks
+                )
+                return {"jump_to": "model", "messages": [runtime_message(recovery)]}
         return self._review_answer(answer, state)
 
     def _review_answer(self, answer, state):
@@ -530,37 +558,26 @@ class EvidenceGateMiddleware(AgentMiddleware):
             and not self.review_state.get("delivery_nudged")
         ):
             self.review_state["delivery_nudged"] = True
-            return {"jump_to": "model", "messages": [HumanMessage(content=_DELIVERY_GUIDANCE)]}
+            return {"jump_to": "model", "messages": [runtime_message(_DELIVERY_GUIDANCE, phase="delivery")]}
         self.saw_final_answer = True
         scope = self.review_scope() if self.review_scope else nullcontext()
         with scope:
             verdicts = self._verify(answer, state)
             if verdicts is None:
                 return None
-            contradicted = (
-                verdicts.get("evidence_sufficient") is False
-                or verdicts.get("answer_supported") == "unsupported"
-                or verdicts.get("evidence_strength") in {"unsupported", "contradicted"}
-            )
-            if verdicts.get("review_available") is False and not contradicted:
+            review_status = _review_status(verdicts)
+            if review_status == "inconclusive":
+                reason = (
+                    "review_material_truncated" if verdicts.get("review_completeness") == "incomplete"
+                    else "review_unavailable" if verdicts.get("review_available") is False
+                    else "review_inconclusive"
+                )
                 self._emit(
                     "deepagents.evidence.verified",
-                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_unavailable"},
+                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": reason},
                 )
                 return None
-            if verdicts.get("evidence_completeness") == "incomplete" and not contradicted:
-                self._emit(
-                    "deepagents.evidence.verified",
-                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "evidence_incomplete"},
-                )
-                return None
-            if verdicts.get("review_completeness") == "incomplete":
-                self._emit(
-                    "deepagents.evidence.verified",
-                    {"verdicts": verdicts, "action": "inconclusive", "fallback_reason": "review_material_truncated"},
-                )
-                return None
-            if _verdicts_supported(verdicts):
+            if review_status in {"supported", "not_requested"}:
                 self._emit(
                     "deepagents.evidence.verified",
                     {"verdicts": verdicts, "action": "accept"},
@@ -593,7 +610,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 {"verdicts": verdicts, "action": "recheck"},
             )
             return {
-                "messages": [HumanMessage(content=guidance)],
+                "messages": [runtime_message(guidance)],
                 "jump_to": "model",
             }
 
@@ -744,25 +761,28 @@ def _evidence_signature(evidence):
 
 
 def _verdicts_supported(verdicts):
-    """Return whether every reported verdict passed."""
+    """Return acceptance using the canonical review or legacy-only verdicts."""
 
+    return _review_status(verdicts) in {"supported", "not_requested"}
+
+
+def _review_status(verdicts):
+    """Separate an unavailable review from an actual unsupported conclusion."""
+
+    if verdicts.get("review_completeness") == "incomplete":
+        return "inconclusive"
+    if "answer_supported" in verdicts:
+        option = verdicts["answer_supported"]
+        return option if option in {"supported", "unsupported"} else "inconclusive"
     if verdicts.get("review_available") is False:
-        return False
-    if verdicts.get("evidence_sufficient") is False:
-        return False
-    option = verdicts.get("answer_supported")
-    if isinstance(option, str) and option and option != "supported":
-        return False
+        return "inconclusive"
     strength = verdicts.get("evidence_strength")
-    if strength == "qualified_weak":
-        return True
-    if strength in {
-        "adapted_only",
-        "example_only",
-        "planned",
-        "unsupported",
-        "contradicted",
-        "unknown",
+    if verdicts.get("evidence_sufficient") is False or strength in {
+        "adapted_only", "example_only", "planned", "unsupported", "contradicted",
     }:
-        return False
-    return True
+        return "unsupported"
+    if ("evidence_sufficient" in verdicts and verdicts["evidence_sufficient"] is None) or strength == "unknown":
+        return "inconclusive"
+    if verdicts.get("evidence_sufficient") is True or strength in {"direct", "derived", "qualified_weak"}:
+        return "supported"
+    return "not_requested"

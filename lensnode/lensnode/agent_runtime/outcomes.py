@@ -1,7 +1,7 @@
 """Terminal outcome policy for LensNode agent runs."""
 
 from .capability_protocol import CAPABILITY_FAMILIES
-from .evidence_gate import _verdicts_supported
+from .evidence_gate import _review_status
 from .prompts import (
     detect_answer_language as _detect_answer_language,
     pick_text as _pick_text,
@@ -56,7 +56,7 @@ def _finalize_runtime_outcome(
     runtime_evidence=None,
     decision_gates=None,
 ):
-    """Combine execution facts and final review without overwriting an earlier failure."""
+    """Keep execution, source coverage and answer support independently observable."""
 
     outcome, detail = _execution_outcome(
         capability_middleware=capability_middleware,
@@ -75,22 +75,48 @@ def _finalize_runtime_outcome(
         and not runtime_evidence["_deliverables"]
     ):
         outcome, detail = "partial", _evidence_termination_detail("artifact")
+    runtime_evidence = runtime_evidence or {}
+    if (
+        not decision_gates
+        and not runtime_evidence.get("required_sources")
+        and not any(key in runtime_evidence for key in ("evidence_completeness", "review_completeness"))
+    ):
+        return outcome, detail
+    if outcome != "completed" and truncated and stop_reason:
+        detail.setdefault("trigger", stop_reason)
+    verdicts = dict(decision_gates or {})
+    if runtime_evidence.get("review_completeness") == "incomplete":
+        verdicts["review_completeness"] = "incomplete"
+    review = _review_status(verdicts)
+    coverage_values = {runtime_evidence.get("evidence_completeness"), verdicts.get("evidence_completeness")}
+    if detail.get("reason") == "source_coverage_incomplete":
+        coverage_values.add("incomplete")
+    coverage = (
+        "incomplete" if "incomplete" in coverage_values
+        else "complete" if "complete" in coverage_values else "unknown"
+    )
+    detail = {**detail, "assessment": {"execution": outcome, "coverage": coverage, "review": review}}
     if decision_gates:
-        detail = {**detail, "decision_gates": decision_gates}
+        detail["decision_gates"] = decision_gates
+    warnings = []
+    if coverage == "incomplete":
+        warnings.append("evidence_incomplete")
+    if review == "inconclusive":
+        warnings.append(
+            "review_material_incomplete" if verdicts.get("review_completeness") == "incomplete"
+            else "review_unavailable" if verdicts.get("review_available") is False else "review_inconclusive"
+        )
+    if warnings:
+        detail["warnings"] = warnings
+    blocking_reasons = [detail["reason"]] if detail.get("reason") and outcome != "completed" else []
+    if review == "unsupported":
         if outcome == "completed":
-            if decision_gates.get("evidence_completeness") == "incomplete":
-                reason = "evidence_incomplete"
-            elif decision_gates.get("review_completeness") == "incomplete":
-                reason = "review_material_incomplete"
-            elif decision_gates.get("review_available") is False:
-                reason = "review_unavailable"
-            elif not _verdicts_supported(decision_gates):
-                reason = "evidence_insufficient"
-            else:
-                reason = None
-            if reason is not None:
-                outcome = "partial"
-                detail.update(reason=reason, error_type="verification")
+            outcome = "partial"
+            detail.update(reason="evidence_insufficient", error_type="verification")
+        if "evidence_insufficient" not in blocking_reasons:
+            blocking_reasons.append("evidence_insufficient")
+    if blocking_reasons:
+        detail["blocking_reasons"] = blocking_reasons
     return outcome, detail
 
 
@@ -113,17 +139,12 @@ def _execution_outcome(
     if runtime_evidence.get("completion_issues"):
         return "partial", {
             **limit_trigger,
-            "reason": "review_material_incomplete" if runtime_evidence.get("review_completeness") == "incomplete"
-                      else "evidence_insufficient",
+            "reason": "evidence_insufficient",
             "error_type": "verification",
             "completion_issues": runtime_evidence["completion_issues"],
         }
     if runtime_evidence.get("artifact_required") and not runtime_evidence.get("_deliverables"):
         return "partial", {**limit_trigger, **_evidence_termination_detail("artifact")}
-    if runtime_evidence.get("review_completeness") == "incomplete":
-        return "partial", {**limit_trigger, "reason": "review_material_incomplete", "error_type": "verification"}
-    if runtime_evidence.get("evidence_completeness") == "incomplete":
-        return "partial", {**limit_trigger, "reason": "evidence_incomplete", "error_type": "verification"}
     if runtime_evidence.get("convergence_exhausted"):
         return "partial", {"reason": "evidence_convergence_limit", "error_type": "execution_limit"}
     required_sources = set(runtime_evidence.get("required_sources") or [])

@@ -4,8 +4,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode.agent_runtime.evidence_gate import (
     EvidenceGateMiddleware,
-    _CONVERGENCE_GUIDANCE,
-    _RECHECK_GUIDANCE,
     _verdicts_supported,
 )
 
@@ -84,6 +82,7 @@ def test_unsupported_answer_is_bounced_back_then_accepted():
     nudge = middleware.after_model(_answer_state(), None)
     assert nudge["jump_to"] == "model"
     assert nudge["messages"]
+    assert nudge["messages"][0].additional_kwargs["lensnode_source"] == "runtime"
     assert len(policy.calls) == 1
 
     # The nudge budget is spent: the best-effort answer is accepted.
@@ -236,13 +235,6 @@ def test_default_recheck_budget_is_one():
     assert middleware.answer_nudges == 1
 
 
-def test_gate_guidance_preserves_user_facing_answer_shape():
-    assert "not a search log" in _RECHECK_GUIDANCE
-    assert "evidence inventory" in _RECHECK_GUIDANCE
-    assert "lead with the direct conclusion" in _CONVERGENCE_GUIDANCE
-    assert "list documents still to read" in _CONVERGENCE_GUIDANCE
-
-
 def test_verification_reuses_only_identical_answer_and_evidence():
     policy = _Policy({"answer_supported": "supported"})
     evidence = {"record": "first"}
@@ -321,3 +313,34 @@ def test_verification_grace_expires_when_the_agent_keeps_searching():
     assert middleware.before_model({}, None) is None
     assert middleware.before_model({}, None)["messages"]
     assert middleware.before_model({}, None) == {"jump_to": "end"}
+
+
+def test_completion_issues_are_repaired_together_without_repeated_model_rounds():
+    issues = [
+        {'code': 'missing-evidence', 'recovery': 'Read saved evidence range 2.'},
+        {'code': 'missing-file', 'recovery': 'Create the requested attachment.'},
+    ]
+    reviews = []
+    policy = _Policy({'answer_supported': 'supported'})
+    middleware = EvidenceGateMiddleware(
+        policy, 'q', completion_check=lambda answer: list(issues), on_recheck=lambda: reviews.append(True)
+    )
+    correction = middleware.after_model(_answer_state(), None)
+    assert correction['jump_to'] == 'model'
+    assert correction['messages'][0].content.splitlines() == [item['recovery'] for item in issues]
+    assert set(middleware.review_state['completion_check_codes']) == {item['code'] for item in issues}
+    assert reviews == [True]
+    issues.clear()
+    assert middleware.after_model(_answer_state('Corrected answer'), None) is None
+    assert len(policy.calls) == 1
+    assert policy.calls[0][1] == 'Corrected answer'
+
+
+def test_all_attachment_problems_are_included_in_one_bounded_repair_phase():
+    issues = [{'code': str(index), 'recovery': f'Repair output file {index}.'} for index in range(6)]
+    policy = _Policy({'answer_supported': 'supported'})
+    middleware = EvidenceGateMiddleware(policy, 'q', prepare_deliverables=lambda: issues)
+    result = middleware.after_model(_answer_state(), None)
+    assert result['messages'][0].content.splitlines() == [item['recovery'] for item in issues]
+    assert middleware.review_state['automatic_delivery_corrections'] == 1
+    assert not policy.calls

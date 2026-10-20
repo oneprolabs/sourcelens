@@ -74,6 +74,8 @@ from .workspace import available_dirs
 
 LOGGER = logging.getLogger("lensnode")
 RUNTIME_CLEANUP_INTERVAL_S = 60 * 60
+OUTPUT_FLUSH_INTERVAL_S = 0.5
+OUTPUT_BATCH_MAX_CHARS = 32_768
 
 
 class LensNodeClient:
@@ -167,6 +169,8 @@ class LensNodeClient:
         self._pending_trace_frames = collections.OrderedDict()
         self._pending_terminal_frames = collections.OrderedDict()
         self._pending_datasource_terminal_frames = collections.OrderedDict()
+        self._buffered_output = None
+        self._output_flush_handle = None
 
     def _enqueue_from_thread(self, loop, payload):
         """Schedule an outbound frame while tolerating loop shutdown."""
@@ -190,6 +194,43 @@ class LensNodeClient:
         return task
 
     def _enqueue(self, payload):
+        """Coalesce adjacent text deltas before the serial control-plane consumer."""
+
+        is_delta = (
+            payload.get("type") == "run_output"
+            and payload.get("run_uuid")
+            and isinstance(payload.get("content_delta"), str)
+            and not payload.get("reset")
+            and set(payload) <= {"type", "run_uuid", "content_delta", "reset"}
+        )
+        if not is_delta:
+            self._flush_buffered_output()
+            self._enqueue_frame(payload)
+            return
+        if self._buffered_output is not None and self._buffered_output["run_uuid"] != payload["run_uuid"]:
+            self._flush_buffered_output()
+        if self._buffered_output is None:
+            self._buffered_output = dict(payload)
+            self._output_flush_handle = asyncio.get_running_loop().call_later(
+                OUTPUT_FLUSH_INTERVAL_S, self._flush_buffered_output,
+            )
+        else:
+            self._buffered_output["content_delta"] += payload["content_delta"]
+        if len(self._buffered_output["content_delta"]) >= OUTPUT_BATCH_MAX_CHARS:
+            self._flush_buffered_output()
+
+    def _flush_buffered_output(self):
+        """Flush text before any ordering boundary, timeout or shutdown."""
+
+        if self._output_flush_handle is not None:
+            self._output_flush_handle.cancel()
+            self._output_flush_handle = None
+        payload = self._buffered_output
+        self._buffered_output = None
+        if payload is not None:
+            self._enqueue_frame(payload)
+
+    def _enqueue_frame(self, payload):
         """Append an outbound frame to the durable outbox.
 
         Not coroutine-safe with respect to threads; background run threads
@@ -420,6 +461,7 @@ class LensNodeClient:
         final run_done frames to reach the server before we close.
         """
 
+        self._flush_buffered_output()
         while self._outbox and attempts > 0:
             await asyncio.sleep(0.1)
             attempts -= 1

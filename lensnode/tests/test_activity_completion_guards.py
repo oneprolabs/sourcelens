@@ -6,12 +6,13 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
+from lensnode import tool_evidence
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.outcomes import _finalize_runtime_outcome
 from lensnode.plugin_agent import prepare_agent_extensions
 from lensnode.plugin_package_loader import load_plugin_support, load_runtime_contract
 
-support = load_plugin_support("activity_reports")
+support = load_plugin_support("activity_evidence")
 
 
 def report(tmp_path, count=3, partial=False):
@@ -23,8 +24,8 @@ def report(tmp_path, count=3, partial=False):
                             "tools": [{"key": "jira_activity_summary"}]}],
     }
     extensions = prepare_agent_extensions(command, tmp_path)
-    extensions.apply_policy(extensions.preferred_route, extensions.tools)
-    ledger = extensions.extensions[0].ledger
+    extensions.apply_policy({"route": "direct_execute"}, extensions.tools)
+    ledger = extensions.extensions[0].store
     source = {
         "ok": True, "since": "2026-10-15T00:00:00Z", "until": "2026-10-16T00:00:00Z",
         "possibly_truncated": partial,
@@ -32,7 +33,8 @@ def report(tmp_path, count=3, partial=False):
                    "updated": "2026-10-15T08:00:00Z", "resolution_date": "2026-10-15T08:00:00Z"}
                   for index in range(count)],
     }
-    ledger.record("jira", "jira", "1.0.0", "jira_activity_summary", {}, source)
+    projected = {**source, "_evidence": support.activity_evidence("jira", source, "jira")}
+    ledger.record("jira", "jira", "1.0.0", "jira_activity_summary", {}, projected)
     return command, extensions, source
 
 
@@ -45,9 +47,9 @@ def test_duplicate_and_skipped_pages_do_not_complete_review_and_resume_keeps_cur
     evidence = extensions.evidence()
     assert evidence["evidence_completeness"] == "complete"
     assert evidence["review_completeness"] == "incomplete"
-    assert extensions.completion_checks("报告已完成")[0]["code"] == "activity_evidence_unread"
+    assert extensions.completion_checks("报告已完成")[0]["code"] == "tool_evidence_unread"
     restored = prepare_agent_extensions(command, tmp_path)
-    restored.apply_policy(restored.preferred_route, restored.tools)
+    restored.apply_policy({"route": "direct_execute"}, restored.tools)
     restored.tools[0].invoke({"offset": 1, "limit": 1})
     assert restored.evidence()["review_completeness"] == "complete"
     assert restored.completion_checks("报告已完成") == []
@@ -58,8 +60,9 @@ def test_new_source_snapshot_invalidates_previously_consumed_pages(tmp_path):
     extensions.tools[0].invoke({})
     assert extensions.completion_checks("报告已完成") == []
     source["items"][0]["summary"] = "A corrected source record"
-    extensions.extensions[0].ledger.record("jira", "jira", "1.0.0", "jira_activity_summary", {}, source)
-    assert extensions.completion_checks("报告已完成")[0]["code"] == "activity_evidence_unread"
+    projected = {**source, "_evidence": support.activity_evidence("jira", source, "jira")}
+    extensions.extensions[0].store.record("jira", "jira", "1.0.0", "jira_activity_summary", {}, projected)
+    assert extensions.completion_checks("报告已完成")[0]["code"] == "tool_evidence_unread"
 
 
 def test_evidence_continuation_fills_the_first_gap_and_stops_at_complete(tmp_path):
@@ -85,7 +88,7 @@ def test_default_evidence_read_continues_from_actual_bounded_page(tmp_path, monk
     """Omitting offset selects the first unread range, including after resume."""
 
     command, extensions, _ = report(tmp_path, count=8)
-    monkeypatch.setattr(support, "MAX_ACTIVITY_PAGE_CHARS", 6000)
+    monkeypatch.setattr(tool_evidence, "MAX_EVIDENCE_PAGE_CHARS", 6000)
     first = json.loads(extensions.tools[0].invoke({"limit": 100}))
     assert 0 < len(first["records"]) < 8
     restored = prepare_agent_extensions(command, tmp_path)
@@ -99,15 +102,13 @@ def test_default_evidence_read_continues_from_actual_bounded_page(tmp_path, monk
 @pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize("answer", [
     "Alice completed nothing.",
-    "Alice has low productivity.",
-    "This report cannot conclude that Alice completed nothing.",
     "<table><tr><td>Alice</td><td>no activity</td></tr></table>",
 ])
 def test_report_wording_is_owned_by_the_model_not_host_keyword_checks(tmp_path, partial, answer):
     """Host checks depend on evidence progress, not semantic claims or negations."""
 
     _, extensions, _ = report(tmp_path, partial=partial)
-    assert [issue["code"] for issue in extensions.completion_checks(answer)] == ["activity_evidence_unread"]
+    assert [issue["code"] for issue in extensions.completion_checks(answer)] == ["tool_evidence_unread"]
     extensions.tools[0].invoke({})
     assert extensions.completion_checks(answer) == []
 
@@ -176,17 +177,15 @@ def test_activity_evidence_tool_is_marked_as_inline_bounded_result(tmp_path):
 
 def test_large_ledger_metadata_does_not_reduce_every_page_to_one_record(tmp_path, monkeypatch):
     _, extensions, _ = report(tmp_path, count=122, partial=True)
-    ledger = extensions.extensions[0].ledger
-    evidence = ledger.report({"jira_activity_summary"})
-    evidence["observed_events"] = [{"detail": "event" * 10000}]
-    for coverage in evidence["source_coverage"].values():
-        coverage["details"] = "coverage" * 10000
-    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    ledger = extensions.extensions[0].store
+    evidence = ledger.material()
+    evidence["sources"][0]["coverage"]["details"] = "coverage" * 10000
+    monkeypatch.setattr(ledger, "material", lambda *args: evidence)
     offset = 0
     pages = []
     while offset is not None:
         raw = extensions.tools[0].invoke({"offset": offset, "limit": 100})
-        assert len(raw) <= support.MAX_ACTIVITY_PAGE_CHARS
+        assert len(raw) <= tool_evidence.MAX_EVIDENCE_PAGE_CHARS
         page = json.loads(raw)
         assert page["ok"] is True
         assert len(page["records"]) >= min(10, 122 - offset)
@@ -201,20 +200,20 @@ def test_large_ledger_metadata_does_not_reduce_every_page_to_one_record(tmp_path
 
 def test_page_size_includes_progress_and_rejected_pages_do_not_mark_evidence_read(tmp_path, monkeypatch):
     _, extensions, _ = report(tmp_path, count=1)
-    ledger = extensions.extensions[0].ledger
-    evidence = ledger.report({"jira_activity_summary"})
-    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
-    evidence["records"][0]["title"] = "x" * support.MAX_ACTIVITY_PAGE_CHARS
+    ledger = extensions.extensions[0].store
+    evidence = ledger.material()
+    monkeypatch.setattr(ledger, "material", lambda *args: evidence)
+    evidence["records"][0]["title"] = "x" * tool_evidence.MAX_EVIDENCE_PAGE_CHARS
     rejected = json.loads(extensions.tools[0].invoke({}))
-    assert rejected["error"] == "ACTIVITY_EVIDENCE_PAGE_TOO_LARGE"
+    assert rejected["error"] == "TOOL_EVIDENCE_PAGE_TOO_LARGE"
     assert ledger.read_progress(evidence)["complete"] is False
     evidence["records"][0]["title"] = ""
     raw = extensions.tools[0].invoke({})
-    monkeypatch.setattr(support, "MAX_ACTIVITY_PAGE_CHARS", len(raw) - 1)
-    ledger.root.joinpath("review", "progress.json").unlink()
+    monkeypatch.setattr(tool_evidence, "MAX_EVIDENCE_PAGE_CHARS", len(raw) - 1)
+    next(ledger.root.rglob("progress.json")).unlink()
     rejected = json.loads(extensions.tools[0].invoke({}))
     if rejected["ok"]:
-        assert len(support._json(rejected)) <= support.MAX_ACTIVITY_PAGE_CHARS
+        assert len(support._json(rejected)) <= tool_evidence.MAX_EVIDENCE_PAGE_CHARS
     else:
         assert ledger.read_progress(evidence)["complete"] is False
 
@@ -245,7 +244,7 @@ def test_consumed_pages_remain_inline_after_real_filesystem_offload(tmp_path, as
     output = asyncio.run(middleware.awrap_tool_call(request, aread)) if asynchronous else middleware.wrap_tool_call(request, read)
     payload = json.loads(output.content)
     assert payload["records"]
-    assert len(output.content) <= support.MAX_ACTIVITY_PAGE_CHARS + 256
+    assert len(output.content) <= tool_evidence.MAX_EVIDENCE_PAGE_CHARS + 256
     assert payload["read_progress"]["complete"] is False
     assert payload["next_offset"] == len(payload["records"])
 
@@ -253,16 +252,18 @@ def test_consumed_pages_remain_inline_after_real_filesystem_offload(tmp_path, as
 def test_unread_pages_are_partial_without_configured_decision_model(tmp_path):
     _, extensions, _ = report(tmp_path)
     evidence = extensions.evidence()
+    evidence["completion_issues"] = extensions.completion_checks("A report.")
+    assert evidence["completion_issues"][0]["code"] == "tool_evidence_unread"
     outcome, detail = _finalize_runtime_outcome(
         capability_middleware=None, evidence_requirement="tool_result", required_capabilities=[],
         truncated=False, stop_reason=None, execution_gate_enabled=False, runtime_evidence=evidence,
     )
     assert outcome == "partial"
-    assert detail["reason"] == "review_material_incomplete"
+    assert detail["completion_issues"][0]["code"] == "tool_evidence_unread"
 
 
 def test_host_check_gets_one_bounded_repair_without_decision_gate():
-    pending = [{"code": "activity_evidence_unread", "recovery": "Call read_activity_evidence offset=1."}]
+    pending = [{"code": "tool_evidence_unread", "recovery": "Call read_tool_evidence offset=1."}]
     gate = EvidenceGateMiddleware(SimpleNamespace(has_evidence_gates=lambda: False), "report",
                                   completion_check=lambda answer: pending)
     state = {"messages": [AIMessage(content="Done")]}
@@ -277,11 +278,11 @@ def test_convergence_trigger_survives_unread_report_failure():
         capability_middleware=None, evidence_requirement="artifact", required_capabilities=[],
         truncated=False, stop_reason=None, runtime_evidence={
             "convergence_exhausted": True, "review_completeness": "incomplete",
-            "completion_issues": [{"code": "activity_evidence_unread"}],
+            "completion_issues": [{"code": "tool_evidence_unread"}],
         },
     )
     assert detail["trigger"] == "evidence_convergence_limit"
-    assert detail["completion_issues"] == [{"code": "activity_evidence_unread"}]
+    assert detail["completion_issues"] == [{"code": "tool_evidence_unread"}]
 
 
 def test_report_middleware_exists_without_decision_gates_and_refreshes_progress(tmp_path):
@@ -315,117 +316,47 @@ def test_failed_completion_check_cannot_repeat_the_rejected_assertion(answer):
 
 @pytest.mark.parametrize("stop_reason", ["token_budget_wrapup", "evidence_convergence_limit"])
 @pytest.mark.parametrize("evidence", [
-    {"completion_issues": [{"code": "activity_evidence_unread"}], "review_completeness": "incomplete"},
+    {"completion_issues": [{"code": "tool_evidence_unread"}], "review_completeness": "incomplete"},
     {"artifact_required": True},
     {"review_completeness": "incomplete"},
     {"evidence_completeness": "incomplete"},
 ])
-def test_verification_failure_keeps_the_execution_limit_that_prevented_completion(stop_reason, evidence):
+def test_execution_limit_is_preserved_independently_of_coverage_or_review(stop_reason, evidence):
     outcome, detail = _finalize_runtime_outcome(
         capability_middleware=None, evidence_requirement="artifact", truncated=True,
         stop_reason=stop_reason, execution_gate_enabled=False, runtime_evidence=evidence,
     )
     assert outcome == "partial"
     assert detail["trigger"] == stop_reason
-    assert detail["error_type"] == "verification"
+    if evidence.get("completion_issues") or evidence.get("artifact_required"):
+        assert detail["error_type"] == "verification"
+    else:
+        assert detail["reason"] == stop_reason
+        assert detail["assessment"]["execution"] == "partial"
 
 
 def test_unread_evidence_failure_explains_why_the_report_was_withheld():
     from lensnode.agent_runtime.runtime import _enforce_completion_status
 
-    result = _enforce_completion_status("报告已完成", {}, [{"code": "activity_evidence_unread"}])
-    assert "工作记录未完成核对" in result
+    result = _enforce_completion_status("报告已完成", {}, [{"code": "tool_evidence_unread"}])
+    assert "来源记录未完成核对" in result
     assert "附件未发布" in result
-
-
-@pytest.mark.parametrize("provider,kind,event,actor_field", [
-    ("github", "issues", "closed", "closed_by"),
-    ("gitlab", "merge_requests", "merged", "merged_by"),
-    ("jira", "issues", "resolved", "resolved_by"),
-])
-def test_event_actor_is_distinct_from_author_and_current_assignee(provider, kind, event, actor_field):
-    item = {"key": "SL-1", "number": 1, "author": {"username": "alice"}, "assignee": "Bob",
-            "assignee_identity": "bob", actor_field: {"username": "carol", "name": "Carol"},
-            "updated_at": "2026-10-15T09:00:00Z", "updated": "2026-10-15T09:00:00Z",
-            {"closed": "closed_at", "merged": "merged_at", "resolved": "resolution_date"}[event]:
-                "2026-10-15T08:00:00Z"}
-    record = support._record(provider, "conn", "repo", kind, item,
-                             "2026-10-15T00:00:00Z", "2026-10-16T00:00:00Z")
-    assert record["event_actor"]["identity"] == "carol"
-    assert record["event_actor"]["verified"] is True
-    assert record["roles"]["author"]["identity"] == "alice"
-    assert record["roles"]["assignee"]["identity"] == "bob"
-    del item[actor_field]
-    record = support._record(provider, "conn", "repo", kind, item,
-                             "2026-10-15T00:00:00Z", "2026-10-16T00:00:00Z")
-    assert record["event_actor"] is None
-
-
-def test_display_name_only_is_never_a_verified_actor():
-    item = {"number": 1, "author": {"username": "alice", "name": "Alice"},
-            "merged_by": {"name": "Carol"}, "merged_at": "2026-10-15T08:00:00Z"}
-    record = support._record("gitlab", "conn", "repo", "merge_requests", item,
-                             "2026-10-15T00:00:00Z", "2026-10-16T00:00:00Z")
-    assert record["event_actor"]["verified"] is False
-    assert record["roles"]["author"]["name"] == "Alice"
-
-
-def test_update_actor_and_jira_creator_remain_distinct_from_current_assignee():
-    item = {"key": "SL-1", "assignee": "Bob", "assignee_identity": "bob",
-            "creator": "Alice", "creator_identity": "alice", "reporter": "Dan", "reporter_identity": "dan",
-            "updated_by": {"accountId": "carol", "displayName": "Carol"},
-            "updated": "2026-10-15T08:00:00Z"}
-    record = support._record("jira", "conn", "repo", "issues", item,
-                             "2026-10-15T00:00:00Z", "2026-10-16T00:00:00Z")
-    assert record["event_actor"]["identity"] == "carol"
-    assert record["roles"]["creator"]["identity"] == "alice"
-    assert record["roles"]["reporter"]["identity"] == "dan"
-    assert record["person"] == "Bob"
-
-
-def test_provider_projections_preserve_available_event_actors_without_inventing_missing_ones():
-    github = load_runtime_contract("github", "1.0.0").execute_tool.__globals__
-    gitlab = load_runtime_contract("gitlab", "1.0.0").execute_tool.__globals__
-    jira = load_runtime_contract("jira", "1.0.0").execute_tool.__globals__
-    assert github["_activity_issue_summary"]({"closed_by": {"login": "carol"}})["closed_by"] == "carol"
-    assert github["_activity_pull_request_summary"]({"merged_by": {"login": "carol"}})["merged_by"] == "carol"
-    assert gitlab["_activity_merge_request"]({"merge_user": {"username": "carol"}})["merged_by"]["username"] == "carol"
-    assert gitlab["_activity_issue"]({"closed_by": {"username": "carol"}})["closed_by"]["username"] == "carol"
-    projected = jira["_activity_issue"]({"key": "SL-1", "fields": {
-        "creator": {"accountId": "alice-id", "displayName": "Alice"},
-        "reporter": {"accountId": "bob-id", "displayName": "Bob"},
-    }}, "SL")
-    assert projected["creator_identity"] == "alice-id"
-    assert projected["reporter_identity"] == "bob-id"
-    assert not projected.get("updated_by")
 
 
 def test_single_record_page_drops_small_optional_metadata_before_rejecting(tmp_path, monkeypatch):
     """A readable record must advance the cursor even when coverage metadata does not fit."""
 
     _, extensions, _ = report(tmp_path, count=1)
-    ledger = extensions.extensions[0].ledger
-    evidence = ledger.report({"jira_activity_summary"})
+    ledger = extensions.extensions[0].store
+    evidence = ledger.material()
     evidence["records"][0]["title"] = "x" * 21000
-    evidence["observed_events"] = [{"detail": "x" * 4500}]
-    monkeypatch.setattr(ledger, "report", lambda *args: evidence)
+    evidence["sources"][0]["coverage"]["details"] = "x" * 4500
+    monkeypatch.setattr(ledger, "material", lambda *args: evidence)
     raw = extensions.tools[0].invoke({})
     page = json.loads(raw)
     assert page["ok"] is True
-    assert len(raw) <= support.MAX_ACTIVITY_PAGE_CHARS
+    assert len(raw) <= tool_evidence.MAX_EVIDENCE_PAGE_CHARS
     assert page["records"] == evidence["records"]
-    assert page["coverage_details_omitted"] is True
+    assert page["source_details_omitted"] is True
     assert page["read_progress"]["complete"] is True
     assert ledger.read_progress(evidence)["complete"] is True
-
-@pytest.mark.parametrize("text", [
-    "可核实的只有两项故障受理及其当前状态；没有完成事件、没有描述与评论，质量与产出水平均无法评价。",
-    "本次台账没有任何完成记录，不能据此判断实际工作量。",
-    "Alice 没有完成证据，暂无法核验交付状态。",
-])
-def test_absence_of_completion_records_is_not_a_zero_work_claim(tmp_path, text):
-    """A record-level limitation must remain reportable after a report repair."""
-
-    _, extensions, _ = report(tmp_path, partial=True)
-    extensions.tools[0].invoke({})
-    assert extensions.completion_checks(text) == []

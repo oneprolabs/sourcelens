@@ -111,6 +111,116 @@ def test_outbox_preserves_frame_and_order_on_send_failure():
     asyncio.run(exercise())
 
 
+def test_streamed_answer_burst_is_coalesced_before_terminal_without_losing_text():
+    """A fast answer must not put hundreds of database writes ahead of run_done."""
+
+    async def exercise():
+        client = _make_client()
+        ws = FakeWebSocket()
+        sender = asyncio.create_task(client._send_loop(ws))
+        chunks = [f"片段{index}🙂" for index in range(1000)]
+        for chunk in chunks:
+            client._enqueue({"type": "run_output", "run_uuid": "run-1", "content_delta": chunk})
+            await asyncio.sleep(0)
+        client._enqueue({"type": "run_done", "run_uuid": "run-1", "status": "done"})
+        await _wait_until(lambda: bool(ws.sent) and json.loads(ws.sent[-1])["type"] == "run_done")
+        client.stopping.set()
+        client._outbox_ready.set()
+        await sender
+
+        frames = [json.loads(item) for item in ws.sent]
+        outputs = [frame for frame in frames if frame["type"] == "run_output"]
+        assert "".join(frame["content_delta"] for frame in outputs) == "".join(chunks)
+        assert len(outputs) <= 2
+        assert frames[-1]["type"] == "run_done"
+
+    asyncio.run(exercise())
+
+
+def test_output_coalescing_preserves_reset_metadata_and_trace_boundaries():
+    """Coalescing must preserve reconciliation, trace order and other runs."""
+
+    async def exercise():
+        client = _make_client()
+        inputs = [
+            {"type": "run_output", "run_uuid": "run-1", "content_delta": "old"},
+            {"type": "run_output", "run_uuid": "run-1", "content_delta": "new", "reset": True},
+            {"type": "run_output", "run_uuid": "run-1", "content_delta": " answer"},
+            {"type": "run_trace_events", "run_uuid": "run-1", "events": [{"sequence": 1}]},
+            {"type": "run_output", "run_uuid": "run-2", "content_delta": "other"},
+            {"type": "run_output", "run_uuid": "run-1", "final_content": "verified", "citations": ["source"]},
+        ]
+        for frame in inputs:
+            client._enqueue(frame)
+        assert list(client._outbox) == inputs
+
+    asyncio.run(exercise())
+
+
+def test_partial_answer_is_flushed_while_model_is_still_running():
+    """A sparse stream must reach the browser without waiting for run_done."""
+
+    async def exercise():
+        client = _make_client()
+        client._enqueue({"type": "run_output", "run_uuid": "run-1", "content_delta": "partial"})
+        ws = FakeWebSocket()
+        sender = asyncio.create_task(client._send_loop(ws))
+        await _wait_until(lambda: bool(ws.sent))
+        assert json.loads(ws.sent[0])["content_delta"] == "partial"
+        client.stopping.set()
+        client._outbox_ready.set()
+        await sender
+
+    asyncio.run(exercise())
+
+
+def test_batched_unicode_output_survives_send_failure_and_reconnect():
+    """A failed batch send must preserve all text before its terminal frame."""
+
+    async def exercise():
+        client = _make_client()
+        text = "完整报告🙂" * 8000
+        for offset in range(0, len(text), 100):
+            client._enqueue({"type": "run_output", "run_uuid": "run-1", "content_delta": text[offset:offset + 100]})
+        client._enqueue({"type": "run_done", "run_uuid": "run-1", "status": "done"})
+        failed_ws = FakeWebSocket(fail_on_index=0)
+        try:
+            await client._send_loop(failed_ws)
+        except FakeSendError:
+            pass
+        else:
+            raise AssertionError("expected a failed send")
+        ws = FakeWebSocket()
+        sender = asyncio.create_task(client._send_loop(ws))
+        await _wait_until(lambda: bool(ws.sent) and json.loads(ws.sent[-1])["type"] == "run_done")
+        client.stopping.set()
+        client._outbox_ready.set()
+        await sender
+        frames = [json.loads(item) for item in ws.sent]
+        assert "".join(frame.get("content_delta", "") for frame in frames) == text
+        assert len(frames) == 3
+        assert frames[-1]["type"] == "run_done"
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_flushes_unexpired_partial_output():
+    """Graceful draining must not leave the last partial answer in a timer."""
+
+    async def exercise():
+        client = _make_client()
+        ws = FakeWebSocket()
+        sender = asyncio.create_task(client._send_loop(ws))
+        client._enqueue({"type": "run_output", "run_uuid": "run-1", "content_delta": "tail🙂"})
+        await client._flush_outbox()
+        client.stopping.set()
+        client._outbox_ready.set()
+        await sender
+        assert [json.loads(item)["content_delta"] for item in ws.sent] == ["tail🙂"]
+
+    asyncio.run(exercise())
+
+
 def test_trace_frames_remain_pending_until_cursor_ack_and_reconnect():
     async def exercise():
         client = _make_client()

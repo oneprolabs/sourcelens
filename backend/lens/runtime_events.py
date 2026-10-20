@@ -87,6 +87,7 @@ PUBLIC_TERMINATION_REASONS = {
     "evidence_unavailable",
     "evidence_insufficient",
     "evidence_incomplete",
+    "source_coverage_incomplete",
     "review_material_incomplete",
     "review_unavailable",
     "evidence_convergence_limit",
@@ -397,6 +398,32 @@ def sanitize_termination_detail(detail):
     if not isinstance(detail, dict):
         return {}
     output = {}
+    assessment = detail.get("assessment")
+    if isinstance(assessment, dict):
+        allowed = {
+            "execution": {"completed", "partial", "blocked"},
+            "coverage": {"complete", "incomplete", "unknown"},
+            "review": {"supported", "unsupported", "inconclusive", "not_requested"},
+        }
+        public_assessment = {
+            key: value for key, values in allowed.items()
+            if isinstance((value := assessment.get(key)), str) and value in values
+        }
+        if public_assessment:
+            output["assessment"] = public_assessment
+    for key, allowed in (
+        ("warnings", {
+            "evidence_incomplete", "review_material_incomplete", "review_unavailable", "review_inconclusive",
+        }),
+        ("blocking_reasons", PUBLIC_TERMINATION_REASONS),
+    ):
+        values = detail.get(key)
+        if isinstance(values, list):
+            public_values = list(dict.fromkeys(
+                value for value in values if isinstance(value, str) and value in allowed
+            ))
+            if public_values:
+                output[key] = public_values
     reason = detail.get("reason")
     if reason in PUBLIC_TERMINATION_REASONS:
         output["reason"] = reason
@@ -404,7 +431,8 @@ def sanitize_termination_detail(detail):
     if trigger in PUBLIC_TERMINATION_REASONS:
         output["trigger"] = trigger
     completion_codes = {
-        "activity_evidence_unread", "activity_claim_unsupported", "completion_check_failed", "artifact_delivery_failed",
+        "activity_evidence_unread", "tool_evidence_unread", "activity_claim_unsupported",
+        "completion_check_failed", "artifact_delivery_failed",
     }
     issues = detail.get("completion_issues")
     if isinstance(issues, list):

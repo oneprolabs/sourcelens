@@ -553,7 +553,7 @@ def test_post_run_checks_skip_unbound_gates():
     assert events == []
 
 
-def test_post_run_checks_report_sufficiency_and_support(monkeypatch):
+def test_post_run_checks_prefer_support_over_redundant_sufficiency(monkeypatch):
     events = []
 
     def fake_execute(*args, **kwargs):
@@ -572,7 +572,6 @@ def test_post_run_checks_report_sufficiency_and_support(monkeypatch):
     )
 
     assert verdicts == {
-        "evidence_sufficient": True,
         "answer_supported": "supported",
     }
 
@@ -626,7 +625,6 @@ def test_post_run_checks_are_inconclusive_when_the_reviewer_is_unavailable(monke
     assert policy.post_run_checks(
         "question", "answer", {"retrieved_evidence": [{"tool": "search", "content": "source"}]}
     ) == {
-        "evidence_sufficient": None,
         "answer_supported": "inconclusive",
         "review_available": False,
     }
@@ -677,3 +675,16 @@ def test_evidence_requirement_state_stays_within_the_limit():
 
     assert len(arguments["state"]) <= limit
     assert "Available tools:" in arguments["state"]
+
+
+@pytest.mark.parametrize('requirement', ['tool_result', 'artifact'])
+def test_required_evidence_route_does_not_repeat_boolean_classification(requirement):
+    route = {'route': 'plan_execute', 'evidence_requirement': requirement}
+    calls = []
+    runner = SimpleNamespace(evaluate=lambda *args, **kwargs: calls.append((args, kwargs)))
+    policy = decision_policy.GateDecisionPolicy(
+        decision_policy.ModelDecisionPolicy(select_route=lambda *args, **kwargs: dict(route)),
+        runner, {'evidence_requirement': {'threshold': 0.5}},
+    )
+    assert policy.select_route(None, 'question') == route
+    assert calls == []

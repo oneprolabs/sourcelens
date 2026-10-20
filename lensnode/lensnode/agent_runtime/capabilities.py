@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from ..checkpoint import CheckpointResumeError
 from ..gateway_model import _tool_result_metadata
@@ -25,11 +25,15 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
         planning_reasoning_effort=None,
         on_state_change=None,
         max_tool_calls=0,
+        execution_reasoning_effort=None,
+        review_state=None,
     ):
         self.emit_event = emit_event
         self.required_capabilities = set(required_capabilities or [])
         self.require_initial_plan = require_initial_plan
         self.planning_reasoning_effort = planning_reasoning_effort
+        self.execution_reasoning_effort = execution_reasoning_effort
+        self.review_state = review_state if review_state is not None else {}
         self.on_state_change = on_state_change
         self.max_tool_calls = max(int(max_tool_calls or 0), 0)
         self.tool_call_count = 0
@@ -771,18 +775,63 @@ class CapabilityBoundaryMiddleware(AgentMiddleware):
         return await handler(request)
 
     def _prepare_model_request(self, request):
-        """Use bounded reasoning for the initial planning-only turn."""
+        """Use framework overrides for planning and active-plan tool follow-ups."""
 
         overrides = {"tools": self._filter_tools(request.tools)}
+        model_settings = dict(request.model_settings or {})
+        if model_settings.get("reasoning_effort") or getattr(getattr(request, "model", None), "reasoning_effort", None):
+            return request.override(**overrides)
+        effort = None
         if (
             self.require_initial_plan
             and not self.initial_plan_exists
             and self.planning_reasoning_effort
         ):
-            model_settings = dict(request.model_settings or {})
-            model_settings["reasoning_effort"] = (
-                self.planning_reasoning_effort
+            effort = self.planning_reasoning_effort
+        elif self.execution_reasoning_effort and overrides["tools"]:
+            state = getattr(request, "state", None) or {}
+            messages = getattr(request, "messages", None) or []
+            todos = state.get("todos") or []
+            latest_human = next(
+                (message for message in reversed(messages) if isinstance(message, HumanMessage)
+                 and message.additional_kwargs.get("lc_source") != "summarization"),
+                None,
             )
+            delivery_hint = (
+                latest_human is not None
+                and latest_human.additional_kwargs.get("lensnode_source") == "runtime"
+                and latest_human.additional_kwargs.get("lensnode_phase") in {"delivery", "analysis"}
+            )
+            latest_tools = []
+            for message in reversed(messages):
+                if delivery_hint and message is latest_human:
+                    continue
+                if not isinstance(message, ToolMessage):
+                    break
+                latest_tools.append(message)
+            reviewing = (
+                latest_human is not None
+                and latest_human.additional_kwargs.get("lensnode_source") == "runtime"
+                and not delivery_hint
+            )
+            reviewing = reviewing or any(
+                self.review_state.get(key) for key in (
+                    "answer_nudges", "automatic_delivery_corrections", "completion_check_codes",
+                )
+            )
+            if (
+                todos
+                and any(item.get("status") == "in_progress" for item in todos)
+                and latest_tools
+                and all(message.status != "error" for message in latest_tools)
+                and not reviewing
+            ):
+                if delivery_hint and messages[-1] is latest_human:
+                    effort = self.planning_reasoning_effort
+                else:
+                    effort = self.execution_reasoning_effort
+        if effort:
+            model_settings["reasoning_effort"] = effort
             overrides["model_settings"] = model_settings
         return request.override(**overrides)
 

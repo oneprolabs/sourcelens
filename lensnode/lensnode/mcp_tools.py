@@ -98,10 +98,11 @@ class MCPToolFirstMiddleware(AgentMiddleware):
 
 
 class DeferredMCPToolMiddleware(AgentMiddleware):
-    """Hide MCP schemas until tool_search promotes matching tools."""
+    """Hide bound integration schemas until tool_search promotes matching tools."""
 
     def __init__(self, mcp_tools, always_visible_prefixes=()):
         self._mcp_tools = {tool.name: tool for tool in mcp_tools}
+        self._deferred_names = frozenset(self._mcp_tools)
         self._always_visible_prefixes = tuple(always_visible_prefixes)
         self._promoted = set()
         self._lock = threading.Lock()
@@ -109,8 +110,8 @@ class DeferredMCPToolMiddleware(AgentMiddleware):
             func=self._search,
             name="tool_search",
             description=(
-                "Search available remote MCP tools by capability. Matching "
-                "tools become available on the next model turn."
+                "Search authorized Plugin and MCP tools by English capability terms or exact tool names. "
+                "Matching tools become available on the next model turn."
             ),
         )
 
@@ -122,18 +123,18 @@ class DeferredMCPToolMiddleware(AgentMiddleware):
             self._promoted.intersection_update(allowed_tool_names)
 
     def _search(self, query: str):
-        """Promote remote tools whose names or descriptions match a query."""
+        """Promote authorized integrations whose names or descriptions match."""
 
         terms = [term for term in re.split(r"\W+", query.lower()) if term]
-        matches = []
-        for tool in self._mcp_tools.values():
-            haystack = f"{tool.name} {tool.description}".lower()
-            score = sum(term in haystack for term in terms)
-            if score:
-                matches.append((score, tool.name, tool))
-        matches.sort(key=lambda item: (-item[0], item[1]))
-        selected = [item[2] for item in matches[:MCP_SEARCH_LIMIT]]
         with self._lock:
+            matches = []
+            for tool in self._mcp_tools.values():
+                haystack = f"{tool.name} {tool.description}".lower()
+                score = sum(term in haystack for term in terms)
+                if score:
+                    matches.append((score, tool.name, tool))
+            matches.sort(key=lambda item: (-item[0], item[1]))
+            selected = [item[2] for item in matches[:MCP_SEARCH_LIMIT]]
             self._promoted.update(tool.name for tool in selected)
         return json.dumps(
             {
@@ -150,7 +151,7 @@ class DeferredMCPToolMiddleware(AgentMiddleware):
         )
 
     def _filter_tools(self, tools):
-        """Return base tools, tool_search, and promoted MCP tools."""
+        """Return core tools, tool_search, and promoted integration tools."""
 
         with self._lock:
             promoted = set(self._promoted)
@@ -158,7 +159,7 @@ class DeferredMCPToolMiddleware(AgentMiddleware):
             tool
             for tool in tools
             if _has_prefix(tool, self._always_visible_prefixes)
-            or not _is_mcp_tool(tool)
+            or (tool.name not in self._deferred_names and not _is_mcp_tool(tool))
             or tool.name in promoted
         ]
 
@@ -435,13 +436,15 @@ def build_deferred_mcp_tools(
     *,
     threshold=12,
     always_visible_prefixes=(),
+    additional_tools=(),
 ):
-    """Return registered MCP tools and optional schema-filter middleware."""
+    """Register MCP tools while deferring large combined integration catalogs."""
 
-    if len(mcp_tools) <= max(int(threshold), 0):
+    deferred_tools = [*mcp_tools, *additional_tools]
+    if len(deferred_tools) <= max(int(threshold), 0):
         return list(mcp_tools), None
     middleware = DeferredMCPToolMiddleware(
-        mcp_tools,
+        deferred_tools,
         always_visible_prefixes=always_visible_prefixes,
     )
     return [*mcp_tools, middleware.search_tool], middleware

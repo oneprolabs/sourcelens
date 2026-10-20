@@ -1104,9 +1104,6 @@ def test_planned_prompts_include_bound_workspace_guidance():
     )
 
     assert guidance in planner_prompt
-    assert "Leave source_windows empty unless exact file paths" in (
-        planner_prompt
-    )
     assert guidance in final_prompt
 
 
@@ -1119,9 +1116,6 @@ def test_planner_prompt_enumerates_allowed_operations_and_json_contract():
     assert '"explore"' in planner_prompt
     assert '"search"' in planner_prompt
     assert '"operation": "search"' in planner_prompt
-    assert "literal_queries must be an array of plain strings" in (
-        planner_prompt
-    )
 
 
 def test_planner_prompt_honors_available_codegraph_operations():

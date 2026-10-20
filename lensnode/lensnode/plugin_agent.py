@@ -297,11 +297,30 @@ def prepare_agent_extensions(command, workspace, skills=(), tools=(), emit_event
             if key in command
         }
     )
-    if not factories:
+    durable_evidence = any(item.metadata.get("durable_evidence") is True for item in bound_tools)
+    if not factories and not durable_evidence:
         return AgentExtensions()
     state_root = plugin_state_root(workspace, command.get("run_uuid"))
     tool_names = tuple([*(getattr(tool, "name", "") for tool in tools), *(tool.key for tool in bound_tools)])
     extensions = []
+    if durable_evidence:
+        from .tool_evidence import ToolEvidenceExtension
+
+        if "tool-evidence" in factories:
+            raise PluginPackageLoadError("plugin agent extension uses a reserved key")
+        extensions.append(
+            ToolEvidenceExtension(
+                AgentExtensionContext(
+                    copy.deepcopy(safe_command),
+                    tuple(copy.deepcopy(bound_tools)),
+                    Path(workspace),
+                    state_root / "tool-evidence",
+                    tuple(skills),
+                    tool_names,
+                    emit_event,
+                )
+            )
+        )
     for key, factory in factories.items():
         if (state_root / key).is_symlink():
             raise PluginPackageLoadError("plugin state path is invalid")

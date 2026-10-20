@@ -1231,6 +1231,7 @@ class LensDeepAgentRuntime:
                     12,
                 ),
                 always_visible_prefixes=always_visible_tool_prefixes,
+                additional_tools=state.plugin_tools,
             )
         )
         state.tools.extend(state.registered_mcp_tools)
@@ -1493,6 +1494,8 @@ class LensDeepAgentRuntime:
                 "none",
             ),
             on_state_change=state.persist_execution_state,
+            execution_reasoning_effort=getattr(self.config, "execution_reasoning_effort", "none"),
+            review_state=state.runtime_evidence.setdefault("_answer_review", {}),
             max_tool_calls=getattr(
                 state,
                 "tool_call_budget",

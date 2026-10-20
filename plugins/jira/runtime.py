@@ -17,7 +17,7 @@ from lensnode.plugin_runtime import PluginRuntimeError
 PLUGIN_API_VERSION = 1
 PLUGIN_KEY = "jira"
 PLUGIN_VERSION = "1.0.0"
-TOOL_METADATA = {"jira_activity_summary": {"activity_report": True}}
+TOOL_METADATA = {"jira_activity_summary": {"durable_evidence": True}}
 RESPONSE_MAX_BYTES = 1_000_000
 ACTIVITY_DEFAULT_MAX_RESULTS = 500
 ACTIVITY_MAX_RESULTS = 1000
@@ -477,18 +477,19 @@ def _description(value):
     visit(value); return "\n".join(output)[:20000]
 
 
-def agent_extensions():
-    """Register Plugin-owned agent behavior through the generic host protocol."""
-
-    from lensnode.plugin_package_loader import load_plugin_support
-
-    support = load_plugin_support("activity_reports")
-    return (("activity-report", support.prepare_activity_report),)
-
-
 def project_tool_result(tool_key, result, max_bytes):
     """Declare source evidence coverage without host-side provider knowledge."""
 
     from lensnode.plugin_package_loader import load_plugin_support
 
-    return load_plugin_support("activity_reports").project_activity_result(tool_key, result, max_bytes, TOOL_METADATA)
+    return load_plugin_support("activity_evidence").project_activity_result(
+        tool_key, result, max_bytes, TOOL_METADATA
+    )
+
+
+def project_tool_evidence(tool_key, result, connection_uuid):
+    """Interpret source events without prescribing report analysis or output."""
+
+    from lensnode.plugin_package_loader import load_plugin_support
+
+    return load_plugin_support("activity_evidence").activity_evidence(PLUGIN_KEY, result, connection_uuid)

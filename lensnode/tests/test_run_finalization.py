@@ -43,8 +43,8 @@ def run_state(*, evidence=None, manifest=None, verdicts=None, checks=()):
 
 @pytest.mark.parametrize("evidence,verdicts,reason", [
     ({}, {"answer_supported": "supported"}, None),
-    ({"evidence_completeness": "incomplete"}, {"answer_supported": "supported"}, "evidence_incomplete"),
-    ({}, {"review_completeness": "incomplete"}, "review_material_incomplete"),
+    ({"evidence_completeness": "incomplete"}, {"answer_supported": "supported"}, None),
+    ({}, {"review_completeness": "incomplete"}, None),
     ({}, {"answer_supported": "unsupported"}, "evidence_insufficient"),
 ])
 def test_final_result_keeps_source_and_review_failures_distinct(evidence, verdicts, reason):
@@ -66,7 +66,8 @@ def test_checked_attachment_survives_source_gap_and_budget_wrapup():
                           termination_reason="token_budget_wrapup")
 
     assert result.outcome == "partial"
-    assert result.termination_detail["reason"] == "evidence_incomplete"
+    assert result.termination_detail["reason"] == "token_budget_wrapup"
+    assert result.termination_detail["warnings"] == ["evidence_incomplete"]
     assert result.termination_detail["trigger"] == "token_budget_wrapup"
     assert result.deliverables == {"deliverables/report.html": "output-1"}
     assert state.command["_deliverables"] == result.deliverables
@@ -148,9 +149,10 @@ def test_changed_wrapup_answer_keeps_graph_evidence_and_coverage(offloaded):
 
     assert reviewed[-1]["retrieved_evidence"] == reviewed[0]["retrieved_evidence"]
     assert len(reviewed) == 2
-    assert result.outcome == ("partial" if offloaded else "completed")
+    assert result.outcome == "completed"
     if offloaded:
-        assert result.termination_detail["reason"] == "review_material_incomplete"
+        assert result.termination_detail["assessment"]["review"] == "inconclusive"
+        assert result.termination_detail["warnings"] == ["review_material_incomplete"]
 
 
 def test_review_failure_retains_answer_as_unverified_instead_of_losing_output():
@@ -168,8 +170,9 @@ def test_review_failure_retains_answer_as_unverified_instead_of_losing_output():
     result = finalize_run(state, "Available findings are attached.", truncated=False, termination_reason=None)
 
     assert result.answer == "Available findings are attached."
-    assert result.outcome == "partial"
-    assert result.termination_detail["reason"] == "review_unavailable"
+    assert result.outcome == "completed"
+    assert result.termination_detail["warnings"] == ["review_unavailable"]
+    assert result.termination_detail["assessment"]["review"] == "inconclusive"
     assert result.termination_detail["decision_gates"]["answer_supported"] == "inconclusive"
     assert result.deliverables == {"deliverables/report.html": "output-1"}
 
@@ -268,5 +271,6 @@ def test_unavailable_gate_does_not_ask_the_model_to_rewrite_a_supported_answer()
     assert gate.after_model({"messages": [AIMessage(content="Available findings.")]}, None) is None
     result = finalize_run(state, "Available findings.", truncated=False, termination_reason=None)
 
-    assert result.outcome == "partial"
-    assert result.termination_detail["reason"] == "review_unavailable"
+    assert result.outcome == "completed"
+    assert result.termination_detail["warnings"] == ["review_unavailable"]
+    assert result.termination_detail["assessment"]["review"] == "inconclusive"

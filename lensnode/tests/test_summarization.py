@@ -44,6 +44,57 @@ def _middleware(response):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+def test_internal_review_is_compacted_once_while_real_user_text_survives(asynchronous):
+    """Large runtime feedback must not become a permanent human anchor."""
+
+    middleware = LensSummarizationMiddleware(
+        model=FakeListChatModel(responses=["INC-42 is resolved; repair the report citation."]),
+        token_counter=lambda messages: sum(len(str(message.content)) for message in messages),
+        trigger=("tokens", 32000),
+        keep=("messages", 2),
+    )
+    user = HumanMessage(content="Summarize INC-42 without omitting people.", id="user")
+    review = HumanMessage(
+        content="Candidate and source facts: INC-42.\n" * 3500,
+        additional_kwargs={"lensnode_source": "runtime"},
+        id="internal-review",
+    )
+    messages = [user, AIMessage(content="Draft"), review, AIMessage(content="Repair"), AIMessage(content="Verify")]
+    result = (
+        asyncio.run(middleware.abefore_model({"messages": messages}, None))
+        if asynchronous else middleware.before_model({"messages": messages}, None)
+    )
+    kept = [message for message in result["messages"] if not isinstance(message, RemoveMessage)]
+
+    assert user in kept
+    assert review not in kept
+    assert "INC-42" in kept[0].content
+    assert middleware.token_counter(kept) < 32000
+    assert (
+        asyncio.run(middleware.abefore_model({"messages": kept}, None))
+        if asynchronous else middleware.before_model({"messages": kept}, None)
+    ) is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_oversized_user_anchor_does_not_repeatedly_summarize_only_a_summary(asynchronous):
+    """An irreducible user input must not trigger paid no-op summary loops."""
+
+    middleware = _middleware("INC-42 is resolved.")
+    messages = [
+        HumanMessage(content="User supplied evidence " * 2000),
+        HumanMessage(content="INC-42 is resolved.", additional_kwargs={"lc_source": "summarization"}),
+        AIMessage(content="Recent work"), AIMessage(content="Continue"),
+    ]
+    result = (
+        asyncio.run(middleware.abefore_model({"messages": messages}, None))
+        if asynchronous else middleware.before_model({"messages": messages}, None)
+    )
+
+    assert result is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
 def test_compaction_summarizes_tool_evidence_without_dropping_human_anchors(asynchronous):
     middleware = _middleware("Evidence: INC-42 was resolved. Remaining work: deliver report.")
     messages = _conversation()

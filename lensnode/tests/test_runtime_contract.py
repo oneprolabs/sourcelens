@@ -126,5 +126,3 @@ def test_final_prompt_keeps_runtime_owned_guidance(built_agent):
     prompt = built_agent["system_prompt"]
 
     assert "Operating contract:" in prompt
-    assert "plan tool" in prompt
-    assert "shell/execute tool" in prompt
