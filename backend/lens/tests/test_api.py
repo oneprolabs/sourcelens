@@ -248,6 +248,68 @@ class RetrievalPolicyValidationTests(SimpleTestCase):
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
 class LensApiTests(TestCase):
+    def test_execution_budget_rejects_invalid_values(self):
+        """Budgets accept only explicit nonnegative integers."""
+
+        url = f"/api/lens/assistants/{self.assistant.uuid}/"
+        for budget in ([], {"max_tokens": True}, {"max_tokens": -1}, {"max_agent_turns": 1.5}, {"typo": 10}):
+            response = self.client.patch(url, {"settings": {"execution_budget": budget}}, format="json")
+            self.assertEqual(response.status_code, 400, response.data)
+
+    def test_execution_api_and_diagnostics_expose_frozen_thinking_request(self):
+        """Run consumers see the selected mode without consulting current defaults."""
+
+        from lens.run_diagnostics import _execution_evidence
+
+        session = Session.objects.create(assistant=self.assistant, user=self.user)
+        for enabled, effort in ((False, "low"), (True, "high")):
+            run = create_execution_run(session=session, question="Analyze", deep_thinking=enabled, enqueue=False)
+            response = self.client.get(f"/api/lens/runs/{run.uuid}/")
+            self.assertEqual(response.status_code, 200)
+            self.assertIs(response.data["execution"]["deep_thinking"], enabled)
+            self.assertEqual(response.data["execution"]["reasoning_effort_requested"], effort)
+            evidence = _execution_evidence(run.execution)
+            self.assertIs(evidence["deep_thinking"], enabled)
+            self.assertEqual(evidence["reasoning_effort_requested"], effort)
+        run.execution.runtime_snapshot.pop("deep_thinking")
+        run.execution.runtime_snapshot.pop("reasoning_effort_requested", None)
+        run.execution.save(update_fields=["runtime_snapshot"])
+        response = self.client.get(f"/api/lens/runs/{run.uuid}/")
+        self.assertIsNone(response.data["execution"]["deep_thinking"])
+        self.assertIsNone(response.data["execution"]["reasoning_effort_requested"])
+
+    def test_legacy_assistant_level_updates_thinking_default(self):
+        """Legacy settings clients can still change the assistant's mode."""
+
+        url = f"/api/lens/assistants/{self.assistant.uuid}/"
+        for level, expected in (("max", True), ("flash", False)):
+            response = self.client.patch(url, {"agent_rounds": level}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertIs(response.data["deep_thinking"], expected)
+        response = self.client.patch(url, {"agent_rounds": "max", "deep_thinking": False}, format="json")
+        self.assertIs(response.data["deep_thinking"], False)
+
+    def test_assistant_thinking_default_is_writable_and_listed(self):
+        """Assistant settings and authenticated chat expose the same thinking default."""
+        url = f"/api/lens/assistants/{self.assistant.uuid}/"
+        response = self.client.patch(url, {"deep_thinking": True}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIs(response.data["deep_thinking"], True)
+        self.assistant.refresh_from_db()
+        self.assertIs(self.assistant.deep_thinking, True)
+        listed = self.client.get("/api/lens/assistants/")
+        self.assertEqual(listed.status_code, 200)
+        item = next(item for item in listed.data["results"] if item["uuid"] == str(self.assistant.uuid))
+        self.assertIs(item["deep_thinking"], True)
+
+    def test_admin_run_thinking_mode_uses_snapshot(self):
+        """Run observation reflects the chosen mode even after the default changes."""
+        session = Session.objects.create(assistant=self.assistant, user=self.user)
+        run = create_execution_run(session=session, question="Analyze", deep_thinking=True, enqueue=False)
+        response = self.client.get(f"/api/lens/admin/runs/{run.uuid}/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIs(response.data["deep_thinking"], True)
+
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(
@@ -4676,8 +4738,8 @@ class LensApiTests(TestCase):
         self.assertEqual(failed_row["model_ref"], str(model_ref))
         self.assertEqual(failed_row["tool_call_count"], 2)
         self.assertEqual(failed_row["retry_count"], 1)
-        self.assertEqual(failed_row["token_budget_profile"], "deep")
-        self.assertEqual(failed_row["token_budget_max_tokens"], 500000)
+        self.assertEqual(failed_row["token_budget_profile"], "unlimited")
+        self.assertEqual(failed_row["token_budget_max_tokens"], 0)
         detail_response = self.client.get(f"/api/lens/admin/runs/{failed.uuid}/")
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.data["tool_call_count"], 2)

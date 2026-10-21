@@ -4,6 +4,29 @@ LensNode is the standalone execution worker for SourceLens. It connects to the
 control plane over WebSocket, reports workspace directories and available tasks,
 then executes dispatched runs inside its local workspace.
 
+## Thinking modes
+
+Run creation accepts `deep_thinking`, overriding the assistant default. Normal
+mode requests `reasoning_effort=low` and skips independent answer review
+(`review=not_requested`); deep mode requests `high` and uses the configured
+reviewer. Without a reviewer, deep mode records `inconclusive` with
+`review_unavailable`. Provider support determines the effect of reasoning
+settings; summary and emergency wrap-up calls keep their own settings.
+
+Run APIs and diagnostics expose the frozen `deep_thinking` and
+`reasoning_effort_requested`; continued and delegated work inherit the mode.
+Legacy snapshots keep their original limits and review behavior, with missing
+mode records left unknown. Explicit legacy `agent_rounds` inputs map deep/max to
+enabled and other tiers to disabled; an explicit boolean takes precedence.
+
+New runs have no default tier budgets. Administrators can set nonnegative
+`settings.execution_budget.max_tokens`, `settings.execution_budget.max_agent_turns`,
+and `settings.tool_budget.max_calls`; zero means unlimited. Budgets freeze at
+run creation and apply to both modes. Token budgets reserve 20% for wrap-up and
+are checked between calls, so an in-flight response can overshoot the allowance.
+Deadlines, graph safety limits, convergence guards, cancellation, tool checks,
+and attachment validation remain active.
+
 ## Command execution
 
 The default `LENSNODE_EXECUTION_BACKEND=trusted_container` enables the

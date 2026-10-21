@@ -3,13 +3,17 @@
 import threading
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, ToolMessage
 
+from lensnode.agent_runtime.decision_policy import build_decision_policy
 from lensnode.agent_runtime.evidence_gate import EvidenceGateMiddleware
 from lensnode.agent_runtime.execution import _run_agent_with_turn_limit
 from lensnode.agent_runtime.finalization import finalize_run
-from lensnode.gateway_model import RunCancelledError
+from lensnode.agent_runtime.runtime import _build_evidence_middleware
+from lensnode.gateway_model import LensGatewayChatModel, RunCancelledError
 from lensnode.plugin_agent import AgentExtension, AgentExtensions
 
 
@@ -39,6 +43,146 @@ def run_state(*, evidence=None, manifest=None, verdicts=None, checks=()):
         question="Summarize the available evidence.",
         cancel_event=threading.Event(),
     )
+
+
+def mode_review_state(monkeypatch, *, command=None, evidence=None, checks=(), verdict="supported"):
+    """Assemble the real review policy and middleware around a model-call recorder."""
+
+    state = run_state(evidence=evidence, checks=checks)
+    state.command.update(command or {})
+    state.command["decision_model"] = {
+        "model_ref": "review-model",
+        "gates": {"answer_supported": {"max_state_chars": 100_000}},
+    }
+    state.decision_policy = build_decision_policy(state.command, SimpleNamespace(), SimpleNamespace())
+    reviewed = []
+
+    def review(gate, **kwargs):
+        reviewed.append(gate)
+        return verdict
+
+    monkeypatch.setattr(state.decision_policy.runner, "evaluate_choice", review)
+    state.evidence_middleware = _build_evidence_middleware(state)
+    return state, reviewed
+
+
+def test_deep_mode_without_reviewer_reports_unavailable_instead_of_verified():
+    """Selecting deep reasoning cannot certify an answer without a review binding."""
+
+    state = run_state()
+    state.command["deep_thinking"] = True
+    state.decision_policy = build_decision_policy(state.command, SimpleNamespace(), SimpleNamespace())
+    state.evidence_middleware = None
+    result = finalize_run(state, "Observed work.", truncated=False, termination_reason=None)
+    assert result.outcome == "completed"
+    assert result.termination_detail["assessment"]["review"] == "inconclusive"
+    assert "review_unavailable" in result.termination_detail["warnings"]
+
+
+def test_normal_mode_does_not_report_truncated_review_material_as_an_attempted_review(monkeypatch):
+    state, reviewed = mode_review_state(
+        monkeypatch, command={"deep_thinking": False}, evidence={"review_completeness": "incomplete"}
+    )
+    result = finalize_run(state, "Observed work.", truncated=False, termination_reason=None)
+
+    assert reviewed == []
+    assert result.termination_detail["assessment"]["review"] == "not_requested"
+    assert "review_material_incomplete" not in result.termination_detail.get("warnings", [])
+
+
+def test_normal_mode_does_not_reuse_a_checkpoint_review(monkeypatch):
+    state, reviewed = mode_review_state(monkeypatch, command={"deep_thinking": False})
+    state.resume_state = SimpleNamespace(decision_gates={"answer_supported": "unsupported"})
+    result = finalize_run(state, "Observed work.", truncated=False, termination_reason=None)
+
+    assert reviewed == []
+    assert result.outcome == "completed"
+    assert result.termination_detail["assessment"]["review"] == "not_requested"
+    assert "decision_gates" not in result.termination_detail
+
+
+def test_normal_mode_keeps_convergence_guards_without_calling_the_reviewer(monkeypatch):
+    state, reviewed = mode_review_state(monkeypatch, command={"deep_thinking": False})
+    state.evidence_middleware.interval = 1
+    nudge = state.evidence_middleware.before_model({"messages": []}, None)
+
+    assert nudge["messages"]
+    assert state.evidence_middleware.convergence_nudges == 1
+    assert reviewed == []
+
+
+@pytest.mark.parametrize("code", ["tool_evidence_unread", "artifact_delivery_failed"])
+def test_normal_mode_keeps_programmatic_completion_checks(monkeypatch, code):
+    state, reviewed = mode_review_state(
+        monkeypatch, command={"deep_thinking": False}, checks=[{"code": code}]
+    )
+    candidate = {"messages": [AIMessage(content="The report is attached.")]}
+    correction = state.evidence_middleware.after_model(candidate, None)
+    assert correction["jump_to"] == "model"
+    result = finalize_run(state, "The report is attached.", truncated=False, termination_reason=None)
+
+    assert reviewed == []
+    assert result.outcome == "partial"
+    assert result.termination_detail["completion_issues"] == [{"code": code}]
+    assert result.deliverables == {}
+
+
+def test_normal_mode_keeps_required_attachment_checks_without_review(monkeypatch):
+    state, reviewed = mode_review_state(monkeypatch, command={"deep_thinking": False})
+    state.evidence_requirement = "artifact"
+    result = finalize_run(state, "The report is attached.", truncated=False, termination_reason=None)
+
+    assert reviewed == []
+    assert result.outcome == "partial"
+    assert result.termination_detail["capability"] == "artifact_delivery"
+
+
+@pytest.mark.parametrize("enabled,outcome", [(False, "completed"), (True, "partial")])
+def test_only_deep_mode_can_request_semantic_correction(monkeypatch, enabled, outcome):
+    state, reviewed = mode_review_state(
+        monkeypatch, command={"deep_thinking": enabled}, verdict="unsupported"
+    )
+    correction = state.evidence_middleware.after_model({"messages": [AIMessage(content="A claim.")]}, None)
+    result = finalize_run(state, "A claim.", truncated=False, termination_reason=None)
+
+    assert (correction is not None and correction.get("jump_to") == "model") is enabled
+    assert bool(reviewed) is enabled
+    assert result.outcome == outcome
+
+
+@pytest.mark.parametrize("command,review_calls,review", [
+    ({"deep_thinking": False}, 0, "not_requested"),
+    ({"deep_thinking": True}, 1, "supported"),
+    ({}, 1, "supported"),
+])
+def test_real_graph_review_follows_thinking_mode(monkeypatch, command, review_calls, review):
+    state, reviewed = mode_review_state(
+        monkeypatch, command=command, evidence={"evidence_completeness": "complete"}
+    )
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={
+            "message": {"content": "Observed work.", "finish_reason": "stop"},
+            "usage": {"prompt_tokens": 9, "completion_tokens": 1},
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        state.model = LensGatewayChatModel(
+            model_ref="main-model", ai_gateway_url="http://gateway/", token="test", http_client=client
+        )
+        graph = create_agent(state.model, tools=[], middleware=[state.evidence_middleware])
+        answer, truncated, reason = _run_agent_with_turn_limit(
+            graph, [{"role": "user", "content": state.question}], max_turns=0, model=state.model
+        )
+        result = finalize_run(state, answer, truncated=truncated, termination_reason=reason)
+
+    assert result.answer == "Observed work."
+    assert result.outcome == "completed"
+    assert len(requests) == 1
+    assert len(reviewed) == review_calls
+    assert result.termination_detail["assessment"]["review"] == review
 
 
 @pytest.mark.parametrize("evidence,verdicts,reason", [

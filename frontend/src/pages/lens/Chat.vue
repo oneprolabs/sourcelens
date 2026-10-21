@@ -777,6 +777,10 @@
                   {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
+                <AnswerReviewStatus
+                  :detail="message._runtimeState?.terminationDetail"
+                />
+
                 <div
                   v-if="clarificationRequestFor(message)"
                   class="clarification-card"
@@ -1528,6 +1532,8 @@
                   {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
+                <AnswerReviewStatus :detail="runtimeState.terminationDetail" />
+
                 <div
                   v-if="partialAnswer || streamError"
                   class="message-card assistant"
@@ -1689,29 +1695,29 @@
                   class="composer-file-input"
                   @change="onFileInputChange"
                 />
-                <button
-                  v-if="acceptsAttachments"
-                  class="composer-attach-btn"
-                  type="button"
-                  :disabled="
-                    !selectedSessionUuid ||
-                    attachments.length >= MAX_ATTACHMENTS
-                  "
-                  :aria-label="t('lens.chat.attachFile')"
-                  :title="t('lens.chat.attachFile')"
-                  @click="triggerFilePick"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.2"
-                    aria-hidden="true"
-                  >
-                    <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-                  </svg>
-                </button>
                 <div class="composer-content">
+                  <button
+                    v-if="acceptsAttachments"
+                    class="composer-attach-btn"
+                    type="button"
+                    :disabled="
+                      !selectedSessionUuid ||
+                      attachments.length >= MAX_ATTACHMENTS
+                    "
+                    :aria-label="t('lens.chat.attachFile')"
+                    :title="t('lens.chat.attachFile')"
+                    @click="triggerFilePick"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                    </svg>
+                  </button>
                   <button
                     v-for="assistant in mentionedAssistants"
                     :key="assistant.uuid"
@@ -1741,10 +1747,8 @@
                   />
                 </div>
                 <div class="composer-inline-toolbar">
-                  <ReasoningDepthSelect
-                    v-model="agentRounds"
-                    :default-value="activeAssistant?.agent_rounds"
-                  />
+                  <DeepThinkingToggle v-model="effectiveDeepThinking" />
+                  <CitationToggle v-model="citationsEnabled" />
                 </div>
                 <button
                   class="composer-action-btn"
@@ -1893,7 +1897,9 @@ import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
 import AuthImage from '@/components/ui/AuthImage.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import ReasoningDepthSelect from './components/ReasoningDepthSelect.vue'
+import DeepThinkingToggle from './components/DeepThinkingToggle.vue'
+import CitationToggle from './components/CitationToggle.vue'
+import AnswerReviewStatus from '@/components/lens/AnswerReviewStatus.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import RowActionMenu from '@/components/ui/RowActionMenu.vue'
 import BrandLogo from '@/components/layout/BrandLogo.vue'
@@ -2027,8 +2033,6 @@ import {
   uploadAttachment
 } from '@/api/lens'
 
-import { assistantShowsCitations } from '@/pages/lens/codeCitations'
-
 import {
   readRecentChat,
   saveRecentChat,
@@ -2055,12 +2059,7 @@ const feedbackUpdatingRuns = ref(new Set())
 const selectedAssistantUuid = ref('')
 const selectedSessionUuid = ref('')
 const question = ref('')
-const AGENT_ROUNDS_STORAGE_KEY = 'lens.chat.agentRounds'
-const agentRounds = ref(
-  typeof window !== 'undefined'
-    ? window.sessionStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
-    : ''
-)
+const deepThinking = ref(null)
 const attachments = ref([])
 const fileInput = ref(null)
 const partialAnswer = ref('')
@@ -2088,11 +2087,6 @@ const runStatusResolvingSessionUuid = ref('')
 const submittingSessionUuids = ref(new Set())
 const sessionCreationInProgress = ref(false)
 
-watch(agentRounds, (value) => {
-  if (typeof window !== 'undefined') {
-    window.sessionStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
-  }
-})
 const streamController = ref(null)
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
@@ -2192,10 +2186,21 @@ const selectedAssistant = computed(
 const activeAssistant = computed(
   () => selectedAssistant.value || publicAssistant.value
 )
+const effectiveDeepThinking = computed({
+  get: () =>
+    deepThinking.value ?? Boolean(activeAssistant.value?.deep_thinking),
+  set: (value) => {
+    deepThinking.value = value
+  }
+})
+watch(selectedAssistantUuid, () => {
+  deepThinking.value = null
+})
 
-const citationsEnabled = computed(() =>
-  assistantShowsCitations(activeAssistant.value)
-)
+const citationsEnabled = computed({
+  get: () => preferencesStore.showCitations,
+  set: (value) => preferencesStore.setShowCitations(value)
+})
 
 const selectedSession = computed(
   () =>
@@ -4302,7 +4307,7 @@ async function submit() {
     showWarning(t('lens.chat.participatingAssistantsRequired'))
     return
   }
-  const agentRoundsAtSubmit = agentRounds.value
+  const deepThinkingAtSubmit = effectiveDeepThinking.value
   const draftTextAtSubmit = question.value
   const mentionUuidsAtSubmit = [...mentionedAssistantUuids.value]
   const mentionAssistantsAtSubmit = [...mentionedAssistants.value]
@@ -4384,7 +4389,7 @@ async function submit() {
     question: optimisticText,
     attachmentUuids,
     routingAssistantUuids: mentionUuidsAtSubmit,
-    agentRounds: agentRoundsAtSubmit,
+    deepThinking: deepThinkingAtSubmit,
     retryDraft: retryDraftAtSubmit,
     pendingSubmission: pendingRunSubmission.value
   })
@@ -4494,7 +4499,7 @@ async function submit() {
     if (!isCurrentView()) return
     messages.value = messages.value.filter((m) => m.uuid !== '__optimistic__')
     question.value = draftTextAtSubmit
-    agentRounds.value = agentRoundsAtSubmit
+    deepThinking.value = deepThinkingAtSubmit
     mentionedAssistantUuids.value = mentionUuidsAtSubmit
     retryDraft.value = retryDraftAtSubmit
     // Only a 4xx response proves that the Run transaction rejected the
@@ -4880,7 +4885,6 @@ function retryLastQuestion(message = null) {
 }
 
 function canRetryLastQuestion(message = null) {
-  if (activeAssistant.value?.agent_rounds === 'flash') return false
   return retryableUserMessage(messages.value, message) !== null
 }
 
@@ -5968,7 +5972,8 @@ onBeforeUnmount(() => {
 }
 
 .composer {
-  @apply flex items-center gap-3 rounded-xl border bg-surface px-4 py-2.5;
+  @apply grid items-center gap-x-3 gap-y-1 rounded-xl border bg-surface px-4 py-2.5;
+  grid-template-columns: minmax(0, 1fr) auto;
   --composer-max-height: 200px;
   border-color: var(--sl-border-default);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
@@ -5979,8 +5984,7 @@ onBeforeUnmount(() => {
 }
 
 .composer-inline-toolbar {
-  @apply pointer-events-auto flex items-center justify-end;
-  flex: 0 0 auto;
+  @apply pointer-events-auto flex flex-wrap items-center;
 }
 
 .composer:focus-within {
@@ -5990,6 +5994,7 @@ onBeforeUnmount(() => {
 
 .composer-content {
   @apply flex min-w-0 flex-1 flex-wrap items-center gap-1.5;
+  grid-column: 1 / -1;
 }
 
 .composer-mention-chip {

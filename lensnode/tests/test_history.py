@@ -225,7 +225,8 @@ def test_plan_outcome_uses_required_capability_failures():
     assert detail["capability"] == "plugin"
 
 
-def test_direct_answer_route_redacts_runtime_details(monkeypatch):
+@pytest.mark.parametrize("thinking", [None, False, True])
+def test_direct_answer_route_redacts_runtime_details(monkeypatch, thinking):
     runtime = agent_runtime.LensDeepAgentRuntime(SimpleNamespace())
     events = []
     outputs = []
@@ -267,6 +268,8 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
         "I used read_file on /subject-documents/"
         "internal.pdf.sourcelens/content.md."
     )
+    if thinking is not None:
+        state.command["deep_thinking"] = thinking
 
     def fake_direct(
         model,
@@ -298,6 +301,9 @@ def test_direct_answer_route_redacts_runtime_details(monkeypatch):
     assert ".sourcelens" not in result["answer"]
     assert "read_file" not in result["answer"]
     assert outputs[-1] == result["answer"]
+    if thinking is not None:
+        expected = "inconclusive" if thinking else "not_requested"
+        assert result["termination_detail"]["assessment"]["review"] == expected
 
 
 class _Msg:

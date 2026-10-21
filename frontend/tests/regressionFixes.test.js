@@ -212,24 +212,6 @@ test('drawer skips visual transitions in a hidden document', async () => {
   assert.equal(animationCount, 0)
 })
 
-test('assistant exposes one execution strategy without a token budget picker', async () => {
-  const [drawer, english, chinese] = await Promise.all([
-    source('pages/lens/AssistantFormDrawerDirectEnvironment.vue'),
-    source('admin/locales/en.json').then(JSON.parse),
-    source('admin/locales/zh-CN.json').then(JSON.parse)
-  ])
-
-  assert.equal(english.lensAdmin.fields.agentRounds, 'Execution strategy')
-  assert.equal(chinese.lensAdmin.fields.agentRounds, '执行策略')
-  assert.equal(chinese.lensAdmin.routingModes.direct, '普通模式')
-  assert.equal(chinese.lensAdmin.routingModes.smart, '智能协作')
-  assert.equal(english.lensAdmin.routingModes.direct, 'Standard Mode')
-  assert.equal(english.lensAdmin.routingModes.smart, 'Smart Collaboration')
-  assert.doesNotMatch(drawer, /tokenBudgetProfiles/)
-  assert.doesNotMatch(drawer, /v-model="form\.token_budget_profile"/)
-  assert.doesNotMatch(drawer, /token_budget_profile:/)
-})
-
 test('assistant node selection defers to datasource bindings', async () => {
   const drawer = await source(
     'pages/lens/AssistantFormDrawerDirectEnvironment.vue'

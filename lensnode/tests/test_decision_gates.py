@@ -395,6 +395,28 @@ def test_build_decision_policy_wraps_bound_gates():
     assert isinstance(policy, decision_policy.GateDecisionPolicy)
 
 
+def test_normal_mode_preserves_retrieval_decisions_and_skips_answer_review(monkeypatch):
+    command = {**_command(), "deep_thinking": False}
+    command["decision_gates"][0]["gates"]["answer_supported"] = {"kind": "choice"}
+    policy = decision_policy.build_decision_policy(command, SimpleNamespace(), SimpleNamespace())
+    calls = []
+
+    def evaluate(gate, **kwargs):
+        calls.append(gate)
+        return 0.9
+
+    def review(gate, **kwargs):
+        calls.append(gate)
+        return "supported"
+
+    monkeypatch.setattr(policy.runner, "evaluate", evaluate)
+    monkeypatch.setattr(policy.runner, "evaluate_choice", review)
+
+    assert policy.needs_retrieval(None, "Read the guide") is True
+    assert policy.post_run_checks("Read the guide", "A documented answer.") == {}
+    assert calls == ["search_needed"]
+
+
 def test_gate_policy_uses_the_bound_threshold(monkeypatch):
     events = []
     runner = _runner(_command(), events)

@@ -58,6 +58,7 @@ def finalize_run(state, answer, *, truncated, termination_reason):
         execution_gate_enabled=state.runtime_mode.execution_gates,
         runtime_evidence=state.runtime_evidence,
         decision_gates=verdicts,
+        answer_review_enabled=state.command.get("deep_thinking") is not False,
     )
     if outcome == "blocked":
         answer = _unverified_execution_answer(
@@ -80,6 +81,13 @@ def _update_extension_evidence(state):
 def _post_run_decision_gates(state, answer):
     """Review the final answer, reusing matching graph or checkpoint verdicts."""
 
+    command = getattr(state, "command", None) or {}
+    if command.get("deep_thinking") is False:
+        return {}
+    policy = getattr(state, "decision_policy", None)
+    checker = getattr(policy, "has_evidence_gates", None)
+    if command.get("deep_thinking") is True and (policy is None or (checker is not None and not checker())):
+        return {"review_available": False}
     resume_state = getattr(state, "resume_state", None)
     if (
         resume_state is not None
@@ -87,7 +95,6 @@ def _post_run_decision_gates(state, answer):
         and not getattr(getattr(state, "agent_extensions", None), "refresh_evidence", False)
     ):
         return dict(resume_state.decision_gates)
-    policy = getattr(state, "decision_policy", None)
     if policy is None:
         return {}
     runtime_evidence = getattr(state, "runtime_evidence", None)

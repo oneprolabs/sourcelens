@@ -3,6 +3,16 @@
 import threading
 
 
+def resolve_reasoning_effort(config, command):
+    """Select reasoning for this run without mutating node defaults."""
+
+    if (command or {}).get("deep_thinking") is True:
+        return "high"
+    if (command or {}).get("deep_thinking") is False:
+        return "low"
+    return getattr(config, "reasoning_effort", None)
+
+
 class SharedTokenBudget:
     """Thread-safe token accounting shared by a parent and its delegates."""
 

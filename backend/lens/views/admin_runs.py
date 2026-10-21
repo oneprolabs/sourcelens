@@ -1024,6 +1024,8 @@ def _admin_run_detail(run):
             "output_files": output_files,
             "error": run.error or "",
             "agent_rounds": agent_rounds,
+            "deep_thinking": runtime_snapshot.get("deep_thinking"),
+            "reasoning_effort_requested": runtime_snapshot.get("reasoning_effort_requested"),
             "failure_summary": _admin_run_failure_summary(run),
             "trace_event_count": run.trace_events.count(),
             "steps": steps,

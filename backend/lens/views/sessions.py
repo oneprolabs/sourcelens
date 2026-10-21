@@ -402,7 +402,7 @@ class SessionViewSet(BaseAuthenticatedViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         run.refresh_from_db()
-        return Response(RunSerializer(run).data, status=201)
+        return Response(RunSerializer(run, context=self.get_serializer_context()).data, status=201)
 
     @action(
         detail=True,

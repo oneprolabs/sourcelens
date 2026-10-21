@@ -176,7 +176,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def _remember_tool_result(self, request, result):
         """Retain original sources independently of graph compaction and offloading."""
 
-        if not self._active():
+        if not self._active() or not getattr(self.policy, "review_enabled", True):
             return
         if isinstance(result, Command):
             results = (result.update or {}).get("messages", []) if isinstance(result.update, dict) else []
@@ -217,6 +217,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def observe_tools(self, state):
         """Retain bounded graph material for a final answer produced outside the graph."""
 
+        if not getattr(self.policy, "review_enabled", True):
+            return
         with self._tool_results_lock:
             retained = dict(self._tool_results)
         material = _tool_evidence(state, limit=self._review_limit(), retained=retained)
@@ -305,7 +307,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
     def final_verdicts(self, answer):
         """Review final text with retained graph material, without restarting execution."""
 
-        if not self._active():
+        if not self._active() or not getattr(self.policy, "review_enabled", True):
             return {}
         cached = self.cached_verdicts(answer, self.evidence)
         if cached is not None:
@@ -560,6 +562,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
             self.review_state["delivery_nudged"] = True
             return {"jump_to": "model", "messages": [runtime_message(_DELIVERY_GUIDANCE, phase="delivery")]}
         self.saw_final_answer = True
+        if not getattr(self.policy, "review_enabled", True):
+            return None
         scope = self.review_scope() if self.review_scope else nullcontext()
         with scope:
             verdicts = self._verify(answer, state)

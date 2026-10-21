@@ -6,14 +6,104 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool
 
 from lensnode.agent_runtime.capabilities import CapabilityBoundaryMiddleware
+from lensnode.agent_runtime.execution import _run_agent_with_turn_limit
+from lensnode.agent_runtime.limits import resolve_reasoning_effort, resolve_token_budget, resolve_tool_call_budget
 from lensnode.agent_runtime.messages import runtime_message
+from lensnode.agent_runtime.runtime import _resolve_agent_turn_limit
 from lensnode.agent_runtime.summarization import build_summarization_middleware
 from lensnode.config import load_config
 from lensnode.gateway_model import LensGatewayChatModel
+
+
+def test_normal_thinking_overrides_high_node_defaults_and_legacy_preserves_them():
+    """The ordinary mode stays fast even on a node configured for high reasoning."""
+
+    config = SimpleNamespace(reasoning_effort="high")
+    assert resolve_reasoning_effort(config, {"deep_thinking": False}) == "low"
+    assert resolve_reasoning_effort(config, {}) == "high"
+    assert config.reasoning_effort == "high"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_turn_budget_applies_to_both_thinking_modes(enabled):
+    """New modes preserve independent administrator turn limits."""
+
+    assert _resolve_agent_turn_limit({"deep_thinking": enabled, "max_agent_turns": 40}) == 40
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_thinking_mode_completes_real_graph_beyond_old_turn_and_token_caps(enabled):
+    """Useful tool work can cross every retired tier boundary and still finish."""
+
+    command = {
+        "deep_thinking": enabled,
+        "agent_rounds": "flash",
+        "max_agent_turns": 0,
+        "token_budget": {"profile": "unlimited", "max_tokens": 0},
+    }
+    config = SimpleNamespace(reasoning_effort=None)
+    budget = resolve_token_budget(config, command)
+    payloads = []
+    facts = []
+
+    @tool
+    def inspect_fact(index: int) -> str:
+        """Read the next independent source fact."""
+        facts.append(index)
+        return f"Verified source fact {index}"
+
+    def respond(request):
+        """Return independent tool requests followed by a complete answer."""
+        payloads.append(json.loads(request.content))
+        index = len(payloads)
+        message = {"content": "All 101 source facts checked.", "finish_reason": "stop"}
+        if index <= 101:
+            message = {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": f"fact-{index}",
+                        "type": "function",
+                        "function": {"name": "inspect_fact", "arguments": json.dumps({"index": index})},
+                    }
+                ],
+            }
+        return httpx.Response(
+            200, json={"message": message, "usage": {"prompt_tokens": 10000, "completion_tokens": 100}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        model = LensGatewayChatModel(
+            model_ref="model",
+            ai_gateway_url="http://gateway/",
+            token="test",
+            http_client=client,
+            reasoning_effort=resolve_reasoning_effort(config, command),
+            token_budget_gates_enabled=bool(budget["max_tokens"]),
+            token_budget_max_tokens=budget["max_tokens"],
+        )
+        graph = create_agent(model, tools=[inspect_fact], middleware=[
+            CapabilityBoundaryMiddleware(max_tool_calls=resolve_tool_call_budget(config, command)),
+        ])
+        result = _run_agent_with_turn_limit(
+            graph,
+            [{"role": "user", "content": "Check all source facts."}],
+            max_turns=_resolve_agent_turn_limit(command),
+            model=model,
+        )
+
+    assert result == ("All 101 source facts checked.", False, None)
+    assert facts == list(range(1, 102))
+    assert model.token_usage["total_tokens"] > 500000
+    assert all(payload.get("reasoning_effort") == ("high" if enabled else "low") for payload in payloads)
+    assert config.reasoning_effort is None
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

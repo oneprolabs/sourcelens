@@ -656,6 +656,10 @@ def _execution_evidence(execution):
         "status": execution.status,
         "task": execution.task,
         "agent_rounds": execution.agent_rounds,
+        "deep_thinking": (execution.runtime_snapshot or {}).get("deep_thinking"),
+        "reasoning_effort_requested": (execution.runtime_snapshot or {}).get("reasoning_effort_requested"),
+        "max_agent_turns": (execution.runtime_snapshot or {}).get("max_agent_turns"),
+        "tool_budget": (execution.runtime_snapshot or {}).get("tool_budget"),
         "run_timeout_s": execution.run_timeout_s,
         "token_budget": {
             "profile": execution.token_budget_profile,

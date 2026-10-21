@@ -203,6 +203,7 @@ class Assistant(TimestampedUUIDModel):
     decision_auto = models.BooleanField(default=True)
     decision_gates = models.JSONField(default=dict, blank=True)
     decision_analyses = models.JSONField(default=dict, blank=True)
+    deep_thinking = models.BooleanField(default=False)
     agent_rounds = models.CharField(
         max_length=16,
         choices=AgentRounds.choices,

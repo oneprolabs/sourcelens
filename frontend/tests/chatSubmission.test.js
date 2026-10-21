@@ -98,12 +98,12 @@ test('sends every explicitly mentioned assistant in one submission', () => {
   ])
 })
 
-test('only sends a reasoning override when explicitly selected', () => {
+test('sends explicit normal and deep thinking without legacy tiers', () => {
   const defaults = { sessionUuid: 'session-1', question: 'Check status' }
-  assert.equal('agent_rounds' in prepareRunSubmission(defaults).payload, false)
-  for (const agentRounds of ['flash', 'fast', 'balanced', 'deep', 'max']) {
-    const prepared = prepareRunSubmission({ ...defaults, agentRounds })
-    assert.equal(prepared.payload.agent_rounds, agentRounds)
+  assert.equal('deep_thinking' in prepareRunSubmission(defaults).payload, false)
+  for (const deepThinking of [false, true]) {
+    const prepared = prepareRunSubmission({ ...defaults, deepThinking })
+    assert.equal(prepared.payload.deep_thinking, deepThinking)
   }
 })
 
@@ -111,7 +111,7 @@ test('replays the same depth but gives a changed depth a new key', () => {
   const defaults = {
     sessionUuid: 'session-1',
     question: 'Check status',
-    agentRounds: 'flash'
+    deepThinking: false
   }
   const first = prepareRunSubmission({
     ...defaults,
@@ -123,10 +123,10 @@ test('replays the same depth but gives a changed depth a new key', () => {
     randomUUID: () => 'replay'
   })
   assert.equal(replay.payload.idempotency_key, 'first')
-  for (const agentRounds of ['', 'max']) {
+  for (const deepThinking of [null, true]) {
     const changed = prepareRunSubmission({
       ...defaults,
-      agentRounds,
+      deepThinking,
       pendingSubmission: first.submission,
       randomUUID: () => 'changed'
     })
@@ -138,9 +138,9 @@ test('a Retry accepts the newly selected reasoning depth', () => {
   const prepared = prepareRunSubmission({
     sessionUuid: 'session-1',
     question: 'Check status',
-    agentRounds: 'max',
+    deepThinking: true,
     retryDraft: { question: 'Check status', runUuid: 'run-1' }
   })
-  assert.equal(prepared.payload.agent_rounds, 'max')
+  assert.equal(prepared.payload.deep_thinking, true)
   assert.equal(prepared.payload.retry_of_run_uuid, 'run-1')
 })

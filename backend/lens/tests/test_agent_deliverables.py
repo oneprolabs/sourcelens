@@ -1,6 +1,7 @@
 """Agent clients can discover and download only published, authorized files."""
 
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -90,6 +91,73 @@ class AgentDeliverableTests(TestCase):
         response = self.client.get(f"/api/lens/runs/{self.run.uuid}/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["output_files"], [])
+
+    def add_citation(self):
+        """Attach captured evidence without changing the stored response later."""
+
+        self.message.content = "See docs/guide.md. [[source: docs/guide.md:1-2]]\n\nDone."
+        self.message.save(update_fields=["content"])
+        self.run.citations = [{
+            "id": "src-1", "path": "docs/guide.md", "start_line": 1, "end_line": 2,
+            "source": "Guide\nDetails", "revision": "working-tree", "supports": "Read while answering",
+        }]
+        self.run.save(update_fields=["citations"])
+
+    def test_agent_polling_hides_citations_for_managed_and_legacy_tokens(self):
+        """Agent-kit answers omit markers and metadata, preserving stored evidence."""
+
+        self.add_citation()
+        web = APIClient()
+        web.force_authenticate(self.user)
+        issued = web.post("/api/v1/auth/agent/token", {}, format="json")
+        self.assertEqual(issued.status_code, 200)
+        managed = APIClient()
+        managed.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.data['access']}")
+        for client in (self.client, managed):
+            with self.subTest(client=client):
+                response = client.get(f"/api/lens/runs/{self.run.uuid}/")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["answer"], "See docs/guide.md.\n\nDone.")
+                self.assertEqual(response.data["citations"], [])
+        self.message.refresh_from_db()
+        self.run.refresh_from_db()
+        self.assertIn("[[source:", self.message.content)
+        self.assertEqual(len(self.run.citations), 1)
+
+    def test_web_polling_retains_citations_even_for_api_request_source(self):
+        """Presentation follows authenticated scope, not caller-supplied labels."""
+
+        self.add_citation()
+        web = APIClient()
+        web.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.user)}")
+        response = web.get(f"/api/lens/runs/{self.run.uuid}/?request_source=cli")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], self.message.content)
+        self.assertEqual(response.data["citations"][0]["id"], "src-1")
+
+    def test_agent_answer_strips_markers_before_truncating(self):
+        """The answer limit cannot expose the beginning of a citation marker."""
+
+        self.message.content = "x" * 49_995 + " [[SOURCE: docs/guide.md:1-2]] tail"
+        self.message.save(update_fields=["content"])
+        response = self.client.get(f"/api/lens/runs/{self.run.uuid}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "x" * 49_995 + " tail")
+
+    def test_agent_creation_response_hides_citations_on_reused_run(self):
+        """An idempotent creation response applies the same scope as polling."""
+
+        self.add_citation()
+        with (
+            patch("lens.views.sessions._session_assistant_is_runnable", return_value=True),
+            patch("lens.views.sessions.RunCreateSerializer.save", return_value=self.run),
+        ):
+            response = self.client.post(
+                f"/api/lens/sessions/{self.session.uuid}/runs/", {"question": "Report"}, format="json"
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["answer"], "See docs/guide.md.\n\nDone.")
+        self.assertEqual(response.data["citations"], [])
 
     def test_agent_can_download_published_bytes_but_not_drafts(self):
         """The route allowlist preserves the download view's publication check."""

@@ -12,6 +12,8 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
+from accounts.authentication import AGENT_SCOPE_CLAIM, AGENT_TOKEN_SCOPE
+
 from .alert_serializers import AlertEventSerializer as AlertEventSerializer
 from .alert_serializers import AlertRuleSerializer as AlertRuleSerializer
 from .assistant_lifecycle import (
@@ -26,7 +28,7 @@ from .datasource.bindings import (
     DatasourceBindingsField, replace_datasource_bindings,
 )
 from .attachments import ATTACHMENT_MAX_PER_MESSAGE, AttachmentError
-from .citations import public_run_citations, sanitize_planned_evidence
+from .citations import public_run_citations, sanitize_planned_evidence, strip_source_markers
 from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
@@ -739,6 +741,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "routing_description",
             "capability",
             "agent_rounds",
+            "deep_thinking",
             "slug",
             "agent_model_ref",
             "decision_model_ref",
@@ -922,6 +925,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             "decision_gates",
             "decision_analyses",
             "agent_rounds",
+            "deep_thinking",
             "token_budget_profile",
             "max_concurrency",
             "settings",
@@ -1078,6 +1082,8 @@ class AssistantSerializer(serializers.ModelSerializer):
 
         attrs.pop("kind", None)
         attrs.pop("selected_task", None)
+        if "deep_thinking" not in attrs and "agent_rounds" in attrs:
+            attrs["deep_thinking"] = attrs["agent_rounds"] in {Assistant.AgentRounds.DEEP, Assistant.AgentRounds.MAX}
         agent_rounds = attrs.get(
             "agent_rounds",
             getattr(
@@ -1243,6 +1249,16 @@ class AssistantSerializer(serializers.ModelSerializer):
         )
         if isinstance(settings, dict):
             settings = dict(settings)
+            if "execution_budget" in settings:
+                budget = settings["execution_budget"]
+                if (
+                    not isinstance(budget, dict)
+                    or set(budget) - {"max_tokens", "max_agent_turns"}
+                    or any(type(value) is not int or not 0 <= value <= 2147483647 for value in budget.values())
+                ):
+                    raise serializers.ValidationError({
+                        "settings": "execution_budget requires nonnegative integer max_tokens and max_agent_turns."
+                    })
             settings["datasource_routing"] = "selected"
             attrs["settings"] = settings
             if "retrieval_policy" in settings:
@@ -4363,8 +4379,29 @@ class RunExecutionSerializer(serializers.ModelSerializer):
     """Run execution snapshot serializer."""
 
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
+    deep_thinking = serializers.SerializerMethodField()
+    reasoning_effort_requested = serializers.SerializerMethodField()
+    max_agent_turns = serializers.SerializerMethodField()
     loaded_skills = serializers.SerializerMethodField()
     loaded_mcps = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.BooleanField(allow_null=True))
+    def get_deep_thinking(self, obj):
+        """Return the frozen choice, leaving legacy executions unknown."""
+
+        return (obj.runtime_snapshot or {}).get("deep_thinking")
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_reasoning_effort_requested(self, obj):
+        """Expose the requested setting without claiming provider support."""
+
+        return (obj.runtime_snapshot or {}).get("reasoning_effort_requested")
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_max_agent_turns(self, obj):
+        """Expose the independent turn budget captured for this execution."""
+
+        return (obj.runtime_snapshot or {}).get("max_agent_turns")
 
     def get_loaded_skills(self, obj):
         """Return Skill identities without definitions or environment data."""
@@ -4386,6 +4423,9 @@ class RunExecutionSerializer(serializers.ModelSerializer):
             "loaded_mcps",
             "target_dirs",
             "agent_rounds",
+            "deep_thinking",
+            "reasoning_effort_requested",
+            "max_agent_turns",
             "run_timeout_s",
             "token_budget_profile",
             "token_budget_max_tokens",
@@ -4413,6 +4453,12 @@ class RunSerializer(serializers.ModelSerializer):
     answer = serializers.SerializerMethodField()
     output_files = serializers.SerializerMethodField()
 
+    def _is_agent_request(self):
+        """Identify agent-kit clients by their authenticated credential scope."""
+
+        auth = getattr(self.context.get("request"), "auth", None)
+        return auth is not None and auth.get(AGENT_SCOPE_CLAIM) == AGENT_TOKEN_SCOPE
+
     @extend_schema_field(RunOutputFileSerializer(many=True))
     def get_output_files(self, obj):
         """Expose only the published files linked to the final answer."""
@@ -4432,6 +4478,8 @@ class RunSerializer(serializers.ModelSerializer):
     def get_citations(self, obj):
         """Return trusted citation metadata without source snapshots."""
 
+        if self._is_agent_request():
+            return []
         return public_run_citations(obj.citations)
 
     def get_planned_evidence(self, obj):
@@ -4444,7 +4492,10 @@ class RunSerializer(serializers.ModelSerializer):
 
         if obj.output_message is None:
             return ""
-        return (obj.output_message.content or "")[:50000]
+        answer = obj.output_message.content or ""
+        if self._is_agent_request():
+            answer = strip_source_markers(answer)
+        return answer[:50000]
 
     class Meta:
         model = Run
@@ -4760,6 +4811,7 @@ class RunCreateSerializer(serializers.Serializer):
     retry_of_run_uuid = serializers.UUIDField(required=False, allow_null=True)
     enqueue = serializers.BooleanField(required=False, default=True)
     run_inline = serializers.BooleanField(required=False, default=False)
+    deep_thinking = serializers.BooleanField(required=False)
     agent_rounds = serializers.ChoiceField(
         choices=Assistant.AgentRounds.choices,
         required=False,
@@ -4863,6 +4915,7 @@ class RunCreateSerializer(serializers.Serializer):
                 routing_assistant_uuid=validated_data.get("routing_assistant_uuid"),
                 routing_assistant_uuids=validated_data.get("routing_assistant_uuids"),
                 agent_rounds=validated_data.get("agent_rounds"),
+                deep_thinking=validated_data.get("deep_thinking"),
                 request_source=_validated_request_source(validated_data),
             )
         except AssistantNotRunnableError:

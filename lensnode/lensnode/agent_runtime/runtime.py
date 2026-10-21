@@ -90,6 +90,7 @@ from .finalization import (
 )
 from .limits import (
     SharedTokenBudget,
+    resolve_reasoning_effort,
     resolve_token_budget as _resolve_token_budget,
     resolve_tool_call_budget as _resolve_tool_call_budget,
 )
@@ -271,6 +272,8 @@ def _resolve_agent_turn_limit(command):
         configured = None
     if configured is not None and configured > 0:
         return configured
+    if "deep_thinking" in (command or {}):
+        return 0
     agent_rounds = (command or {}).get("agent_rounds")
     if agent_rounds in _AGENT_TURNS_BY_ROUNDS:
         return _AGENT_TURNS_BY_ROUNDS[agent_rounds]
@@ -280,6 +283,22 @@ def _resolve_agent_turn_limit(command):
     if task == "knowledge_qa":
         return _DEFAULT_KNOWLEDGE_QA_MAX_TURNS
     return configured
+
+
+def _direct_answer_outcome(state, answer):
+    """Record review independently of successful direct-answer execution."""
+
+    return _finalize_runtime_outcome(
+        capability_middleware=None,
+        evidence_requirement=getattr(state, "evidence_requirement", "none"),
+        required_capabilities=getattr(state, "required_capabilities", []),
+        truncated=False,
+        stop_reason=state.model.stop_reason,
+        execution_gate_enabled=False,
+        runtime_evidence=getattr(state, "runtime_evidence", {}),
+        decision_gates=_post_run_decision_gates(state, answer),
+        answer_review_enabled=state.command.get("deep_thinking") is not False,
+    )
 
 
 def _vague_code_analysis_question(question):
@@ -581,13 +600,16 @@ class LensDeepAgentRuntime:
         )
         if state.emit_output is not None:
             state.emit_output(answer)
+        outcome, detail = "completed", {}
+        if "deep_thinking" in command:
+            outcome, detail = _direct_answer_outcome(state, answer)
         return {
             "answer": _normalize_code_analysis_paths(answer, command),
             "samples": [],
             "stop_reason": state.model.stop_reason,
             "token_usage": state.model.token_usage,
-            "outcome": "completed",
-            "termination_detail": {},
+            "outcome": outcome,
+            "termination_detail": detail,
             "citations": [],
         }
 
@@ -1086,7 +1108,7 @@ class LensDeepAgentRuntime:
                 0.8,
             ),
             token_budget_wrapup_event=state.token_budget_wrapup_event,
-            reasoning_effort=getattr(self.config, "reasoning_effort", None),
+            reasoning_effort=resolve_reasoning_effort(self.config, state.command),
             on_runtime_state_change=lambda runtime_state: (
                 state.persist_execution_state(
                     guardrail_state=runtime_state
@@ -1465,6 +1487,9 @@ class LensDeepAgentRuntime:
             outcome, termination_detail = "completed", {}
             if extensions.extensions:
                 _update_extension_evidence(state)
+            if "deep_thinking" in state.command:
+                outcome, termination_detail = _direct_answer_outcome(state, answer)
+            elif extensions.extensions:
                 outcome, termination_detail = _finalize_runtime_outcome(
                     capability_middleware=None,
                     evidence_requirement=state.evidence_requirement,
@@ -1473,6 +1498,7 @@ class LensDeepAgentRuntime:
                     stop_reason=state.model.stop_reason,
                     execution_gate_enabled=False,
                     runtime_evidence=state.runtime_evidence,
+                    answer_review_enabled=state.command.get("deep_thinking") is not False,
                 )
             return {
                 "answer": answer,

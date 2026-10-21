@@ -323,6 +323,32 @@ test('preferences store applies isolated theme lifecycles', async (t) => {
       })
     })
 
+    await t.test(
+      'citation display defaults on and remembers toggles across stores',
+      () => {
+        return withStore(({ store }) => {
+          assert.equal(store.showCitations, true)
+          store.setShowCitations(false)
+          assert.equal(store.showCitations, false)
+          const restored = usePreferencesStore(createPinia())
+          try {
+            restored.loadFromLocalStorage()
+            assert.equal(restored.showCitations, false)
+            restored.setShowCitations(true)
+            store.loadFromLocalStorage()
+            assert.equal(store.showCitations, true)
+            store.setShowCitations(false)
+            store.reset()
+            assert.equal(store.showCitations, true)
+            restored.loadFromLocalStorage()
+            assert.equal(restored.showCitations, true)
+          } finally {
+            restored.$dispose()
+          }
+        })
+      }
+    )
+
     await t.test('load registers one system-only media listener', () => {
       return withStore(({ browser, store }) => {
         store.loadFromLocalStorage()

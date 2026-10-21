@@ -749,7 +749,13 @@
                       </div>
                       <div class="overview-meta-item">
                         <span class="overview-label">
-                          {{ t('lensAdmin.fields.agentRounds') }}
+                          {{
+                            t(
+                              detail.deep_thinking == null
+                                ? 'lensAdmin.fields.agentRounds'
+                                : 'lensAdmin.fields.deepThinking'
+                            )
+                          }}
                         </span>
                         <span
                           data-testid="run-analysis-depth"
@@ -758,6 +764,21 @@
                           {{ agentRoundsLabel }}
                         </span>
                       </div>
+                      <div
+                        v-if="detail.reasoning_effort_requested"
+                        class="overview-meta-item"
+                      >
+                        <span class="overview-label">{{
+                          t('lensAdmin.fields.reasoningEffortRequested')
+                        }}</span>
+                        <span
+                          class="overview-meta-value"
+                          :title="t('lensAdmin.reasoningSupportHint')"
+                        >
+                          {{ detail.reasoning_effort_requested }}
+                        </span>
+                      </div>
+                      <AnswerReviewStatus :detail="detail.termination_detail" />
                       <div class="overview-meta-item">
                         <span class="overview-label">
                           {{ t('lensRuns.colUser') }}
@@ -1740,6 +1761,7 @@ import {
   resolveRunSummary
 } from '@/admin/utils/operationsSummary'
 import FilePreviewModal from '@/components/lens/FilePreviewModal.vue'
+import AnswerReviewStatus from '@/components/lens/AnswerReviewStatus.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDateInput from '@/components/ui/BaseDateInput.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
@@ -1980,6 +2002,13 @@ const AGENT_ROUNDS_KEYS = {
 }
 
 const agentRoundsLabel = computed(() => {
+  if (typeof detail.value?.deep_thinking === 'boolean') {
+    return t(
+      detail.value.deep_thinking
+        ? 'lensAdmin.thinkingModes.deep'
+        : 'lensAdmin.thinkingModes.normal'
+    )
+  }
   const value = detail.value?.agent_rounds
   const key = AGENT_ROUNDS_KEYS[value]
   return key ? t(`lensAdmin.agentRounds.${key}`) : value || '-'

@@ -55,6 +55,7 @@ def _finalize_runtime_outcome(
     execution_gate_enabled=True,
     runtime_evidence=None,
     decision_gates=None,
+    answer_review_enabled=True,
 ):
     """Keep execution, source coverage and answer support independently observable."""
 
@@ -77,17 +78,18 @@ def _finalize_runtime_outcome(
         outcome, detail = "partial", _evidence_termination_detail("artifact")
     runtime_evidence = runtime_evidence or {}
     if (
-        not decision_gates
+        answer_review_enabled
+        and not decision_gates
         and not runtime_evidence.get("required_sources")
         and not any(key in runtime_evidence for key in ("evidence_completeness", "review_completeness"))
     ):
         return outcome, detail
     if outcome != "completed" and truncated and stop_reason:
         detail.setdefault("trigger", stop_reason)
-    verdicts = dict(decision_gates or {})
-    if runtime_evidence.get("review_completeness") == "incomplete":
+    verdicts = dict(decision_gates or {}) if answer_review_enabled else {}
+    if answer_review_enabled and runtime_evidence.get("review_completeness") == "incomplete":
         verdicts["review_completeness"] = "incomplete"
-    review = _review_status(verdicts)
+    review = _review_status(verdicts) if answer_review_enabled else "not_requested"
     coverage_values = {runtime_evidence.get("evidence_completeness"), verdicts.get("evidence_completeness")}
     if detail.get("reason") == "source_coverage_incomplete":
         coverage_values.add("incomplete")
@@ -96,7 +98,7 @@ def _finalize_runtime_outcome(
         else "complete" if "complete" in coverage_values else "unknown"
     )
     detail = {**detail, "assessment": {"execution": outcome, "coverage": coverage, "review": review}}
-    if decision_gates:
+    if decision_gates and answer_review_enabled:
         detail["decision_gates"] = decision_gates
     warnings = []
     if coverage == "incomplete":
