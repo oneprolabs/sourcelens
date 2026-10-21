@@ -777,6 +777,10 @@
                   {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
+                <AnswerReviewStatus
+                  :detail="message._runtimeState?.terminationDetail"
+                />
+
                 <div
                   v-if="clarificationRequestFor(message)"
                   class="clarification-card"
@@ -1528,6 +1532,8 @@
                   {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
+                <AnswerReviewStatus :detail="runtimeState.terminationDetail" />
+
                 <div
                   v-if="partialAnswer || streamError"
                   class="message-card assistant"
@@ -1893,6 +1899,7 @@ import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import DeepThinkingToggle from './components/DeepThinkingToggle.vue'
 import CitationToggle from './components/CitationToggle.vue'
+import AnswerReviewStatus from '@/components/lens/AnswerReviewStatus.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import RowActionMenu from '@/components/ui/RowActionMenu.vue'
 import BrandLogo from '@/components/layout/BrandLogo.vue'

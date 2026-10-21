@@ -36,13 +36,29 @@ def test_thinking_mode_does_not_inherit_legacy_turn_or_tool_limits(enabled):
     assert resolve_tool_call_budget(SimpleNamespace(tool_budget_max_calls=64), command) == 0
 
 
-@pytest.mark.parametrize("enabled,expected", [(False, None), (True, "high")])
+@pytest.mark.parametrize("enabled,expected", [(False, "low"), (True, "high")])
 def test_thinking_mode_selects_reasoning_without_changing_node_default(enabled, expected):
     """A per-run choice must not change another run's node defaults."""
 
     config = SimpleNamespace(reasoning_effort=None)
     assert resolve_reasoning_effort(config, {"deep_thinking": enabled}) == expected
     assert config.reasoning_effort is None
+
+
+def test_normal_thinking_overrides_high_node_defaults_and_legacy_preserves_them():
+    """The ordinary mode stays fast even on a node configured for high reasoning."""
+
+    config = SimpleNamespace(reasoning_effort="high")
+    assert resolve_reasoning_effort(config, {"deep_thinking": False}) == "low"
+    assert resolve_reasoning_effort(config, {}) == "high"
+    assert config.reasoning_effort == "high"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_turn_budget_applies_to_both_thinking_modes(enabled):
+    """New modes preserve independent administrator turn limits."""
+
+    assert _resolve_agent_turn_limit({"deep_thinking": enabled, "max_agent_turns": 40}) == 40
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -109,7 +125,7 @@ def test_thinking_mode_completes_real_graph_beyond_old_turn_and_token_caps(enabl
     assert result == ("All 101 source facts checked.", False, None)
     assert facts == list(range(1, 102))
     assert model.token_usage["total_tokens"] > 500000
-    assert all(payload.get("reasoning_effort") == ("high" if enabled else None) for payload in payloads)
+    assert all(payload.get("reasoning_effort") == ("high" if enabled else "low") for payload in payloads)
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

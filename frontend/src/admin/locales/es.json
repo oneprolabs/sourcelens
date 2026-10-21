@@ -2235,6 +2235,9 @@
       "agentModel": "Modelo de agente",
       "executionCapability": "Capacidad de ejecución del nodo",
       "deepThinking": "Pensamiento profundo",
+      "reasoningEffortRequested": "Razonamiento solicitado",
+      "executionMaxTokens": "Presupuesto de tokens por ejecución",
+      "executionMaxTurns": "Presupuesto de turnos por ejecución",
       "agentRounds": "Estrategia de ejecución",
       "maxConcurrency": "Concurrencia máxima",
       "multimodalModel": "Modelo multimodal",
@@ -2785,7 +2788,9 @@
       "normal": "Pensamiento normal",
       "deep": "Pensamiento profundo"
     },
-    "deepThinkingHint": "Dedica más razonamiento a preguntas complejas; puede tardar más.",
+    "deepThinkingHint": "Solicita más razonamiento para preguntas complejas; puede tardar más. El soporte depende del modelo. La revisión se muestra por separado.",
+    "reasoningSupportHint": "Configuración solicitada; adopción por el proveedor sin confirmar.",
+    "executionBudgetHint": "0 significa sin límite configurado. Se aplica a ambos modos. Los tokens se comprueban entre llamadas; no es un límite monetario.",
     "agentRounds": {
       "flash": "Flash",
       "flashHint": "Completar la solicitud principal, omitir extensiones opcionales",

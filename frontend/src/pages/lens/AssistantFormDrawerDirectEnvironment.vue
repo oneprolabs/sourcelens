@@ -369,6 +369,29 @@
               <span>{{ t('lensAdmin.deepThinkingHint') }}</span>
             </label>
           </FormRow>
+          <FormRow :label="t('lensAdmin.fields.executionMaxTokens')">
+            <input
+              v-model.number="form.execution_max_tokens"
+              type="number"
+              min="0"
+              max="2147483647"
+              step="1"
+              class="form-input w-40"
+            />
+          </FormRow>
+          <FormRow :label="t('lensAdmin.fields.executionMaxTurns')">
+            <input
+              v-model.number="form.execution_max_agent_turns"
+              type="number"
+              min="0"
+              max="2147483647"
+              step="1"
+              class="form-input w-40"
+            />
+            <p class="mt-1 text-xs text-ink-500">
+              {{ t('lensAdmin.executionBudgetHint') }}
+            </p>
+          </FormRow>
         </div>
 
         <!-- Wizard Step 2 — Execution -->

@@ -66,6 +66,19 @@ def mode_review_state(monkeypatch, *, command=None, evidence=None, checks=(), ve
     return state, reviewed
 
 
+def test_deep_mode_without_reviewer_reports_unavailable_instead_of_verified():
+    """Selecting deep reasoning cannot certify an answer without a review binding."""
+
+    state = run_state()
+    state.command["deep_thinking"] = True
+    state.decision_policy = build_decision_policy(state.command, SimpleNamespace(), SimpleNamespace())
+    state.evidence_middleware = None
+    result = finalize_run(state, "Observed work.", truncated=False, termination_reason=None)
+    assert result.outcome == "completed"
+    assert result.termination_detail["assessment"]["review"] == "inconclusive"
+    assert "review_unavailable" in result.termination_detail["warnings"]
+
+
 @pytest.mark.parametrize("command,expected_calls,review", [
     ({"deep_thinking": False}, 0, "not_requested"),
     ({"deep_thinking": True}, 1, "supported"),

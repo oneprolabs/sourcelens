@@ -300,6 +300,15 @@ function trackDelegation(state, event) {
   }
 }
 
+export function answerReviewStatus(terminationDetail) {
+  const review = terminationDetail?.assessment?.review
+  return ['not_requested', 'supported', 'unsupported', 'inconclusive'].includes(
+    review
+  )
+    ? review
+    : null
+}
+
 export function runtimeOutcomeNotice(state) {
   if (state?.clarificationRequest) {
     return { kind: 'clarification', errorType: null }

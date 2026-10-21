@@ -1,4 +1,4 @@
 type: improvement
 audience: user
-en: Replace run-depth tiers with a Deep thinking toggle. Normal mode skips independent answer review for faster responses, while chat users can show or hide citations and Agent-kit responses omit platform citation markers.
-zh-CN: 用「深度思考」开关替代运行级别，普通模式跳过独立答案审核以加快响应；聊天中可随时显示或隐藏引用，Agent-kit 响应不再包含平台引用标记。
+en: Replace run-depth tiers with a Deep thinking toggle. Normal mode skips independent answer review for faster responses, with explicit reasoning requests, separate review status, and optional administrator execution budgets, while chat users can show or hide citations and Agent-kit responses omit platform citation markers.
+zh-CN: 用「深度思考」开关替代运行级别，普通模式跳过独立答案审核以加快响应，明确记录请求思考强度与审核状态，并支持独立配置执行预算；聊天中可随时显示或隐藏引用，Agent-kit 响应不再包含平台引用标记。

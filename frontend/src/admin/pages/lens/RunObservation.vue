@@ -764,6 +764,21 @@
                           {{ agentRoundsLabel }}
                         </span>
                       </div>
+                      <div
+                        v-if="detail.reasoning_effort_requested"
+                        class="overview-meta-item"
+                      >
+                        <span class="overview-label">{{
+                          t('lensAdmin.fields.reasoningEffortRequested')
+                        }}</span>
+                        <span
+                          class="overview-meta-value"
+                          :title="t('lensAdmin.reasoningSupportHint')"
+                        >
+                          {{ detail.reasoning_effort_requested }}
+                        </span>
+                      </div>
+                      <AnswerReviewStatus :detail="detail.termination_detail" />
                       <div class="overview-meta-item">
                         <span class="overview-label">
                           {{ t('lensRuns.colUser') }}
@@ -1746,6 +1761,7 @@ import {
   resolveRunSummary
 } from '@/admin/utils/operationsSummary'
 import FilePreviewModal from '@/components/lens/FilePreviewModal.vue'
+import AnswerReviewStatus from '@/components/lens/AnswerReviewStatus.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDateInput from '@/components/ui/BaseDateInput.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'

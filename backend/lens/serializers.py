@@ -1082,6 +1082,8 @@ class AssistantSerializer(serializers.ModelSerializer):
 
         attrs.pop("kind", None)
         attrs.pop("selected_task", None)
+        if "deep_thinking" not in attrs and "agent_rounds" in attrs:
+            attrs["deep_thinking"] = attrs["agent_rounds"] in {Assistant.AgentRounds.DEEP, Assistant.AgentRounds.MAX}
         agent_rounds = attrs.get(
             "agent_rounds",
             getattr(
@@ -1247,6 +1249,16 @@ class AssistantSerializer(serializers.ModelSerializer):
         )
         if isinstance(settings, dict):
             settings = dict(settings)
+            if "execution_budget" in settings:
+                budget = settings["execution_budget"]
+                if (
+                    not isinstance(budget, dict)
+                    or set(budget) - {"max_tokens", "max_agent_turns"}
+                    or any(type(value) is not int or not 0 <= value <= 2147483647 for value in budget.values())
+                ):
+                    raise serializers.ValidationError({
+                        "settings": "execution_budget requires nonnegative integer max_tokens and max_agent_turns."
+                    })
             settings["datasource_routing"] = "selected"
             attrs["settings"] = settings
             if "retrieval_policy" in settings:
@@ -4367,8 +4379,29 @@ class RunExecutionSerializer(serializers.ModelSerializer):
     """Run execution snapshot serializer."""
 
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
+    deep_thinking = serializers.SerializerMethodField()
+    reasoning_effort_requested = serializers.SerializerMethodField()
+    max_agent_turns = serializers.SerializerMethodField()
     loaded_skills = serializers.SerializerMethodField()
     loaded_mcps = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.BooleanField(allow_null=True))
+    def get_deep_thinking(self, obj):
+        """Return the frozen choice, leaving legacy executions unknown."""
+
+        return (obj.runtime_snapshot or {}).get("deep_thinking")
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_reasoning_effort_requested(self, obj):
+        """Expose the requested setting without claiming provider support."""
+
+        return (obj.runtime_snapshot or {}).get("reasoning_effort_requested")
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_max_agent_turns(self, obj):
+        """Expose the independent turn budget captured for this execution."""
+
+        return (obj.runtime_snapshot or {}).get("max_agent_turns")
 
     def get_loaded_skills(self, obj):
         """Return Skill identities without definitions or environment data."""
@@ -4390,6 +4423,9 @@ class RunExecutionSerializer(serializers.ModelSerializer):
             "loaded_mcps",
             "target_dirs",
             "agent_rounds",
+            "deep_thinking",
+            "reasoning_effort_requested",
+            "max_agent_turns",
             "run_timeout_s",
             "token_budget_profile",
             "token_budget_max_tokens",

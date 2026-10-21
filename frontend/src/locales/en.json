@@ -253,7 +253,14 @@
       "deepThinking": "Deep thinking",
       "showCitations": "Show citations",
       "showCitationsHint": "Show source citations in answers. Your choice is saved in this browser.",
-      "deepThinkingHint": "Use more reasoning for complex questions; responses may take longer.",
+      "deepThinkingHint": "Request more model reasoning for complex questions; responses may take longer. Support depends on the model. Answer review is reported separately.",
+      "answerReview": {
+        "label": "Answer review",
+        "not_requested": "Not requested",
+        "supported": "Supported by evidence",
+        "unsupported": "Insufficient support",
+        "inconclusive": "Inconclusive"
+      },
       "liveOutput": "Live output",
       "newSession": "New session",
       "smartCollaboration": "Smart Collaboration",

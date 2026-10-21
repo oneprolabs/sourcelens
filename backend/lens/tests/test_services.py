@@ -132,6 +132,36 @@ TEST_CHANNEL_LAYERS = {
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
 class LensServiceTests(TransactionTestCase):
+    @patch("lens.services.async_to_sync")
+    @patch("lens.services.get_channel_layer")
+    def test_independent_execution_budgets_are_frozen_in_both_modes(self, get_channel_layer, mock_async_to_sync):
+        """Administrator budgets survive assistant edits and do not depend on reasoning."""
+
+        for enabled in (False, True):
+            self.assistant.settings = {"execution_budget": {"max_tokens": 200000, "max_agent_turns": 40}}
+            self.assistant.save(update_fields=["settings"])
+            run = create_execution_run(session=self.session, question="Analyze", deep_thinking=enabled, enqueue=False)
+            self.assistant.settings = {}
+            self.assistant.save(update_fields=["settings"])
+            dispatch_run_to_lensnode(run, "Analyze")
+            payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
+            self.assertEqual(payload["token_budget"]["max_tokens"], 200000)
+            self.assertEqual(payload["max_agent_turns"], 40)
+            self.assertEqual(RunSerializer(run).data["execution"]["max_agent_turns"], 40)
+
+    def test_legacy_rounds_select_thinking_with_explicit_boolean_precedence(self):
+        """Legacy callers keep their intent without overriding a new mode choice."""
+
+        for rounds in Assistant.AgentRounds.values:
+            self.assistant.deep_thinking = rounds not in {"deep", "max"}
+            self.assistant.save(update_fields=["deep_thinking"])
+            run = create_execution_run(session=self.session, question="Analyze", agent_rounds=rounds, enqueue=False)
+            self.assertIs(run.execution.runtime_snapshot["deep_thinking"], rounds in {"deep", "max"})
+        override = create_execution_run(
+            session=self.session, question="Analyze", agent_rounds="max", deep_thinking=False, enqueue=False
+        )
+        self.assertIs(override.execution.runtime_snapshot["deep_thinking"], False)
+
     def test_thinking_default_override_and_continuation(self):
         """Assistant edits cannot change the chosen mode of existing or continued work."""
         self.assistant.deep_thinking = True

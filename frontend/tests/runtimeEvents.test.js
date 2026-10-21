@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   activitiesForNode,
+  answerReviewStatus,
   applyRuntimeEvent,
   buildAssistantActivityGroups,
   buildWorkflowTree,
@@ -29,6 +30,30 @@ import {
   workflowProgressSource
 } from '../src/pages/lens/runtimeEvents.js'
 import { createStreamTextBuffer } from '../src/pages/lens/streamBuffer.js'
+
+test('answer review status remains separate from execution completion across history and sync', () => {
+  for (const review of [
+    'not_requested',
+    'supported',
+    'unsupported',
+    'inconclusive'
+  ]) {
+    const termination_detail = {
+      assessment: { execution: 'completed', review }
+    }
+    const state = runtimeStateFor({
+      status: 'done',
+      outcome: 'completed',
+      termination_detail
+    })
+    assert.equal(answerReviewStatus(state.terminationDetail), review)
+  }
+  assert.equal(answerReviewStatus({}), null)
+  assert.equal(
+    answerReviewStatus({ assessment: { review: 'completed' } }),
+    null
+  )
+})
 
 test('restores active history without closing unfinished plans or Skill activity', () => {
   for (const status of ['queued', 'running', 'streaming', undefined]) {

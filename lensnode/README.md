@@ -8,13 +8,21 @@ then executes dispatched runs inside its local workspace.
 
 The assistant's `deep_thinking` default can be overridden with a boolean on each
 Run creation request. Enabling it requests `reasoning_effort=high` for the main
-agent; the provider determines how that setting is supported. Normal mode keeps
-the existing planning and execution reasoning settings. Summary and emergency
-wrap-up calls keep their own reasoning settings.
+agent; the provider determines how that setting is supported. Normal mode
+explicitly requests `reasoning_effort=low`, including on nodes configured for
+stronger reasoning. Summary and emergency wrap-up calls keep their own reasoning
+settings.
+
+Selecting a mode records a requested setting; it does not prove provider support
+or certify answer quality. Run APIs and diagnostics expose the frozen
+`deep_thinking` and `reasoning_effort_requested` fields. Legacy executions leave
+these unknown rather than reconstructing them from current assistant settings.
 
 Normal mode prioritizes speed and skips the independent answer-grounding model
 review, including its in-loop correction and final review calls. Its review
 assessment is `not_requested`. Deep thinking keeps the configured answer review.
+If no reviewer is bound, its review is inconclusive with `review_unavailable`,
+rather than verified.
 Retrieval and routing decisions, convergence guards, tool execution checks, and
 attachment validation still apply in both modes. Legacy snapshots without a
 `deep_thinking` choice keep their original review behavior.
@@ -25,7 +33,18 @@ limit, repeated-call detection, cancellation, and explicit administrator tool
 budgets still apply. A run freezes its thinking choice; delegated and continued
 work inherit it unless explicitly overridden. Legacy execution snapshots retain
 their original limits when resumed. Existing assistants using `deep` or `max`
-start with deep thinking enabled after the migration.
+start with deep thinking enabled after the migration. Legacy clients explicitly
+sending `agent_rounds` map deep/max to enabled and other tiers to disabled; an
+explicit `deep_thinking` boolean takes precedence.
+
+Administrators can configure `settings.execution_budget.max_tokens` and
+`settings.execution_budget.max_agent_turns` independently of thinking mode. Both
+accept nonnegative integers; zero preserves the absence of a configured cap.
+Budgets freeze when a Run starts. A bounded token budget reserves 20% for
+wrap-up; existing shared accounting and guards enforce it between model calls.
+A single in-flight provider response can exceed the remaining allowance, so a
+token budget is not a hard monetary ceiling. Existing
+`settings.tool_budget.max_calls` continues to bound actual tool calls.
 
 ## Command execution
 

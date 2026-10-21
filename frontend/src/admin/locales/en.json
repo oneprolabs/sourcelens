@@ -2235,6 +2235,9 @@
       "agentModel": "Agent Model",
       "executionCapability": "Node execution capability",
       "deepThinking": "Deep thinking",
+      "reasoningEffortRequested": "Requested reasoning effort",
+      "executionMaxTokens": "Run token budget",
+      "executionMaxTurns": "Run model-turn budget",
       "agentRounds": "Execution strategy",
       "maxConcurrency": "Max Concurrency",
       "multimodalModel": "Multimodal Model",
@@ -2782,7 +2785,9 @@
       "configureDecisionModel": "Configure a decision model"
     },
     "thinkingModes": { "normal": "Normal thinking", "deep": "Deep thinking" },
-    "deepThinkingHint": "Use more reasoning for complex questions; responses may take longer.",
+    "deepThinkingHint": "Request more model reasoning for complex questions; responses may take longer. Support depends on the model. Answer review is reported separately.",
+    "reasoningSupportHint": "Requested setting; provider adoption is unconfirmed.",
+    "executionBudgetHint": "0 means no configured cap. Budgets apply in both thinking modes. Token accounting is checked between model calls; this is not a currency limit.",
     "agentRounds": {
       "flash": "Flash",
       "flashHint": "Complete the core request, skip optional extensions",

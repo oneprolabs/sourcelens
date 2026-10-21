@@ -993,6 +993,8 @@ function defaultForm() {
     decision_gates: {},
     decision_analyses: {},
     deep_thinking: false,
+    execution_max_tokens: 0,
+    execution_max_agent_turns: 0,
     max_concurrency: 5,
     multimodal_model_ref: '',
     exclude_extensions_text: '.lock,.pyc,.sqlite3',
@@ -1047,6 +1049,9 @@ function formFromRow(row) {
     decision_gates: structuredClone(row.decision_gates || {}),
     decision_analyses: structuredClone(row.decision_analyses || {}),
     deep_thinking: Boolean(row.deep_thinking),
+    execution_max_tokens: row.settings?.execution_budget?.max_tokens || 0,
+    execution_max_agent_turns:
+      row.settings?.execution_budget?.max_agent_turns || 0,
     max_concurrency: row.max_concurrency ?? 5,
     multimodal_model_ref: row.multimodal_model_ref || '',
     exclude_extensions_text: listToText(
@@ -1262,6 +1267,10 @@ function buildAssistantSettings() {
   const features = { ...(settings.features || {}) }
   features.codegraph = !!form.value.enable_codegraph
   settings.features = features
+  settings.execution_budget = {
+    max_tokens: form.value.execution_max_tokens,
+    max_agent_turns: form.value.execution_max_agent_turns
+  }
   return settings
 }
 

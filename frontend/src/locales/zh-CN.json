@@ -253,7 +253,14 @@
       "deepThinking": "深度思考",
       "showCitations": "显示引用",
       "showCitationsHint": "显示回答中的来源引用，设置会在此浏览器中保留。",
-      "deepThinkingHint": "投入更多推理，适合复杂问题，可能需要更长时间。",
+      "deepThinkingHint": "为复杂问题请求更多模型推理，可能需要更长时间；实际支持取决于模型。答案审核结果单独显示。",
+      "answerReview": {
+        "label": "答案审核",
+        "not_requested": "未请求",
+        "supported": "有证据支持",
+        "unsupported": "缺少证据支持",
+        "inconclusive": "无法判定"
+      },
       "liveOutput": "实时输出",
       "newSession": "新建会话",
       "smartCollaboration": "智能协作",
