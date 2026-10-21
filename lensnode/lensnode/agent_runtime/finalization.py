@@ -58,6 +58,7 @@ def finalize_run(state, answer, *, truncated, termination_reason):
         execution_gate_enabled=state.runtime_mode.execution_gates,
         runtime_evidence=state.runtime_evidence,
         decision_gates=verdicts,
+        answer_review_enabled=state.command.get("deep_thinking") is not False,
     )
     if outcome == "blocked":
         answer = _unverified_execution_answer(
@@ -80,6 +81,8 @@ def _update_extension_evidence(state):
 def _post_run_decision_gates(state, answer):
     """Review the final answer, reusing matching graph or checkpoint verdicts."""
 
+    if (getattr(state, "command", None) or {}).get("deep_thinking") is False:
+        return {}
     resume_state = getattr(state, "resume_state", None)
     if (
         resume_state is not None

@@ -357,28 +357,17 @@
               {{ t('lensAdmin.wizard.maxConcurrencyHint') }}
             </p>
           </FormRow>
-          <FormRow :label="t('lensAdmin.fields.agentRounds')">
-            <div class="grid grid-cols-5 gap-2">
-              <label
-                v-for="tier in agentRoundsTiers"
-                :key="tier.value"
-                class="flex cursor-pointer flex-col items-center rounded-lg border-2 p-2 text-center transition-colors"
-                :class="
-                  form.agent_rounds === tier.value
-                    ? 'border-brand-600 bg-brand-50 text-brand-700'
-                    : 'border-line bg-surface text-ink-600 hover:border-brand-300'
-                "
-              >
-                <input
-                  type="radio"
-                  :value="tier.value"
-                  v-model="form.agent_rounds"
-                  class="sr-only execution-tier-radio"
-                />
-                <span class="text-sm font-medium">{{ tier.label }}</span>
-                <span class="mt-0.5 text-xs opacity-60">{{ tier.hint }}</span>
-              </label>
-            </div>
+          <FormRow :label="t('lensAdmin.fields.deepThinking')">
+            <label
+              class="flex cursor-pointer items-center gap-2 text-sm text-ink-700"
+            >
+              <input
+                v-model="form.deep_thinking"
+                type="checkbox"
+                class="form-checkbox"
+              />
+              <span>{{ t('lensAdmin.deepThinkingHint') }}</span>
+            </label>
           </FormRow>
         </div>
 
@@ -645,23 +634,6 @@
               >
                 {{ t('lensAdmin.datasourceSelection.empty') }}
               </p>
-              <FormRow
-                v-if="requiresWorkspace"
-                :label="t('lensAdmin.fields.enableCitations')"
-              >
-                <label
-                  class="flex cursor-pointer items-center gap-3 rounded-md border border-line bg-surface-sunken p-3"
-                >
-                  <input
-                    type="checkbox"
-                    v-model="form.enable_citations"
-                    class="h-4 w-4 flex-shrink-0 rounded border-line text-brand-600 focus:ring-brand-500"
-                  />
-                  <span class="text-sm text-ink-700">{{
-                    t('lensAdmin.fields.enableCitationsHint')
-                  }}</span>
-                </label>
-              </FormRow>
             </fieldset>
             <div
               v-if="isGeneralChatTask"
@@ -2041,34 +2013,6 @@ const slugLengthClass = computed(() => {
   return 'text-ink-400'
 })
 
-const agentRoundsTiers = computed(() => [
-  {
-    value: 'flash',
-    label: t('lensAdmin.agentRounds.flash'),
-    hint: t('lensAdmin.agentRounds.flashHint')
-  },
-  {
-    value: 'fast',
-    label: t('lensAdmin.agentRounds.fast'),
-    hint: t('lensAdmin.agentRounds.fastHint')
-  },
-  {
-    value: 'balanced',
-    label: t('lensAdmin.agentRounds.balanced'),
-    hint: t('lensAdmin.agentRounds.balancedHint')
-  },
-  {
-    value: 'deep',
-    label: t('lensAdmin.agentRounds.deep'),
-    hint: t('lensAdmin.agentRounds.deepHint')
-  },
-  {
-    value: 'max',
-    label: t('lensAdmin.agentRounds.max'),
-    hint: t('lensAdmin.agentRounds.maxHint')
-  }
-])
-
 const wizardStepsMeta = computed(() => [
   {
     key: 'basic',
@@ -3133,17 +3077,6 @@ function removeDatasourceBinding(binding) {
   @apply py-1.5 text-xs;
 }
 
-.execution-tier-radio {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  margin: -1px !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  border: 0 !important;
-  clip: rect(0, 0, 0, 0) !important;
-  white-space: nowrap !important;
-}
 .datasource-select {
   position: relative;
 }

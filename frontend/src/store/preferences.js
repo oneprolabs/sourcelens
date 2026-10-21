@@ -9,6 +9,7 @@ import {
 } from '@/utils/theme'
 
 const COMPLETION_INDICATOR_KEY = 'answerCompletionIndicator'
+const SHOW_CITATIONS_KEY = 'sourcelens.showCitations'
 const NATIVE_BROWSER_NOTIFICATIONS_KEY = 'nativeBrowserNotifications'
 const THEME_MODE_KEY = 'userThemeMode'
 const UNREAD_STORAGE_KEY = 'sourcelens.answerCompletion.unreadSessions'
@@ -152,6 +153,7 @@ export const usePreferencesStore = defineStore('preferences', {
     detectedLanguage: detectLanguage(),
     detectedTimezone: detectTimezone(),
     answerCompletionIndicator: true,
+    showCitations: true,
     nativeBrowserNotifications: false,
     themeMode: 'system',
     themeOverride: null,
@@ -190,6 +192,11 @@ export const usePreferencesStore = defineStore('preferences', {
       if (!enabled) {
         localStorage.removeItem(UNREAD_STORAGE_KEY)
       }
+    },
+
+    setShowCitations(enabled) {
+      this.showCitations = enabled
+      getStorage()?.setItem(SHOW_CITATIONS_KEY, String(enabled))
     },
 
     setNativeBrowserNotifications(enabled) {
@@ -233,6 +240,7 @@ export const usePreferencesStore = defineStore('preferences', {
       const savedLanguage = localStorage.getItem('userLanguage')
       const savedTimezone = localStorage.getItem('userTimezone')
       const savedIndicator = localStorage.getItem(COMPLETION_INDICATOR_KEY)
+      this.showCitations = localStorage.getItem(SHOW_CITATIONS_KEY) !== 'false'
       const savedNativeNotifications = localStorage.getItem(
         NATIVE_BROWSER_NOTIFICATIONS_KEY
       )
@@ -286,6 +294,7 @@ export const usePreferencesStore = defineStore('preferences', {
       this.language = normalizedLanguage
       this.timezone = this.detectedTimezone
       this.answerCompletionIndicator = true
+      this.showCitations = true
       this.nativeBrowserNotifications = false
       this.themeMode = 'system'
       i18n.global.locale.value = normalizedLanguage
@@ -293,6 +302,7 @@ export const usePreferencesStore = defineStore('preferences', {
       localStorage.removeItem('userLanguage')
       localStorage.removeItem('userTimezone')
       localStorage.removeItem(COMPLETION_INDICATOR_KEY)
+      localStorage.removeItem(SHOW_CITATIONS_KEY)
       localStorage.removeItem(NATIVE_BROWSER_NOTIFICATIONS_KEY)
       removeThemeMode()
       localStorage.removeItem(UNREAD_STORAGE_KEY)

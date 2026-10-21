@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
-  assistantShowsCitations,
   citationLocation,
   citationSourceUrl,
   isDocumentCitationPath,
@@ -49,51 +48,6 @@ test('detects converted document paths for the rendered preview', () => {
   assert.equal(isDocumentCitationPath('assets/icon.png'), false)
   assert.equal(isDocumentCitationPath(''), false)
   assert.equal(isDocumentCitationPath(undefined), false)
-})
-
-test('assistant citation preference defaults on for both payload shapes', () => {
-  assert.equal(assistantShowsCitations(null), true)
-  assert.equal(assistantShowsCitations({}), true)
-  assert.equal(assistantShowsCitations({ show_citations: false }), false)
-  assert.equal(assistantShowsCitations({ show_citations: true }), true)
-  assert.equal(
-    assistantShowsCitations({ settings: { features: { citations: false } } }),
-    false
-  )
-  assert.equal(
-    assistantShowsCitations({ settings: { features: { citations: true } } }),
-    true
-  )
-})
-
-test('assistant form and chat honor the citation switch', async () => {
-  const assistants = await readFile(
-    new URL('../src/pages/lens/Assistants.vue', import.meta.url),
-    'utf8'
-  )
-  const form = await readFile(
-    new URL(
-      '../src/pages/lens/AssistantFormDrawerDirectEnvironment.vue',
-      import.meta.url
-    ),
-    'utf8'
-  )
-  const chat = await readFile(
-    new URL('../src/pages/lens/Chat.vue', import.meta.url),
-    'utf8'
-  )
-
-  assert.match(
-    assistants,
-    /features\.citations = !!form\.value\.enable_citations/
-  )
-  assert.match(
-    assistants,
-    /enable_citations: row\.settings\?\.features\?\.citations !== false/
-  )
-  assert.match(form, /v-model="form\.enable_citations"/)
-  assert.match(chat, /assistantShowsCitations/)
-  assert.match(chat, /citationsEnabled/)
 })
 
 test('connects message citations to the authenticated code drawer', async () => {

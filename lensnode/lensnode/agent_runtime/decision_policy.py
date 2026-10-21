@@ -96,10 +96,11 @@ class GateDecisionPolicy(ControlDecisionPolicy):
 
     retain_full_evidence = True
 
-    def __init__(self, inner, runner, gates):
+    def __init__(self, inner, runner, gates, *, review_enabled=True):
         self.inner = inner
         self.runner = runner
         self.gates = gates or {}
+        self.review_enabled = review_enabled
 
     def needs_retrieval(self, model, question, history=None):
         value = self.runner.evaluate(
@@ -149,7 +150,7 @@ class GateDecisionPolicy(ControlDecisionPolicy):
         unbound gate adds no traffic and no events.
         """
 
-        if not self.has_evidence_gates():
+        if not self.review_enabled or not self.has_evidence_gates():
             return {}
         verdicts = {}
         gates = self._review_gates()
@@ -266,7 +267,7 @@ def build_decision_policy(
         run_uuid=run_uuid,
         attempt=attempt,
     )
-    return GateDecisionPolicy(policy, runner, gates)
+    return GateDecisionPolicy(policy, runner, gates, review_enabled=command.get("deep_thinking") is not False)
 
 
 def _post_run_state(question, answer, evidence=None, limit=4000):

@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 MAX_CITATION_SOURCE_CHARS = 100_000
 MAX_LINE_NUMBER = 10_000_000
 CITATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+SOURCE_MARKER_PATTERN = re.compile(r"[ \t]*\[\[\s*source:[^\]\n]*\]\]", re.IGNORECASE)
 # Datasource mounts are materialized as `ds_<uuid>` directories; the segment
 # is internal plumbing and carries no meaning for a reader of the citation.
 # This is the guarantee layer: `lensnode/consulted_sources.py` normally
@@ -56,6 +57,12 @@ def public_run_citations(value):
         {field: item[field] for field in PUBLIC_CITATION_FIELDS}
         for item in sanitize_run_citations(value)
     ]
+
+
+def strip_source_markers(text):
+    """Remove inline citation markers while preserving answer text and paths."""
+
+    return SOURCE_MARKER_PATTERN.sub("", text)
 
 
 def sanitize_planned_evidence(value):

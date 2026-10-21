@@ -248,6 +248,27 @@ class RetrievalPolicyValidationTests(SimpleTestCase):
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
 class LensApiTests(TestCase):
+    def test_assistant_thinking_default_is_writable_and_listed(self):
+        """Assistant settings and authenticated chat expose the same thinking default."""
+        url = f"/api/lens/assistants/{self.assistant.uuid}/"
+        response = self.client.patch(url, {"deep_thinking": True}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIs(response.data["deep_thinking"], True)
+        self.assistant.refresh_from_db()
+        self.assertIs(self.assistant.deep_thinking, True)
+        listed = self.client.get("/api/lens/assistants/")
+        self.assertEqual(listed.status_code, 200)
+        item = next(item for item in listed.data["results"] if item["uuid"] == str(self.assistant.uuid))
+        self.assertIs(item["deep_thinking"], True)
+
+    def test_admin_run_thinking_mode_uses_snapshot(self):
+        """Run observation reflects the chosen mode even after the default changes."""
+        session = Session.objects.create(assistant=self.assistant, user=self.user)
+        run = create_execution_run(session=session, question="Analyze", deep_thinking=True, enqueue=False)
+        response = self.client.get(f"/api/lens/admin/runs/{run.uuid}/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIs(response.data["deep_thinking"], True)
+
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(
@@ -4676,8 +4697,8 @@ class LensApiTests(TestCase):
         self.assertEqual(failed_row["model_ref"], str(model_ref))
         self.assertEqual(failed_row["tool_call_count"], 2)
         self.assertEqual(failed_row["retry_count"], 1)
-        self.assertEqual(failed_row["token_budget_profile"], "deep")
-        self.assertEqual(failed_row["token_budget_max_tokens"], 500000)
+        self.assertEqual(failed_row["token_budget_profile"], "unlimited")
+        self.assertEqual(failed_row["token_budget_max_tokens"], 0)
         detail_response = self.client.get(f"/api/lens/admin/runs/{failed.uuid}/")
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.data["tool_call_count"], 2)

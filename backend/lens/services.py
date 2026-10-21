@@ -1147,6 +1147,7 @@ def create_execution_run(
     routing_assistant_uuid=None,
     routing_assistant_uuids=None,
     agent_rounds=None,
+    deep_thinking=None,
     request_source=None,
 ):
     """Create a queued run for LensNode execution."""
@@ -1258,6 +1259,7 @@ def create_execution_run(
         run,
         answer_language=answer_language,
         agent_rounds=agent_rounds,
+        deep_thinking=deep_thinking,
         routing_assistant_uuids=routing_assistant_uuids,
         routing_assistant_explicit=(explicit_routing_assistant_uuids is not None),
     )
@@ -2428,12 +2430,13 @@ def create_run_execution_snapshot(
     routing_assistant_uuids=None,
     routing_assistant_explicit=False,
     agent_rounds=None,
+    deep_thinking=None,
 ):
     """Create or return the per-run LensNode execution snapshot."""
 
     assistant = run.session.assistant
     agent_rounds = agent_rounds or assistant.agent_rounds
-    token_budget = token_budget_for_rounds(agent_rounds)
+    token_budget = token_budget_for_profile(Assistant.TokenBudgetProfile.UNLIMITED)
     profile = getattr(run.session.user, "profile", None)
     answer_language = normalize_answer_language(
         answer_language or getattr(profile, "language", None)
@@ -2446,9 +2449,11 @@ def create_run_execution_snapshot(
         routing_assistant_uuids,
         routing_assistant_explicit,
     )
-    tool_budget = tool_budget_for_assistant(assistant)
-    if tool_budget is not None:
-        runtime_snapshot["tool_budget"] = tool_budget
+    source_run = run.parent_run or run.retry_of_run
+    if deep_thinking is None and source_run is not None and hasattr(source_run, "execution"):
+        deep_thinking = (source_run.execution.runtime_snapshot or {}).get("deep_thinking")
+    runtime_snapshot["deep_thinking"] = assistant.deep_thinking if deep_thinking is None else deep_thinking
+    runtime_snapshot["tool_budget"] = tool_budget_for_assistant(assistant) or {"max_calls": 0}
     loaded_plugins = build_loaded_plugins(assistant)
     loaded_skills = build_loaded_skills(assistant)
     loaded_skills.extend(
@@ -3260,7 +3265,10 @@ def dispatch_run_to_lensnode(
                 "decision_model": runtime_snapshot.get("decision_model") or {},
                 "agent_model_ref": (agent_model_ref),
                 "agent_rounds": agent_rounds,
-                "max_agent_turns": max_agent_turns_for_rounds(agent_rounds),
+                "max_agent_turns": (
+                    0 if "deep_thinking" in runtime_snapshot else max_agent_turns_for_rounds(agent_rounds)
+                ),
+                **({"deep_thinking": runtime_snapshot["deep_thinking"]} if "deep_thinking" in runtime_snapshot else {}),
                 "resume": resume,
                 "run_timeout_s": run_timeout_s,
                 "remaining_run_timeout_s": remaining_run_timeout_s,

@@ -36,9 +36,3 @@ export function isDocumentCitationPath(path) {
   const dot = lower.lastIndexOf('.')
   return dot !== -1 && DOCUMENT_CITATION_EXTENSIONS.has(lower.slice(dot))
 }
-
-export function assistantShowsCitations(assistant) {
-  if (!assistant) return true
-  if (assistant.show_citations === false) return false
-  return assistant.settings?.features?.citations !== false
-}

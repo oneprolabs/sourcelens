@@ -2234,6 +2234,7 @@
       "workspaceGuideHelp": "描述仓库结构、检索优先级和停止规则。SourceLens 会将其保存为绑定 Skill，并在节点执行时注入。",
       "agentModel": "Agent 模型",
       "executionCapability": "节点执行能力",
+      "deepThinking": "深度思考",
       "agentRounds": "执行策略",
       "maxConcurrency": "最大并发数",
       "multimodalModel": "多模态模型",
@@ -2780,6 +2781,8 @@
       "decisionModelHint": "可选。配置后使用独立模型执行证据校验和候选排序；不配置时沿用原有处理链路。",
       "configureDecisionModel": "配置决策模型"
     },
+    "thinkingModes": { "normal": "常规思考", "deep": "深度思考" },
+    "deepThinkingHint": "投入更多推理，适合复杂问题，可能需要更长时间。",
     "agentRounds": {
       "flash": "极速",
       "flashHint": "完成核心请求，跳过可选扩展",

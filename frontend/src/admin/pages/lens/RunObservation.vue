@@ -749,7 +749,13 @@
                       </div>
                       <div class="overview-meta-item">
                         <span class="overview-label">
-                          {{ t('lensAdmin.fields.agentRounds') }}
+                          {{
+                            t(
+                              detail.deep_thinking == null
+                                ? 'lensAdmin.fields.agentRounds'
+                                : 'lensAdmin.fields.deepThinking'
+                            )
+                          }}
                         </span>
                         <span
                           data-testid="run-analysis-depth"
@@ -1980,6 +1986,13 @@ const AGENT_ROUNDS_KEYS = {
 }
 
 const agentRoundsLabel = computed(() => {
+  if (typeof detail.value?.deep_thinking === 'boolean') {
+    return t(
+      detail.value.deep_thinking
+        ? 'lensAdmin.thinkingModes.deep'
+        : 'lensAdmin.thinkingModes.normal'
+    )
+  }
   const value = detail.value?.agent_rounds
   const key = AGENT_ROUNDS_KEYS[value]
   return key ? t(`lensAdmin.agentRounds.${key}`) : value || '-'

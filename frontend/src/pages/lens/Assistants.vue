@@ -992,7 +992,7 @@ function defaultForm() {
     decision_auto: true,
     decision_gates: {},
     decision_analyses: {},
-    agent_rounds: 'balanced',
+    deep_thinking: false,
     max_concurrency: 5,
     multimodal_model_ref: '',
     exclude_extensions_text: '.lock,.pyc,.sqlite3',
@@ -1013,7 +1013,6 @@ function defaultForm() {
     access_grant_options: [],
     settings: { datasource_routing: 'selected' },
     enable_codegraph: true,
-    enable_citations: true,
     status: 'active',
     mode: 'direct',
     collaboration_member_uuids: []
@@ -1047,7 +1046,7 @@ function formFromRow(row) {
     decision_auto: row.decision_auto !== false,
     decision_gates: structuredClone(row.decision_gates || {}),
     decision_analyses: structuredClone(row.decision_analyses || {}),
-    agent_rounds: row.agent_rounds || 'balanced',
+    deep_thinking: Boolean(row.deep_thinking),
     max_concurrency: row.max_concurrency ?? 5,
     multimodal_model_ref: row.multimodal_model_ref || '',
     exclude_extensions_text: listToText(
@@ -1111,7 +1110,6 @@ function formFromRow(row) {
     access_grant_options: row.access_grants || [],
     settings: { ...(row.settings || {}), datasource_routing: 'selected' },
     enable_codegraph: row.settings?.features?.codegraph !== false,
-    enable_citations: row.settings?.features?.citations !== false,
     status: row.status || 'active'
   }
 }
@@ -1175,7 +1173,7 @@ function buildPayload() {
     decision_auto: form.value.decision_auto !== false,
     decision_gates: form.value.decision_gates || {},
     decision_analyses: form.value.decision_analyses || {},
-    agent_rounds: form.value.agent_rounds || 'balanced',
+    deep_thinking: Boolean(form.value.deep_thinking),
     ...(mode.value === 'edit'
       ? { max_concurrency: Number(form.value.max_concurrency) || 5 }
       : {}),
@@ -1263,7 +1261,6 @@ function buildAssistantSettings() {
   }
   const features = { ...(settings.features || {}) }
   features.codegraph = !!form.value.enable_codegraph
-  features.citations = !!form.value.enable_citations
   settings.features = features
   return settings
 }

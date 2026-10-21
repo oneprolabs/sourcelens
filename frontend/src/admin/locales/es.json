@@ -2234,6 +2234,7 @@
       "workspaceGuideHelp": "Describe la disposición del repositorio, la prioridad de búsqueda y las reglas de detención. SourceLens lo guardará como una Skill vinculada e inyectará en las ejecuciones de LensNode.",
       "agentModel": "Modelo de agente",
       "executionCapability": "Capacidad de ejecución del nodo",
+      "deepThinking": "Pensamiento profundo",
       "agentRounds": "Estrategia de ejecución",
       "maxConcurrency": "Concurrencia máxima",
       "multimodalModel": "Modelo multimodal",
@@ -2780,6 +2781,11 @@
       "decisionModelHint": "Opcional. Configure un modelo dedicado para comprobar evidencias y ordenar candidatos, o déjelo sin configurar para mantener el flujo existente.",
       "configureDecisionModel": "Configurar un modelo de decisión"
     },
+    "thinkingModes": {
+      "normal": "Pensamiento normal",
+      "deep": "Pensamiento profundo"
+    },
+    "deepThinkingHint": "Dedica más razonamiento a preguntas complejas; puede tardar más.",
     "agentRounds": {
       "flash": "Flash",
       "flashHint": "Completar la solicitud principal, omitir extensiones opcionales",

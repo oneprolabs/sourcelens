@@ -90,6 +90,7 @@ from .finalization import (
 )
 from .limits import (
     SharedTokenBudget,
+    resolve_reasoning_effort,
     resolve_token_budget as _resolve_token_budget,
     resolve_tool_call_budget as _resolve_tool_call_budget,
 )
@@ -264,6 +265,8 @@ register_harness_profile(
 def _resolve_agent_turn_limit(command):
     """Return the bounded model-turn budget for a run."""
 
+    if "deep_thinking" in (command or {}):
+        return 0
     configured = (command or {}).get("max_agent_turns")
     try:
         configured = int(configured) if configured is not None else None
@@ -1086,7 +1089,7 @@ class LensDeepAgentRuntime:
                 0.8,
             ),
             token_budget_wrapup_event=state.token_budget_wrapup_event,
-            reasoning_effort=getattr(self.config, "reasoning_effort", None),
+            reasoning_effort=resolve_reasoning_effort(self.config, state.command),
             on_runtime_state_change=lambda runtime_state: (
                 state.persist_execution_state(
                     guardrail_state=runtime_state
@@ -1473,6 +1476,7 @@ class LensDeepAgentRuntime:
                     stop_reason=state.model.stop_reason,
                     execution_gate_enabled=False,
                     runtime_evidence=state.runtime_evidence,
+                    answer_review_enabled=state.command.get("deep_thinking") is not False,
                 )
             return {
                 "answer": answer,

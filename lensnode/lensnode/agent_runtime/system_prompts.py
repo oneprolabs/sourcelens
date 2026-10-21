@@ -728,14 +728,7 @@ def _workspace_guide_prompt(workspace_guide):
 
 
 def _subagent_guidance(agent_rounds, command=None):
-    """Return depth-tiered guidance on when to use the task subagent.
-
-    Subagents are a completed agent loop each (multi-round, minute-scale),
-    so they only pay off for heavy, independent subtasks and are a net
-    loss on light multi-file work. Only the deep/max tiers encourage
-    parallel delegation; lighter tiers steer the model to stay in the
-    main loop and parallelize with batched tool calls instead.
-    """
+    """Delegate heavy independent work in either thinking mode, preserving legacy guidance."""
 
     if (command or {}).get("routing_mode") == "smart":
         return (
@@ -743,7 +736,7 @@ def _subagent_guidance(agent_rounds, command=None):
             "calls in one turn are allowed; collect every subagent result "
             "before synthesizing the final answer.\n\n"
         )
-    if agent_rounds in ("deep", "max"):
+    if "deep_thinking" in (command or {}) or agent_rounds in ("deep", "max"):
         return (
             "Delegating subtasks (task tool): when the question splits "
             "into genuinely independent, heavy subtasks — each needing "

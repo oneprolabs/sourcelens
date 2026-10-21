@@ -2234,6 +2234,7 @@
       "workspaceGuideHelp": "Describe repository layout, search priority, and stopping rules. SourceLens will save it as a bound Skill and inject it into LensNode runs.",
       "agentModel": "Agent Model",
       "executionCapability": "Node execution capability",
+      "deepThinking": "Deep thinking",
       "agentRounds": "Execution strategy",
       "maxConcurrency": "Max Concurrency",
       "multimodalModel": "Multimodal Model",
@@ -2780,6 +2781,8 @@
       "decisionModelHint": "Optional. Configure a dedicated model for evidence checks and candidate ranking, or leave it unset to keep the existing processing flow.",
       "configureDecisionModel": "Configure a decision model"
     },
+    "thinkingModes": { "normal": "Normal thinking", "deep": "Deep thinking" },
+    "deepThinkingHint": "Use more reasoning for complex questions; responses may take longer.",
     "agentRounds": {
       "flash": "Flash",
       "flashHint": "Complete the core request, skip optional extensions",
