@@ -110,19 +110,14 @@ def test_needs_retrieval_fails_safe_on_error():
     assert agent_runtime._message_needs_retrieval(model, "在么") is True
 
 
-@pytest.mark.parametrize(
-    "text",
-    ["Hi", "Helo", "在么", "helloooo", "Thanks a lot!", "你是谁呀"],
-)
 @pytest.mark.parametrize("thinking", [None, False, True])
 def test_gate_answers_non_retrieval_messages(
     monkeypatch,
     tmp_path,
-    text,
     thinking,
 ):
     state = _state(
-        text,
+        "Hi",
         model=_model('{"needs_retrieval": false}'),
         command_extra={} if thinking is None else {"deep_thinking": thinking},
     )

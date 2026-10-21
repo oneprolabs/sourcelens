@@ -79,25 +79,6 @@ def test_deep_mode_without_reviewer_reports_unavailable_instead_of_verified():
     assert "review_unavailable" in result.termination_detail["warnings"]
 
 
-@pytest.mark.parametrize("command,expected_calls,review", [
-    ({"deep_thinking": False}, 0, "not_requested"),
-    ({"deep_thinking": True}, 1, "supported"),
-    ({}, 1, "supported"),
-])
-def test_thinking_mode_controls_review_in_graph_and_at_finalization(monkeypatch, command, expected_calls, review):
-    state, reviewed = mode_review_state(
-        monkeypatch, command=command, evidence={"evidence_completeness": "complete"}
-    )
-    candidate = {"messages": [AIMessage(content="Observed work.")]}
-    assert state.evidence_middleware.after_model(candidate, None) is None
-    result = finalize_run(state, "Observed work.", truncated=False, termination_reason=None)
-
-    assert len(reviewed) == expected_calls
-    assert result.answer == "Observed work."
-    assert result.outcome == "completed"
-    assert result.termination_detail["assessment"]["review"] == review
-
-
 def test_normal_mode_does_not_report_truncated_review_material_as_an_attempted_review(monkeypatch):
     state, reviewed = mode_review_state(
         monkeypatch, command={"deep_thinking": False}, evidence={"review_completeness": "incomplete"}
@@ -169,9 +150,15 @@ def test_only_deep_mode_can_request_semantic_correction(monkeypatch, enabled, ou
     assert result.outcome == outcome
 
 
-@pytest.mark.parametrize("enabled,review_calls", [(False, 0), (True, 1)])
-def test_real_graph_completes_in_both_modes_with_the_expected_review_calls(monkeypatch, enabled, review_calls):
-    state, reviewed = mode_review_state(monkeypatch, command={"deep_thinking": enabled})
+@pytest.mark.parametrize("command,review_calls,review", [
+    ({"deep_thinking": False}, 0, "not_requested"),
+    ({"deep_thinking": True}, 1, "supported"),
+    ({}, 1, "supported"),
+])
+def test_real_graph_review_follows_thinking_mode(monkeypatch, command, review_calls, review):
+    state, reviewed = mode_review_state(
+        monkeypatch, command=command, evidence={"evidence_completeness": "complete"}
+    )
     requests = []
 
     def respond(request):
@@ -195,6 +182,7 @@ def test_real_graph_completes_in_both_modes_with_the_expected_review_calls(monke
     assert result.outcome == "completed"
     assert len(requests) == 1
     assert len(reviewed) == review_calls
+    assert result.termination_detail["assessment"]["review"] == review
 
 
 @pytest.mark.parametrize("evidence,verdicts,reason", [

@@ -6,45 +6,26 @@ then executes dispatched runs inside its local workspace.
 
 ## Thinking modes
 
-The assistant's `deep_thinking` default can be overridden with a boolean on each
-Run creation request. Enabling it requests `reasoning_effort=high` for the main
-agent; the provider determines how that setting is supported. Normal mode
-explicitly requests `reasoning_effort=low`, including on nodes configured for
-stronger reasoning. Summary and emergency wrap-up calls keep their own reasoning
-settings.
+Run creation accepts `deep_thinking`, overriding the assistant default. Normal
+mode requests `reasoning_effort=low` and skips independent answer review
+(`review=not_requested`); deep mode requests `high` and uses the configured
+reviewer. Without a reviewer, deep mode records `inconclusive` with
+`review_unavailable`. Provider support determines the effect of reasoning
+settings; summary and emergency wrap-up calls keep their own settings.
 
-Selecting a mode records a requested setting; it does not prove provider support
-or certify answer quality. Run APIs and diagnostics expose the frozen
-`deep_thinking` and `reasoning_effort_requested` fields. Legacy executions leave
-these unknown rather than reconstructing them from current assistant settings.
+Run APIs and diagnostics expose the frozen `deep_thinking` and
+`reasoning_effort_requested`; continued and delegated work inherit the mode.
+Legacy snapshots keep their original limits and review behavior, with missing
+mode records left unknown. Explicit legacy `agent_rounds` inputs map deep/max to
+enabled and other tiers to disabled; an explicit boolean takes precedence.
 
-Normal mode prioritizes speed and skips the independent answer-grounding model
-review, including its in-loop correction and final review calls. Its review
-assessment is `not_requested`. Deep thinking keeps the configured answer review.
-If no reviewer is bound, its review is inconclusive with `review_unavailable`,
-rather than verified.
-Retrieval and routing decisions, convergence guards, tool execution checks, and
-attachment validation still apply in both modes. Legacy snapshots without a
-`deep_thinking` choice keep their original review behavior.
-
-New runs use the same execution policy in both modes, without the former tier's
-Token, model-turn, or default tool-call caps. The one-hour deadline, graph safety
-limit, repeated-call detection, cancellation, and explicit administrator tool
-budgets still apply. A run freezes its thinking choice; delegated and continued
-work inherit it unless explicitly overridden. Legacy execution snapshots retain
-their original limits when resumed. Existing assistants using `deep` or `max`
-start with deep thinking enabled after the migration. Legacy clients explicitly
-sending `agent_rounds` map deep/max to enabled and other tiers to disabled; an
-explicit `deep_thinking` boolean takes precedence.
-
-Administrators can configure `settings.execution_budget.max_tokens` and
-`settings.execution_budget.max_agent_turns` independently of thinking mode. Both
-accept nonnegative integers; zero preserves the absence of a configured cap.
-Budgets freeze when a Run starts. A bounded token budget reserves 20% for
-wrap-up; existing shared accounting and guards enforce it between model calls.
-A single in-flight provider response can exceed the remaining allowance, so a
-token budget is not a hard monetary ceiling. Existing
-`settings.tool_budget.max_calls` continues to bound actual tool calls.
+New runs have no default tier budgets. Administrators can set nonnegative
+`settings.execution_budget.max_tokens`, `settings.execution_budget.max_agent_turns`,
+and `settings.tool_budget.max_calls`; zero means unlimited. Budgets freeze at
+run creation and apply to both modes. Token budgets reserve 20% for wrap-up and
+are checked between calls, so an in-flight response can overshoot the allowance.
+Deadlines, graph safety limits, convergence guards, cancellation, tool checks,
+and attachment validation remain active.
 
 ## Command execution
 

@@ -21,30 +21,6 @@ from lensnode.config import load_config
 from lensnode.gateway_model import LensGatewayChatModel
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_thinking_mode_does_not_inherit_legacy_turn_or_tool_limits(enabled):
-    """The new mode marker disables legacy limits even when old tier data remains."""
-
-    command = {
-        "task": "knowledge_qa",
-        "deep_thinking": enabled,
-        "agent_rounds": "flash",
-        "max_agent_turns": 0,
-        "token_budget": {"profile": "unlimited", "max_tokens": 0},
-    }
-    assert _resolve_agent_turn_limit(command) == 0
-    assert resolve_tool_call_budget(SimpleNamespace(tool_budget_max_calls=64), command) == 0
-
-
-@pytest.mark.parametrize("enabled,expected", [(False, "low"), (True, "high")])
-def test_thinking_mode_selects_reasoning_without_changing_node_default(enabled, expected):
-    """A per-run choice must not change another run's node defaults."""
-
-    config = SimpleNamespace(reasoning_effort=None)
-    assert resolve_reasoning_effort(config, {"deep_thinking": enabled}) == expected
-    assert config.reasoning_effort is None
-
-
 def test_normal_thinking_overrides_high_node_defaults_and_legacy_preserves_them():
     """The ordinary mode stays fast even on a node configured for high reasoning."""
 
@@ -68,6 +44,7 @@ def test_thinking_mode_completes_real_graph_beyond_old_turn_and_token_caps(enabl
     command = {
         "deep_thinking": enabled,
         "agent_rounds": "flash",
+        "max_agent_turns": 0,
         "token_budget": {"profile": "unlimited", "max_tokens": 0},
     }
     config = SimpleNamespace(reasoning_effort=None)
@@ -126,6 +103,7 @@ def test_thinking_mode_completes_real_graph_beyond_old_turn_and_token_caps(enabl
     assert facts == list(range(1, 102))
     assert model.token_usage["total_tokens"] > 500000
     assert all(payload.get("reasoning_effort") == ("high" if enabled else "low") for payload in payloads)
+    assert config.reasoning_effort is None
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

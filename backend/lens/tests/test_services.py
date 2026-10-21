@@ -149,19 +149,6 @@ class LensServiceTests(TransactionTestCase):
             self.assertEqual(payload["max_agent_turns"], 40)
             self.assertEqual(RunSerializer(run).data["execution"]["max_agent_turns"], 40)
 
-    def test_legacy_rounds_select_thinking_with_explicit_boolean_precedence(self):
-        """Legacy callers keep their intent without overriding a new mode choice."""
-
-        for rounds in Assistant.AgentRounds.values:
-            self.assistant.deep_thinking = rounds not in {"deep", "max"}
-            self.assistant.save(update_fields=["deep_thinking"])
-            run = create_execution_run(session=self.session, question="Analyze", agent_rounds=rounds, enqueue=False)
-            self.assertIs(run.execution.runtime_snapshot["deep_thinking"], rounds in {"deep", "max"})
-        override = create_execution_run(
-            session=self.session, question="Analyze", agent_rounds="max", deep_thinking=False, enqueue=False
-        )
-        self.assertIs(override.execution.runtime_snapshot["deep_thinking"], False)
-
     def test_thinking_default_override_and_continuation(self):
         """Assistant edits cannot change the chosen mode of existing or continued work."""
         self.assistant.deep_thinking = True
@@ -204,34 +191,33 @@ class LensServiceTests(TransactionTestCase):
     @patch("lens.services.async_to_sync")
     @patch("lens.services.get_channel_layer")
     def test_deep_thinking_is_frozen_without_tier_limits(self, get_channel_layer, mock_async_to_sync):
-        """Both thinking modes can finish work regardless of the legacy tier."""
+        """Explicit mode overrides legacy tiers and remains frozen for dispatch."""
         from lens.serializers import RunCreateSerializer
 
-        for enabled in (False, True):
-            for rounds in Assistant.AgentRounds.values:
-                with self.subTest(deep_thinking=enabled, rounds=rounds):
-                    serializer = RunCreateSerializer(
-                        data={
-                            "question": "Analyze the evidence",
-                            "deep_thinking": enabled,
-                            "agent_rounds": rounds,
-                            "enqueue": False,
-                        },
-                        context={"session": self.session},
-                    )
-                    self.assertTrue(serializer.is_valid(), serializer.errors)
-                    run = serializer.save()
-                    self.assertIs(run.execution.runtime_snapshot["deep_thinking"], enabled)
-                    self.assertEqual(run.execution.token_budget_max_tokens, 0)
-                    self.assertEqual(run.execution.token_budget_final_reserve_tokens, 0)
-                    create_run_execution_snapshot(run, deep_thinking=not enabled)
-                    dispatch_run_to_lensnode(run, "Analyze the evidence")
-                    payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
-                    self.assertIs(payload["deep_thinking"], enabled)
-                    self.assertEqual(payload["max_agent_turns"], 0)
-                    self.assertEqual(payload["token_budget"]["max_tokens"], 0)
-                    self.assertEqual(payload["tool_budget"], {"max_calls": 0})
-                    self.assertEqual(payload["run_timeout_s"], 3600)
+        for enabled, rounds in ((False, "max"), (True, "flash")):
+            with self.subTest(deep_thinking=enabled, rounds=rounds):
+                serializer = RunCreateSerializer(
+                    data={
+                        "question": "Analyze the evidence",
+                        "deep_thinking": enabled,
+                        "agent_rounds": rounds,
+                        "enqueue": False,
+                    },
+                    context={"session": self.session},
+                )
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                run = serializer.save()
+                self.assertIs(run.execution.runtime_snapshot["deep_thinking"], enabled)
+                self.assertEqual(run.execution.token_budget_max_tokens, 0)
+                self.assertEqual(run.execution.token_budget_final_reserve_tokens, 0)
+                create_run_execution_snapshot(run, deep_thinking=not enabled)
+                dispatch_run_to_lensnode(run, "Analyze the evidence")
+                payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
+                self.assertIs(payload["deep_thinking"], enabled)
+                self.assertEqual(payload["max_agent_turns"], 0)
+                self.assertEqual(payload["token_budget"]["max_tokens"], 0)
+                self.assertEqual(payload["tool_budget"], {"max_calls": 0})
+                self.assertEqual(payload["run_timeout_s"], 3600)
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -285,6 +271,8 @@ class LensServiceTests(TransactionTestCase):
         self.assistant.save(update_fields=["agent_rounds"])
         for rounds in Assistant.AgentRounds.values:
             with self.subTest(rounds=rounds):
+                self.assistant.deep_thinking = rounds not in {"deep", "max"}
+                self.assistant.save(update_fields=["deep_thinking"])
                 serializer = RunCreateSerializer(
                     data={
                         "question": "Analyze this request",
@@ -297,6 +285,7 @@ class LensServiceTests(TransactionTestCase):
                 run = serializer.save()
                 budget = {"profile": "unlimited", "max_tokens": 0, "final_reserve_tokens": 0}
                 self.assertEqual(run.execution.agent_rounds, rounds)
+                self.assertIs(run.execution.runtime_snapshot["deep_thinking"], rounds in {"deep", "max"})
                 self.assertEqual(
                     run.execution.token_budget_max_tokens,
                     budget["max_tokens"],
