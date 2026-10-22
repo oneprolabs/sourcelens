@@ -1020,6 +1020,30 @@ class SharedQAApiTests(TestCase):
         self.assertEqual(overridden.data["policy"], "public")
         self.assertFalse(overridden.data["requires_choice"])
 
+    def test_policy_endpoint_rejects_a_malformed_assistant_uuid(self):
+        self.client.force_authenticate(self.owner)
+        resp = self.client.get("/api/lens/shares/policy/?assistant_uuid=abc")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_policy_endpoint_reports_the_deciding_layer(self):
+        self.client.force_authenticate(self.owner)
+        url = f"/api/lens/shares/policy/?assistant_uuid={self.assistant.uuid}"
+
+        self._set_global_policy("login")
+        global_source = self.client.get(url)
+        self.assertEqual(global_source.data["policy"], "login")
+        self.assertEqual(global_source.data["source"], "global")
+
+        self._set_assistant_policy("inherit")
+        inherit_source = self.client.get(url)
+        self.assertEqual(inherit_source.data["policy"], "login")
+        self.assertEqual(inherit_source.data["source"], "global")
+
+        self._set_assistant_policy("public")
+        assistant_source = self.client.get(url)
+        self.assertEqual(assistant_source.data["policy"], "public")
+        self.assertEqual(assistant_source.data["source"], "assistant")
+
     def test_policy_endpoint_requires_sign_in(self):
         self.client.force_authenticate(user=None)
         resp = self.client.get("/api/lens/shares/policy/")

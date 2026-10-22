@@ -1,6 +1,7 @@
 """Shared Q&A publishing, moderation, and public views."""
 
 import secrets
+from uuid import UUID
 
 from django.db.models import F, Q
 from django.http import FileResponse, Http404, HttpResponse
@@ -102,9 +103,16 @@ class SharedQAPolicyView(APIView):
             request.query_params.get("assistant_slug") or ""
         ).strip()
         if assistant_uuid or assistant_slug:
-            lookup = {"uuid": assistant_uuid} if assistant_uuid else {
-                "slug": assistant_slug
-            }
+            if assistant_uuid:
+                try:
+                    lookup = {"uuid": UUID(assistant_uuid)}
+                except (AttributeError, TypeError, ValueError):
+                    return Response(
+                        {"detail": "Assistant not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+            else:
+                lookup = {"slug": assistant_slug}
             assistant = (
                 Assistant.objects.filter(**lookup)
                 .filter(

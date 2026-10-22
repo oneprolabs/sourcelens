@@ -86,10 +86,12 @@ def configured_policy(assistant=None, share=None):
 def policy_source(assistant=None):
     """Return which layer decided the policy, or None when none did."""
 
-    if assistant_policy(assistant):
-        return "assistant"
-    if global_policy():
-        return "global"
+    for candidate, source in (
+        (assistant_policy(assistant), "assistant"),
+        (global_policy(), "global"),
+    ):
+        if candidate and candidate != INHERIT:
+            return source
     return None
 
 
