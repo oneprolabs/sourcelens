@@ -1020,6 +1020,51 @@ class SharedQAApiTests(TestCase):
         self.assertEqual(overridden.data["policy"], "public")
         self.assertFalse(overridden.data["requires_choice"])
 
+    def test_public_list_keeps_shares_a_configured_policy_opens(self):
+        token = self._share(payload={"require_login": True}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        share.is_listed = True
+        share.save(update_fields=["is_listed"])
+        self._set_global_policy("public")
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(
+            "/api/lens/public/assistants/data-helper/qa/",
+            HTTP_ACCEPT_LANGUAGE="zh-CN",
+        )
+        self.assertEqual(anonymous.status_code, 200)
+        self.assertEqual(anonymous.data["total"], 1)
+        self.assertEqual(anonymous.data["results"][0]["token"], token)
+
+        detail = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(detail.status_code, 200)
+
+    def test_policy_endpoint_reports_a_private_assistant_as_sign_in_only(self):
+        private_assistant = Assistant.objects.create(
+            name="Private Helper",
+            slug="private-helper",
+            lensnode=self.lensnode,
+            selected_task="qa",
+            status=Assistant.Status.ACTIVE,
+            visibility=Assistant.Visibility.PRIVATE,
+        )
+        self._set_global_policy("public")
+        AssistantAccess.objects.create(
+            assistant=private_assistant,
+            user=self.owner,
+        )
+        self.client.force_authenticate(self.owner)
+
+        resp = self.client.get(
+            "/api/lens/shares/policy/"
+            f"?assistant_uuid={private_assistant.uuid}"
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["policy"], "login")
+        self.assertEqual(resp.data["source"], "private")
+        self.assertFalse(resp.data["requires_choice"])
+
     def test_policy_endpoint_rejects_a_malformed_assistant_uuid(self):
         self.client.force_authenticate(self.owner)
         resp = self.client.get("/api/lens/shares/policy/?assistant_uuid=abc")

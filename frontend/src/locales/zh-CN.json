@@ -167,6 +167,7 @@
       "shareAccessConfigured": "链接访问方式：{mode}（{source}决定）",
       "shareAccessByAssistant": "助手策略",
       "shareAccessByGlobal": "全局策略",
+      "shareAccessPrivate": "私有助手的分享链接始终需要登录后才能查看。",
       "shareAccessLabel": "链接访问方式",
       "shareAccessPublic": "免登录查看",
       "shareAccessPublicHint": "任何拿到链接的人都可以直接打开查看这份问答。",

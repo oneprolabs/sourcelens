@@ -205,6 +205,9 @@ const showsAccessChoice = computed(
 )
 
 const accessPolicyHint = computed(() => {
+  if (accessPolicy.value?.source === 'private') {
+    return t('lens.qa.shareAccessPrivate')
+  }
   if (configuredAccessPolicy.value === 'inherit') {
     return ''
   }

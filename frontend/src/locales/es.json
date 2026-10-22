@@ -167,6 +167,7 @@
       "shareAccessConfigured": "Acceso al enlace: {mode} (decidido por la política {source})",
       "shareAccessByAssistant": "del asistente",
       "shareAccessByGlobal": "global",
+      "shareAccessPrivate": "Los enlaces de compartir de un asistente privado siempre requieren un usuario autenticado.",
       "shareAccessLabel": "Quién puede abrir el enlace",
       "shareAccessPublic": "Abierto sin iniciar sesión",
       "shareAccessPublicHint": "Cualquiera con el enlace puede abrir y leer esta pregunta y respuesta.",

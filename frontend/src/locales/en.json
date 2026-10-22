@@ -167,6 +167,7 @@
       "shareAccessConfigured": "Link access: {mode} (decided by the {source} policy)",
       "shareAccessByAssistant": "assistant",
       "shareAccessByGlobal": "global",
+      "shareAccessPrivate": "A private Assistant's share links always require a signed-in viewer.",
       "shareAccessLabel": "Who can open the link",
       "shareAccessPublic": "Open without sign-in",
       "shareAccessPublicHint": "Anyone with the link can open and read this Q&A.",

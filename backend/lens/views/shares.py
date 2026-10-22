@@ -15,6 +15,7 @@ from accounts.models import normalize_answer_language
 from lens.models import Assistant, SharedQA, SharedQAFile
 from lens.public_share import (
     INHERIT,
+    LOGIN,
     allows_anonymous_access,
     configured_policy,
     policy_source,
@@ -127,6 +128,16 @@ class SharedQAPolicyView(APIView):
                 return Response(
                     {"detail": "Assistant not found."},
                     status=status.HTTP_404_NOT_FOUND,
+                )
+            if assistant.visibility != Assistant.Visibility.PUBLIC:
+                # A private Assistant always needs a signed-in viewer, so no
+                # policy can open its share links.
+                return Response(
+                    {
+                        "policy": LOGIN,
+                        "source": "private",
+                        "requires_choice": False,
+                    }
                 )
         return Response(
             {
@@ -356,9 +367,13 @@ class PublicSharedQAListView(APIView):
             is_listed=True,
             status=SharedQA.Status.PUBLISHED,
         ).order_by("-published_at", "-created_at")
-        if not (request.user and request.user.is_authenticated):
-            # A share the publisher marked as sign-in only must not surface
-            # its title or excerpt to an anonymous visitor.
+        if (
+            not (request.user and request.user.is_authenticated)
+            and configured_policy(assistant) is None
+        ):
+            # Without a configured layer the publisher decides per share, so a
+            # share marked as sign-in only must not surface its title or
+            # excerpt to an anonymous visitor.
             queryset = queryset.exclude(require_login=True)
         total = queryset.count()
         rows = SharedQAListSerializer(
