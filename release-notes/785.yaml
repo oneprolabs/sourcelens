@@ -1,0 +1,11 @@
+type: improvement
+audience: user
+en: >-
+  Chat run progress numbers each plan step and shows how long that step took.
+  A running step keeps counting up, completed steps keep their duration after
+  the conversation reloads, and restored history omits durations instead of
+  guessing. Active and failed steps are now clearly distinguished by color.
+zh-CN: >-
+  Chat 运行进度为每个计划步骤编号，并显示该步骤耗时。进行中的步骤持续走秒，
+  已完成步骤在会话重新加载后仍保留耗时，历史回放则不再虚构时长。
+  进行中和失败的步骤通过独立配色清晰区分。
