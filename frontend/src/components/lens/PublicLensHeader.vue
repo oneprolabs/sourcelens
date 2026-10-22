@@ -1,30 +1,32 @@
 <template>
   <header
-    class="flex items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3 sm:px-6"
+    class="flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-2 sm:gap-3 sm:px-6 sm:py-3"
   >
-    <router-link to="/" class="flex items-center no-underline">
+    <router-link to="/" class="flex min-w-0 shrink-0 items-center no-underline">
       <BrandLogo variant="responsive" />
     </router-link>
-    <div class="flex items-center gap-2">
+    <div class="flex min-w-0 items-center gap-2">
       <router-link
         v-if="showQaLink && assistantSlug"
         :to="`/lens/assistants/${assistantSlug}/qa`"
-        class="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-theme-secondary no-underline transition-colors hover:border-line-strong hover:bg-surface-sunken hover:text-theme"
+        :aria-label="t('lens.qa.publicListLink')"
+        class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line px-2.5 py-2 text-sm font-medium text-theme-secondary no-underline transition-colors hover:border-line-strong hover:bg-surface-sunken hover:text-theme sm:min-h-0 sm:min-w-0 sm:px-3 sm:py-1.5"
       >
         <MessagesSquare :size="15" :stroke-width="2" aria-hidden="true" />
-        {{ t('lens.qa.publicListLink') }}
+        <span class="hidden sm:inline">{{ t('lens.qa.publicListLink') }}</span>
       </router-link>
       <router-link
         v-if="assistantSlug"
         :to="`/lens/assistants/${assistantSlug}/chat`"
-        class="rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white no-underline transition-colors hover:bg-primary-700"
+        class="inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md bg-primary-600 px-3 py-2 text-sm font-medium text-white no-underline transition-colors hover:bg-primary-700 sm:min-h-0 sm:py-1.5"
       >
-        {{ ctaLabel }}
+        <span class="sm:hidden">{{ t('lens.qa.backToChat') }}</span>
+        <span class="hidden sm:inline">{{ ctaLabel }}</span>
       </router-link>
       <router-link
         v-if="!isAuthenticated"
         :to="loginTarget"
-        class="rounded-md px-3 py-1.5 text-sm font-medium text-theme-secondary no-underline transition-colors hover:bg-surface-sunken"
+        class="inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 py-2 text-sm font-medium text-theme-secondary no-underline transition-colors hover:bg-surface-sunken sm:min-h-0 sm:px-3 sm:py-1.5"
       >
         {{ t('auth.signIn') }}
       </router-link>

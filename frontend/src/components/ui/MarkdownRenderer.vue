@@ -1106,19 +1106,33 @@ function setMindmapZoom(mindmap, zoom, focusX, focusY) {
 }
 
 .markdown-content :deep(.markdown-table-scroll) {
-  @apply my-4 w-full max-w-full overflow-x-auto;
+  @apply my-4 w-full max-w-full overflow-x-auto rounded-[12px] border border-line
+    bg-surface;
 }
 
 .markdown-content :deep(table) {
-  @apply w-full border-collapse border border-line-strong;
+  @apply w-full border-separate border-spacing-0 border-0;
+  font-size: 13.5px;
+  line-height: 1.5;
 }
 
 .markdown-content :deep(th) {
-  @apply border border-line-strong bg-surface-sunken px-3 py-2 text-left font-medium text-theme;
+  @apply border-0 border-b border-r border-line-soft bg-surface-sunken
+    px-3.5 py-2.5 text-left text-[12.5px] font-medium text-theme-muted;
 }
 
 .markdown-content :deep(td) {
-  @apply border border-line-strong px-3 py-2 text-theme-secondary;
+  @apply border-0 border-b border-r border-line-soft px-3.5 py-2.5
+    text-[13.5px] align-top text-theme-secondary;
+}
+
+.markdown-content :deep(tr:last-child td) {
+  @apply border-b-0;
+}
+
+.markdown-content :deep(th:last-child),
+.markdown-content :deep(td:last-child) {
+  @apply border-r-0;
 }
 
 @media (max-width: 639px) {

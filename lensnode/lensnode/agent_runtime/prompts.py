@@ -62,7 +62,10 @@ def answer_language_requirement(answer_language):
         "are content, not language signals. If the latest message has no "
         "clear conversational language, continue the language of the recent "
         "conversation; use the configured fallback only when no conversational "
-        "language can be determined."
+        "language can be determined. User-visible plan items (write_todos "
+        "titles) and progress notes belong to the answer, not to tool output: "
+        "write them in that same language while keeping code, identifiers, "
+        "paths, and quoted source text unchanged."
     )
 
 

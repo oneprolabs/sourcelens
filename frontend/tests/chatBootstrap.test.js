@@ -437,33 +437,73 @@ test('keeps the mobile welcome copy clear of the docked composer', async () => {
   assert.match(source, /\.chat-welcome \{[\s\S]*?padding: 0 1\.5rem 13\.5rem;/)
 })
 
-test('keeps live agent activity expanded on mobile while allowing collapse', async () => {
+test('shows a collapsible live run summary above agent activity', async () => {
   const source = await chatSource()
 
   assert.match(
     source,
-    /v-if="[\s\S]*?isRunActive &&[\s\S]*?liveStructuredProgress\.items\.length[\s\S]*?open\s+class="runtime-progress-card runtime-progress-live"/
+    /:open="liveProgressExpanded"[\s\S]*?class="runtime-progress-card runtime-progress-live"/
   )
+  assert.match(source, /@toggle="liveProgressExpanded = \$event\.target\.open"/)
   assert.match(
     source,
     /class="runtime-progress-summary runtime-progress-live-summary"[\s\S]*?\{\{ liveProgressText \}\}/
   )
   assert.match(source, /class="runtime-progress-content"/)
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /\.runtime-progress-live > \.runtime-progress-summary \{[\s\S]*?display: none;/
+    /\.runtime-progress-live > \.runtime-progress-summary \{[^}]*display: none;/
   )
   assert.match(
     source,
     /\.runtime-progress-card \{[\s\S]*?border: 0;[\s\S]*?background: transparent;[\s\S]*?padding: 0;/
   )
+})
+
+test('aligns live progress and attachment cards with Chat v2 metrics', async () => {
+  const source = await chatSource()
+
   assert.match(
     source,
-    /\.runtime-progress-live > \.runtime-progress-summary \{[\s\S]*?display: flex;[\s\S]*?min-height: 2\.75rem;/
+    /\.runtime-progress-badge \{[\s\S]*?width: 1\.125rem;[\s\S]*?height: 1\.125rem;/
+  )
+  assert.match(
+    source,
+    /\.runtime-progress-title \{[\s\S]*?font-size: 0\.8125rem;[\s\S]*?font-weight: 500;/
+  )
+  assert.match(
+    source,
+    /\.runtime-progress-meta \{[\s\S]*?font-size: 0\.78125rem;/
+  )
+  assert.match(
+    source,
+    /class="message-document-icon"[\s\S]*?class="message-document-meta"/
+  )
+  assert.match(source, /\.message-document-icon \{[\s\S]*?h-\[38px\]/)
+  assert.match(
+    source,
+    /class="composer-document-icon"[\s\S]*?class="composer-document-name"/
+  )
+  assert.match(
+    source,
+    /\.deliverable-card \{[\s\S]*?max-w-\[32\.5rem\][\s\S]*?rounded-\[12px\]/
   )
 })
 
-test('keeps completed agent activity visible until the user collapses it', async () => {
+test('summarizes activity progress by activity count instead of step status', async () => {
+  const source = await chatSource()
+  const start = source.indexOf('function progressSummaryTitle(message)')
+  const body = source.slice(start, start + 700)
+
+  assert.notEqual(start, -1)
+  assert.match(body, /progress\.kind === 'activity'/)
+  assert.match(
+    body,
+    /formatActivityProgressText\(items, \{[\s\S]*?terminal:[\s\S]*?translate: t/
+  )
+})
+
+test('keeps completed agent activity collapsed until the user expands it', async () => {
   const source = await chatSource()
   const completedProgress = source.indexOf(
     'structuredProgress(message._runtimeState).items.length ||'
@@ -473,8 +513,13 @@ test('keeps completed agent activity visible until the user collapses it', async
   assert.notEqual(completedProgress, -1)
   assert.notEqual(completedDetails, -1)
   assert.match(
-    source.slice(completedDetails, completedProgress + 240),
-    /<details[\s\S]*?open[\s\S]*?class="runtime-progress-card"/
+    source.slice(completedDetails, completedProgress + 320),
+    /<details[\s\S]*?:open="isProgressExpanded\(message\)"[\s\S]*?class="runtime-progress-card"/
+  )
+  assert.match(source, /function isProgressExpanded\(message\)/)
+  assert.match(
+    source,
+    /return !isTerminalRunStatus\(message\?\.thinking\?\.status\)/
   )
 })
 
@@ -494,7 +539,11 @@ test('renders delegated assistants as bounded progressive-disclosure cards', asy
     source,
     /:live="!isTerminalRunStatus\(message\.thinking\.status\)"/
   )
-  assert.match(component, /<details[\s\S]*?:open="live"/)
+  assert.match(
+    component,
+    /<details[\s\S]*?:open="live \|\| \(groups\.length === 1 && !group\.assistantName\)"/
+  )
+  assert.match(component, /runtime-assistant-card\.is-direct/)
   assert.match(component, /class="runtime-assistant-task-summary"/)
   assert.match(component, /class="runtime-assistant-full-task"/)
   assert.match(component, /group\.summaryItems/)

@@ -263,7 +263,18 @@
         "not_requested": "No solicitada",
         "supported": "Respaldada por evidencia",
         "unsupported": "Respaldo insuficiente",
-        "inconclusive": "No concluyente"
+        "inconclusive": "No concluyente",
+        "coverage": {
+          "complete": "La cobertura de evidencia es completa.",
+          "incomplete": "La cobertura de evidencia es incompleta; algunas afirmaciones no se verificaron.",
+          "unknown": "No se pudo determinar la cobertura de evidencia."
+        },
+        "warning": {
+          "evidenceIncomplete": "Parte de la evidencia referenciada no se leyó, esas afirmaciones siguen sin verificar.",
+          "reviewMaterialIncomplete": "El material disponible para la revisión se truncó, la conclusión sigue sin verificar.",
+          "reviewUnavailable": "El paso de revisión no estuvo disponible, la conclusión sigue sin verificar.",
+          "reviewInconclusive": "La evidencia disponible ni confirma ni refuta la conclusión."
+        }
       },
       "liveOutput": "Salida en vivo",
       "newSession": "Nueva sesión",
@@ -333,15 +344,15 @@
       "hideTimeline": "Ocultar eventos",
       "citations": {
         "title": "Fuentes",
-        "count": "{count} citas de código",
-        "open": "Abrir cita de código {location}",
-        "viewerTitle": "Cita de código",
+        "count": "{count} referencias",
+        "open": "Abrir referencia {location}",
+        "viewerTitle": "Detalles de la referencia",
         "revision": "Revisión",
         "symbol": "Símbolo",
         "lines": "Líneas",
-        "loading": "Cargando cita de código…",
+        "loading": "Cargando referencia…",
         "retry": "Reintentar",
-        "unavailable": "Esta cita de código no está disponible. Su instantánea de ejecución puede faltar, o es posible que no tenga acceso.",
+        "unavailable": "Esta referencia no está disponible. Su instantánea de ejecución puede faltar, o es posible que no tenga acceso.",
         "preview": "Vista previa",
         "source": "Texto original"
       },
@@ -358,6 +369,11 @@
         "knowledgeSummary": "Resumir la información clave",
         "knowledgeCompare": "Comparar dos conceptos",
         "knowledgeActions": "Extraer conclusiones y elementos de acción"
+      },
+      "followUps": {
+        "detail": "Cuéntame más sobre «{topic}»",
+        "details": "¿Cuáles son los detalles clave o los límites de «{topic}»?",
+        "sources": "¿Qué fuentes respaldan estas conclusiones?"
       },
       "attachFile": "Subir imagen o documento",
       "removeAttachment": "Eliminar archivo adjunto",
@@ -576,7 +592,17 @@
       },
       "searchSessions": "Buscar conversaciones",
       "searchSessionsPlaceholder": "Buscar títulos de conversaciones",
-      "noSearchResults": "No hay conversaciones que coincidan"
+      "noSearchResults": "No hay conversaciones que coincidan",
+      "progress": {
+        "completedSteps": "{count} pasos completados",
+        "finishedSteps": "{done} de {total} pasos completados",
+        "runningSteps": "En curso · {done}/{total}",
+        "duration": "Tardó {duration}",
+        "expand": "Ver pasos",
+        "collapse": "Contraer"
+      },
+      "exportAction": "Exportar",
+      "regenerateAction": "Regenerar"
     }
   },
   "auth": {

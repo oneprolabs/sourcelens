@@ -503,17 +503,43 @@
                     structuredProgress(message._runtimeState).items.length ||
                     delegatedTaskGroups(message._runtimeState).length
                   "
-                  open
+                  :open="isProgressExpanded(message)"
                   class="runtime-progress-card"
+                  @toggle="handleProgressToggle(message, $event)"
                 >
                   <summary class="runtime-progress-summary">
-                    <span class="runtime-card-title">
-                      {{
-                        progressTitle(
-                          structuredProgress(message._runtimeState).kind,
-                          structuredProgress(message._runtimeState).hasPlan
-                        )
-                      }}
+                    <span
+                      class="runtime-progress-badge"
+                      :class="progressBadgeClass(message)"
+                      aria-hidden="true"
+                    >
+                      <span
+                        v-if="progressBadgeClass(message) === 'is-running'"
+                        class="runtime-progress-badge-spinner"
+                      />
+                      <svg
+                        v-else
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path
+                          v-if="progressBadgeClass(message) === 'is-failed'"
+                          d="M3.4 3.4 8.6 8.6M8.6 3.4 3.4 8.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          v-else
+                          d="M2.4 6.2 4.8 8.6 9.6 3.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <span class="runtime-progress-title">
+                      {{ progressSummaryTitle(message) }}
                       <span
                         v-if="
                           isSmartCollaborationConversation &&
@@ -524,13 +550,14 @@
                         · {{ assistantNamesLabel(message._runtimeState) }}
                       </span>
                     </span>
-                    <span class="runtime-progress-summary-text">
+                    <span class="runtime-progress-meta">
+                      {{ progressSummaryMeta(message) }}
+                    </span>
+                    <span class="runtime-progress-hint">
                       {{
-                        structuredProgressText(
-                          message._runtimeState,
-                          message.thinking.duration_seconds,
-                          isTerminalRunStatus(message.thinking.status)
-                        )
+                        isProgressExpanded(message)
+                          ? t('lens.chat.progress.collapse')
+                          : t('lens.chat.progress.expand')
                       }}
                     </span>
                     <span class="runtime-progress-chevron" aria-hidden="true">
@@ -779,6 +806,7 @@
 
                 <AnswerReviewStatus
                   :detail="message._runtimeState?.terminationDetail"
+                  :show-not-requested="false"
                 />
 
                 <div
@@ -881,14 +909,20 @@
                         :title="file.original_name"
                         @click="downloadAttachmentFile(file)"
                       >
-                        <FileText :size="20" aria-hidden="true" />
-                        <span>
+                        <span class="message-document-icon">
+                          <FileText :size="18" aria-hidden="true" />
+                        </span>
+                        <span class="message-document-meta">
                           <strong>{{
                             compactFilename(file.original_name)
                           }}</strong>
                           <small>{{ formatBytes(file.byte_size) }}</small>
                         </span>
-                        <Download :size="16" aria-hidden="true" />
+                        <Download
+                          :size="15"
+                          class="message-document-download"
+                          aria-hidden="true"
+                        />
                       </button>
                     </div>
                     <div v-if="message.content" class="message-text">
@@ -923,7 +957,7 @@
                         @click="handleCardClick(file)"
                       >
                         <span class="deliverable-thumb">
-                          <FileText :size="20" />
+                          <FileText :size="17" />
                         </span>
                         <span class="deliverable-meta">
                           <span class="deliverable-name">{{
@@ -938,21 +972,21 @@
                         <button
                           v-if="isPreviewable(file)"
                           type="button"
-                          class="deliverable-action"
+                          class="deliverable-action-btn"
                           :title="t('lens.chat.preview')"
-                          :aria-label="t('lens.chat.preview')"
                           @click="openPreview(file)"
                         >
-                          <Eye :size="18" />
+                          <Eye :size="14" aria-hidden="true" />
+                          {{ t('lens.chat.preview') }}
                         </button>
                         <button
                           type="button"
-                          class="deliverable-action"
+                          class="deliverable-action-btn is-primary"
                           :title="t('lens.chat.download')"
-                          :aria-label="t('lens.chat.download')"
                           @click="downloadOutputFile(file)"
                         >
-                          <Download :size="18" />
+                          <Download :size="14" aria-hidden="true" />
+                          {{ t('lens.chat.download') }}
                         </button>
                       </span>
                     </div>
@@ -1188,21 +1222,23 @@
                     (liveStructuredProgress.items.length ||
                       delegatedTaskGroups(runtimeState).length)
                   "
-                  open
+                  :open="liveProgressExpanded"
                   class="runtime-progress-card runtime-progress-live"
                   role="status"
                   aria-live="polite"
+                  @toggle="liveProgressExpanded = $event.target.open"
                 >
                   <summary
                     class="runtime-progress-summary runtime-progress-live-summary"
                   >
-                    <span class="runtime-card-title">
-                      {{
-                        progressTitle(
-                          liveStructuredProgress.kind,
-                          liveStructuredProgress.hasPlan
-                        )
-                      }}
+                    <span
+                      class="runtime-progress-badge is-running"
+                      aria-hidden="true"
+                    >
+                      <span class="runtime-progress-badge-spinner" />
+                    </span>
+                    <span class="runtime-progress-title">
+                      {{ t('lens.chat.runtime.running') }}
                       <span
                         v-if="
                           isSmartCollaborationConversation &&
@@ -1213,34 +1249,24 @@
                         · {{ assistantNamesLabel(runtimeState) }}
                       </span>
                     </span>
-                    <span class="runtime-progress-summary-text">
+                    <span class="runtime-progress-meta">
                       {{ liveProgressText }}
-                      <span v-if="elapsedText"> · {{ elapsedText }}</span>
+                      <template v-if="elapsedText">
+                        · {{ elapsedText }}
+                      </template>
+                    </span>
+                    <span class="runtime-progress-hint">
+                      {{
+                        liveProgressExpanded
+                          ? t('lens.chat.progress.collapse')
+                          : t('lens.chat.progress.expand')
+                      }}
                     </span>
                     <span class="runtime-progress-chevron" aria-hidden="true">
                       ⌄
                     </span>
                   </summary>
                   <div class="runtime-progress-content">
-                    <div
-                      class="runtime-card-title runtime-progress-desktop-title"
-                    >
-                      {{
-                        progressTitle(
-                          liveStructuredProgress.kind,
-                          liveStructuredProgress.hasPlan
-                        )
-                      }}
-                      <span
-                        v-if="
-                          isSmartCollaborationConversation &&
-                          assistantNamesLabel(runtimeState)
-                        "
-                        class="runtime-assistant-names"
-                      >
-                        · {{ assistantNamesLabel(runtimeState) }}
-                      </span>
-                    </div>
                     <AssistantActivityGroups
                       v-if="
                         liveStructuredProgress.kind === 'workflow' &&
@@ -1443,10 +1469,6 @@
                         </div>
                       </div>
                     </div>
-                    <div class="runtime-progress-footer">
-                      <span>{{ liveProgressText }}</span>
-                      <span v-if="elapsedText"> · {{ elapsedText }}</span>
-                    </div>
                   </div>
                 </details>
 
@@ -1463,6 +1485,22 @@
                   <span v-if="elapsedText" class="thinking-elapsed">
                     {{ elapsedText }}
                   </span>
+                </div>
+
+                <div
+                  v-if="
+                    isRunActive &&
+                    !liveStructuredProgress.items.length &&
+                    !delegatedTaskGroups(runtimeState).length &&
+                    !partialAnswer &&
+                    !streamError
+                  "
+                  class="live-answer-skeleton"
+                  aria-hidden="true"
+                >
+                  <span />
+                  <span />
+                  <span />
                 </div>
 
                 <div
@@ -1532,7 +1570,10 @@
                   {{ t('lens.chat.runtime.outcomeBlocked') }}
                 </div>
 
-                <AnswerReviewStatus :detail="runtimeState.terminationDetail" />
+                <AnswerReviewStatus
+                  :detail="runtimeState.terminationDetail"
+                  :show-not-requested="false"
+                />
 
                 <div
                   v-if="partialAnswer || streamError"
@@ -1585,6 +1626,21 @@
           :class="{ 'composer-wrap-empty': isEmptyConversation }"
         >
           <div class="composer-inner">
+            <div
+              v-if="followUpSuggestions.length"
+              class="follow-up-suggestions"
+              data-testid="follow-up-suggestions"
+            >
+              <button
+                v-for="suggestion in followUpSuggestions"
+                :key="suggestion"
+                type="button"
+                class="follow-up-chip"
+                @click="applyPromptSuggestion(suggestion)"
+              >
+                {{ suggestion }}
+              </button>
+            </div>
             <div class="composer-shell relative">
               <ParticipatingAssistantsPicker
                 v-if="isSmartCollaborationConversation"
@@ -1619,8 +1675,10 @@
                     :alt="item.name"
                   />
                   <span v-else class="composer-document">
-                    <FileText :size="22" aria-hidden="true" />
-                    <span>{{ item.name }}</span>
+                    <span class="composer-document-icon">
+                      <FileText :size="16" aria-hidden="true" />
+                    </span>
+                    <span class="composer-document-name">{{ item.name }}</span>
                   </span>
                   <span
                     v-if="item.status === 'uploading'"
@@ -1697,28 +1755,6 @@
                 />
                 <div class="composer-content">
                   <button
-                    v-if="acceptsAttachments"
-                    class="composer-attach-btn"
-                    type="button"
-                    :disabled="
-                      !selectedSessionUuid ||
-                      attachments.length >= MAX_ATTACHMENTS
-                    "
-                    :aria-label="t('lens.chat.attachFile')"
-                    :title="t('lens.chat.attachFile')"
-                    @click="triggerFilePick"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.2"
-                      aria-hidden="true"
-                    >
-                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-                    </svg>
-                  </button>
-                  <button
                     v-for="assistant in mentionedAssistants"
                     :key="assistant.uuid"
                     type="button"
@@ -1747,6 +1783,28 @@
                   />
                 </div>
                 <div class="composer-inline-toolbar">
+                  <button
+                    v-if="acceptsAttachments"
+                    class="composer-attach-btn"
+                    type="button"
+                    :disabled="
+                      !selectedSessionUuid ||
+                      attachments.length >= MAX_ATTACHMENTS
+                    "
+                    :aria-label="t('lens.chat.attachFile')"
+                    :title="t('lens.chat.attachFile')"
+                    @click="triggerFilePick"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                    </svg>
+                  </button>
                   <DeepThinkingToggle v-model="effectiveDeepThinking" />
                   <CitationToggle v-model="citationsEnabled" />
                 </div>
@@ -1968,6 +2026,7 @@ import {
   updateSessionSubmissionSet
 } from '@/pages/lens/chatSubmission'
 import { promptSuggestionKeys } from '@/pages/lens/chatPromptSuggestions'
+import { buildFollowUpSuggestions } from '@/pages/lens/chatFollowUps'
 import { resolveChatViewport } from '@/pages/lens/chatViewport'
 import { createStreamTextBuffer } from '@/pages/lens/streamBuffer'
 import { recoverRunStream } from '@/pages/lens/chatRunStream'
@@ -2083,6 +2142,13 @@ const streamError = ref('')
 const failedRunError = ref(null)
 const queuePosition = ref(null)
 const currentRun = ref(null)
+const liveProgressExpanded = ref(true)
+watch(
+  () => currentRun.value?.uuid,
+  () => {
+    liveProgressExpanded.value = true
+  }
+)
 const pendingRunSubmission = ref(null)
 const retryDraft = ref(null)
 const runStatusResolvingSessionUuid = ref('')
@@ -2700,15 +2766,83 @@ function structuredProgressText(
   return ''
 }
 
-function progressTitle(kind, hasPlan = false) {
-  if (kind === 'plan') return t('lens.chat.runtime.planTitle')
-  if (kind === 'activity') return t('lens.chat.agentActivity')
-  if (kind === 'workflow') {
-    return t(
-      hasPlan ? 'lens.chat.runtime.planTitle' : 'lens.chat.runtime.stageTitle'
+// Per-message expansion state for the collapsed run summary. The default
+// keeps a finished run collapsed and a running run expanded; an explicit
+// user toggle always wins.
+const progressExpandedOverrides = ref({})
+
+function progressMessageKey(message) {
+  return message?.uuid || message?.run || ''
+}
+
+function isProgressExpanded(message) {
+  const key = progressMessageKey(message)
+  if (!key) return false
+  const override = progressExpandedOverrides.value[key]
+  if (typeof override === 'boolean') return override
+  return !isTerminalRunStatus(message?.thinking?.status)
+}
+
+function handleProgressToggle(message, event) {
+  const key = progressMessageKey(message)
+  if (!key) return
+  progressExpandedOverrides.value = {
+    ...progressExpandedOverrides.value,
+    [key]: Boolean(event?.target?.open)
+  }
+}
+
+function progressItems(message) {
+  const progress = structuredProgress(message?._runtimeState)
+  return Array.isArray(progress.items) ? progress.items : []
+}
+
+function progressBadgeClass(message) {
+  const items = progressItems(message)
+  const failed =
+    isFailedRunStatus(message?.thinking?.status) ||
+    items.some((item) => item.status === 'failed')
+  if (failed) return 'is-failed'
+  if (items.some((item) => item.status === 'in_progress')) return 'is-running'
+  return 'is-done'
+}
+
+function progressSummaryTitle(message) {
+  const progress = structuredProgress(message?._runtimeState)
+  const items = Array.isArray(progress.items) ? progress.items : []
+  const terminal = isTerminalRunStatus(message?.thinking?.status)
+  if (progress.kind === 'activity') {
+    return formatActivityProgressText(items, {
+      terminal: terminal && !isFailedRunStatus(message?.thinking?.status),
+      translate: t
+    })
+  }
+  const total = items.length
+  const done = items.filter((item) => item.status === 'completed').length
+  if (!terminal) {
+    return t('lens.chat.progress.runningSteps', { done, total })
+  }
+  if (done >= total) {
+    return t('lens.chat.progress.completedSteps', { count: done })
+  }
+  return t('lens.chat.progress.finishedSteps', { done, total })
+}
+
+function progressSummaryMeta(message) {
+  const parts = []
+  const duration = Number(message?.thinking?.duration_seconds || 0)
+  if (duration > 0) {
+    parts.push(
+      t('lens.chat.progress.duration', { duration: formatDuration(duration) })
     )
   }
-  return t('lens.chat.runtime.stageTitle')
+  const current = progressItems(message).find(
+    (item) => item.status === 'in_progress'
+  )
+  if (current) {
+    parts.push(current.title || current.summary || '')
+  }
+  return parts.filter(Boolean).join(' · ')
 }
 
 const PATH_KINDS = new Set([
@@ -2994,6 +3128,35 @@ const decoratedMessages = computed(() =>
     })
 )
 
+const lastFollowUpMessage = computed(() => {
+  if (isRunActive.value || showLiveAnswer.value) return null
+  const messages = decoratedMessages.value
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'assistant') continue
+    if (!(message.content || '').trim()) return null
+    const status = message.thinking?.status
+    return isTerminalRunStatus(status) && status !== 'awaiting_user_input'
+      ? message
+      : null
+  }
+  return null
+})
+
+const followUpSuggestions = computed(() => {
+  const message = lastFollowUpMessage.value
+  if (!message) return []
+  return buildFollowUpSuggestions({
+    content: message.content,
+    citations: message.citations,
+    task: (selectedAssistant.value || publicAssistant.value)?.selected_task,
+    askedQuestions: decoratedMessages.value
+      .filter((item) => item.role === 'user')
+      .map((item) => item.content || ''),
+    translate: t
+  })
+})
+
 const isEmptyConversation = computed(
   () =>
     isMobile.value && !decoratedMessages.value.length && !showLiveAnswer.value
@@ -3061,6 +3224,10 @@ function mapRunError(code) {
 
 function isTerminalRunStatus(status) {
   return ['awaiting_user_input', 'done', 'failed', 'cancelled'].includes(status)
+}
+
+function isFailedRunStatus(status) {
+  return ['failed', 'cancelled'].includes(status)
 }
 
 const retryHintMessage = computed(() =>
@@ -5451,7 +5618,22 @@ onBeforeUnmount(() => {
 }
 
 .message-actions {
-  @apply mt-2 flex items-center gap-1;
+  @apply mt-2 flex flex-wrap items-center gap-1;
+}
+
+.follow-up-suggestions {
+  @apply pointer-events-auto mb-2 flex flex-wrap gap-1.5;
+}
+
+.follow-up-chip {
+  @apply inline-flex h-[30px] items-center rounded-full border
+    border-[#e4e4e7] bg-surface px-3 text-left text-[12.5px] text-[#3f3f46]
+    transition-colors;
+}
+
+.follow-up-chip:hover,
+.follow-up-chip:focus-visible {
+  @apply border-[#c9d7f6] bg-[#eef3fd] text-[#2f62d6];
 }
 
 .icon-btn {
@@ -5557,19 +5739,21 @@ onBeforeUnmount(() => {
   margin-bottom: 0.5rem;
 }
 
-.runtime-progress-live {
-  border-color: var(--sl-border-default);
-  background: var(--sl-bg-raised);
+.runtime-progress-card {
+  border-color: #ebebee;
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
 }
 
-.runtime-progress-live > .runtime-progress-summary {
-  display: none;
+.runtime-progress-live {
+  border-color: #ebebee;
+  background: #fcfcfc;
 }
 
 .runtime-progress-summary {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.625rem;
   cursor: pointer;
   list-style: none;
 }
@@ -5582,25 +5766,90 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
-.runtime-progress-summary-text {
+.runtime-progress-badge {
+  display: inline-flex;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+}
+
+.runtime-progress-badge svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+.runtime-progress-badge.is-done {
+  background: #e5f4ec;
+  color: #2e9e6a;
+}
+
+.runtime-progress-badge.is-running {
+  background: #eef3fd;
+  color: #2f62d6;
+}
+
+.runtime-progress-badge.is-failed {
+  background: #fdeaea;
+  color: #b64949;
+}
+
+.runtime-progress-badge-spinner {
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 2px solid #d6e1fa;
+  border-top-color: #2f62d6;
+  border-radius: 9999px;
+  animation: runtime-progress-spin 0.75s linear infinite;
+}
+
+@keyframes runtime-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.runtime-progress-title {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
-  color: var(--sl-text-muted);
-  font-size: 0.72rem;
+  color: var(--sl-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.runtime-progress-meta {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #a1a1aa;
+  font-size: 0.78125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-progress-hint {
+  flex: 0 0 auto;
+  color: #71717a;
+  font-size: 0.75rem;
+}
+
 .runtime-progress-chevron {
   flex: 0 0 auto;
-  color: var(--sl-text-subtle);
-  font-size: 0.9rem;
+  color: #a1a1aa;
+  font-size: 0.75rem;
+  line-height: 1;
   transition: transform 0.15s ease;
 }
 
 .runtime-progress-card[open] .runtime-progress-summary {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.375rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #f2f2f4;
 }
 
 .runtime-progress-card[open] .runtime-progress-chevron {
@@ -5776,19 +6025,44 @@ onBeforeUnmount(() => {
   font-size: 0.72rem;
 }
 
-.runtime-progress-footer {
-  margin-top: 0.4rem;
-  padding-top: 0.4rem;
-  border-top: 1px dashed #e2e8f0;
-  color: var(--sl-text-muted);
-  font-size: 0.72rem;
+.live-status-card {
+  @apply mb-2 flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-[13px];
+  border: 1px solid #ebebee;
+  background: #fcfcfc;
+  color: var(--sl-text-secondary);
 }
 
-.live-status-card {
-  @apply mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-sm;
-  border: 1px solid #e5e7eb;
-  background: var(--sl-bg-canvas);
-  color: var(--sl-text-secondary);
+.live-answer-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.25rem 0 0.15rem;
+}
+
+.live-answer-skeleton span {
+  height: 0.6rem;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #f2f2f4 25%, #e9e9ec 37%, #f2f2f4 63%);
+  background-size: 400% 100%;
+  animation: live-skeleton-shimmer 1.4s ease infinite;
+}
+
+.live-answer-skeleton span:nth-child(2) {
+  width: 92%;
+}
+
+.live-answer-skeleton span:nth-child(3) {
+  width: 58%;
+}
+
+@keyframes live-skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0 50%;
+  }
 }
 
 .runtime-block-card {
@@ -5865,8 +6139,26 @@ onBeforeUnmount(() => {
 
 .live-progress-dot {
   @apply h-1.5 w-1.5 shrink-0 rounded-full;
-  background: #2b4ee6;
-  animation: cursor-blink 1s steps(2, start) infinite;
+  background: #2f62d6;
+  box-shadow: 0 0 0 0 rgb(47 98 214 / 35%);
+  animation: live-dot-pulse 1.6s ease-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(47 98 214 / 35%);
+    opacity: 1;
+  }
+
+  70% {
+    box-shadow: 0 0 0 0.35rem rgb(47 98 214 / 0%);
+    opacity: 0.65;
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(47 98 214 / 0%);
+    opacity: 1;
+  }
 }
 
 .live-text {
@@ -5879,11 +6171,25 @@ onBeforeUnmount(() => {
   color: var(--sl-text-secondary);
 }
 
+.live-markdown.is-streaming {
+  animation: live-answer-in 0.2s ease-out;
+}
+
 .live-markdown.is-streaming :deep(.markdown-content > *:last-child)::after {
   content: '';
-  @apply ml-1 inline-block h-4 w-1 align-middle;
-  background: #2b4ee6;
+  @apply ml-1 inline-block h-4 w-[2px] rounded-full align-text-bottom;
+  background: #2f62d6;
   animation: cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes live-answer-in {
+  from {
+    opacity: 0.4;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .activity-list {
@@ -5986,7 +6292,14 @@ onBeforeUnmount(() => {
 }
 
 .composer-inline-toolbar {
-  @apply pointer-events-auto flex flex-wrap items-center;
+  @apply pointer-events-auto flex flex-wrap items-center gap-1.5;
+}
+
+.composer-inline-toolbar :deep(.deep-thinking-toggle),
+.composer-inline-toolbar :deep(.citation-toggle) {
+  min-height: 2rem;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
 }
 
 .composer:focus-within {
@@ -6061,8 +6374,8 @@ onBeforeUnmount(() => {
 }
 
 .composer-attach-btn {
-  @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-    border border-line bg-surface text-theme-muted transition-colors;
+  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full
+    border border-[#e4e4e7] bg-surface text-theme-muted transition-colors;
 }
 
 .composer-attach-btn:hover:not(:disabled) {
@@ -6074,7 +6387,7 @@ onBeforeUnmount(() => {
 }
 
 .composer-attach-btn svg {
-  @apply h-[18px] w-[18px];
+  @apply h-[13px] w-[13px];
 }
 
 .composer-attachments {
@@ -6082,19 +6395,26 @@ onBeforeUnmount(() => {
 }
 
 .composer-thumb {
-  @apply relative h-16 w-16 overflow-hidden rounded-lg border border-line;
+  @apply relative h-16 w-16 overflow-hidden rounded-[10px] border
+    border-[#ebebee];
 }
 
 .composer-thumb.is-document {
-  @apply w-48 bg-surface-sunken;
+  @apply w-[13.5rem] bg-[#fcfcfc];
 }
 
 .composer-document {
-  @apply flex h-full min-w-0 items-center gap-2 px-3 pr-7 text-theme-secondary;
+  @apply flex h-full min-w-0 items-center gap-2 px-2.5 pr-7
+    text-theme-secondary;
 }
 
-.composer-document span {
-  @apply truncate text-xs font-medium;
+.composer-document-icon {
+  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg
+    bg-[#eef3fd] text-[#2f62d6];
+}
+
+.composer-document-name {
+  @apply min-w-0 truncate text-[12.5px] font-medium;
 }
 
 .composer-thumb img {
@@ -6129,7 +6449,15 @@ onBeforeUnmount(() => {
     @apply h-11 w-11;
   }
 
+  .composer-inline-toolbar :deep(.deep-thinking-toggle),
+  .composer-inline-toolbar :deep(.citation-toggle) {
+    min-height: 2.75rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
   .deliverable-action,
+  .deliverable-action-btn,
   .retry-hint-btn {
     min-width: 44px;
     min-height: 44px;
@@ -6320,13 +6648,14 @@ onBeforeUnmount(() => {
     min-height: 2.75rem;
   }
 
-  .runtime-progress-summary .runtime-card-title {
+  .runtime-progress-summary .runtime-card-title,
+  .runtime-progress-summary .runtime-progress-title {
     color: var(--sl-text-primary);
     font-size: 0.875rem;
     line-height: 1.25rem;
   }
 
-  .runtime-progress-summary-text {
+  .runtime-progress-meta {
     font-size: 0.75rem;
     line-height: 1rem;
   }
@@ -6342,6 +6671,8 @@ onBeforeUnmount(() => {
 
   .runtime-progress-card[open] .runtime-progress-summary {
     margin-bottom: 0.25rem;
+    padding-bottom: 0;
+    border-bottom: 0;
   }
 
   .runtime-progress-content {
@@ -6355,11 +6686,6 @@ onBeforeUnmount(() => {
   .runtime-progress-card:not(.runtime-progress-live) > .runtime-plan-node {
     margin-left: 0.5rem;
     padding-left: 0.75rem;
-  }
-
-  .runtime-progress-live .runtime-progress-desktop-title,
-  .runtime-progress-live .runtime-progress-footer {
-    display: none;
   }
 
   .live-status-card {
@@ -6530,29 +6856,40 @@ onBeforeUnmount(() => {
 .message-attachments :deep(.auth-image) {
   max-width: 220px;
   max-height: 220px;
+  border: 1px solid #ebebee;
+  border-radius: 0.625rem;
   object-fit: cover;
 }
 
 .message-document-card {
-  @apply flex w-full min-w-0 max-w-sm items-center gap-2 rounded-lg border
-    border-line bg-surface px-3 py-2 text-left text-theme-secondary
-    transition-colors;
+  @apply flex w-full min-w-0 max-w-[32.5rem] items-center gap-2.5
+    rounded-[12px] border border-[#ebebee] bg-[#fcfcfc] px-3 py-3 text-left
+    text-theme-secondary transition-colors;
 }
 
 .message-document-card:hover {
-  @apply border-primary-300 text-primary-700;
+  @apply border-primary-300 bg-surface text-primary-700;
 }
 
-.message-document-card span {
-  @apply flex min-w-0 flex-1 flex-col;
+.message-document-icon {
+  @apply flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[9px]
+    bg-[#eef3fd] text-[#2f62d6];
 }
 
-.message-document-card strong {
-  @apply truncate text-sm font-medium;
+.message-document-meta {
+  @apply flex min-w-0 flex-1 flex-col gap-0.5;
 }
 
-.message-document-card small {
-  @apply text-xs text-theme-subtle;
+.message-document-meta strong {
+  @apply truncate text-[13.5px] font-medium text-theme;
+}
+
+.message-document-meta small {
+  @apply text-xs text-[#71717a];
+}
+
+.message-document-download {
+  @apply shrink-0 text-[#a1a1aa];
 }
 
 .message-deliverables {
@@ -6560,8 +6897,8 @@ onBeforeUnmount(() => {
 }
 
 .deliverable-card {
-  @apply flex w-full max-w-sm items-center gap-3 rounded-xl border
-    border-line bg-surface px-3 py-2.5 text-left transition-all;
+  @apply flex w-full max-w-[32.5rem] items-center gap-3 rounded-[12px] border
+    border-[#e4e4e7] bg-surface py-3 pl-3.5 pr-3 text-left transition-all;
 }
 
 .deliverable-card:hover {
@@ -6573,20 +6910,20 @@ onBeforeUnmount(() => {
 }
 
 .deliverable-thumb {
-  @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-lg
-    bg-primary-50 text-primary-600;
+  @apply flex h-[38px] w-[38px] shrink-0 items-center justify-center
+    rounded-[9px] bg-[#eef3fd] text-[#2f62d6];
 }
 
 .deliverable-meta {
-  @apply flex min-w-0 flex-1 flex-col;
+  @apply flex min-w-0 flex-1 flex-col gap-0.5;
 }
 
 .deliverable-name {
-  @apply truncate text-sm font-medium text-theme;
+  @apply truncate text-[13.5px] font-medium text-theme;
 }
 
 .deliverable-sub {
-  @apply mt-0.5 text-xs uppercase tracking-wide text-theme-subtle;
+  @apply text-xs text-[#71717a];
 }
 
 .deliverable-actions {
@@ -6600,6 +6937,24 @@ onBeforeUnmount(() => {
 
 .deliverable-action:hover {
   @apply bg-primary-50 text-primary-600;
+}
+
+.deliverable-action-btn {
+  @apply flex h-8 shrink-0 items-center gap-1.5 rounded-lg border
+    border-[#e4e4e7] bg-surface px-3 text-[13px] font-medium
+    text-theme-secondary transition-colors;
+}
+
+.deliverable-action-btn:hover {
+  @apply border-primary-300 bg-primary-50 text-primary-700;
+}
+
+.deliverable-action-btn.is-primary {
+  @apply border-transparent bg-ink-900 text-white;
+}
+
+.deliverable-action-btn.is-primary:hover {
+  @apply bg-ink-700 text-white;
 }
 
 .disclaimer {

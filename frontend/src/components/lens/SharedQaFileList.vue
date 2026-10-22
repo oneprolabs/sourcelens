@@ -49,7 +49,9 @@ function open(file) {
           <FileText :size="19" aria-hidden="true" />
         </span>
         <span class="min-w-0">
-          <span class="block truncate text-sm font-medium text-ink-800">
+          <span
+            class="block break-words text-sm font-medium text-ink-800 sm:truncate"
+          >
             {{ file.filename }}
           </span>
           <span class="block text-xs text-ink-400">
@@ -61,7 +63,7 @@ function open(file) {
       <button
         v-if="isPreviewable(file)"
         type="button"
-        class="rounded-md p-2 text-ink-400 transition-colors hover:bg-surface-sunken hover:text-primary-600"
+        class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center rounded-md p-2 text-ink-400 transition-colors hover:bg-surface-sunken hover:text-primary-600"
         :aria-label="t('lens.qa.previewFile', { name: file.filename })"
         @click="emit('preview', file)"
       >
@@ -69,7 +71,7 @@ function open(file) {
       </button>
       <button
         type="button"
-        class="rounded-md p-2 text-ink-400 transition-colors hover:bg-surface-sunken hover:text-primary-600"
+        class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center rounded-md p-2 text-ink-400 transition-colors hover:bg-surface-sunken hover:text-primary-600"
         :aria-label="t('lens.qa.downloadFile', { name: file.filename })"
         @click="emit('download', file)"
       >

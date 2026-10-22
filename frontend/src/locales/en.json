@@ -263,7 +263,18 @@
         "not_requested": "Not requested",
         "supported": "Supported by evidence",
         "unsupported": "Insufficient support",
-        "inconclusive": "Inconclusive"
+        "inconclusive": "Inconclusive",
+        "coverage": {
+          "complete": "Evidence coverage is complete.",
+          "incomplete": "Evidence coverage is incomplete; some statements were not verified.",
+          "unknown": "Evidence coverage could not be determined."
+        },
+        "warning": {
+          "evidenceIncomplete": "Some referenced evidence was not read, so those statements stay unverified.",
+          "reviewMaterialIncomplete": "The material available for review was truncated, so the conclusion stays unverified.",
+          "reviewUnavailable": "The review step was unavailable, so the conclusion stays unverified.",
+          "reviewInconclusive": "The available evidence neither confirms nor refutes the conclusion."
+        }
       },
       "liveOutput": "Live output",
       "newSession": "New session",
@@ -333,15 +344,15 @@
       "hideTimeline": "Hide events",
       "citations": {
         "title": "Sources",
-        "count": "{count} code citations",
-        "open": "Open code citation {location}",
-        "viewerTitle": "Code citation",
+        "count": "{count} references",
+        "open": "Open reference {location}",
+        "viewerTitle": "Reference details",
         "revision": "Revision",
         "symbol": "Symbol",
         "lines": "Lines",
-        "loading": "Loading code citation…",
+        "loading": "Loading reference…",
         "retry": "Retry",
-        "unavailable": "This code citation is unavailable. Its run snapshot may be missing, or you may not have access.",
+        "unavailable": "This reference is unavailable. Its run snapshot may be missing, or you may not have access.",
         "preview": "Preview",
         "source": "Source"
       },
@@ -358,6 +369,11 @@
         "knowledgeSummary": "Summarize the key information",
         "knowledgeCompare": "Compare two concepts",
         "knowledgeActions": "Extract conclusions and action items"
+      },
+      "followUps": {
+        "detail": "Tell me more about “{topic}”",
+        "details": "What are the key details or caveats of “{topic}”?",
+        "sources": "Which sources support these conclusions?"
       },
       "attachFile": "Upload image or document",
       "removeAttachment": "Remove attachment",
@@ -576,7 +592,17 @@
       },
       "searchSessions": "Search conversations",
       "searchSessionsPlaceholder": "Search conversation titles",
-      "noSearchResults": "No conversations match your search"
+      "noSearchResults": "No conversations match your search",
+      "progress": {
+        "completedSteps": "Completed {count} steps",
+        "finishedSteps": "Completed {done} of {total} steps",
+        "runningSteps": "Working · {done}/{total}",
+        "duration": "Took {duration}",
+        "expand": "View steps",
+        "collapse": "Collapse"
+      },
+      "exportAction": "Export",
+      "regenerateAction": "Regenerate"
     }
   },
   "auth": {

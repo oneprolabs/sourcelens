@@ -61,11 +61,6 @@
                         <p class="mt-1 text-sm leading-6 text-ink-500">
                           {{ setting.description }}
                         </p>
-                        <p
-                          class="setting-key mt-1 font-mono text-xs text-ink-400"
-                        >
-                          {{ setting.key }}
-                        </p>
                       </td>
                       <td class="table-cell">
                         <div
@@ -368,10 +363,6 @@ onMounted(load)
 
   .settings-table .table-cell:last-child {
     @apply pt-0;
-  }
-
-  .setting-key {
-    overflow-wrap: anywhere;
   }
 
   .settings-control {
