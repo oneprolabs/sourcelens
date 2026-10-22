@@ -2,7 +2,7 @@
 
 import secrets
 
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.http import content_disposition_header
@@ -12,6 +12,13 @@ from rest_framework.views import APIView
 
 from accounts.models import normalize_answer_language
 from lens.models import Assistant, SharedQA, SharedQAFile
+from lens.public_share import (
+    INHERIT,
+    allows_anonymous_access,
+    configured_policy,
+    policy_source,
+    requires_publisher_choice,
+)
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.serializers import (
     SharedQAAdminDetailSerializer,
@@ -57,14 +64,69 @@ class SharedQAViewSet(BaseAuthenticatedViewSet):
         )
 
     def partial_update(self, request, *args, **kwargs):
-        """Let the owner edit the share title after publishing."""
+        """Let the owner edit the share title and its access mode."""
 
         share = self.get_object()
+        updates = []
         title = (request.data.get("title") or "").strip()
         if title:
             share.title = title[:200]
-            share.save(update_fields=["title", "updated_at"])
+            updates.append("title")
+        if "require_login" in request.data:
+            assistant = share.assistant
+            if (
+                assistant is not None
+                and assistant.visibility == Assistant.Visibility.PUBLIC
+                and isinstance(request.data.get("require_login"), bool)
+            ):
+                share.require_login = request.data["require_login"]
+                updates.append("require_login")
+        if updates:
+            share.save(update_fields=[*updates, "updated_at"])
         return Response(SharedQAMineSerializer(share).data)
+
+
+class SharedQAPolicyView(APIView):
+    """Report the link-access policy a publisher inherits for a new share."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Return the inherited policy and whether the publisher must choose."""
+
+        assistant = None
+        assistant_uuid = (
+            request.query_params.get("assistant_uuid") or ""
+        ).strip()
+        assistant_slug = (
+            request.query_params.get("assistant_slug") or ""
+        ).strip()
+        if assistant_uuid or assistant_slug:
+            lookup = {"uuid": assistant_uuid} if assistant_uuid else {
+                "slug": assistant_slug
+            }
+            assistant = (
+                Assistant.objects.filter(**lookup)
+                .filter(
+                    Q(visibility=Assistant.Visibility.PUBLIC)
+                    | Q(access_grants__user=request.user)
+                    | Q(access_grants__group__in=request.user.groups.all())
+                )
+                .distinct()
+                .first()
+            )
+            if assistant is None:
+                return Response(
+                    {"detail": "Assistant not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        return Response(
+            {
+                "policy": configured_policy(assistant) or INHERIT,
+                "source": policy_source(assistant) or "",
+                "requires_choice": requires_publisher_choice(assistant),
+            }
+        )
 
 
 class AdminSharedQAViewSet(BaseAdminViewSet):
@@ -113,7 +175,7 @@ class PublicSharedQAView(APIView):
                 {"detail": "Shared Q&A not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        access_error = _shared_qa_access_error(share.assistant, request.user)
+        access_error = _shared_qa_access_error(share.assistant, request.user, share=share)
         if access_error is not None:
             return access_error
         snapshot_shared_qa_files(share, strict=False)
@@ -139,7 +201,7 @@ class PublicSharedQAPdfView(APIView):
         )
         if share is None or share.assistant is None:
             raise Http404
-        access_error = _shared_qa_access_error(share.assistant, request.user)
+        access_error = _shared_qa_access_error(share.assistant, request.user, share=share)
         if access_error is not None:
             return access_error
         snapshot_shared_qa_files(share, strict=False)
@@ -181,7 +243,7 @@ class PublicSharedQAFileView(APIView):
         )
         if share is None or share.assistant is None:
             raise Http404
-        access_error = _shared_qa_access_error(share.assistant, request.user)
+        access_error = _shared_qa_access_error(share.assistant, request.user, share=share)
         if access_error is not None:
             return access_error
         snapshot = get_object_or_404(
@@ -216,10 +278,28 @@ def _shared_qa_visible_to_user(share, user):
     )
 
 
-def _shared_qa_access_error(assistant, user):
-    """Return an access error response for shared Q&A, or None if allowed."""
+def _shared_qa_access_error(assistant, user, share=None):
+    """Return an access error response for shared Q&A, or None if allowed.
 
-    if not (user and user.is_authenticated):
+    A public Assistant publishes its shared Q&A, so its share links open
+    without signing in unless the share, the Assistant, or the deployment
+    policy requires a signed-in viewer. A private Assistant always needs an
+    authenticated viewer that holds access.
+    """
+
+    authenticated = bool(user and user.is_authenticated)
+    if not authenticated:
+        if not allows_anonymous_access(assistant, share=share):
+            return Response(
+                {
+                    "code": "AUTHENTICATION_REQUIRED",
+                    "detail": "Sign in to view this shared Q&A.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    if assistant.is_accessible_by(user):
+        return None
+    if not authenticated:
         return Response(
             {
                 "code": "AUTHENTICATION_REQUIRED",
@@ -227,15 +307,13 @@ def _shared_qa_access_error(assistant, user):
             },
             status=status.HTTP_403_FORBIDDEN,
         )
-    if not assistant.is_accessible_by(user):
-        return Response(
-            {
-                "code": "ASSISTANT_ACCESS_DENIED",
-                "detail": "You do not have access to this assistant.",
-            },
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    return None
+    return Response(
+        {
+            "code": "ASSISTANT_ACCESS_DENIED",
+            "detail": "You do not have access to this assistant.",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 class PublicSharedQAListView(APIView):

@@ -217,10 +217,11 @@ class QAPdfApiTests(TestCase):
         render_pdf.assert_called_once()
 
     @patch("lens.views.shares.render_qa_pdf", return_value=b"%PDF-test")
-    def test_anonymous_user_cannot_download_shared_pdf(self, render_pdf):
+    def test_anonymous_user_can_download_shared_pdf(self, render_pdf):
         response = self.client.get(
             f"/api/lens/public/qa/{self.share.token}/pdf/"
         )
 
-        self.assertEqual(response.status_code, 403)
-        render_pdf.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        render_pdf.assert_called_once()

@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from lens.models import (
     Assistant,
     AssistantAccess,
+    GlobalSetting,
     LensNode,
     Message,
     MessageAttachment,
@@ -293,7 +294,7 @@ class SharedQAApiTests(TestCase):
             self.assertGreater(item["byte_size"], 0)
             self.assertTrue(item["content_type"])
 
-    def test_share_file_requires_login_and_assistant_access(self):
+    def test_share_file_allows_anonymous_for_public_assistant(self):
         self._add_run_files()
         token = self._share().data["token"]
         snapshot = SharedQAFile.objects.get(
@@ -304,12 +305,13 @@ class SharedQAApiTests(TestCase):
 
         self.client.force_authenticate(user=None)
         anonymous = self.client.get(url)
-        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.status_code, 200)
         self.assertEqual(
-            anonymous.data["code"],
-            "AUTHENTICATION_REQUIRED",
+            anonymous["Content-Type"],
+            snapshot.content_type,
         )
 
+    def test_share_file_requires_login_for_private_assistant(self):
         private_token = self._private_share_token(with_files=True)
         private_share = SharedQA.objects.get(token=private_token)
         private_snapshot = private_share.files.get(
@@ -319,6 +321,15 @@ class SharedQAApiTests(TestCase):
             private_token,
             private_snapshot.uuid,
         )
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(private_url)
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(
+            anonymous.data["code"],
+            "AUTHENTICATION_REQUIRED",
+        )
+
         self.client.force_authenticate(self.other)
         denied = self.client.get(private_url)
         self.assertEqual(denied.status_code, 403)
@@ -449,12 +460,12 @@ class SharedQAApiTests(TestCase):
         resp = self._share(user=self.other)
         self.assertEqual(resp.status_code, 404)
 
-    def test_public_assistant_single_requires_login_then_allows_authenticated_user(self):
+    def test_public_assistant_single_allows_anonymous_and_authenticated_viewers(self):
         token = self._share().data["token"]
         self.client.force_authenticate(user=None)
         anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
-        self.assertEqual(anonymous.status_code, 403)
-        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+        self.assertEqual(anonymous.status_code, 200)
+        self.assertEqual(anonymous.data["question"], "What is X?")
 
         self.client.force_authenticate(self.other)
         other = self.client.get(f"/api/lens/public/qa/{token}/")
@@ -465,7 +476,7 @@ class SharedQAApiTests(TestCase):
         peer = self.client.get(f"/api/lens/public/qa/{token}/")
         self.assertEqual(peer.status_code, 200)
         self.assertEqual(peer.data["question"], "What is X?")
-        self.assertEqual(peer.data["view_count"], 2)
+        self.assertEqual(peer.data["view_count"], 3)
 
     def test_archiving_assistant_preserves_shared_qa_snapshot_access(self):
         token = self._share().data["token"]
@@ -496,7 +507,7 @@ class SharedQAApiTests(TestCase):
         resp = self.client.get(f"/api/lens/public/qa/{token}/")
         self.assertEqual(resp.status_code, 200)
 
-    def test_listed_single_requires_login_and_counts_views(self):
+    def test_listed_single_counts_views_for_anonymous_and_authenticated(self):
         token = self._share().data["token"]
         share = SharedQA.objects.get(token=token)
         share.is_listed = True
@@ -504,18 +515,19 @@ class SharedQAApiTests(TestCase):
 
         self.client.force_authenticate(user=None)
         anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
-        self.assertEqual(anonymous.status_code, 403)
-        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+        self.assertEqual(anonymous.status_code, 200)
+        self.assertEqual(anonymous.data["answer"], "X is a thing.")
+        self.assertEqual(anonymous.data["view_count"], 1)
 
         self.client.force_authenticate(self.other)
         resp = self.client.get(f"/api/lens/public/qa/{token}/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["question"], "What is X?")
         self.assertEqual(resp.data["answer"], "X is a thing.")
-        self.assertEqual(resp.data["view_count"], 1)
+        self.assertEqual(resp.data["view_count"], 2)
         self.assertNotIn("published_by", resp.data)
         again = self.client.get(f"/api/lens/public/qa/{token}/")
-        self.assertEqual(again.data["view_count"], 2)
+        self.assertEqual(again.data["view_count"], 3)
 
     def test_private_assistant_single_requires_assistant_access(self):
         token = self._private_share_token()
@@ -594,8 +606,8 @@ class SharedQAApiTests(TestCase):
         url = "/api/lens/public/assistants/data-helper/qa/"
         self.client.force_authenticate(user=None)
         before = self.client.get(url)
-        self.assertEqual(before.status_code, 403)
-        self.assertEqual(before.data["code"], "AUTHENTICATION_REQUIRED")
+        self.assertEqual(before.status_code, 200)
+        self.assertEqual(before.data["total"], 0)
 
         self.client.force_authenticate(self.other)
         before_auth = self.client.get(url)
@@ -796,3 +808,195 @@ class SharedQAApiTests(TestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, 404)
+
+    def _set_global_policy(self, policy):
+        """Store the deployment-wide share policy."""
+
+        GlobalSetting.objects.update_or_create(
+            key="lens.public_share.policy",
+            defaults={"value": policy},
+        )
+
+    def _set_assistant_policy(self, policy, assistant=None):
+        """Store the Assistant-level share policy."""
+
+        target = assistant or self.assistant
+        settings = dict(target.settings or {})
+        settings["public_share"] = {"policy": policy}
+        target.settings = settings
+        target.save(update_fields=["settings"])
+
+    def test_global_policy_requires_login_for_public_share(self):
+        self._set_global_policy("login")
+        token = self._share().data["token"]
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+
+        self.client.force_authenticate(self.other)
+        signed_in = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(signed_in.status_code, 200)
+
+    def test_assistant_policy_overrides_global_policy(self):
+        self._set_global_policy("login")
+        self._set_assistant_policy("public")
+        token = self._share().data["token"]
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 200)
+
+    def test_share_choice_applies_when_no_layer_is_configured(self):
+        token = self._share(payload={"require_login": True}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIs(share.require_login, True)
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_share_choice_keeps_public_share_open(self):
+        token = self._share(payload={"require_login": False}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIs(share.require_login, False)
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 200)
+
+    def test_assistant_policy_wins_over_the_share_choice(self):
+        self._set_assistant_policy("public")
+        token = self._share(payload={"require_login": True}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIs(share.require_login, True)
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 200)
+
+    def test_configured_policy_applies_to_a_share_without_a_choice(self):
+        token = self._share().data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIsNone(share.require_login)
+
+        self._set_global_policy("login")
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_configured_policy_wins_over_the_share_choice(self):
+        self._set_global_policy("login")
+        token = self._share(payload={"require_login": False}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIs(share.require_login, False)
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_open_global_policy_reopens_a_share_that_required_login(self):
+        token = self._share(payload={"require_login": True}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIs(share.require_login, True)
+
+        self.client.force_authenticate(user=None)
+        denied = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(denied.status_code, 403)
+
+        self._set_global_policy("public")
+        allowed = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_owner_can_change_the_access_mode_of_an_existing_share(self):
+        token = self._share().data["token"]
+        share = SharedQA.objects.get(token=token)
+
+        self.client.force_authenticate(self.owner)
+        resp = self.client.patch(
+            f"/api/lens/shares/{share.uuid}/",
+            {"require_login": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIs(resp.data["require_login"], True)
+        share.refresh_from_db()
+        self.assertIs(share.require_login, True)
+
+        self.client.force_authenticate(user=None)
+        denied = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.data["code"], "AUTHENTICATION_REQUIRED")
+
+        self.client.force_authenticate(self.owner)
+        reopened = self.client.patch(
+            f"/api/lens/shares/{share.uuid}/",
+            {"require_login": False},
+            format="json",
+        )
+        self.assertEqual(reopened.status_code, 200)
+        self.assertIs(reopened.data["require_login"], False)
+
+        self.client.force_authenticate(user=None)
+        allowed = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_private_assistant_share_keeps_its_access_mode_unchanged(self):
+        private_token = self._private_share_token()
+        private_share = SharedQA.objects.get(token=private_token)
+
+        self.client.force_authenticate(self.owner)
+        resp = self.client.patch(
+            f"/api/lens/shares/{private_share.uuid}/",
+            {"require_login": False},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.data["require_login"])
+
+    def test_private_assistant_never_offers_a_share_choice(self):
+        private_assistant = Assistant.objects.create(
+            name="Private Helper",
+            slug="private-helper",
+            lensnode=self.lensnode,
+            selected_task="qa",
+            status=Assistant.Status.ACTIVE,
+            visibility=Assistant.Visibility.PRIVATE,
+        )
+        run = self._make_done_run(private_assistant)
+        token = self._share(run=run, payload={"require_login": False}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        self.assertIsNone(share.require_login)
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(f"/api/lens/public/qa/{token}/")
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_policy_endpoint_reports_inherited_policy(self):
+        self.client.force_authenticate(self.owner)
+        url = f"/api/lens/shares/policy/?assistant_uuid={self.assistant.uuid}"
+
+        inherited = self.client.get(url)
+        self.assertEqual(inherited.status_code, 200)
+        self.assertEqual(inherited.data["policy"], "inherit")
+        self.assertTrue(inherited.data["requires_choice"])
+
+        self._set_global_policy("login")
+        configured = self.client.get(url)
+        self.assertEqual(configured.data["policy"], "login")
+        self.assertFalse(configured.data["requires_choice"])
+
+        self._set_assistant_policy("public")
+        overridden = self.client.get(url)
+        self.assertEqual(overridden.data["policy"], "public")
+        self.assertFalse(overridden.data["requires_choice"])
+
+    def test_policy_endpoint_requires_sign_in(self):
+        self.client.force_authenticate(user=None)
+        resp = self.client.get("/api/lens/shares/policy/")
+        self.assertEqual(resp.status_code, 401)

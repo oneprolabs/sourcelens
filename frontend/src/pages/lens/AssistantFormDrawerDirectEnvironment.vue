@@ -357,18 +357,6 @@
               {{ t('lensAdmin.wizard.maxConcurrencyHint') }}
             </p>
           </FormRow>
-          <FormRow :label="t('lensAdmin.fields.deepThinking')">
-            <label
-              class="flex cursor-pointer items-center gap-2 text-sm text-ink-700"
-            >
-              <input
-                v-model="form.deep_thinking"
-                type="checkbox"
-                class="form-checkbox"
-              />
-              <span>{{ t('lensAdmin.deepThinkingHint') }}</span>
-            </label>
-          </FormRow>
           <FormRow :label="t('lensAdmin.fields.executionMaxTokens')">
             <input
               v-model.number="form.execution_max_tokens"
@@ -397,58 +385,36 @@
         <!-- Wizard Step 2 — Execution -->
         <div v-else-if="wizardStep === 2" class="space-y-4">
           <div v-if="form.mode === 'direct'" class="space-y-4">
-            <div class="grid gap-4 md:grid-cols-2">
-              <FormRow :label="t('lensAdmin.fields.type')">
-                <div class="grid gap-2 sm:grid-cols-3" role="radiogroup">
-                  <label
-                    v-for="type in assistantTypeOptions"
-                    :key="type.value"
-                    class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors"
+            <FormRow :label="t('lensAdmin.fields.type')">
+              <div class="grid gap-2 sm:grid-cols-3" role="radiogroup">
+                <label
+                  v-for="type in assistantTypeOptions"
+                  :key="type.value"
+                  class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors"
+                  :class="
+                    form.capability === type.value
+                      ? 'border-brand-600 bg-brand-50 text-brand-700'
+                      : 'border-line bg-surface text-ink-600 hover:border-brand-300'
+                  "
+                >
+                  <input
+                    v-model="form.capability"
+                    type="radio"
+                    :value="type.value"
+                    class="sr-only"
+                  />
+                  <span
+                    class="h-3 w-3 rounded-full border-2"
                     :class="
                       form.capability === type.value
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-line bg-surface text-ink-600 hover:border-brand-300'
+                        ? 'border-brand-600 bg-brand-600'
+                        : 'border-line'
                     "
-                  >
-                    <input
-                      v-model="form.capability"
-                      type="radio"
-                      :value="type.value"
-                      class="sr-only"
-                    />
-                    <span
-                      class="h-3 w-3 rounded-full border-2"
-                      :class="
-                        form.capability === type.value
-                          ? 'border-brand-600 bg-brand-600'
-                          : 'border-line'
-                      "
-                    />
-                    <span>{{ type.label }}</span>
-                  </label>
-                </div>
-              </FormRow>
-              <FormRow
-                v-if="requiresNodeSelection"
-                :label="t('lensAdmin.fields.lensnode')"
-              >
-                <BaseSelect
-                  v-model="form.lensnode_uuid"
-                  :required="requiresWorkspace"
-                >
-                  <option value="">
-                    {{ t('lensAdmin.placeholders.selectLensNode') }}
-                  </option>
-                  <option
-                    v-for="ln in compatibleLensnodes"
-                    :key="ln.uuid"
-                    :value="ln.uuid"
-                  >
-                    {{ ln.name }}
-                  </option>
-                </BaseSelect>
-              </FormRow>
-            </div>
+                  />
+                  <span>{{ type.label }}</span>
+                </label>
+              </div>
+            </FormRow>
           </div>
           <div
             v-else
@@ -1487,6 +1453,26 @@
             </p>
           </FormRow>
 
+          <FormRow
+            v-if="form.visibility === 'public'"
+            :label="t('lensAdmin.wizard.publicSharePolicyLabel')"
+          >
+            <BaseSelect v-model="form.public_share_policy">
+              <option value="inherit">
+                {{ t('lensAdmin.wizard.publicSharePolicyInherit') }}
+              </option>
+              <option value="public">
+                {{ t('lensAdmin.wizard.publicSharePolicyPublic') }}
+              </option>
+              <option value="login">
+                {{ t('lensAdmin.wizard.publicSharePolicyLogin') }}
+              </option>
+            </BaseSelect>
+            <p class="mt-1 text-xs text-ink-500">
+              {{ t('lensAdmin.wizard.publicSharePolicyHint') }}
+            </p>
+          </FormRow>
+
           <div v-if="form.visibility === 'private'" class="space-y-4">
             <div
               class="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
@@ -1787,7 +1773,6 @@ const props = defineProps({
   // Shared reactive form object owned by the parent; this drawer writes into
   // it directly so the parent's save() can read the result unchanged.
   form: { type: Object, required: true },
-  lensnodes: { type: Array, default: () => [] },
   assistants: { type: Array, default: () => [] },
   skills: { type: Array, default: () => [] },
   environmentVariableSets: { type: Array, default: () => [] },
@@ -2194,8 +2179,6 @@ const requiresWorkspace = computed(() =>
   ['code_analysis', 'knowledge_qa'].includes(props.form.capability)
 )
 
-const requiresNodeSelection = computed(() => false)
-
 watch(
   () => props.form.mode,
   (assistantMode) => {
@@ -2208,12 +2191,6 @@ watch(
     props.form.plugin_bindings = []
     props.form.multimodal_model_ref = ''
   }
-)
-
-const compatibleLensnodes = computed(() =>
-  props.lensnodes.filter((lensnode) =>
-    (lensnode.tasks || []).some((task) => task.name === props.form.capability)
-  )
 )
 
 const chatModelOptions = computed(() =>

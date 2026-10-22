@@ -1056,6 +1056,11 @@ export async function deleteShare(uuid) {
   await api.delete(`/lens/shares/${uuid}/`)
 }
 
+export async function getSharePolicy(params = {}) {
+  const response = await api.get('/lens/shares/policy/', { params })
+  return unwrapResponse(response)
+}
+
 export async function getPublicQa(token) {
   const response = await api.get(`/lens/public/qa/${token}/`)
   return unwrapResponse(response)

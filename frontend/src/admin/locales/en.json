@@ -2315,6 +2315,11 @@
     "settings": {
       "publicBaseUrlTitle": "Public Base URL",
       "publicBaseUrlDesc": "Base address used for assistant share links (e.g. your own domain). Leave empty to use the current server address.",
+      "publicSharePolicyTitle": "Public share access policy",
+      "publicSharePolicyDesc": "Default policy for public assistant share links: whether a visitor must sign in. An Assistant can override it; when unset the publisher chooses.",
+      "publicSharePolicyInherit": "Not configured (assistant or publisher decides)",
+      "publicSharePolicyPublic": "Open without sign-in",
+      "publicSharePolicyLogin": "Sign-in required",
       "nodeImageTitle": "Node Image",
       "nodeImageDesc": "Docker image used in the generated compose. Leave empty to use the default oneprolabs/lensnode:latest.",
       "groups": {
@@ -2779,13 +2784,17 @@
       "noSkills": "No Skills available — create one in the Skill Library first",
       "noMcp": "No MCP Servers available — create one in the MCP Server Library first",
       "visibilityHint": "Admins can always access every assistant.",
+      "publicSharePolicyLabel": "Public share access policy",
+      "publicSharePolicyHint": "Controls whether this assistant's share links need a signed-in viewer. Left unset, the global policy and the publisher decide; private assistants always require sign-in.",
+      "publicSharePolicyInherit": "Follow the global policy (publisher decides)",
+      "publicSharePolicyPublic": "Open without sign-in",
+      "publicSharePolicyLogin": "Sign-in required",
       "noDecisionModel": "None (keep the existing flow)",
       "decisionAutomatic": "Automatic (based on assistant capability)",
       "decisionModelHint": "Optional. Configure a dedicated model for evidence checks and candidate ranking, or leave it unset to keep the existing processing flow.",
       "configureDecisionModel": "Configure a decision model"
     },
     "thinkingModes": { "normal": "Normal thinking", "deep": "Deep thinking" },
-    "deepThinkingHint": "Request more model reasoning for complex questions; responses may take longer. Support depends on the model. Answer review is reported separately.",
     "reasoningSupportHint": "Requested setting; provider adoption is unconfirmed.",
     "executionBudgetHint": "0 means no configured cap. Budgets apply in both thinking modes. Token accounting is checked between model calls; this is not a currency limit.",
     "agentRounds": {

@@ -1808,6 +1808,8 @@
       :run-uuid="shareRunUuid"
       :existing-share="shareExisting"
       :assistant-name="assistantName"
+      :assistant-uuid="shareAssistantUuid"
+      :assistant-slug="shareAssistantSlug"
       :question="shareQuestion"
       :answer-preview="shareAnswer"
       @close="shareOpen = false"
@@ -2183,12 +2185,8 @@ const selectedAssistant = computed(
     ) || null
 )
 
-const activeAssistant = computed(
-  () => selectedAssistant.value || publicAssistant.value
-)
 const effectiveDeepThinking = computed({
-  get: () =>
-    deepThinking.value ?? Boolean(activeAssistant.value?.deep_thinking),
+  get: () => deepThinking.value ?? false,
   set: (value) => {
     deepThinking.value = value
   }
@@ -2387,6 +2385,10 @@ const emptyVariant = computed(() =>
   userStore.userHasFeature('admin_console') ? 'admin' : 'visitor'
 )
 
+const shareAssistantUuid = computed(() => selectedAssistant.value?.uuid || '')
+const shareAssistantSlug = computed(
+  () => selectedAssistant.value?.slug || publicAssistant.value?.slug || ''
+)
 const assistantName = computed(() =>
   isSmartCollaborationRoute.value
     ? t('lens.chat.smartCollaboration')

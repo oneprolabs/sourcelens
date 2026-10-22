@@ -79,6 +79,19 @@
                             class="settings-input w-full max-w-40 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                           />
                           <BaseSelect
+                            v-else-if="setting.type === 'select'"
+                            v-model="settingsForm[setting.key]"
+                            class="min-w-0 max-w-lg"
+                          >
+                            <option
+                              v-for="option in setting.options"
+                              :key="option.value"
+                              :value="option.value"
+                            >
+                              {{ option.label }}
+                            </option>
+                          </BaseSelect>
+                          <BaseSelect
                             v-else-if="setting.type === 'model_ref'"
                             v-model="settingsForm[setting.key]"
                             class="min-w-0 max-w-lg"
@@ -282,7 +295,8 @@ const defaultSettings = {
   'lensnode_health.interval_seconds': 60,
   'run_retention.interval_seconds': 86400,
   'lens.skills.generator_model_ref': '',
-  'lens.smart_collaboration.model_ref': ''
+  'lens.smart_collaboration.model_ref': '',
+  'lens.public_share.policy': 'inherit'
 }
 
 const settingsForm = ref({ ...defaultSettings })
@@ -411,6 +425,28 @@ const settingDefinitions = computed(() => {
       description: t('lensAdmin.settings.skillGeneratorModelDesc'),
       type: 'model_ref',
       unit: ''
+    },
+    {
+      key: 'lens.public_share.policy',
+      group: 'advanced',
+      label: t('lensAdmin.settings.publicSharePolicyTitle'),
+      description: t('lensAdmin.settings.publicSharePolicyDesc'),
+      type: 'select',
+      unit: '',
+      options: [
+        {
+          value: 'inherit',
+          label: t('lensAdmin.settings.publicSharePolicyInherit')
+        },
+        {
+          value: 'public',
+          label: t('lensAdmin.settings.publicSharePolicyPublic')
+        },
+        {
+          value: 'login',
+          label: t('lensAdmin.settings.publicSharePolicyLogin')
+        }
+      ]
     }
   ]
 })
@@ -455,6 +491,10 @@ function hydrateSettingsForm() {
       const definition = settingDefinitions.value.find(
         (item) => item.key === setting.key
       )
+      if (definition?.type === 'select') {
+        next[setting.key] = String(setting.value ?? next[setting.key])
+        return
+      }
       next[setting.key] =
         definition?.type === 'number'
           ? Number(setting.value ?? next[setting.key])
@@ -478,7 +518,9 @@ async function saveSettings() {
       const value =
         setting.type === 'number'
           ? Math.max(1, Number(settingsForm.value[setting.key]) || 1)
-          : settingsForm.value[setting.key] || ''
+          : setting.type === 'select'
+            ? settingsForm.value[setting.key] || 'inherit'
+            : settingsForm.value[setting.key] || ''
       const payload = {
         key: setting.key,
         value,

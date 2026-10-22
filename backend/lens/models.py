@@ -1991,6 +1991,14 @@ class SharedQA(TimestampedUUIDModel):
     )
     title = models.CharField(max_length=200, blank=True, default="")
     is_listed = models.BooleanField(default=False)
+    require_login = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Publisher choice for anonymous access; null defers to the "
+            "Assistant and deployment policy."
+        ),
+    )
     status = models.CharField(
         max_length=16,
         choices=Status.choices,

@@ -104,6 +104,29 @@ from .shares import _shared_qa_default_title, _unique_share_token
 logger = logging.getLogger(__name__)
 
 
+def _share_require_login_choice(request, assistant):
+    """Return the publisher's link-access choice for a new share.
+
+    Only a public Assistant can expose a share without a signed-in viewer,
+    so a private Assistant never stores a choice. The publisher is only
+    asked while neither the Assistant nor the deployment configured a
+    policy, but an explicit choice is always honoured.
+    """
+
+    if assistant is None or assistant.visibility != Assistant.Visibility.PUBLIC:
+        return None
+    value = request.data.get("require_login")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return None
+
+
 def _session_assistant_is_runnable(session, user):
     """Return whether a session may start work for its owning user."""
 
@@ -868,6 +891,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
         title = (request.data.get("title") or "").strip()[:200]
         if not title:
             title = _shared_qa_default_title(question)
+        require_login = _share_require_login_choice(request, assistant)
         with transaction.atomic():
             share = SharedQA.objects.create(
                 token=_unique_share_token(),
@@ -879,6 +903,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
                 answer=answer,
                 content_language=content_language,
                 title=title,
+                require_login=require_login,
                 published_by=request.user,
                 published_at=timezone.now(),
             )

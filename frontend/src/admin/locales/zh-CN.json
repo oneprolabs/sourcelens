@@ -2315,6 +2315,11 @@
     "settings": {
       "publicBaseUrlTitle": "对外基础地址",
       "publicBaseUrlDesc": "用于助手分享链接的基础地址（如你自己的域名）。留空则使用当前服务地址。",
+      "publicSharePolicyTitle": "公开分享访问策略",
+      "publicSharePolicyDesc": "全局默认策略：公开助手分享链接是否必须登录后才能查看。助手可单独覆盖，未配置时分享者可自行选择。",
+      "publicSharePolicyInherit": "未配置（由助手或分享者决定）",
+      "publicSharePolicyPublic": "免登录查看",
+      "publicSharePolicyLogin": "必须登录",
       "nodeImageTitle": "节点镜像地址",
       "nodeImageDesc": "为新节点生成 compose 时使用的 Docker 镜像。留空则使用默认 oneprolabs/lensnode:latest。",
       "groups": {
@@ -2779,13 +2784,17 @@
       "noSkills": "暂无可用 Skill，请先在 Skill 资源库中创建",
       "noMcp": "暂无可用 MCP Server，请先在 MCP Server 资源库中创建",
       "visibilityHint": "管理员始终可访问全部助手。",
+      "publicSharePolicyLabel": "公开分享访问策略",
+      "publicSharePolicyHint": "控制该助手分享链接是否必须登录后才能查看。留空时由全局策略与分享者决定；私有助手始终需要登录。",
+      "publicSharePolicyInherit": "跟随全局策略（由分享者决定）",
+      "publicSharePolicyPublic": "免登录查看",
+      "publicSharePolicyLogin": "必须登录",
       "noDecisionModel": "不配置（沿用原有链路）",
       "decisionAutomatic": "自动（按助手能力启用）",
       "decisionModelHint": "可选。配置后使用独立模型执行证据校验和候选排序；不配置时沿用原有处理链路。",
       "configureDecisionModel": "配置决策模型"
     },
     "thinkingModes": { "normal": "常规思考", "deep": "深度思考" },
-    "deepThinkingHint": "为复杂问题请求更多模型推理，可能需要更长时间；实际支持取决于模型。答案审核结果单独显示。",
     "reasoningSupportHint": "记录请求的设置，尚未确认供应商是否采用。",
     "executionBudgetHint": "0 表示不设置上限，两种思考模式均生效。Token 用量在模型调用之间检查，不等同于费用金额上限。",
     "agentRounds": {

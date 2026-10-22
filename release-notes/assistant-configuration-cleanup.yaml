@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Simplified the Assistant configuration page: deep thinking is now decided by
+  the end user in each conversation, the unused LensNode picker is gone, and
+  the run budget fields no longer fail to save when cleared.
+zh-CN: >-
+  精简助手配置页：深度思考改由终端用户在每次对话中自行决定，移除已失效的
+  节点选择项，并修复运行预算输入框清空后无法保存的问题。

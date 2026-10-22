@@ -416,7 +416,6 @@
       :show="showDrawer"
       :mode="mode"
       :form="form"
-      :lensnodes="lensnodes"
       :assistants="assistants"
       :skills="skills"
       :environment-variable-sets="environmentVariableSets"
@@ -992,7 +991,6 @@ function defaultForm() {
     decision_auto: true,
     decision_gates: {},
     decision_analyses: {},
-    deep_thinking: false,
     execution_max_tokens: 0,
     execution_max_agent_turns: 0,
     max_concurrency: 5,
@@ -1014,6 +1012,7 @@ function defaultForm() {
     access_user_ids: [],
     access_grant_options: [],
     settings: { datasource_routing: 'selected' },
+    public_share_policy: 'inherit',
     enable_codegraph: true,
     status: 'active',
     mode: 'direct',
@@ -1048,7 +1047,6 @@ function formFromRow(row) {
     decision_auto: row.decision_auto !== false,
     decision_gates: structuredClone(row.decision_gates || {}),
     decision_analyses: structuredClone(row.decision_analyses || {}),
-    deep_thinking: Boolean(row.deep_thinking),
     execution_max_tokens: row.settings?.execution_budget?.max_tokens || 0,
     execution_max_agent_turns:
       row.settings?.execution_budget?.max_agent_turns || 0,
@@ -1114,6 +1112,7 @@ function formFromRow(row) {
       .map((g) => g.id),
     access_grant_options: row.access_grants || [],
     settings: { ...(row.settings || {}), datasource_routing: 'selected' },
+    public_share_policy: row.settings?.public_share?.policy || 'inherit',
     enable_codegraph: row.settings?.features?.codegraph !== false,
     status: row.status || 'active'
   }
@@ -1178,7 +1177,6 @@ function buildPayload() {
     decision_auto: form.value.decision_auto !== false,
     decision_gates: form.value.decision_gates || {},
     decision_analyses: form.value.decision_analyses || {},
-    deep_thinking: Boolean(form.value.deep_thinking),
     ...(mode.value === 'edit'
       ? { max_concurrency: Number(form.value.max_concurrency) || 5 }
       : {}),
@@ -1267,11 +1265,25 @@ function buildAssistantSettings() {
   const features = { ...(settings.features || {}) }
   features.codegraph = !!form.value.enable_codegraph
   settings.features = features
+  if (
+    form.value.public_share_policy &&
+    form.value.public_share_policy !== 'inherit'
+  ) {
+    settings.public_share = { policy: form.value.public_share_policy }
+  } else {
+    delete settings.public_share
+  }
   settings.execution_budget = {
-    max_tokens: form.value.execution_max_tokens,
-    max_agent_turns: form.value.execution_max_agent_turns
+    max_tokens: executionBudgetValue(form.value.execution_max_tokens),
+    max_agent_turns: executionBudgetValue(form.value.execution_max_agent_turns)
   }
   return settings
+}
+
+function executionBudgetValue(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) return 0
+  return Math.min(Math.floor(parsed), 2147483647)
 }
 
 async function archive(row) {

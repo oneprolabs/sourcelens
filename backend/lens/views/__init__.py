@@ -59,6 +59,7 @@ from .shares import (
     PublicSharedQAListView,
     PublicSharedQAPdfView,
     PublicSharedQAView,
+    SharedQAPolicyView,
     SharedQAViewSet,
 )
 from .skills import MCPServerViewSet, SkillViewSet
@@ -110,6 +111,7 @@ __all__ = [
     "RunOutputFileDownloadView",
     "RunViewSet",
     "SessionViewSet",
+    "SharedQAPolicyView",
     "SharedQAViewSet",
     "SkillViewSet",
     "_admin_run_step_counts",
