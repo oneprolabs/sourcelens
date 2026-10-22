@@ -888,6 +888,30 @@ class SharedQAApiTests(TestCase):
         self.assertEqual(anonymous.status_code, 403)
         self.assertEqual(anonymous.data["code"], "AUTHENTICATION_REQUIRED")
 
+    def test_public_list_hides_shares_that_require_sign_in(self):
+        token = self._share(payload={"require_login": True}).data["token"]
+        share = SharedQA.objects.get(token=token)
+        share.is_listed = True
+        share.save(update_fields=["is_listed"])
+
+        self.client.force_authenticate(user=None)
+        anonymous = self.client.get(
+            "/api/lens/public/assistants/data-helper/qa/",
+            HTTP_ACCEPT_LANGUAGE="zh-CN",
+        )
+        self.assertEqual(anonymous.status_code, 200)
+        self.assertEqual(anonymous.data["total"], 0)
+        self.assertEqual(anonymous.data["results"], [])
+
+        self.client.force_authenticate(self.other)
+        signed_in = self.client.get(
+            "/api/lens/public/assistants/data-helper/qa/",
+            HTTP_ACCEPT_LANGUAGE="zh-CN",
+        )
+        self.assertEqual(signed_in.status_code, 200)
+        self.assertEqual(signed_in.data["total"], 1)
+        self.assertEqual(signed_in.data["results"][0]["token"], token)
+
     def test_configured_policy_wins_over_the_share_choice(self):
         self._set_global_policy("login")
         token = self._share(payload={"require_login": False}).data["token"]

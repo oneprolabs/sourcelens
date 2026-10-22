@@ -348,6 +348,10 @@ class PublicSharedQAListView(APIView):
             is_listed=True,
             status=SharedQA.Status.PUBLISHED,
         ).order_by("-published_at", "-created_at")
+        if not (request.user and request.user.is_authenticated):
+            # A share the publisher marked as sign-in only must not surface
+            # its title or excerpt to an anonymous visitor.
+            queryset = queryset.exclude(require_login=True)
         total = queryset.count()
         rows = SharedQAListSerializer(
             queryset[offset:offset + limit],
