@@ -490,6 +490,34 @@ test('aligns live progress and attachment cards with Chat v2 metrics', async () 
   )
 })
 
+test('renders plan steps with Chat v2 numbering and per-step durations', async () => {
+  const source = await chatSource()
+
+  assert.match(source, /class="runtime-plan-index"/)
+  assert.match(source, /progressStepIndex\(index\)/)
+  assert.match(source, /class="runtime-plan-duration"/)
+  assert.match(source, /function progressStepDuration\(/)
+  assert.match(
+    source,
+    /\.runtime-plan-step \{[\s\S]*?grid-template-columns: 1\.125rem minmax\(0, 1fr\) auto;/
+  )
+  assert.match(source, /class="runtime-progress-body"/)
+  assert.match(source, /--sl-plan-surface: #fcfcfc;/)
+  assert.match(
+    source,
+    /\.runtime-progress-summary \{[\s\S]*?padding: 0\.625rem 0\.875rem;[\s\S]*?background: var\(--sl-plan-surface\);/
+  )
+  assert.match(source, /--sl-plan-divider: #f2f2f4;/)
+  assert.match(
+    source,
+    /\.runtime-progress-body,\s*\.runtime-progress-content \{[\s\S]*?border-top: 1px solid var\(--sl-plan-divider\);/
+  )
+  assert.match(
+    source,
+    /:root\[data-theme='dark'\] \.runtime-progress-card[\s\S]*?--sl-plan-surface: #26292a;/
+  )
+})
+
 test('summarizes activity progress by activity count instead of step status', async () => {
   const source = await chatSource()
   const start = source.indexOf('function progressSummaryTitle(message)')
