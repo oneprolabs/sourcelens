@@ -5,7 +5,9 @@
       :assistant-slug="qa?.assistant_slug"
       :show-qa-link="true"
     />
-    <main class="mx-auto max-w-3xl px-4 py-8">
+    <main
+      class="mx-auto max-w-3xl px-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-8 sm:pb-8"
+    >
       <BaseLoading v-if="loading" />
 
       <div v-else-if="accessState">
@@ -25,9 +27,9 @@
           {{ qa.assistant_name }}
         </router-link>
 
-        <div class="mt-3 flex items-center gap-2">
+        <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
           <span
-            class="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-2.5 py-1 text-xs font-semibold text-primary-700"
+            class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-primary-50 px-2.5 py-1 text-xs font-semibold text-primary-700"
           >
             <Bot :size="14" :stroke-width="2" aria-hidden="true" />
             {{ t('lens.qa.agentBadge') }}
@@ -100,16 +102,16 @@
         </section>
 
         <div
-          class="mt-6 flex items-center justify-between border-t border-line pt-4 text-xs text-ink-400"
+          class="mt-6 flex flex-col gap-2 border-t border-line pt-4 text-xs text-ink-400 sm:flex-row sm:items-center sm:justify-between"
         >
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>{{ formatDate(qa.published_at, 'yyyy-MM-dd HH:mm') }}</span>
             <span>{{ t('lens.qa.viewCount', { count: qa.view_count }) }}</span>
           </div>
-          <div class="flex items-center gap-1">
+          <div class="-ml-2.5 flex items-center gap-1 sm:ml-0">
             <button
               type="button"
-              class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-ink-500 transition-colors hover:bg-surface-sunken hover:text-primary-600"
+              class="inline-flex min-h-10 items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-2 text-ink-500 transition-colors hover:bg-surface-sunken hover:text-primary-600 sm:min-h-0 sm:px-2 sm:py-1"
               @click="exportPdf"
             >
               <Download :size="14" :stroke-width="2" aria-hidden="true" />
@@ -117,7 +119,7 @@
             </button>
             <button
               type="button"
-              class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-ink-500 transition-colors hover:bg-surface-sunken hover:text-primary-600"
+              class="inline-flex min-h-10 items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-2 text-ink-500 transition-colors hover:bg-surface-sunken hover:text-primary-600 sm:min-h-0 sm:px-2 sm:py-1"
               @click="copyLink"
             >
               <Copy :size="14" :stroke-width="2" aria-hidden="true" />
@@ -128,7 +130,7 @@
 
         <div
           v-if="qa.assistant_slug"
-          class="mt-8 rounded-xl border border-line bg-surface px-5 py-4"
+          class="mt-8 rounded-xl border border-line bg-surface px-4 py-4 sm:px-5"
         >
           <p class="text-sm font-medium text-ink-700">
             {{ t('lens.qa.ctaTitle') }}

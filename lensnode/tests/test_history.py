@@ -34,7 +34,10 @@ from lensnode.agent_runtime import (
     _synthesize_wrapup_answer,
 )
 from lensnode.agent_runtime.limits import resolve_tool_call_budget
-from lensnode.agent_runtime.prompts import command_answer_language
+from lensnode.agent_runtime.prompts import (
+    answer_language_requirement,
+    command_answer_language,
+)
 from lensnode.agent_runtime.system_prompts import _smart_collaboration_system_prompt
 from lensnode.checkpoint import CheckpointResumeError, ResumeState
 from lensnode.delegation_events import delegation_events
@@ -3628,6 +3631,14 @@ def test_command_answer_language_preserves_chinese_script_variant():
         command_answer_language({"answer_language": "zh-HK"})
         == "Traditional Chinese"
     )
+
+
+def test_answer_language_policy_covers_user_visible_plan_titles():
+    prompt = answer_language_requirement("Simplified Chinese")
+
+    assert "write_todos" in prompt
+    assert "progress notes" in prompt
+    assert "same language" in prompt
 
 
 def test_plan_execute_blocks_business_tools_until_plan_exists():

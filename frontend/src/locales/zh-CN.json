@@ -263,7 +263,18 @@
         "not_requested": "未请求",
         "supported": "有证据支持",
         "unsupported": "缺少证据支持",
-        "inconclusive": "无法判定"
+        "inconclusive": "无法判定",
+        "coverage": {
+          "complete": "证据覆盖完整。",
+          "incomplete": "证据覆盖不完整，部分结论无法核实。",
+          "unknown": "无法确定证据覆盖情况。"
+        },
+        "warning": {
+          "evidenceIncomplete": "部分引用的证据未被读取，相关结论保持未核实状态。",
+          "reviewMaterialIncomplete": "可用于复核的材料被截断，结论保持未核实状态。",
+          "reviewUnavailable": "复核步骤不可用，结论保持未核实状态。",
+          "reviewInconclusive": "现有证据既不能确认也不能否定该结论。"
+        }
       },
       "liveOutput": "实时输出",
       "newSession": "新建会话",
@@ -333,15 +344,15 @@
       "hideTimeline": "收起事件",
       "citations": {
         "title": "内容依据",
-        "count": "{count} 处代码引用",
-        "open": "打开代码引用 {location}",
-        "viewerTitle": "代码引用",
+        "count": "{count} 处引用",
+        "open": "打开引用 {location}",
+        "viewerTitle": "引用详情",
         "revision": "版本",
         "symbol": "符号",
         "lines": "行号",
-        "loading": "正在加载代码引用…",
+        "loading": "正在加载引用…",
         "retry": "重试",
-        "unavailable": "该代码引用当前不可用，可能是运行快照已缺失或你没有访问权限。",
+        "unavailable": "该引用当前不可用，可能是运行快照已缺失或你没有访问权限。",
         "preview": "预览",
         "source": "源码"
       },
@@ -358,6 +369,11 @@
         "knowledgeSummary": "总结资料中的关键内容",
         "knowledgeCompare": "对比两个概念的差异",
         "knowledgeActions": "提取结论和行动项"
+      },
+      "followUps": {
+        "detail": "请详细说明「{topic}」",
+        "details": "「{topic}」还有哪些关键细节或边界？",
+        "sources": "这些结论分别来自哪些来源？"
       },
       "attachFile": "上传图片或文档",
       "removeAttachment": "移除附件",
@@ -576,7 +592,17 @@
       },
       "searchSessions": "搜索会话",
       "searchSessionsPlaceholder": "搜索会话标题",
-      "noSearchResults": "没有找到匹配的会话"
+      "noSearchResults": "没有找到匹配的会话",
+      "progress": {
+        "completedSteps": "已完成 {count} 个步骤",
+        "finishedSteps": "已完成 {done}/{total} 个步骤",
+        "runningSteps": "进行中 · {done}/{total}",
+        "duration": "用时 {duration}",
+        "expand": "查看步骤",
+        "collapse": "收起"
+      },
+      "exportAction": "导出",
+      "regenerateAction": "重新生成"
     }
   },
   "auth": {

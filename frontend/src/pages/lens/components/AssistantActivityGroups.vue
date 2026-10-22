@@ -3,10 +3,14 @@
     <details
       v-for="group in groups"
       :key="group.key"
-      :open="live"
+      :open="live || (groups.length === 1 && !group.assistantName)"
       class="runtime-assistant-card"
+      :class="{ 'is-direct': groups.length === 1 && !group.assistantName }"
     >
-      <summary class="runtime-assistant-summary">
+      <summary
+        v-if="groups.length > 1 || group.assistantName"
+        class="runtime-assistant-summary"
+      >
         <span
           class="runtime-assistant-status-indicator"
           :class="{ 'is-live': live }"
@@ -38,11 +42,16 @@
           class="runtime-assistant-activity-list"
         >
           <div
-            v-for="activity in group.summaryItems"
+            v-for="(activity, index) in group.summaryItems"
             :key="activity.kind"
             class="runtime-assistant-activity"
           >
-            <span aria-hidden="true">✓</span>
+            <span
+              v-if="live && index === group.summaryItems.length - 1"
+              class="runtime-assistant-activity-live"
+              aria-hidden="true"
+            />
+            <span v-else aria-hidden="true">✓</span>
             <span>{{ activityLabel(activity.kind) }}</span>
             <span
               v-if="activity.count > 1"
@@ -97,22 +106,35 @@ function activityLabel(kind) {
 <style scoped>
 .runtime-assistant-groups {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
 
 .runtime-assistant-card {
-  border: 1px solid var(--sl-border-default);
-  border-radius: 0.45rem;
+  overflow: hidden;
+  border: 1px solid #ebebee;
+  border-radius: 0.625rem;
   background: var(--sl-bg-raised);
+}
+
+.runtime-assistant-card.is-direct {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.runtime-assistant-card.is-direct > .runtime-assistant-details {
+  padding: 0;
+  border-top: 0;
 }
 
 .runtime-assistant-summary {
   display: flex;
-  min-height: 2.75rem;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.45rem;
+  gap: 0.625rem;
+  padding: 0.625rem 0.875rem;
+  background: #fcfcfc;
   cursor: pointer;
   list-style: none;
 }
@@ -129,43 +151,44 @@ function activityLabel(kind) {
 .runtime-assistant-heading {
   display: flex;
   align-items: baseline;
-  gap: 0.45rem;
+  gap: 0.375rem;
   color: var(--sl-text-primary);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 
 .runtime-assistant-status-text {
-  color: var(--sl-text-muted);
-  font-size: 0.68rem;
+  color: #71717a;
+  font-size: 0.75rem;
   font-weight: 400;
 }
 
 .runtime-assistant-status-indicator {
   display: inline-flex;
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 1.125rem;
+  height: 1.125rem;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  margin-top: 0.1rem;
-  color: var(--sl-success);
-  font-size: 0.68rem;
+  border-radius: 999px;
+  background: #e5f4ec;
+  color: #2e9e6a;
+  font-size: 0.625rem;
 }
 
 .runtime-assistant-status-indicator.is-live {
-  border: 2px solid var(--sl-border-default);
-  border-top-color: var(--sl-accent);
-  border-radius: 999px;
-  animation: runtime-assistant-spin 0.8s linear infinite;
+  border: 2px solid #d6e1fa;
+  border-top-color: #2f62d6;
+  background: #eef3fd;
+  animation: runtime-assistant-spin 0.75s linear infinite;
 }
 
 .runtime-assistant-task-summary {
   display: -webkit-box;
-  margin-top: 0.15rem;
+  margin-top: 0.125rem;
   overflow: hidden;
-  color: var(--sl-text-secondary);
-  font-size: 0.7rem;
-  line-height: 1rem;
+  color: #71717a;
+  font-size: 0.78125rem;
+  line-height: 1.1rem;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -173,8 +196,10 @@ function activityLabel(kind) {
 
 .runtime-assistant-chevron {
   flex: 0 0 auto;
-  color: var(--sl-text-muted);
-  transition: transform 0.16s ease;
+  color: #a1a1aa;
+  font-size: 0.75rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
 }
 
 .runtime-assistant-card[open]
@@ -184,46 +209,71 @@ function activityLabel(kind) {
 }
 
 .runtime-assistant-details {
-  padding: 0 0.45rem 0.45rem 1.85rem;
+  padding: 0.375rem 0.875rem 0.75rem;
+  border-top: 1px solid #f2f2f4;
 }
 
 .runtime-assistant-activity-list {
   display: grid;
-  gap: 0.15rem;
+  gap: 0.125rem;
+  padding-top: 0.125rem;
 }
 
 .runtime-assistant-activity {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  color: var(--sl-text-muted);
-  font-size: 0.7rem;
+  gap: 0.5rem;
+  padding: 0.375rem 0;
+  color: #3f3f46;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+}
+
+.runtime-assistant-activity > span:nth-child(2) {
+  min-width: 0;
+}
+
+.runtime-assistant-activity > span:first-child {
+  color: #2e9e6a;
+  font-size: 0.6875rem;
+}
+
+.runtime-assistant-activity-live {
+  width: 0.625rem;
+  height: 0.625rem;
+  flex: 0 0 auto;
+  border: 2px solid #d6e1fa;
+  border-top-color: #2f62d6;
+  border-radius: 999px;
+  animation: runtime-assistant-spin 0.75s linear infinite;
 }
 
 .runtime-assistant-activity-count {
+  color: #a1a1aa;
+  font-size: 0.71875rem;
   font-variant-numeric: tabular-nums;
 }
 
 .runtime-assistant-full-task {
-  margin-top: 0.35rem;
-  color: var(--sl-text-muted);
-  font-size: 0.68rem;
+  margin-top: 0.375rem;
+  color: #71717a;
+  font-size: 0.75rem;
 }
 
 .runtime-assistant-full-task > summary {
   width: fit-content;
   min-height: 1.5rem;
   cursor: pointer;
-  color: var(--sl-accent);
+  color: #2f62d6;
 }
 
 .runtime-assistant-full-task p {
   margin: 0.25rem 0 0;
-  padding: 0.35rem;
-  border-radius: 0.3rem;
-  background: var(--sl-bg-hover);
-  color: var(--sl-text-secondary);
-  line-height: 1.05rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.5rem;
+  background: #fafafa;
+  color: #3f3f46;
+  line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
