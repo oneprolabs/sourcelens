@@ -99,6 +99,7 @@ from .plugins.skill_requirements import (
     SkillPluginRequirementError,
     validate_required_plugins,
 )
+from .public_share import PUBLIC_SHARE_POLICIES
 from .routing_descriptions import (
     build_routing_description,
     refresh_routing_description,
@@ -1263,6 +1264,17 @@ class AssistantSerializer(serializers.ModelSerializer):
             attrs["settings"] = settings
             if "retrieval_policy" in settings:
                 validate_retrieval_policy(settings.get("retrieval_policy"))
+            public_share = settings.get("public_share")
+            if isinstance(public_share, dict) and "policy" in public_share:
+                if public_share["policy"] not in PUBLIC_SHARE_POLICIES:
+                    raise serializers.ValidationError(
+                        {
+                            "settings": (
+                                "public_share.policy must be one of "
+                                f"{', '.join(PUBLIC_SHARE_POLICIES)}."
+                            )
+                        }
+                    )
             features = settings.get("features")
             if isinstance(features, dict) and "citations" in features:
                 if not isinstance(features["citations"], bool):
@@ -5046,6 +5058,7 @@ class SharedQAMineSerializer(serializers.ModelSerializer):
             "assistant_name",
             "assistant_slug",
             "is_listed",
+            "require_login",
             "status",
             "view_count",
             "published_at",

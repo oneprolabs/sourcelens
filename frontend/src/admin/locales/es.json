@@ -2315,6 +2315,11 @@
     "settings": {
       "publicBaseUrlTitle": "URL base pública",
       "publicBaseUrlDesc": "Dirección base usada para enlaces de compartición de asistente (por ejemplo, tu propio dominio). Déjalo vacío para usar la dirección del servidor actual.",
+      "publicSharePolicyTitle": "Política de acceso a compartir público",
+      "publicSharePolicyDesc": "Política predeterminada para los enlaces de compartir de asistentes públicos: si un visitante debe iniciar sesión. Un asistente puede anularla; si no está definida, quien comparte decide.",
+      "publicSharePolicyInherit": "Sin configurar (decide el asistente o quien comparte)",
+      "publicSharePolicyPublic": "Abierto sin iniciar sesión",
+      "publicSharePolicyLogin": "Requiere iniciar sesión",
       "nodeImageTitle": "Imagen del nodo",
       "nodeImageDesc": "Imagen de Docker utilizada en el compose generado. Déjalo vacío para usar la predeterminada oneprolabs/lensnode:latest.",
       "groups": {
@@ -2779,6 +2784,11 @@
       "noSkills": "No hay Skills disponibles — cree uno primero en la Biblioteca de Skills",
       "noMcp": "No hay servidores MCP disponibles — cree uno primero en la Biblioteca de Servidores MCP",
       "visibilityHint": "Los administradores siempre pueden acceder a todos los asistentes.",
+      "publicSharePolicyLabel": "Política de acceso a compartir público",
+      "publicSharePolicyHint": "Controla si los enlaces de compartir de este asistente requieren un usuario autenticado. Sin definir, deciden la política global y quien comparte; los asistentes privados siempre requieren iniciar sesión.",
+      "publicSharePolicyInherit": "Seguir la política global (decide quien comparte)",
+      "publicSharePolicyPublic": "Abierto sin iniciar sesión",
+      "publicSharePolicyLogin": "Requiere iniciar sesión",
       "noDecisionModel": "Ninguno (mantener el flujo existente)",
       "decisionAutomatic": "Automático (según la capacidad del asistente)",
       "decisionModelHint": "Opcional. Configure un modelo dedicado para comprobar evidencias y ordenar candidatos, o déjelo sin configurar para mantener el flujo existente.",
@@ -2788,7 +2798,6 @@
       "normal": "Pensamiento normal",
       "deep": "Pensamiento profundo"
     },
-    "deepThinkingHint": "Solicita más razonamiento para preguntas complejas; puede tardar más. El soporte depende del modelo. La revisión se muestra por separado.",
     "reasoningSupportHint": "Configuración solicitada; adopción por el proveedor sin confirmar.",
     "executionBudgetHint": "0 significa sin límite configurado. Se aplica a ambos modos. Los tokens se comprueban entre llamadas; no es un límite monetario.",
     "agentRounds": {

@@ -1,0 +1,9 @@
+type: improvement
+audience: user
+en: >-
+  Shared Q&A links of a public Assistant can now be opened without signing
+  in. Administrators choose the access policy globally, per Assistant, or let
+  the publisher decide per link.
+zh-CN: >-
+  公开助手的分享问答链接现在可以免登录直接打开。管理员可按全局、按助手设置
+  访问策略，也可交给分享者逐条决定。

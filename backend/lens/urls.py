@@ -48,6 +48,7 @@ from .views import (
     RunOutputFileDownloadView,
     RunViewSet,
     SessionViewSet,
+    SharedQAPolicyView,
     SharedQAViewSet,
     SkillViewSet,
     admin_run_trajectory_stream_view,
@@ -166,6 +167,11 @@ urlpatterns = [
         "public/assistants/<slug:slug>/qa/",
         PublicSharedQAListView.as_view(),
         name="lens-public-assistant-qa",
+    ),
+    path(
+        "shares/policy/",
+        SharedQAPolicyView.as_view(),
+        name="lens-shared-qa-policy",
     ),
     path(
         "public/qa/<str:token>/",

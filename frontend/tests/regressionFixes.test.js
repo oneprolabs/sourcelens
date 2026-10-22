@@ -217,13 +217,10 @@ test('assistant node selection defers to datasource bindings', async () => {
     'pages/lens/AssistantFormDrawerDirectEnvironment.vue'
   )
 
-  assert.match(
-    drawer,
-    /const requiresNodeSelection = computed\(\(\) => false\)/
-  )
+  assert.doesNotMatch(drawer, /requiresNodeSelection/)
+  assert.doesNotMatch(drawer, /compatibleLensnodes/)
   assert.match(drawer, /const requiresWorkspace = computed\(/)
   assert.doesNotMatch(drawer, /isOrchestratorTask/)
-  assert.match(drawer, /v-if="requiresNodeSelection"/)
   assert.match(drawer, /v-if="form\.mode === 'direct'"/)
   assert.match(drawer, /v-if="isGeneralChatTask"/)
   assert.doesNotMatch(drawer, /isDirectGeneralChat/)
@@ -255,12 +252,26 @@ test('assistant selects its type before conditional execution settings', async (
   assert.doesNotMatch(firstStep, /v-model="form\.capability"/)
   assert.ok(
     secondStep.indexOf("t('lensAdmin.fields.type')") <
-      secondStep.indexOf('v-if="requiresNodeSelection"')
+      secondStep.indexOf("t('lensAdmin.datasourceSelection.title')")
   )
   assert.match(secondStep, /v-for="type in assistantTypeOptions"/)
   assert.match(drawer, /if \(!props\.form\.capability\) return false/)
   assert.match(assistants, /capability: '',/)
   assert.match(chinese.lensAdmin.wizard.step2Desc, /先选择类型/)
+})
+
+test('assistant configuration leaves deep thinking to the end user', async () => {
+  const [drawer, assistants, detail, chat] = await Promise.all([
+    source('pages/lens/AssistantFormDrawerDirectEnvironment.vue'),
+    source('pages/lens/Assistants.vue'),
+    source('pages/lens/AssistantDetailView.vue'),
+    source('pages/lens/Chat.vue')
+  ])
+
+  assert.doesNotMatch(drawer, /deep_thinking/)
+  assert.doesNotMatch(assistants, /deep_thinking/)
+  assert.doesNotMatch(detail, /deep_thinking/)
+  assert.match(chat, /deepThinking\.value \?\? false/)
 })
 
 test('assistant form does not configure fixed Smart Collaboration delegates', async () => {
@@ -436,4 +447,23 @@ test('environment variable sets show their Skill and MCP references', async () =
   assert.match(page, /usage\.assistant_name/)
   assert.equal(english.lensAdmin.environmentVariables.usages, 'Referenced by')
   assert.equal(chinese.lensAdmin.environmentVariables.usages, '引用方')
+})
+
+test('shared Q&A links expose a configurable access mode', async () => {
+  const [modal, api, lens, chinese] = await Promise.all([
+    source('components/lens/QaShareModal.vue'),
+    source('api/lens.js'),
+    source('pages/lens/Assistants.vue'),
+    source('admin/locales/zh-CN.json').then(JSON.parse)
+  ])
+
+  assert.match(modal, /shareAccessLabel/)
+  assert.match(modal, /payload\.require_login = accessChoice\.value === 'login'/)
+  assert.match(modal, /accessChoiceDirty/)
+  assert.match(api, /getSharePolicy/)
+  assert.match(lens, /public_share_policy/)
+  assert.equal(
+    chinese.lensAdmin.settings.publicSharePolicyPublic,
+    '免登录查看'
+  )
 })

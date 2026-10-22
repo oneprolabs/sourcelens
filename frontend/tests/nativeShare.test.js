@@ -64,12 +64,13 @@ test('uses native sharing for an existing mobile Q&A link', async () => {
   assert.match(chat, /shareOpen\.value = true/)
 })
 
-test('offers system sharing after a Q&A link has been created', async () => {
+test('copies the Q&A link instead of opening the system share sheet', async () => {
   const modal = await source('components/lens/QaShareModal.vue')
 
-  assert.match(modal, /v-if="share && nativeShareAvailable"/)
-  assert.match(modal, /@click="shareNative"/)
-  assert.match(modal, /await shareWithNative\(/)
-  assert.match(modal, /if \(result\.status === 'cancelled'\) return/)
-  assert.match(modal, /await copy\(\)/)
+  assert.match(modal, /v-if="share"/)
+  assert.match(modal, /@click="copy"/)
+  assert.match(modal, /t\('lens\.share\.copyLink'\)/)
+  assert.doesNotMatch(modal, /shareWithNative/)
+  assert.doesNotMatch(modal, /nativeShareAvailable/)
+  assert.doesNotMatch(modal, /copyInvitation/)
 })

@@ -38,6 +38,42 @@
         />
       </div>
 
+      <div
+        v-if="!showsAccessChoice && accessPolicyHint"
+        class="text-xs text-ink-500"
+      >
+        {{ accessPolicyHint }}
+      </div>
+
+      <div v-if="showsAccessChoice">
+        <label class="mb-1 block text-xs font-medium text-ink-500">
+          {{ t('lens.qa.shareAccessLabel') }}
+        </label>
+        <div class="space-y-2">
+          <label
+            v-for="option in accessOptions"
+            :key="option.value"
+            class="flex cursor-pointer items-start gap-2 rounded-md bg-surface-sunken p-3"
+          >
+            <input
+              :checked="accessChoice === option.value"
+              type="radio"
+              :value="option.value"
+              class="mt-0.5 h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
+              @change="onAccessChoiceChange(option.value)"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm font-medium text-ink-800">
+                {{ option.label }}
+              </span>
+              <span class="mt-0.5 block text-xs leading-5 text-ink-500">
+                {{ option.description }}
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+
       <div v-if="answerPreview">
         <div class="mb-1 text-xs font-medium text-ink-500">
           {{ t('lens.qa.previewLabel') }}
@@ -54,51 +90,28 @@
         <label class="mb-1 block text-xs font-medium text-ink-500">
           {{ t('lens.qa.linkLabel') }}
         </label>
-        <div class="flex items-center gap-2">
-          <a
-            :href="shareLink"
-            target="_blank"
-            rel="noopener"
-            class="min-w-0 flex-1 truncate font-mono text-xs text-ink-500 no-underline transition-colors hover:text-primary-600 hover:underline"
-            :title="shareLink"
-          >
-            {{ shareLink }}
-          </a>
-          <button
-            type="button"
-            class="qa-share-copy shrink-0 rounded-md p-1.5 text-ink-400 transition-colors hover:bg-surface-sunken hover:text-primary-600"
-            :title="t('lens.share.copyLink')"
-            :aria-label="t('lens.share.copyLink')"
-            @click="copy"
-          >
-            <Copy :size="15" :stroke-width="2" aria-hidden="true" />
-          </button>
-        </div>
-        <p class="mt-2 text-xs text-ink-400">{{ t('lens.qa.listNote') }}</p>
-        <BaseButton
-          class="mt-3"
-          variant="secondary"
-          size="sm"
-          block
-          @click="copyInvitation"
+        <a
+          :href="shareLink"
+          target="_blank"
+          rel="noopener"
+          class="block truncate font-mono text-xs text-ink-500 no-underline transition-colors hover:text-primary-600 hover:underline"
+          :title="shareLink"
         >
-          <Copy :size="14" :stroke-width="2" aria-hidden="true" />
-          {{ t('lens.qa.copyInvitation') }}
-        </BaseButton>
+          {{ shareLink }}
+        </a>
+        <p class="mt-2 text-xs text-ink-400">{{ t('lens.qa.listNote') }}</p>
       </div>
 
       <BaseButton
-        v-if="share && nativeShareAvailable"
+        v-if="share"
         class="qa-share-native"
         variant="primary"
         size="md"
         block
-        :disabled="titleDirty"
-        :loading="nativeSharing"
-        @click="shareNative"
+        @click="copy"
       >
-        <Share2 :size="16" :stroke-width="2" aria-hidden="true" />
-        {{ t('lens.qa.nativeShare') }}
+        <Copy :size="16" :stroke-width="2" aria-hidden="true" />
+        {{ t('lens.share.copyLink') }}
       </BaseButton>
     </div>
 
@@ -130,15 +143,19 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, Copy, Share2 } from '@lucide/vue'
+import { Bot, Copy } from '@lucide/vue'
 
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
-import { shareRun, updateMyShare, deleteShare } from '@/api/lens'
+import {
+  shareRun,
+  updateMyShare,
+  deleteShare,
+  getSharePolicy
+} from '@/api/lens'
 import { copyToClipboard } from '@/utils/clipboard'
 import { qaShareUrl } from '@/utils/lens'
-import { shareWithNative, supportsNativeShare } from '@/utils/nativeShare'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps({
@@ -146,6 +163,8 @@ const props = defineProps({
   runUuid: { type: String, default: '' },
   existingShare: { type: Object, default: null },
   assistantName: { type: String, default: '' },
+  assistantUuid: { type: String, default: '' },
+  assistantSlug: { type: String, default: '' },
   question: { type: String, default: '' },
   answerPreview: { type: String, default: '' }
 })
@@ -161,38 +180,75 @@ const { showSuccess, showError } = useToast()
 const title = ref('')
 const share = ref(null)
 const creating = ref(false)
-const nativeSharing = ref(false)
 const saving = ref(false)
-const nativeShareAvailable = supportsNativeShare()
+const accessPolicy = ref(null)
+const accessChoice = ref('public')
+const accessChoiceDirty = ref(false)
+
+const configuredAccessPolicy = computed(
+  () => accessPolicy.value?.policy || 'inherit'
+)
+
+const effectiveAccessChoice = computed(() => {
+  if (configuredAccessPolicy.value !== 'inherit') {
+    return configuredAccessPolicy.value
+  }
+  if (share.value) {
+    if (share.value.require_login === true) return 'login'
+    if (share.value.require_login === false) return 'public'
+  }
+  return 'public'
+})
+
+const showsAccessChoice = computed(
+  () => accessPolicy.value?.requires_choice === true
+)
+
+const accessPolicyHint = computed(() => {
+  if (configuredAccessPolicy.value === 'inherit') {
+    return ''
+  }
+  const mode =
+    configuredAccessPolicy.value === 'login'
+      ? t('lens.qa.shareAccessLogin')
+      : t('lens.qa.shareAccessPublic')
+  const source =
+    accessPolicy.value?.source === 'assistant'
+      ? t('lens.qa.shareAccessByAssistant')
+      : t('lens.qa.shareAccessByGlobal')
+  return t('lens.qa.shareAccessConfigured', { mode, source })
+})
+
+const accessOptions = computed(() => [
+  {
+    value: 'public',
+    label: t('lens.qa.shareAccessPublic'),
+    description: t('lens.qa.shareAccessPublicHint')
+  },
+  {
+    value: 'login',
+    label: t('lens.qa.shareAccessLogin'),
+    description: t('lens.qa.shareAccessLoginHint')
+  }
+])
 
 const shareLink = computed(() =>
   share.value ? qaShareUrl(share.value.token) : ''
-)
-
-const invitationText = computed(() =>
-  t('lens.qa.shareInvitation', {
-    name: props.assistantName || t('lens.qa.genericAgent'),
-    title: title.value.trim() || defaultTitle(props.question),
-    url: shareLink.value
-  })
-)
-
-const nativeShareText = computed(() =>
-  t('lens.qa.nativeShareText', {
-    name: props.assistantName || t('lens.qa.genericAgent'),
-    title: title.value.trim() || defaultTitle(props.question)
-  })
 )
 
 const titleDirty = computed(
   () => !!share.value && title.value.trim() !== (share.value.title || '')
 )
 
+const accessDirty = computed(() => !!share.value && accessChoiceDirty.value)
+
 const primaryLabel = computed(() => {
   if (!share.value) {
     return t('lens.qa.createLink')
   }
-  return titleDirty.value ? t('lens.qa.saveTitle') : t('lens.qa.done')
+  return titleDirty.value || accessDirty.value
+    ? t('lens.qa.save')
+    : t('lens.qa.done')
 })
 
 watch(
@@ -202,11 +258,31 @@ watch(
       share.value = props.existingShare || null
       title.value = share.value?.title || defaultTitle(props.question)
       creating.value = false
-      nativeSharing.value = false
       saving.value = false
+      accessChoiceDirty.value = false
+      loadAccessPolicy()
     }
   }
 )
+
+async function loadAccessPolicy() {
+  accessPolicy.value = null
+  accessChoice.value = 'public'
+  try {
+    accessPolicy.value = await getSharePolicy({
+      assistant_uuid: props.assistantUuid || undefined,
+      assistant_slug: props.assistantSlug || undefined
+    })
+  } catch {
+    accessPolicy.value = null
+  }
+  accessChoice.value = effectiveAccessChoice.value
+}
+
+function onAccessChoiceChange(value) {
+  accessChoice.value = value
+  accessChoiceDirty.value = true
+}
 
 function emitClose() {
   emit('close')
@@ -216,8 +292,8 @@ function primaryAction() {
   if (!share.value) {
     return create()
   }
-  if (titleDirty.value) {
-    return saveTitle()
+  if (titleDirty.value || accessDirty.value) {
+    return saveChanges()
   }
   return emitClose()
 }
@@ -228,7 +304,11 @@ async function create() {
   }
   creating.value = true
   try {
-    share.value = await shareRun(props.runUuid, { title: title.value.trim() })
+    const payload = { title: title.value.trim() }
+    if (accessChoiceDirty.value) {
+      payload.require_login = accessChoice.value === 'login'
+    }
+    share.value = await shareRun(props.runUuid, payload)
     title.value = share.value.title || ''
     emit('shared', share.value)
     showSuccess(t('lens.qa.shared'))
@@ -239,16 +319,19 @@ async function create() {
   }
 }
 
-async function saveTitle() {
+async function saveChanges() {
   if (!share.value) {
     return
   }
   saving.value = true
   try {
-    share.value = await updateMyShare(share.value.uuid, {
-      title: title.value.trim()
-    })
+    const payload = { title: title.value.trim() }
+    if (accessChoiceDirty.value) {
+      payload.require_login = accessChoice.value === 'login'
+    }
+    share.value = await updateMyShare(share.value.uuid, payload)
     title.value = share.value.title || ''
+    accessChoiceDirty.value = false
     showSuccess(t('lens.qa.actionDone'))
   } catch {
     showError(t('lens.qa.shareFailed'))
@@ -263,38 +346,6 @@ async function copy() {
   } else {
     showError(t('lens.qa.copyFailed'))
   }
-}
-
-async function copyInvitation() {
-  if (await copyToClipboard(invitationText.value)) {
-    showSuccess(t('lens.qa.invitationCopied'))
-  } else {
-    showError(t('lens.qa.copyFailed'))
-  }
-}
-
-async function shareNative() {
-  if (!share.value || titleDirty.value) {
-    return
-  }
-  nativeSharing.value = true
-  const result = await shareWithNative({
-    title: title.value.trim() || defaultTitle(props.question),
-    text: nativeShareText.value,
-    url: shareLink.value
-  })
-  nativeSharing.value = false
-
-  if (result.status === 'shared') {
-    emitClose()
-    return
-  }
-  if (result.status === 'cancelled') return
-  if (result.status === 'unsupported') {
-    await copy()
-    return
-  }
-  showError(t('lens.qa.nativeShareFailed'))
 }
 
 async function unshare() {
@@ -331,19 +382,9 @@ async function unshare() {
 }
 
 @media (max-width: 767px), (hover: none), (pointer: coarse) {
-  .qa-share-copy,
   :deep(.qa-share-action) {
     min-width: 44px;
     min-height: 44px;
-  }
-
-  .qa-share-copy {
-    display: flex;
-    width: 44px;
-    height: 44px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
   }
 }
 </style>

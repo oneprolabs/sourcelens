@@ -114,10 +114,6 @@
                 </dd>
               </div>
               <div>
-                <dt>{{ t('lensAdmin.fields.deepThinking') }}</dt>
-                <dd>{{ deepThinkingLabel }}</dd>
-              </div>
-              <div>
                 <dt>{{ t('lensAdmin.fields.decisionModel') }}</dt>
                 <dd>
                   {{
@@ -506,13 +502,6 @@ const isSmart = computed(
 )
 const datasourceCount = computed(
   () => props.assistant.datasource_bindings?.length || 0
-)
-const deepThinkingLabel = computed(() =>
-  t(
-    props.assistant.deep_thinking
-      ? 'lensAdmin.thinkingModes.deep'
-      : 'lensAdmin.thinkingModes.normal'
-  )
 )
 const toolCount = computed(
   () =>
