@@ -206,6 +206,10 @@ export function createRuntimeState() {
     documentProgressRevision: 0,
     plan: [],
     planRevision: 0,
+    // Wall-clock window per plan step, recorded while the live stream runs.
+    // Replayed history carries no per-event timestamps, so restored runs keep
+    // an empty map and simply omit the per-step duration.
+    planTimings: {},
     stages: [],
     stageRevision: 0,
     activities: [],
@@ -637,6 +641,32 @@ export function normalizePlanSteps(steps) {
   })
 }
 
+const PLAN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped'])
+
+function planTimingTimestamp(value) {
+  const parsed = Date.parse(String(value || ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function recordPlanStepTimings(existing, plan, at) {
+  if (at === null) return existing || {}
+  const timings = { ...(existing || {}) }
+  for (const item of plan) {
+    const entry = { ...(timings[item.id] || {}) }
+    if (item.status === 'in_progress' && !entry.startedAt) {
+      entry.startedAt = at
+    }
+    if (PLAN_TERMINAL_STATUSES.has(item.status)) {
+      // A step can jump from pending to terminal between two snapshots; treat
+      // the terminal observation as both ends so the row still shows a time.
+      if (!entry.startedAt) entry.startedAt = at
+      if (!entry.endedAt) entry.endedAt = at
+    }
+    timings[item.id] = entry
+  }
+  return timings
+}
+
 function prePlanActivityFamily(activity) {
   if (activity.stageKind === 'preparation') return 'preparation'
   if (activity.kind === 'get_order_detail') return 'order_detail'
@@ -987,7 +1017,7 @@ export function selectCurrentWorkflowStage(tasks) {
   return stages.at(-1) || null
 }
 
-export function applyRuntimeEvent(state, event) {
+export function applyRuntimeEvent(state, event, observedAt = null) {
   const current = trackDelegation(state || createRuntimeState(), event)
   if (
     event?.type === 'sync' ||
@@ -1102,6 +1132,11 @@ export function applyRuntimeEvent(state, event) {
       ...current,
       plan,
       planRevision: revision,
+      planTimings: recordPlanStepTimings(
+        current.planTimings,
+        plan,
+        planTimingTimestamp(observedAt ?? event?.ts)
+      ),
       activities:
         current.plan.length === 0
           ? reconcilePrePlanActivities(current, plan)

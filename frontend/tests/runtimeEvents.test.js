@@ -2050,3 +2050,84 @@ test('bounds and normalizes untrusted plan fields', () => {
   assert.equal(steps[0].title.length, 240)
   assert.equal(steps[0].status, 'pending')
 })
+
+test('records per-step plan durations from live event timestamps', () => {
+  const planAt = (revision, statuses) => ({
+    event_type: 'plan.updated',
+    visibility: 'user',
+    payload: {
+      revision,
+      steps: statuses.map((status, index) => ({
+        id: `step-${index + 1}`,
+        title: `Step ${index + 1}`,
+        status
+      }))
+    }
+  })
+  let state = applyRuntimeEvent(
+    createRuntimeState(),
+    planAt(1, ['in_progress', 'pending']),
+    '2026-10-22T09:00:00.000Z'
+  )
+  state = applyRuntimeEvent(
+    state,
+    planAt(2, ['completed', 'in_progress']),
+    '2026-10-22T09:00:06.000Z'
+  )
+
+  assert.deepEqual(state.planTimings['step-1'], {
+    startedAt: Date.parse('2026-10-22T09:00:00.000Z'),
+    endedAt: Date.parse('2026-10-22T09:00:06.000Z')
+  })
+  assert.deepEqual(state.planTimings['step-2'], {
+    startedAt: Date.parse('2026-10-22T09:00:06.000Z')
+  })
+})
+
+test('records a zero-length duration when a step completes before it is seen running', () => {
+  const planAt = (revision, statuses) => ({
+    event_type: 'plan.updated',
+    visibility: 'user',
+    payload: {
+      revision,
+      steps: statuses.map((status, index) => ({
+        id: `step-${index + 1}`,
+        title: `Step ${index + 1}`,
+        status
+      }))
+    }
+  })
+  let state = applyRuntimeEvent(
+    createRuntimeState(),
+    planAt(1, ['in_progress', 'pending']),
+    '2026-10-22T09:00:00.000Z'
+  )
+  state = applyRuntimeEvent(
+    state,
+    planAt(2, ['completed', 'completed']),
+    '2026-10-22T09:00:04.000Z'
+  )
+
+  assert.deepEqual(state.planTimings['step-2'], {
+    startedAt: Date.parse('2026-10-22T09:00:04.000Z'),
+    endedAt: Date.parse('2026-10-22T09:00:04.000Z')
+  })
+})
+
+test('leaves step durations unknown for replayed history', () => {
+  const state = runtimeStateFor({
+    status: 'done',
+    steps: [
+      {
+        visibility: 'user',
+        event_type: 'plan.updated',
+        payload: {
+          revision: 1,
+          steps: [{ id: 'step-1', title: 'Step 1', status: 'completed' }]
+        }
+      }
+    ]
+  })
+
+  assert.deepEqual(state.planTimings, {})
+})

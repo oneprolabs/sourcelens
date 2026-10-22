@@ -561,183 +561,208 @@
                       }}
                     </span>
                     <span class="runtime-progress-chevron" aria-hidden="true">
-                      ⌄
+                      <svg
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M3 4.5 6 7.5 9 4.5" />
+                      </svg>
                     </span>
                   </summary>
-                  <AssistantActivityGroups
-                    v-if="
-                      structuredProgress(message._runtimeState).kind ===
-                        'workflow' &&
-                      delegatedTaskGroups(message._runtimeState).length
-                    "
-                    :groups="delegatedTaskGroups(message._runtimeState)"
-                    :live="!isTerminalRunStatus(message.thinking.status)"
-                  />
-                  <div
-                    v-if="
-                      structuredProgress(message._runtimeState).kind ===
-                      'workflow'
-                    "
-                    class="runtime-workflow"
-                  >
+                  <div class="runtime-progress-body">
+                    <AssistantActivityGroups
+                      v-if="
+                        structuredProgress(message._runtimeState).kind ===
+                          'workflow' &&
+                        delegatedTaskGroups(message._runtimeState).length
+                      "
+                      :groups="delegatedTaskGroups(message._runtimeState)"
+                      :live="!isTerminalRunStatus(message.thinking.status)"
+                    />
                     <div
-                      v-for="task in structuredProgress(message._runtimeState)
-                        .tasks"
-                      :key="task.id"
-                      class="runtime-workflow-task"
-                      :class="{
-                        'is-direct': !structuredProgress(message._runtimeState)
-                          .hasPlan
-                      }"
+                      v-if="
+                        structuredProgress(message._runtimeState).kind ===
+                        'workflow'
+                      "
+                      class="runtime-workflow"
                     >
                       <div
-                        v-if="structuredProgress(message._runtimeState).hasPlan"
-                        class="runtime-plan-step runtime-task-row"
+                        v-for="task in structuredProgress(message._runtimeState)
+                          .tasks"
+                        :key="task.id"
+                        class="runtime-workflow-task"
                         :class="{
-                          'is-active-ancestor': isActiveProgressAncestor(
-                            task,
-                            task.stages
-                          )
+                          'is-direct': !structuredProgress(
+                            message._runtimeState
+                          ).hasPlan
                         }"
                       >
-                        <span
-                          class="runtime-plan-status"
-                          :class="[
-                            `is-${task.status}`,
-                            {
-                              'is-active-ancestor': isActiveProgressAncestor(
-                                task,
-                                task.stages
-                              )
-                            }
-                          ]"
-                          aria-hidden="true"
-                        >
-                          {{ progressStatusIcon(task.status) }}
-                        </span>
-                        <span>{{ workflowTaskTitle(task) }}</span>
-                      </div>
-                      <div
-                        v-for="stage in task.stages"
-                        :key="stage.id"
-                        class="runtime-workflow-stage"
-                      >
                         <div
-                          class="runtime-plan-step runtime-stage-row"
+                          v-if="
+                            structuredProgress(message._runtimeState).hasPlan
+                          "
+                          class="runtime-plan-step runtime-task-row"
                           :class="{
                             'is-active-ancestor': isActiveProgressAncestor(
-                              stage,
-                              stage.steps
+                              task,
+                              task.stages
                             )
                           }"
                         >
                           <span
                             class="runtime-plan-status"
                             :class="[
-                              `is-${stage.status}`,
+                              `is-${task.status}`,
                               {
                                 'is-active-ancestor': isActiveProgressAncestor(
-                                  stage,
-                                  stage.steps
+                                  task,
+                                  task.stages
                                 )
                               }
                             ]"
                             aria-hidden="true"
                           >
-                            {{ progressStatusIcon(stage.status) }}
+                            {{ progressStatusIcon(task.status) }}
                           </span>
-                          <span>{{ workflowStageTitle(stage.kind) }}</span>
+                          <span>{{ workflowTaskTitle(task) }}</span>
                         </div>
-                        <div class="runtime-workflow-steps">
+                        <div
+                          v-for="stage in task.stages"
+                          :key="stage.id"
+                          class="runtime-workflow-stage"
+                        >
                           <div
-                            v-for="step in stage.steps"
-                            :key="step.id"
-                            class="runtime-plan-step runtime-step-row"
+                            class="runtime-plan-step runtime-stage-row"
+                            :class="{
+                              'is-active-ancestor': isActiveProgressAncestor(
+                                stage,
+                                stage.steps
+                              )
+                            }"
                           >
                             <span
                               class="runtime-plan-status"
-                              :class="`is-${step.status}`"
+                              :class="[
+                                `is-${stage.status}`,
+                                {
+                                  'is-active-ancestor':
+                                    isActiveProgressAncestor(stage, stage.steps)
+                                }
+                              ]"
                               aria-hidden="true"
                             >
-                              {{ progressStatusIcon(step.status) }}
+                              {{ progressStatusIcon(stage.status) }}
                             </span>
-                            <span>{{ workflowStepTitle(step) }}</span>
+                            <span>{{ workflowStageTitle(stage.kind) }}</span>
+                          </div>
+                          <div class="runtime-workflow-steps">
+                            <div
+                              v-for="step in stage.steps"
+                              :key="step.id"
+                              class="runtime-plan-step runtime-step-row"
+                            >
+                              <span
+                                class="runtime-plan-status"
+                                :class="`is-${step.status}`"
+                                aria-hidden="true"
+                              >
+                                {{ progressStatusIcon(step.status) }}
+                              </span>
+                              <span>{{ workflowStepTitle(step) }}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                  <AssistantActivityGroups
-                    v-else-if="
-                      structuredProgress(message._runtimeState).kind ===
-                      'activity'
-                    "
-                    :groups="
-                      assistantActivityGroups(
-                        message._runtimeState,
-                        structuredProgress(message._runtimeState).items
-                      )
-                    "
-                    :live="!isTerminalRunStatus(message.thinking.status)"
-                  />
-                  <div
-                    v-else
-                    v-for="item in structuredProgress(message._runtimeState)
-                      .items"
-                    :key="item.id"
-                    class="runtime-plan-node"
-                  >
-                    <div class="runtime-plan-step">
-                      <span
-                        class="runtime-plan-status"
-                        :class="`is-${item.status}`"
-                        aria-hidden="true"
-                      >
-                        {{ progressStatusIcon(item.status) }}
-                      </span>
-                      <span class="runtime-step-content">
-                        <span>{{ item.title }}</span>
-                        <span v-if="item.summary" class="runtime-step-summary">
-                          {{ item.summary }}
-                        </span>
-                      </span>
-                    </div>
-                    <div
-                      v-if="
-                        nodeActivities(message._runtimeState, item.id).length
+                    <AssistantActivityGroups
+                      v-else-if="
+                        structuredProgress(message._runtimeState).kind ===
+                        'activity'
                       "
-                      class="runtime-node-activities"
+                      :groups="
+                        assistantActivityGroups(
+                          message._runtimeState,
+                          structuredProgress(message._runtimeState).items
+                        )
+                      "
+                      :live="!isTerminalRunStatus(message.thinking.status)"
+                    />
+                    <div
+                      v-else
+                      v-for="(item, index) in structuredProgress(
+                        message._runtimeState
+                      ).items"
+                      :key="item.id"
+                      class="runtime-plan-node"
                     >
                       <div
-                        v-for="activity in nodeActivities(
-                          message._runtimeState,
-                          item.id
-                        )"
-                        :key="activity.id"
-                        class="runtime-node-activity"
+                        class="runtime-plan-step"
+                        :class="{
+                          'is-active': item.status === 'in_progress',
+                          'is-failed': item.status === 'failed'
+                        }"
                       >
-                        <span class="runtime-activity-indicator">{{
-                          progressStatusIcon(activity.status || 'completed')
-                        }}</span>
-                        <span
-                          v-if="activity.assistantName"
-                          class="runtime-activity-assistant"
-                        >
-                          {{ activity.assistantName }}
+                        <span class="runtime-plan-index" aria-hidden="true">
+                          {{ progressStepIndex(index) }}
                         </span>
-                        <span>{{ activityLabel(activity.kind) }}</span>
-                        <span
-                          v-if="activity.delegatedTask"
-                          class="runtime-activity-task-inline"
-                        >
-                          · {{ activity.delegatedTask }}
+                        <span class="runtime-step-content">
+                          <span>{{ item.title }}</span>
+                          <span
+                            v-if="item.summary"
+                            class="runtime-step-summary"
+                          >
+                            {{ item.summary }}
+                          </span>
                         </span>
-                        <span
-                          v-if="activity.count > 1"
-                          class="runtime-activity-count"
-                        >
-                          ×{{ activity.count }}
+                        <span class="runtime-plan-duration">
+                          {{
+                            progressStepDuration(
+                              message._runtimeState,
+                              item,
+                              item.status
+                            )
+                          }}
                         </span>
+                      </div>
+                      <div
+                        v-if="
+                          nodeActivities(message._runtimeState, item.id).length
+                        "
+                        class="runtime-node-activities"
+                      >
+                        <div
+                          v-for="activity in nodeActivities(
+                            message._runtimeState,
+                            item.id
+                          )"
+                          :key="activity.id"
+                          class="runtime-node-activity"
+                        >
+                          <span class="runtime-activity-indicator">{{
+                            progressStatusIcon(activity.status || 'completed')
+                          }}</span>
+                          <span
+                            v-if="activity.assistantName"
+                            class="runtime-activity-assistant"
+                          >
+                            {{ activity.assistantName }}
+                          </span>
+                          <span>{{ activityLabel(activity.kind) }}</span>
+                          <span
+                            v-if="activity.delegatedTask"
+                            class="runtime-activity-task-inline"
+                          >
+                            · {{ activity.delegatedTask }}
+                          </span>
+                          <span
+                            v-if="activity.count > 1"
+                            class="runtime-activity-count"
+                          >
+                            ×{{ activity.count }}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1263,7 +1288,14 @@
                       }}
                     </span>
                     <span class="runtime-progress-chevron" aria-hidden="true">
-                      ⌄
+                      <svg
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M3 4.5 6 7.5 9 4.5" />
+                      </svg>
                     </span>
                   </summary>
                   <div class="runtime-progress-content">
@@ -1392,24 +1424,19 @@
                     />
                     <div
                       v-else
-                      v-for="item in liveStructuredProgress.items"
+                      v-for="(item, index) in liveStructuredProgress.items"
                       :key="item.id"
                       class="runtime-plan-node"
                     >
-                      <div class="runtime-plan-step">
-                        <span
-                          class="runtime-plan-status"
-                          :class="`is-${livePlanStatus(
-                            item,
-                            liveStructuredProgress.items
-                          )}`"
-                          aria-hidden="true"
-                        >
-                          {{
-                            progressStatusIcon(
-                              livePlanStatus(item, liveStructuredProgress.items)
-                            )
-                          }}
+                      <div
+                        class="runtime-plan-step"
+                        :class="{
+                          'is-active': item.status === 'in_progress',
+                          'is-failed': item.status === 'failed'
+                        }"
+                      >
+                        <span class="runtime-plan-index" aria-hidden="true">
+                          {{ progressStepIndex(index) }}
                         </span>
                         <span class="runtime-step-content">
                           <span>{{ item.title }}</span>
@@ -1419,6 +1446,15 @@
                           >
                             {{ item.summary }}
                           </span>
+                        </span>
+                        <span class="runtime-plan-duration">
+                          {{
+                            progressStepDuration(
+                              runtimeState,
+                              item,
+                              livePlanStatus(item, liveStructuredProgress.items)
+                            )
+                          }}
                         </span>
                       </div>
                       <div
@@ -2771,6 +2807,11 @@ function structuredProgressText(
 // user toggle always wins.
 const progressExpandedOverrides = ref({})
 
+// Step durations are observed from the live stream only, so keep the last
+// observed timings per run. A finished run re-renders from its persisted
+// steps (which carry no times) and would otherwise lose its durations.
+const runPlanTimings = new Map()
+
 function progressMessageKey(message) {
   return message?.uuid || message?.run || ''
 }
@@ -2795,6 +2836,28 @@ function handleProgressToggle(message, event) {
 function progressItems(message) {
   const progress = structuredProgress(message?._runtimeState)
   return Array.isArray(progress.items) ? progress.items : []
+}
+
+// Reading the elapsed counter keeps the running step's duration ticking; the
+// counter is driven by the run clock while a run is active.
+const planClockMs = computed(() => {
+  void elapsedSeconds.value
+  return Date.now()
+})
+
+function progressStepIndex(index) {
+  return String(index + 1).padStart(2, '0')
+}
+
+function progressStepDuration(state, item, status) {
+  const timing = state?.planTimings?.[item?.id]
+  if (!timing?.startedAt) return ''
+  let finishedAt = timing.endedAt || 0
+  if (!finishedAt && status === 'in_progress') {
+    finishedAt = planClockMs.value
+  }
+  if (!finishedAt || finishedAt < timing.startedAt) return ''
+  return formatDuration((finishedAt - timing.startedAt) / 1000)
 }
 
 function progressBadgeClass(message) {
@@ -3122,6 +3185,10 @@ const decoratedMessages = computed(() =>
     .map((message) => {
       if (message.role === 'assistant' && message.thinking) {
         const runtime = runtimeStateFor(message.thinking)
+        const observed = message.run ? runPlanTimings.get(message.run) : null
+        if (observed) {
+          runtime.planTimings = { ...observed, ...runtime.planTimings }
+        }
         return { ...message, _runtimeState: runtime }
       }
       return message
@@ -3440,8 +3507,22 @@ async function finishSubmittedRun(
   answerAutoScroller.request()
 }
 
-function pushAgentActivity(item) {
-  runtimeState.value = applyRuntimeEvent(runtimeState.value, item)
+function pushAgentActivity(item, observedAt = null) {
+  runtimeState.value = applyRuntimeEvent(runtimeState.value, item, observedAt)
+  rememberPlanTimings()
+}
+
+// Keep the timings observed for the active run so the finished message keeps
+// its per-step durations after the message list reloads from the server.
+function rememberPlanTimings() {
+  const runUuid = currentRun.value?.uuid
+  const timings = runtimeState.value?.planTimings
+  if (!runUuid || !timings) return
+  if (!Object.keys(timings).length) return
+  runPlanTimings.set(runUuid, {
+    ...(runPlanTimings.get(runUuid) || {}),
+    ...timings
+  })
 }
 
 function appendAnswerDelta(content) {
@@ -4363,24 +4444,32 @@ function handleStepEvent(event) {
   const seenCount = seenStepEventCounts.get(stepKey) || 0
   const newEvents = events.slice(seenCount)
   seenStepEventCounts.set(stepKey, events.length)
+  // Only live step deltas carry an arrival time; the sync snapshot replays
+  // persisted steps at once and must not fabricate step durations.
+  const observedAt = event.type === 'step' ? event.ts : null
 
   newEvents.forEach((item) => {
     if (!event.assistant_name && !event.delegated_task) {
-      pushAgentActivity(item)
+      pushAgentActivity(item, observedAt)
       return
     }
-    pushAgentActivity({
-      ...item,
-      assistant_name: item.assistant_name || event.assistant_name,
-      delegated_task: item.delegated_task || event.delegated_task,
-      payload: item.payload
-        ? {
-            ...item.payload,
-            assistant_name: item.payload.assistant_name || event.assistant_name,
-            delegated_task: item.payload.delegated_task || event.delegated_task
-          }
-        : item.payload
-    })
+    pushAgentActivity(
+      {
+        ...item,
+        assistant_name: item.assistant_name || event.assistant_name,
+        delegated_task: item.delegated_task || event.delegated_task,
+        payload: item.payload
+          ? {
+              ...item.payload,
+              assistant_name:
+                item.payload.assistant_name || event.assistant_name,
+              delegated_task:
+                item.payload.delegated_task || event.delegated_task
+            }
+          : item.payload
+      },
+      observedAt
+    )
   })
 }
 
@@ -5735,27 +5824,50 @@ onBeforeUnmount(() => {
 }
 
 .runtime-progress-card {
+  --sl-plan-border: #ebebee;
+  --sl-plan-surface: #fcfcfc;
+  --sl-plan-surface-hover: #f7f7f8;
+  --sl-plan-divider: #f2f2f4;
+  --sl-plan-text: #3f3f46;
+  --sl-plan-mono: #a1a1aa;
+  --sl-plan-hint: #71717a;
+  --sl-plan-danger: #b64949;
   margin-top: 0;
   margin-bottom: 0.5rem;
+  overflow: hidden;
+  border-color: var(--sl-plan-border);
+  border-radius: 0.75rem;
+  background: var(--sl-bg-raised);
+  padding: 0;
 }
 
-.runtime-progress-card {
-  border-color: #ebebee;
-  border-radius: 0.75rem;
-  padding: 0.625rem 0.875rem;
+:global(:root[data-theme='dark'] .runtime-progress-card) {
+  --sl-plan-border: #3a3d3e;
+  --sl-plan-surface: #26292a;
+  --sl-plan-surface-hover: #2f3233;
+  --sl-plan-divider: #3a3d3e;
+  --sl-plan-text: #b4b4b4;
+  --sl-plan-mono: #858585;
+  --sl-plan-hint: #858585;
+  --sl-plan-danger: #e08585;
 }
 
 .runtime-progress-live {
-  border-color: #ebebee;
-  background: #fcfcfc;
+  border-color: var(--sl-plan-border);
 }
 
 .runtime-progress-summary {
   display: flex;
   align-items: center;
   gap: 0.625rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--sl-plan-surface);
   cursor: pointer;
   list-style: none;
+}
+
+.runtime-progress-summary:hover {
+  background: var(--sl-plan-surface-hover);
 }
 
 .runtime-progress-summary::-webkit-details-marker {
@@ -5826,7 +5938,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: #a1a1aa;
+  color: var(--sl-plan-mono);
   font-size: 0.78125rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5834,22 +5946,31 @@ onBeforeUnmount(() => {
 
 .runtime-progress-hint {
   flex: 0 0 auto;
-  color: #71717a;
+  color: var(--sl-plan-hint);
   font-size: 0.75rem;
 }
 
 .runtime-progress-chevron {
+  display: inline-flex;
+  width: 0.75rem;
+  height: 0.75rem;
   flex: 0 0 auto;
-  color: #a1a1aa;
-  font-size: 0.75rem;
-  line-height: 1;
+  color: var(--sl-plan-mono);
   transition: transform 0.15s ease;
 }
 
-.runtime-progress-card[open] .runtime-progress-summary {
-  margin-bottom: 0.375rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #f2f2f4;
+.runtime-progress-chevron svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.runtime-progress-body,
+.runtime-progress-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  border-top: 1px solid var(--sl-plan-divider);
+  padding: 0.375rem 0.875rem 0.75rem;
 }
 
 .runtime-progress-card[open] .runtime-progress-chevron {
@@ -5863,10 +5984,36 @@ onBeforeUnmount(() => {
 }
 
 .runtime-plan-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.18rem 0;
+  display: grid;
+  grid-template-columns: 1.125rem minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 0.625rem;
+  padding: 0.375rem 0;
+  color: var(--sl-plan-text);
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+}
+
+.runtime-plan-index,
+.runtime-plan-duration {
+  color: var(--sl-plan-mono);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.71875rem;
+  line-height: 1.1875rem;
+}
+
+.runtime-plan-duration {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runtime-plan-step.is-active {
+  color: var(--sl-text-primary);
+  font-weight: 500;
+}
+
+.runtime-plan-step.is-failed {
+  color: var(--sl-plan-danger);
 }
 
 .runtime-workflow-task + .runtime-workflow-task {
@@ -5908,7 +6055,7 @@ onBeforeUnmount(() => {
 
 .runtime-node-activities {
   max-height: 5.5rem;
-  margin: 0.15rem 0 0.25rem 1.5rem;
+  margin: 0.15rem 0 0.25rem 1.75rem;
   padding: 0.15rem 0.35rem;
   overflow-y: auto;
   border-left: 1px solid #e2e8f0;
@@ -5966,12 +6113,11 @@ onBeforeUnmount(() => {
 
 .runtime-plan-status {
   display: inline-flex;
-  width: 1rem;
-  height: 1rem;
+  width: 1.125rem;
+  height: 1.1875rem;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  margin-top: 0.08rem;
   color: var(--sl-text-muted);
   font-size: 0.75rem;
   font-weight: 700;
@@ -5979,11 +6125,11 @@ onBeforeUnmount(() => {
 }
 
 .runtime-plan-status.is-in_progress {
-  width: 0.85rem;
-  height: 0.85rem;
-  margin: 0.15rem 0.075rem 0;
-  border: 2px solid #ead7b4;
-  border-top-color: #b7791f;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0.15625rem 0.125rem 0;
+  border: 2px solid #d6e1fa;
+  border-top-color: #2f62d6;
   border-radius: 9999px;
   color: transparent;
   font-size: 0;
@@ -5991,7 +6137,7 @@ onBeforeUnmount(() => {
 }
 
 .runtime-plan-step.is-active-ancestor {
-  color: #74521e;
+  color: #2357c4;
   font-weight: 600;
 }
 
@@ -6020,9 +6166,9 @@ onBeforeUnmount(() => {
 }
 
 .runtime-step-summary {
-  margin-top: 0.08rem;
-  color: var(--sl-text-muted);
-  font-size: 0.72rem;
+  margin-top: 0.125rem;
+  color: #a1a1aa;
+  font-size: 0.75rem;
 }
 
 .live-status-card {
@@ -6641,6 +6787,7 @@ onBeforeUnmount(() => {
     min-height: 2.75rem;
     gap: 0.375rem;
     padding: 0;
+    background: transparent;
   }
 
   .runtime-progress-live > .runtime-progress-summary {
@@ -6675,17 +6822,12 @@ onBeforeUnmount(() => {
     border-bottom: 0;
   }
 
+  .runtime-progress-body,
   .runtime-progress-content {
     margin-left: 0.5rem;
+    border-top: 0;
     border-left: 1px solid var(--sl-border-default);
     padding: 0.125rem 0 0.25rem 0.75rem;
-  }
-
-  .runtime-progress-card:not(.runtime-progress-live) > .runtime-workflow,
-  .runtime-progress-card:not(.runtime-progress-live) > .runtime-node-activities,
-  .runtime-progress-card:not(.runtime-progress-live) > .runtime-plan-node {
-    margin-left: 0.5rem;
-    padding-left: 0.75rem;
   }
 
   .live-status-card {
