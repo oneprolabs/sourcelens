@@ -1,5 +1,7 @@
 """Automatic evidence-gate verification inside the agent loop."""
 
+import json
+
 from langchain_core.messages import AIMessage, ToolMessage
 
 from lensnode.agent_runtime.evidence_gate import (
@@ -100,13 +102,131 @@ def test_pending_tool_calls_are_never_nudged():
     assert policy.calls == []
 
 
-def test_no_gates_is_a_noop():
+def test_no_gates_disables_review_but_not_loop_control():
     policy = _Policy(active=False)
-    middleware = EvidenceGateMiddleware(policy, "q")
+    middleware = EvidenceGateMiddleware(policy, "q", interval=2, max_convergence_nudges=1)
 
     assert middleware.after_model(_answer_state(), None) is None
-    assert middleware.before_model(_tool_state(), None) is None
     assert policy.calls == []
+    # "When to stop" is loop control, not answer review: the guard must
+    # still fire when no evidence gate is bound.
+    assert middleware.before_model(_tool_state(), None) is None
+    assert middleware.before_model(_tool_state(), None)["messages"]
+    assert middleware.before_model(_tool_state(), None) == {"jump_to": "end"}
+
+
+def _search_state(query, content, call_id="call-1"):
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "search_workspace", "args": {"query": query}, "id": call_id}
+                ],
+            ),
+            ToolMessage(
+                name="search_workspace", tool_call_id=call_id, content=content
+            ),
+        ]
+    }
+
+
+def _evidence_page_state(offset, call_id="call-1", snapshot="abc", total_records=None):
+    progress = {
+        "snapshot_sha256": snapshot,
+        "next_offset": offset,
+        "complete": False,
+    }
+    if total_records is not None:
+        progress["total_records"] = total_records
+    payload = json.dumps({"read_progress": progress})
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_tool_evidence", "args": {}, "id": call_id}],
+            ),
+            ToolMessage(
+                name="read_tool_evidence", tool_call_id=call_id, content=payload
+            ),
+        ]
+    }
+
+
+def test_repeated_empty_results_end_the_run_without_gates():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(policy, "q", interval=8, max_convergence_nudges=2)
+    empty = '{"items":[],"ok":true,"project":"p","query":"%s"}'
+    queries = ["130002", "13000", "ENOENT", "errno"]
+
+    results = [
+        middleware.before_model(_search_state(query, empty % query, call_id=f"c{index}"), None)
+        for index, query in enumerate(queries)
+    ]
+
+    assert results[:3] == [None, None, None]
+    assert results[-1] == {"jump_to": "end"}
+
+
+def test_fresh_results_keep_the_run_alive():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(policy, "q", interval=8, max_convergence_nudges=2)
+
+    for index in range(6):
+        state = _search_state(
+            f"query-{index}",
+            f"docs/file{index}.md: finding {index} is documented.",
+            call_id=f"c{index}",
+        )
+        assert middleware.before_model(state, None) is None
+
+
+def test_evidence_paging_beyond_grace_stops_counting_as_progress():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(
+        policy,
+        "q",
+        interval=1,
+        max_convergence_nudges=1,
+        evidence_page_progress_grace=2,
+        max_evidence_pages=12,
+    )
+
+    for offset in range(2):
+        assert middleware.before_model(
+            _evidence_page_state(offset, total_records=5000), None
+        ) is None
+    assert middleware.before_model(
+        _evidence_page_state(2, total_records=5000), None
+    )["messages"]
+    assert middleware.before_model(
+        _evidence_page_state(3, total_records=5000), None
+    ) == {"jump_to": "end"}
+
+
+def test_feasible_corpus_paging_is_not_capped():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(policy, "q", interval=2, max_convergence_nudges=1)
+
+    for offset in range(20):
+        assert middleware.before_model(
+            _evidence_page_state(offset, total_records=120), None
+        ) is None
+
+
+def test_evidence_page_limit_ends_the_run():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(
+        policy, "q", max_evidence_pages=3, max_convergence_nudges=2
+    )
+
+    for offset in range(3):
+        assert middleware.before_model(
+            _evidence_page_state(offset, total_records=5000), None
+        ) is None
+    assert middleware.before_model(
+        _evidence_page_state(3, total_records=5000), None
+    ) == {"jump_to": "end"}
 
 
 def test_convergence_nudge_then_end():
@@ -344,3 +464,17 @@ def test_all_attachment_problems_are_included_in_one_bounded_repair_phase():
     assert result['messages'][0].content.splitlines() == [item['recovery'] for item in issues]
     assert middleware.review_state['automatic_delivery_corrections'] == 1
     assert not policy.calls
+
+
+def test_repeated_reads_of_an_oversized_corpus_count_toward_the_cap():
+    policy = _Policy(active=False)
+    middleware = EvidenceGateMiddleware(
+        policy, "q", max_evidence_pages=3, max_convergence_nudges=2
+    )
+    page = _evidence_page_state(0, total_records=5000)
+
+    # Re-reading the same offset never advances the cursor, but the corpus is
+    # still too large to finish within one run.
+    for _ in range(3):
+        assert middleware.before_model(page, None) is None
+    assert middleware.before_model(page, None) == {"jump_to": "end"}
