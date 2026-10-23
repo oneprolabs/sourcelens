@@ -23,7 +23,8 @@ class Policy:
 def test_recent_file_write_preserves_a_bounded_publication_window():
     evidence = {"artifact_required": True, "_deliverables": {}}
     review = {"convergence_nudges": 2, "delivery_turns": 8}
-    gate = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review)
+    gate = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review,
+                                  max_convergence_nudges=2)
     state = {"messages": [ToolMessage(
         name="write_file", tool_call_id="write", content="Updated file /report.html"
     )]}
@@ -40,9 +41,11 @@ def test_replayed_write_does_not_extend_publication_forever():
     evidence = {"artifact_required": True}
     review = {"convergence_nudges": 2, "delivery_turns": 8}
     state = {"messages": [ToolMessage(name="write_file", tool_call_id="same", content="Updated file /report.html")]}
-    first = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review)
+    first = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review,
+                                   max_convergence_nudges=2)
     assert first.before_model(state, None) is None
-    restored = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review)
+    restored = EvidenceGateMiddleware(Policy(), "report", evidence=evidence, review_state=review,
+                                      max_convergence_nudges=2)
     assert restored.before_model(state, None) is None
     assert restored.before_model(state, None) == {"jump_to": "end"}
 
@@ -53,7 +56,8 @@ def test_replayed_write_does_not_extend_publication_forever():
 ])
 def test_unrelated_or_failed_tools_do_not_grant_publication_grace(name, content, status):
     gate = EvidenceGateMiddleware(Policy(), "report", evidence={"artifact_required": True},
-                                  review_state={"convergence_nudges": 2, "delivery_turns": 8})
+                                  review_state={"convergence_nudges": 2, "delivery_turns": 8},
+                                  max_convergence_nudges=2)
     state = {"messages": [ToolMessage(name=name, content=content, status=status, tool_call_id="tool")]}
     assert gate.before_model(state, None) == {"jump_to": "end"}
 

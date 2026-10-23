@@ -18,11 +18,17 @@ from .messages import runtime_message
 
 LOGGER = logging.getLogger("lensnode")
 
-DEFAULT_INTERVAL = 8
+DEFAULT_INTERVAL = 12
 DEFAULT_MAX_NUDGES = 1
-DEFAULT_MAX_CONVERGENCE_NUDGES = 2
+DEFAULT_MAX_CONVERGENCE_NUDGES = 3
 DEFAULT_DELIVERY_TURNS = 8
 PUBLICATION_GRACE_TURNS = 2
+DEFAULT_MAX_STALL_TURNS = 4
+DEFAULT_MAX_EVIDENCE_PAGES = 12
+DEFAULT_EVIDENCE_PAGE_PROGRESS_GRACE = 3
+MAX_EVIDENCE_RECORDS = 600
+
+_EMPTY_RESULT_KEYS = ("items", "results", "matches", "hits", "data", "records", "files", "rows")
 
 _RECHECK_GUIDANCE = (
     "Before this answer is accepted, a verification step found it is not "
@@ -103,10 +109,13 @@ class EvidenceGateMiddleware(AgentMiddleware):
     the loop, so a runaway search cannot consume the whole recursion
     budget. It is deliberately hooked on ``before_model`` (after any tool
     results), never while tool calls are still pending, so it can never
-    leave an AI message with unanswered tool calls.
+    leave an AI message with unanswered tool calls. The guard is loop
+    control rather than answer review: it also runs when no evidence gate
+    is bound, and ends the loop as soon as ``max_stall_turns`` consecutive
+    turns add no new information.
 
-    The middleware is a no-op unless the run actually binds an
-    answer-grounding gate, so unconfigured assistants pay nothing.
+    Answer review is a no-op unless the run binds an answer-grounding gate,
+    so unconfigured assistants pay nothing for verification.
     """
 
     def __init__(
@@ -118,6 +127,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
         interval=DEFAULT_INTERVAL,
         max_nudges=DEFAULT_MAX_NUDGES,
         max_convergence_nudges=DEFAULT_MAX_CONVERGENCE_NUDGES,
+        max_stall_turns=DEFAULT_MAX_STALL_TURNS,
+        max_evidence_pages=DEFAULT_MAX_EVIDENCE_PAGES,
+        evidence_page_progress_grace=DEFAULT_EVIDENCE_PAGE_PROGRESS_GRACE,
         emit_event=None,
         review_scope=None,
         on_recheck=None,
@@ -131,6 +143,9 @@ class EvidenceGateMiddleware(AgentMiddleware):
         self.interval = max(int(interval), 1)
         self.max_nudges = max(int(max_nudges), 0)
         self.max_convergence_nudges = max(int(max_convergence_nudges), 0)
+        self.max_stall_turns = max(int(max_stall_turns), 0)
+        self.max_evidence_pages = max(int(max_evidence_pages), 0)
+        self.evidence_page_progress_grace = max(int(evidence_page_progress_grace), 0)
         self.emit_event = emit_event
         self.review_scope = review_scope
         self.on_recheck = on_recheck
@@ -334,14 +349,21 @@ class EvidenceGateMiddleware(AgentMiddleware):
         return self._after_model(state)
 
     def _before_model(self, state=None):
-        if not self._active() or self.saw_final_answer:
+        """Stop a runaway search loop, whether or not review gates are bound."""
+
+        if self.saw_final_answer:
             return None
         if self.max_convergence_nudges <= 0:
             return None
         self.model_calls += 1
         self.review_state["model_calls"] = self.model_calls
+        progress = self._artifact_progress(state or {})
+        self._record_stall(True if progress else self._information_gain(state or {}))
+        if self.review_state.get("evidence_page_limit_reached"):
+            return self._end_convergence("evidence_corpus_limit")
+        if self.max_stall_turns and self._stall_turns() >= self.max_stall_turns:
+            return self._end_convergence("no_information_gain")
         if self.convergence_nudges < self.max_convergence_nudges:
-            progress = self._artifact_progress(state or {})
             if progress:
                 if progress == "deliver":
                     artifact_required = isinstance(self.evidence, dict) and self.evidence.get("artifact_required")
@@ -391,13 +413,7 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 if self.delivery_turns == 1:
                     return {"messages": [runtime_message(_DELIVERY_GUIDANCE, phase="delivery")]}
                 return None
-            if isinstance(self.evidence, dict):
-                self.evidence["convergence_exhausted"] = True
-            self._emit(
-                "deepagents.evidence.convergence",
-                {"action": "end", "turn": self.model_calls},
-            )
-            return {"jump_to": "end"}
+            return self._end_convergence("convergence_budget")
         if self.convergence_calls % self.interval != 0:
             return None
         self.convergence_nudges += 1
@@ -413,8 +429,85 @@ class EvidenceGateMiddleware(AgentMiddleware):
             guidance, phase="delivery" if guidance == _DELIVERY_GUIDANCE else "analysis",
         )]}
 
+    def _stall_turns(self):
+        """Return how many consecutive turns produced no new information."""
+
+        return int(self.review_state.get("stall_turns") or 0)
+
+    def _record_stall(self, progressed):
+        """Track consecutive turns that produced no new information."""
+
+        if progressed is None:
+            return
+        self.review_state["stall_turns"] = 0 if progressed else self._stall_turns() + 1
+
+    def _end_convergence(self, reason):
+        """End the loop and record why the run is being wrapped up."""
+
+        if isinstance(self.evidence, dict):
+            self.evidence["convergence_exhausted"] = True
+            self.evidence["convergence_reason"] = reason
+        self._emit(
+            "deepagents.evidence.convergence",
+            {"action": "end", "turn": self.model_calls, "reason": reason},
+        )
+        return {"jump_to": "end"}
+
+    def _information_gain(self, state):
+        """Return whether the latest tool batch produced previously unseen results."""
+
+        calls = {
+            call["id"]: call
+            for message in state.get("messages", [])
+            if isinstance(message, AIMessage)
+            for call in message.tool_calls or []
+        }
+        batch = []
+        for message in reversed(state.get("messages", [])):
+            if getattr(message, "type", "") != "tool":
+                break
+            call = calls.get(getattr(message, "tool_call_id", None))
+            if call is not None:
+                batch.append([call.get("name"), _message_text(message)])
+        if not batch:
+            return None
+        signature = hashlib.sha256(json.dumps(batch, sort_keys=True).encode()).hexdigest()
+        if signature == self.review_state.get("observed_tool_batch"):
+            return None
+        self.review_state["observed_tool_batch"] = signature
+        seen = set(self.review_state.get("tool_result_signatures") or [])
+        gained = False
+        eligible = False
+        for message in reversed(state.get("messages", [])):
+            if getattr(message, "type", "") != "tool":
+                break
+            if getattr(message, "status", "success") == "error":
+                continue
+            call = calls.get(getattr(message, "tool_call_id", None))
+            if call is None:
+                continue
+            if (
+                call.get("name") in {"ls", "write_todos", "read_tool_evidence"}
+                or _successful_artifact_write(message)
+            ):
+                continue
+            eligible = True
+            text = _message_text(message)
+            if not _result_carries_payload(text):
+                continue
+            result_signature = _result_signature(text, call.get("args") or {})
+            if result_signature not in seen:
+                seen.add(result_signature)
+                gained = True
+        self.review_state["tool_result_signatures"] = sorted(seen)
+        return gained if eligible else None
+
     def _artifact_progress(self, state):
-        """Do not count bounded setup, advancing local evidence pages, or writes as stalled searches."""
+        """Do not count bounded setup, advancing local evidence pages, or writes as stalled searches.
+
+        Evidence paging stops counting as progress only when the source
+        snapshot declares a corpus too large to finish within this run.
+        """
 
         calls = {
             call["id"]: call
@@ -454,17 +547,28 @@ class EvidenceGateMiddleware(AgentMiddleware):
                 except (TypeError, ValueError):
                     continue
                 page = payload.get("read_progress") if isinstance(payload, dict) else None
-                if isinstance(page, dict) and page.get("snapshot_sha256"):
-                    snapshot = page["snapshot_sha256"]
-                    previous = cursors.get(snapshot, -1)
-                    offset = page.get("next_offset")
-                    if previous is None or (page.get("complete") is not True and (
-                        type(offset) is not int or offset <= previous
-                    )):
+                if not (isinstance(page, dict) and page.get("snapshot_sha256")):
+                    continue
+                total_records = page.get("total_records")
+                infeasible = type(total_records) is int and total_records > MAX_EVIDENCE_RECORDS
+                if infeasible:
+                    reads = int(self.review_state.get("evidence_page_reads") or 0) + 1
+                    self.review_state["evidence_page_reads"] = reads
+                    if reads > self.max_evidence_pages:
+                        self.review_state["evidence_page_limit_reached"] = True
                         continue
-                    cursors[snapshot] = None if page.get("complete") is True else offset
-                    progress = [page["snapshot_sha256"], page.get("next_offset"), page.get("complete")]
-                    completed = page.get("complete") is True
+                snapshot = page["snapshot_sha256"]
+                previous = cursors.get(snapshot, -1)
+                offset = page.get("next_offset")
+                if previous is None or (page.get("complete") is not True and (
+                    type(offset) is not int or offset <= previous
+                )):
+                    continue
+                cursors[snapshot] = None if page.get("complete") is True else offset
+                if infeasible and reads > self.evidence_page_progress_grace:
+                    continue
+                progress = [page["snapshot_sha256"], page.get("next_offset"), page.get("complete")]
+                completed = page.get("complete") is True
             if progress is None:
                 continue
             signature = hashlib.sha256(json.dumps(progress, sort_keys=True).encode()).hexdigest()
@@ -493,6 +597,8 @@ class EvidenceGateMiddleware(AgentMiddleware):
             correction_calls_remaining=self.correction_calls_remaining,
             publication_grace_used=0,
             artifact_progress_allowances={},
+            stall_turns=0,
+            observed_tool_batch="",
         )
         if isinstance(self.evidence, dict):
             self.evidence.pop("convergence_exhausted", None)
@@ -658,6 +764,35 @@ def _source_coverage_incomplete(content):
         return False
     metadata = payload.get("_evidence")
     return payload.get("ok") is False or (isinstance(metadata, dict) and metadata.get("complete") is False)
+
+
+def _result_carries_payload(text):
+    """Return whether a tool result contains any usable payload."""
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    try:
+        payload = json.loads(stripped)
+    except (TypeError, ValueError):
+        return True
+    if isinstance(payload, dict):
+        collections = [
+            payload[key] for key in _EMPTY_RESULT_KEYS if isinstance(payload.get(key), list)
+        ]
+        if collections:
+            return any(bool(items) for items in collections)
+    return bool(payload)
+
+
+def _result_signature(text, args):
+    """Hash a result with echoed request arguments removed."""
+
+    normalized = text or ""
+    for value in (args or {}).values():
+        if isinstance(value, str) and len(value) >= 3:
+            normalized = normalized.replace(value, "")
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def _tool_evidence(state, limit=1200, retained=None):

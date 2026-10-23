@@ -395,7 +395,7 @@ def test_real_graph_automatically_delivers_without_save_tool(
             return []
 
     if at_delivery_limit:
-        evidence["_answer_review"] = {"convergence_nudges": 2, "delivery_turns": 7}
+        evidence["_answer_review"] = {"convergence_nudges": 3, "delivery_turns": 7}
     policy = SimpleNamespace(has_evidence_gates=lambda: True,
                              post_run_checks=lambda *args: {"answer_supported": "supported"})
     state = SimpleNamespace(command=command, runtime_evidence=evidence, question="Create a report",

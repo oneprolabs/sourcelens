@@ -1,0 +1,9 @@
+type: improvement
+audience: user
+en: >-
+  End retrieval runs early once further searching stops producing new evidence,
+  and close the answer with what was confirmed, what could not be confirmed and
+  why, plus what narrower query would settle it.
+zh-CN: >-
+  当继续检索不再产生新证据时提前结束运行，并在回答末尾说明已确认内容、
+  未能确认的部分及原因，以及收窄查询的建议。

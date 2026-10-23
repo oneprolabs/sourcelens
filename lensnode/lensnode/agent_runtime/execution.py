@@ -307,6 +307,10 @@ def _run_agent_with_turn_limit(
         truncated = True
         truncation_reason = "evidence_convergence_limit"
 
+    wrapup_reason = truncation_reason
+    if truncation_reason == "evidence_convergence_limit" and isinstance(execution_evidence, dict):
+        wrapup_reason = execution_evidence.get("convergence_reason") or truncation_reason
+
     if finalize_deliverables is not None:
         finalize_deliverables()
 
@@ -331,7 +335,7 @@ def _run_agent_with_turn_limit(
             answer_language,
             emit_event,
             current_question=current_question,
-            reason=truncation_reason or "limit",
+            reason=wrapup_reason or "limit",
             system_prompt=system_prompt,
             retained_tools=observed_tools,
             user_context=user_context,
@@ -826,6 +830,23 @@ def _synthesize_wrapup_answer(
             "Capability execution reached its recovery limit. Do not call "
             "tools. Give a concise answer from the current conversation and "
             "collected information, and state what failed or remains undone."
+        )
+    elif reason in {
+        "evidence_convergence_limit",
+        "no_information_gain",
+        "evidence_corpus_limit",
+        "convergence_budget",
+    }:
+        instruction = (
+            "Further retrieval stopped producing new evidence, so you cannot "
+            "call more tools. Based only on the current conversation and "
+            "collected results, write the most complete answer you can. Then "
+            "add a short, clearly separated closing note that states: (1) which "
+            "parts of the request are confirmed by evidence, (2) which parts "
+            "could not be confirmed and why (no matching results, insufficient "
+            "access, or a source corpus too large to finish), and (3) what "
+            "narrower query or additional access would settle the open parts. "
+            "Do not mention internal runtime controls or budgets."
         )
     else:
         instruction = (

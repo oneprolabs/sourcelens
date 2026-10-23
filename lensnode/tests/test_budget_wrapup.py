@@ -366,3 +366,41 @@ def test_publication_grace_stops_on_new_response_after_history_compaction():
     )
     assert not agent.exhausted
     assert result == ("Recovered answer", True, "token_budget_wrapup")
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["evidence_convergence_limit", "no_information_gain", "evidence_corpus_limit", "convergence_budget"],
+)
+def test_evidence_gap_wrapup_requests_a_declared_gap(reason):
+    """A retrieval dead end must end with an explicit, structured gap note."""
+
+    model = SynthesisModel()
+    _synthesize_wrapup_answer(
+        model, [HumanMessage(content="Investigate INC-42")], "Simplified Chinese", None,
+        current_question="Investigate INC-42", reason=reason,
+    )
+
+    control = model.messages[-2].content.lower()
+    assert "could not be confirmed" in control
+    assert "narrower query" in control
+
+
+def test_convergence_wrapup_uses_the_specific_stop_reason():
+    event = threading.Event()
+    agent = BudgetedAgent(event, [[HumanMessage(content="Check the agent"), AIMessage(content="Draft")]])
+    model = SynthesisModel()
+
+    answer, truncated, reason = _run_agent_with_turn_limit(
+        agent,
+        [{"role": "user", "content": "Check the agent"}],
+        max_turns=26,
+        model=model,
+        execution_evidence={
+            "convergence_exhausted": True,
+            "convergence_reason": "no_information_gain",
+        },
+    )
+
+    assert (answer, truncated, reason) == ("Recovered answer", True, "evidence_convergence_limit")
+    assert "could not be confirmed" in model.messages[-2].content.lower()
