@@ -197,7 +197,7 @@ def _matched_events(rule, payload, run=None):
     if subject == "run":
         if reasons & {"token_budget", "token_capped", "token_budget_wrapup"}:
             events.append("run_token_limit")
-        if "turn_limit" in reasons:
+        if reasons & {"turn_limit", "step_limit"}:
             events.append("run_round_limit")
         if payload.get("outcome") == "partial":
             events.append("run_partial")

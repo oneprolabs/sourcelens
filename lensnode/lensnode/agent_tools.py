@@ -357,7 +357,25 @@ def build_agent_tools(
                     }
                 )
             emit("tool.read_workspace_file.denied", {"path": path})
-            return _json({"error": "PATH_NOT_ALLOWED", "path": path})
+            candidates = _denied_path_candidates(
+                path,
+                target_dirs,
+                retrieval_policy,
+            )
+            return _json(
+                {
+                    "error": "PATH_NOT_ALLOWED",
+                    "path": path,
+                    "candidate_files": candidates,
+                    "hint": (
+                        "Read one of candidate_files instead of retrying this "
+                        "path."
+                        if candidates
+                        else "Use find_files with the file name, then read the "
+                        "path it returns."
+                    ),
+                }
+            )
         started = time.monotonic()
         window = read_workspace_window(
             str(resolved),
@@ -3284,6 +3302,87 @@ def _resolve_allowed_path(path, target_dirs, policy=None):
         if is_path_allowed(root, resolved, scope, policy or {}):
             return resolved
     return None
+
+
+def _denied_path_candidates(path, target_dirs, policy=None, limit=3):
+    """Suggest allowed paths for a denied read without a broad workspace scan."""
+
+    requested = Path(str(path or ""))
+    name = requested.name
+    if not name:
+        return []
+    relative = str(requested).lstrip("/")
+    candidates = []
+    for item in target_dirs:
+        root = Path(item.get("path", "")).resolve()
+        scope = target_scope(item)
+        for probe in _path_probes(root, relative, name):
+            resolved = _allowed_candidate(probe, root, scope, policy)
+            if resolved and resolved not in candidates:
+                candidates.append(resolved)
+            if len(candidates) >= limit:
+                return candidates
+    for found in glob_files(
+        target_dirs,
+        f"**/{name}",
+        max_results=limit,
+        policy=policy,
+    ):
+        if found not in candidates:
+            candidates.append(found)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def _path_probes(root, relative, name):
+    """Return cheap candidate locations for a denied relative path.
+
+    Models commonly drop the workspace prefix (`datasources/<id>/...` or a
+    repository directory) from a path they saw in evidence, so a probe only
+    costs one stat per candidate and never walks the tree.
+    """
+
+    probes = [root / relative, root / name]
+    try:
+        top_level = sorted(
+            child for child in root.iterdir() if child.is_dir()
+        )
+    except OSError:
+        top_level = []
+    for top in top_level[:32]:
+        if relative != name:
+            probes.append(top / relative)
+        probes.append(top / name)
+    for container in ("datasources", "sources"):
+        base = root / container
+        if not base.is_dir():
+            continue
+        try:
+            datasets = sorted(
+                child for child in base.iterdir() if child.is_dir()
+            )
+        except OSError:
+            continue
+        for dataset in datasets[:32]:
+            if relative != name:
+                probes.append(dataset / relative)
+            probes.append(dataset / name)
+    return probes
+
+
+def _allowed_candidate(candidate, root, scope, policy):
+    """Return the cited path of an allowed existing file, or None."""
+
+    try:
+        if not candidate.is_file():
+            return None
+        resolved = retrieval_path(candidate.resolve())
+    except OSError:
+        return None
+    if not is_path_allowed(root, resolved, scope, policy or {}):
+        return None
+    return str(citation_path(resolved))
 
 
 def _resolve_allowed_directory(path, target_dirs, policy=None):

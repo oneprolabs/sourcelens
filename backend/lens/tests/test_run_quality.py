@@ -70,6 +70,16 @@ class RunQualitySummaryTests(RunTraceFixtureMixin, TestCase):
         self.assertEqual(detail["reason"], "evidence_incomplete")
         self.assertNotIn("private content", str(detail))
 
+    def test_step_limit_reason_survives_public_sanitization(self):
+        """The graph superstep ceiling is reported as a public limit, not a failure."""
+
+        detail = sanitize_termination_detail(
+            {"reason": "step_limit", "trigger": "step_limit", "raw": "private content"}
+        )
+        self.assertEqual(detail["reason"], "step_limit")
+        self.assertEqual(detail["trigger"], "step_limit")
+        self.assertNotIn("private content", str(detail))
+
     def test_compaction_failure_preserves_the_public_stop_reason(self):
         detail = sanitize_termination_detail({
             "reason": "context_compaction_failed", "trigger": "context_compaction_failed",

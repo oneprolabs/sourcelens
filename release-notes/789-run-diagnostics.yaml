@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  LensNode heartbeats and disconnect logs now report event-loop lag, send time
+  and outbox depth, so control-channel drops can be traced to the code that
+  stalled.
+zh-CN: >-
+  LensNode 心跳与断开日志现在会记录事件循环延迟、发送耗时与待发送队列深度，
+  便于定位导致控制通道断开的代码。

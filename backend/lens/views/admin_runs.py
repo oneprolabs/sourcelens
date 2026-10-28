@@ -553,7 +553,7 @@ def _admin_run_row(run):
             run.status == Run.Status.DONE
             and run.outcome == Run.Outcome.PARTIAL
             and (run.termination_detail or {}).get("trigger")
-            in {"turn_limit", "loop_capped"}
+            in {"turn_limit", "loop_capped", "step_limit"}
         ),
         "subagent_count": counts["subagent_count"],
         "subagent_denied_count": counts["subagent_denied_count"],
@@ -1380,7 +1380,7 @@ class AdminRunRetryView(APIView):
                 run.status == Run.Status.DONE
                 and run.outcome == Run.Outcome.PARTIAL
                 and (run.termination_detail or {}).get("trigger")
-                in {"turn_limit", "loop_capped"}
+                in {"turn_limit", "loop_capped", "step_limit"}
             )
             if (
                 run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]

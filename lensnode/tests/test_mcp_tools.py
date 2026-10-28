@@ -14,6 +14,8 @@ from pydantic import Field
 from lensnode.mcp_tools import (
     DeferredMCPToolMiddleware,
     MCPToolFirstMiddleware,
+    _is_blank_text_result,
+    _mcp_text_preview,
     _wrap_mcp_tool,
     build_deferred_mcp_tools,
     load_mcp_tools,
@@ -150,6 +152,51 @@ def test_mcp_tool_bounds_large_codegraph_results():
     assert result["ok"] is True
     assert result["truncated"] is True
     assert len(result["result"][0]["text"]) <= 8000
+
+
+def test_mcp_tool_keeps_codegraph_text_when_result_has_newlines():
+    payload = "\n".join(
+        f"line {index}: relationship and source context" for index in range(700)
+    )
+
+    async def explore(**_kwargs):
+        return [{"type": "text", "text": payload, "id": "block-1"}]
+
+    tool = _wrap_mcp_tool(
+        StructuredTool.from_function(
+            coroutine=explore,
+            name="codegraph_explore",
+            description="Explore code.",
+        ),
+        "codegraph",
+        "codegraph",
+        1,
+        set(),
+    )
+
+    result = json.loads(tool.invoke({"query": "symbol"}))
+    block = result["result"][0]
+    text = block["text"]
+
+    assert result["ok"] is True
+    assert result["truncated"] is True
+    assert text.startswith("line 0:")
+    assert text.endswith("relationship and source context")
+    assert "truncated" in text
+    assert len(json.dumps(block, ensure_ascii=False)) <= 8000
+
+
+def test_mcp_text_preview_replaces_blank_text_result():
+    raw = [{"type": "text", "text": "x" * 20000}]
+
+    assert _is_blank_text_result([{"type": "text"}]) is True
+    assert _is_blank_text_result([{"type": "text", "text": "kept"}]) is False
+
+    preview = _mcp_text_preview(raw)
+
+    assert preview["type"] == "text"
+    assert preview["text"].startswith('[{"type": "text"')
+    assert len(json.dumps(preview, ensure_ascii=False)) <= 8000
 
 
 def test_mcp_tool_returns_short_result_for_duplicate_arguments():

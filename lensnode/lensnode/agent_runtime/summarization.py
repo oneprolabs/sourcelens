@@ -31,6 +31,12 @@ CONTINUATION_SUMMARY_PROMPT = (
     "Do NOT write a final answer here. Do NOT imply the task is complete "
     "or already answered. This is a working note to yourself so you can "
     "keep investigating, then produce the final answer in a later step.\n\n"
+    "Keep the whole note under 700 words. Write one line per evidence item "
+    "as `path:line → fact`, and keep at most 12 items — the ones still "
+    "load-bearing for the remaining work. Collapse repeated reads of the "
+    "same file, superseded readings, and resolved dead ends into a short "
+    "count (for example '40 further reads of block.vue showed no new "
+    "facts').\n\n"
     "<messages>\n{messages}\n</messages>"
 )
 
