@@ -372,7 +372,8 @@ def build_agent_tools(
                         "path."
                         if candidates
                         else "Use find_files with the file name, then read the "
-                        "path it returns."
+                        "path it returns. If find_files returns no match, "
+                        "verify the path or pick another file."
                     ),
                 }
             )
@@ -3322,16 +3323,6 @@ def _denied_path_candidates(path, target_dirs, policy=None, limit=3):
                 candidates.append(resolved)
             if len(candidates) >= limit:
                 return candidates
-    for found in glob_files(
-        target_dirs,
-        f"**/{name}",
-        max_results=limit,
-        policy=policy,
-    ):
-        if found not in candidates:
-            candidates.append(found)
-        if len(candidates) >= limit:
-            break
     return candidates
 
 

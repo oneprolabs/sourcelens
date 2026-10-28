@@ -4912,6 +4912,64 @@ class LensApiTests(TestCase):
             },
         )
 
+    def test_admin_retry_accepts_a_limit_partial_without_a_trigger(self):
+        session = Session.objects.create(
+            assistant=self.assistant,
+            user=self.user,
+        )
+        run = create_execution_run(
+            session=session,
+            question="Audit every host",
+            enqueue=False,
+        )
+        run.status = Run.Status.DONE
+        run.outcome = Run.Outcome.PARTIAL
+        run.termination_detail = {"reason": "step_limit"}
+        run.save(update_fields=["status", "outcome", "termination_detail"])
+
+        detail = self.client.get(f"/api/lens/admin/runs/{run.uuid}/")
+
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertTrue(detail.data["continuation_available"])
+        self.assertTrue(detail.data["available_actions"]["retry"])
+
+        response = self.client.post(
+            f"/api/lens/admin/runs/{run.uuid}/retry/",
+            {"idempotency_key": "step-limit-retry-1"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        retry = Run.objects.get(uuid=response.data["uuid"])
+        self.assertEqual(retry.retry_of_run, run)
+
+    def test_admin_retry_rejects_an_archived_session(self):
+        session = Session.objects.create(
+            assistant=self.assistant,
+            user=self.user,
+        )
+        run = create_execution_run(
+            session=session,
+            question="Audit every host",
+            enqueue=False,
+        )
+        run.status = Run.Status.DONE
+        run.outcome = Run.Outcome.PARTIAL
+        run.termination_detail = {"reason": "step_limit"}
+        run.save(update_fields=["status", "outcome", "termination_detail"])
+        session.status = Session.Status.ARCHIVED
+        session.save(update_fields=["status"])
+
+        response = self.client.post(
+            f"/api/lens/admin/runs/{run.uuid}/retry/",
+            {"idempotency_key": "archived-retry-1"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "SESSION_ARCHIVED")
+        self.assertFalse(Run.objects.filter(retry_of_run=run).exists())
+
     @patch("lens.views.admin_runs.resume_awaiting_run")
     def test_admin_resume_requires_an_awaiting_run(self, resume):
         session = Session.objects.create(

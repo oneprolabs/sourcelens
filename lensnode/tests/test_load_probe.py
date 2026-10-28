@@ -104,6 +104,37 @@ def test_watchdog_does_not_dump_a_healthy_loop(caplog):
     assert caplog.records == []
 
 
+def test_restart_after_stop_reports_each_stall_again(caplog):
+    async def run():
+        probe = LoopLagProbe(
+            interval_s=0.1,
+            warn_threshold_s=0.2,
+            warn_cooldown_s=60.0,
+        )
+        probe.start()
+        await asyncio.sleep(0.15)
+        time.sleep(0.6)
+        await asyncio.sleep(0.1)
+        await probe.stop()
+        probe.start()
+        await asyncio.sleep(0.15)
+        time.sleep(0.6)
+        await asyncio.sleep(0.1)
+        await probe.stop()
+
+    with caplog.at_level(logging.ERROR, logger="lensnode"):
+        asyncio.run(run())
+
+    stalls = [
+        record.getMessage()
+        for record in caplog.records
+        if "stalled LensNode event loop" in record.getMessage()
+    ]
+    # The second stall is only reported if the restart clears the dump
+    # cooldown left behind by the first one.
+    assert len(stalls) == 2
+
+
 def test_resource_metrics_report_loop_lag_send_time_and_outbox_depth():
     client = _make_client()
     client._send_max_s = 0.25

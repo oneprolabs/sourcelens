@@ -84,15 +84,27 @@ class LoopLagProbe:
     def start(self):
         """Start sampling on the running loop and its stall watchdog."""
 
-        if self._sampler_task is None or self._sampler_task.done():
-            self._sampler_task = asyncio.create_task(self._sample())
         if self._watchdog is None:
+            # Reset the stall window so a restart does not report the silence
+            # that happened while the probe was stopped.
+            self._watchdog_stop.clear()
+            self._beat_at = time.monotonic()
+            self._loop_beat = 0
+            self._dumped_beat = -1
+            self._dump_logged_at = 0.0
+            self._lag_logged_at = 0.0
+            self._max_lag_s = 0.0
+            self._last_lag_s = 0.0
+            self._stall_count = 0
+            self._loop_thread_id = None
             self._watchdog = threading.Thread(
                 target=self._watch,
                 name="lensnode-loop-watchdog",
                 daemon=True,
             )
             self._watchdog.start()
+        if self._sampler_task is None or self._sampler_task.done():
+            self._sampler_task = asyncio.create_task(self._sample())
 
     async def stop(self):
         """Stop sampling and the watchdog thread."""
@@ -162,6 +174,8 @@ class LoopLagProbe:
 
         poll_s = max(0.1, self.interval_s)
         while not self._watchdog_stop.wait(poll_s):
+            if threading.current_thread() is not self._watchdog:
+                return
             if self._loop_thread_id is None:
                 continue
             silence_s = time.monotonic() - self._beat_at
