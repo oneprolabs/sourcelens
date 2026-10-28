@@ -86,6 +86,52 @@ def test_repeated_compaction_failure_stops_the_graph_and_synthesizes_once():
     assert "deepagents.agent.context_compaction_failed" in events
 
 
+def test_step_limit_synthesizes_an_answer_instead_of_failing_the_run():
+    """The graph superstep ceiling becomes a truncated answer, not a failure."""
+
+    from langgraph.errors import GraphRecursionError
+
+    class StepLimitedAgent:
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [HumanMessage(content="Audit hosts"), AIMessage(content="Observed 42 hosts")]}
+            raise GraphRecursionError("Recursion limit of 500 reached without hitting a stop condition.")
+
+    events = []
+    model = SynthesisModel()
+    answer, truncated, reason = _run_agent_with_turn_limit(
+        StepLimitedAgent(), [{"role": "user", "content": "Audit hosts"}], 0,
+        model=model, emit_event=lambda name, detail: events.append(name),
+    )
+
+    assert (answer, truncated, reason) == ("Recovered answer", True, "step_limit")
+    assert "Observed 42 hosts" in str(model.messages)
+    assert "step limit" in str(model.messages)
+    assert events == ["llm.response", "deepagents.agent.step_limit", "deepagents.agent.wrapup"]
+
+
+def test_step_limit_keeps_partial_text_when_synthesis_fails():
+    """A failed wrap-up still returns the work already streamed."""
+
+    from langgraph.errors import GraphRecursionError
+
+    class StepLimitedAgent:
+        def stream(self, _input, **_kwargs):
+            yield {"messages": [HumanMessage(content="Audit hosts"), AIMessage(content="Observed 42 hosts")]}
+            raise GraphRecursionError("Recursion limit of 500 reached without hitting a stop condition.")
+
+    class FailingModel:
+        stop_reason = None
+
+        def invoke(self, *_args, **_kwargs):
+            raise RuntimeError("gateway unavailable")
+
+    answer, truncated, reason = _run_agent_with_turn_limit(
+        StepLimitedAgent(), [{"role": "user", "content": "Audit hosts"}], 0, model=FailingModel(),
+    )
+
+    assert (answer, truncated, reason) == ("Observed 42 hosts", True, "step_limit")
+
+
 def test_budget_reserve_does_not_skip_after_model_correction():
     event = threading.Event()
     draft = [HumanMessage(content="Check the agent"), AIMessage(content="Unverified draft")]

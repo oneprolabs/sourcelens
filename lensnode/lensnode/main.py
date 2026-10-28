@@ -39,6 +39,7 @@ from .delegation_events import delegation_events
 from .execution_queue import ExecutionClass, LensNodeExecutionQueue
 from .executor import TASKS, LensNodeExecutor
 from .gateway_model import RunCancelledError
+from .load_probe import LoopLagProbe
 from .logging_utils import (
     elapsed_since,
     format_duration,
@@ -171,6 +172,11 @@ class LensNodeClient:
         self._pending_datasource_terminal_frames = collections.OrderedDict()
         self._buffered_output = None
         self._output_flush_handle = None
+        # Event-loop responsiveness: the control plane closes the socket when
+        # the loop misses a ping budget, so lag is reported with every
+        # heartbeat and a stall dumps the stacks that caused it.
+        self.load_probe = LoopLagProbe()
+        self._send_max_s = 0.0
 
     def _enqueue_from_thread(self, loop, payload):
         """Schedule an outbound frame while tolerating loop shutdown."""
@@ -294,6 +300,7 @@ class LensNodeClient:
         """Run the client with reconnect backoff until stopped."""
 
         cleanup_task = asyncio.create_task(self._runtime_cleanup_loop())
+        self.load_probe.start()
         try:
             backoff_s = 1
             while not self.stopping.is_set():
@@ -336,6 +343,7 @@ class LensNodeClient:
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(backoff_s * 2, 30)
         finally:
+            await self.load_probe.stop()
             cleanup_task.cancel()
             await asyncio.gather(cleanup_task, return_exceptions=True)
 
@@ -2308,7 +2316,9 @@ class LensNodeClient:
             disk_percent = usage.used / usage.total * 100 if usage.total else None
         except OSError:
             pass
-        return {
+        send_max_s = self._send_max_s
+        self._send_max_s = 0.0
+        metrics = {
             key: round(value, 1)
             for key, value in {
                 "cpu_percent": cpu_percent,
@@ -2317,6 +2327,10 @@ class LensNodeClient:
             }.items()
             if value is not None
         }
+        metrics.update(self.load_probe.collect())
+        metrics["outbox_depth"] = len(self._outbox)
+        metrics["send_ms_max"] = round(send_max_s * 1000, 1)
+        return metrics
 
     async def _heartbeat_loop(self):
         """Periodically report workspace state while connected.
@@ -2385,7 +2399,12 @@ class LensNodeClient:
                     frame = payload
                     if payload.get("type") == "run_done":
                         frame = {**payload, "node_sent_at": utc_now().isoformat()}
+                    started = asyncio.get_running_loop().time()
                     await websocket.send(json.dumps(frame, ensure_ascii=False))
+                    self._send_max_s = max(
+                        self._send_max_s,
+                        asyncio.get_running_loop().time() - started,
+                    )
                 except (RuntimeError, AttributeError):
                     # The event loop is being torn down (container restart or
                     # deploy). Requeue the frame and stop quietly instead of
@@ -2425,6 +2444,10 @@ class LensNodeClient:
         ]
         if self.connected_at:
             details.append(f"ConnectedDuration: {elapsed_since(self.connected_at)}")
+        # Snapshot the control-channel health at the moment of the close: a
+        # keepalive timeout is decided by what the loop was doing just before.
+        for key, value in self._resource_metrics().items():
+            details.append(f"{key}: {value}")
         LOGGER.info(
             task_log(
                 (

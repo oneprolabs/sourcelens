@@ -94,6 +94,7 @@ PUBLIC_TERMINATION_REASONS = {
     "context_compaction_failed",
     "execution_limit",
     "turn_limit",
+    "step_limit",
     "soft_deadline",
     "token_budget",
     "safety_terminated",

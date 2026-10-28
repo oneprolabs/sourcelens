@@ -73,6 +73,18 @@ class UnifiedAlertTests(TestCase):
         evaluate_run_alerts(run.uuid)
         self.assertEqual(AlertEvent.objects.get().event_type, "run_token_limit")
 
+    def test_step_limit_termination_is_a_round_limit_alert(self):
+        self.rule.events = ["run_round_limit"]
+        self.rule.save()
+        run = self.run_event(
+            status="done",
+            outcome="partial",
+            error="",
+            termination_detail={"reason": "step_limit", "trigger": "step_limit"},
+        )
+        evaluate_run_alerts(run.uuid)
+        self.assertEqual(AlertEvent.objects.get().event_type, "run_round_limit")
+
     def test_terminal_run_writes_outbox_before_commit_and_rollback_removes_it(self):
         with transaction.atomic():
             run = self.run_event()

@@ -1,0 +1,9 @@
+type: fix
+audience: user
+en: >-
+  Fixed code-analysis tools returning empty results, and Runs that reach the
+  graph step ceiling now finish with the evidence already gathered instead of
+  failing.
+zh-CN: >-
+  修复代码分析工具返回空结果的问题；达到图执行步数上限的运行将基于已收集证据
+  完成回答，而不再直接失败。

@@ -1201,3 +1201,72 @@ def test_canonical_search_depth_is_measured_on_source_paths(tmp_path, monkeypatc
         result = search_workspace(dirs, "Warranty period", output_mode=mode)
         items = result[{"content": "matches", "files": "files", "count": "counts"}[mode]]
         assert [item if isinstance(item, str) else item["path"] for item in items] == [str(source)]
+
+
+def test_read_workspace_file_suggests_allowed_path_on_denial(tmp_path):
+    root = tmp_path / "workspace"
+    docs = root / "docs"
+    docs.mkdir(parents=True)
+    target = docs / "guide.md"
+    target.write_text("policy marker\n", encoding="utf-8")
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {"target_dirs": [{"path": str(root)}], "settings": {}}
+        )
+    }
+
+    denied = json.loads(
+        tools["read_workspace_file"].invoke(
+            {"path": str(tmp_path / "elsewhere" / "guide.md")}
+        )
+    )
+
+    assert denied["error"] == "PATH_NOT_ALLOWED"
+    assert denied["candidate_files"] == [str(target)]
+    assert "candidate_files" in denied["hint"]
+
+
+def test_read_workspace_file_denial_without_matches_points_to_find_files(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {"target_dirs": [{"path": str(root)}], "settings": {}}
+        )
+    }
+
+    denied = json.loads(
+        tools["read_workspace_file"].invoke(
+            {"path": str(tmp_path / "missing" / "absent.md")}
+        )
+    )
+
+    assert denied["error"] == "PATH_NOT_ALLOWED"
+    assert denied["candidate_files"] == []
+    assert "find_files" in denied["hint"]
+
+
+def test_read_workspace_file_suggests_datasource_prefixed_path(tmp_path):
+    root = tmp_path / "workspace"
+    dataset = root / "datasources" / "8f2c"
+    docs = dataset / "docs"
+    docs.mkdir(parents=True)
+    target = docs / "features.md"
+    target.write_text("policy marker\n", encoding="utf-8")
+    tools = {
+        tool.name: tool
+        for tool in build_agent_tools(
+            {"target_dirs": [{"path": str(root)}], "settings": {}}
+        )
+    }
+
+    denied = json.loads(
+        tools["read_workspace_file"].invoke(
+            {"path": "docs/features.md"}
+        )
+    )
+
+    assert denied["error"] == "PATH_NOT_ALLOWED"
+    assert str(target) in denied["candidate_files"]

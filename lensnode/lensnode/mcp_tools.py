@@ -646,6 +646,8 @@ def _wrap_mcp_tool(
                 timeout=max(float(timeout_s), 0.001),
             )
             bounded, truncated = _bound_mcp_result(result)
+            if truncated and _is_blank_text_result(bounded):
+                bounded = _mcp_text_preview(result)
             if dedupe_queries:
                 seen_queries.add(query_key)
             return _result_json(
@@ -744,9 +746,14 @@ def _bound_mcp_result(value, limit=MCP_RESULT_MAX_CHARS):
             if _json_size({**bounded, key: candidate}) > limit:
                 if not isinstance(item, str):
                     break
-                empty_size = _json_size({**bounded, key: ""})
-                candidate = item[: max(limit - empty_size - 2, 0)]
-                if _json_size({**bounded, key: candidate}) > limit:
+                candidate = _fit_bounded_text(
+                    item,
+                    lambda slice_, key=key: _json_size(
+                        {**bounded, key: slice_}
+                    )
+                    <= limit,
+                )
+                if not candidate:
                     break
             bounded[key] = candidate
         return bounded, True
@@ -758,6 +765,64 @@ def _json_size(value):
     """Return the serialized size used for MCP result budgeting."""
 
     return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _fit_bounded_text(text, fits, marker="\n…[truncated]…\n"):
+    """Return the longest head/tail slice of text accepted by fits.
+
+    The slice is measured after JSON encoding, so escaping inside the
+    value counts against the same budget as the surrounding payload.
+    Keeping both ends preserves the exploration summary and the source
+    excerpt that a structural query needs.
+    """
+
+    if fits(text):
+        return text
+    if not fits(marker):
+        return ""
+    best = marker
+    low, high = 0, len(text)
+    while low <= high:
+        middle = (low + high) // 2
+        head = int(middle * 0.6)
+        tail = middle - head
+        candidate = text[:head] + marker + (text[-tail:] if tail else "")
+        if fits(candidate):
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    return best
+
+
+def _is_blank_text_result(value):
+    """Return whether an MCP payload kept text blocks but lost their text."""
+
+    if isinstance(value, dict):
+        if str(value.get("type", "")) == "text":
+            return not str(value.get("text", "") or "").strip()
+        return bool(value) and all(
+            _is_blank_text_result(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return bool(value) and all(
+            _is_blank_text_result(item) for item in value
+        )
+    return False
+
+
+def _mcp_text_preview(value, limit=MCP_RESULT_MAX_CHARS):
+    """Return a bounded plain-text preview instead of an empty result."""
+
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return {
+        "type": "text",
+        "text": _fit_bounded_text(
+            text,
+            lambda slice_: _json_size({"type": "text", "text": slice_})
+            <= limit,
+        ),
+    }
 
 
 def _unique_identifier(value, used):

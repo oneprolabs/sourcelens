@@ -33,6 +33,7 @@ from lens.runtime_events import (
     sanitize_termination_detail,
 )
 from lens.serializers import MessageAttachmentSerializer, RunOutputFileSerializer
+from lens.session_lifecycle import SessionStateError
 from lens.services import (
     TERMINAL_RUN_STATUSES,
     cancel_descendant_runs,
@@ -449,6 +450,22 @@ def _admin_run_failure_summary(run):
     return summary
 
 
+LIMIT_PARTIAL_REASONS = {"turn_limit", "loop_capped", "step_limit"}
+
+
+def _is_limit_partial(run):
+    """Return whether a partial Run stopped at an execution limit.
+
+    Runtime modes without execution gates (code analysis, document Q&A) record
+    the limit in ``reason`` only, so both fields are checked.
+    """
+
+    if run.status != Run.Status.DONE or run.outcome != Run.Outcome.PARTIAL:
+        return False
+    detail = run.termination_detail or {}
+    return bool({detail.get("reason"), detail.get("trigger")} & LIMIT_PARTIAL_REASONS)
+
+
 def _admin_run_row(run):
     """Serialize one run for the observability list."""
 
@@ -549,12 +566,7 @@ def _admin_run_row(run):
         "tool_call_count": tool_call_count,
         "retry_count": retry_count,
         "retry_of_run_uuid": (str(run.retry_of_run.uuid) if run.retry_of_run else None),
-        "continuation_available": (
-            run.status == Run.Status.DONE
-            and run.outcome == Run.Outcome.PARTIAL
-            and (run.termination_detail or {}).get("trigger")
-            in {"turn_limit", "loop_capped"}
-        ),
+        "continuation_available": _is_limit_partial(run),
         "subagent_count": counts["subagent_count"],
         "subagent_denied_count": counts["subagent_denied_count"],
         "structured_analysis_calls": counts["structured_analysis_calls"],
@@ -584,7 +596,10 @@ def _admin_run_row(run):
         "available_actions": {
             "cancel": run.status
             in [Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING],
-            "retry": run.status in [Run.Status.FAILED, Run.Status.CANCELLED],
+            "retry": (
+                run.status in [Run.Status.FAILED, Run.Status.CANCELLED]
+                or _is_limit_partial(run)
+            ),
             "resume": can_resume,
             "export": True,
         },
@@ -1376,12 +1391,7 @@ class AdminRunRetryView(APIView):
                     {"detail": "Run not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            turn_limit_retry = (
-                run.status == Run.Status.DONE
-                and run.outcome == Run.Outcome.PARTIAL
-                and (run.termination_detail or {}).get("trigger")
-                in {"turn_limit", "loop_capped"}
-            )
+            turn_limit_retry = _is_limit_partial(run)
             if (
                 run.status not in [Run.Status.FAILED, Run.Status.CANCELLED]
                 and not turn_limit_retry
@@ -1403,20 +1413,26 @@ class AdminRunRetryView(APIView):
             attachment_uuids.extend(
                 item["uuid"] for item in get_run_document_attachments(run.uuid)
             )
+            try:
+                retry = create_execution_run(
+                    session=run.session,
+                    question=run.input_message.content,
+                    idempotency_key=idempotency_key,
+                    retry_of_run=run,
+                    enqueue=True,
+                    attachment_uuids=attachment_uuids,
+                    user=run.session.user,
+                )
+            except SessionStateError:
+                return Response(
+                    {"detail": "SESSION_ARCHIVED"},
+                    status=status.HTTP_409_CONFLICT,
+                )
             detail = dict(run.termination_detail or {})
             detail["continuation_status"] = "fallback_new_run"
             detail["fallback_reason"] = "checkpoint_resume_not_supported"
             run.termination_detail = detail
             run.save(update_fields=["termination_detail"])
-            retry = create_execution_run(
-                session=run.session,
-                question=run.input_message.content,
-                idempotency_key=idempotency_key,
-                retry_of_run=run,
-                enqueue=True,
-                attachment_uuids=attachment_uuids,
-                user=run.session.user,
-            )
             snapshot = dict(retry.execution.runtime_snapshot or {})
             snapshot["admin_action"] = {
                 "action": "retry",

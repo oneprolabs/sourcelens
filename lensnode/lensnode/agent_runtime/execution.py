@@ -5,6 +5,7 @@ import logging
 import time
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langgraph.errors import GraphRecursionError
 
 from ..agent_tools import SELF_REPORTING_TOOLS
 from ..gateway_model import (
@@ -152,6 +153,7 @@ def _run_agent_with_turn_limit(
     )
     budget_exhausted = False
     compaction_failed = False
+    step_limit_reached = False
     delivery_grace_used = False
     delivery_write_grace_used = False
     pending_artifact_write = None
@@ -167,13 +169,15 @@ def _run_agent_with_turn_limit(
         )
 
     def _iterate_states():
-        nonlocal budget_exhausted, compaction_failed
+        nonlocal budget_exhausted, compaction_failed, step_limit_reached
         try:
             yield from state_stream
         except RunTokenBudgetExhaustedError:
             budget_exhausted = True
         except ContextCompactionError:
             compaction_failed = True
+        except GraphRecursionError:
+            step_limit_reached = True
 
     for state in _iterate_states():
         if cancel_event is not None and cancel_event.is_set():
@@ -288,6 +292,14 @@ def _run_agent_with_turn_limit(
             truncation_reason = "turn_limit"
             break
 
+    if step_limit_reached:
+        # LangGraph stops the graph at its superstep ceiling. Keep the Run
+        # alive and synthesize from the evidence already collected.
+        truncated = True
+        truncation_reason = "step_limit"
+        if emit_event is not None:
+            emit_event("deepagents.agent.step_limit", {})
+
     if budget_exhausted:
         # The gateway rejected the next call at the Run budget cap before
         # the local reserve fired. Stop issuing calls and synthesize from
@@ -319,6 +331,7 @@ def _run_agent_with_turn_limit(
         "soft_deadline",
         "token_budget_wrapup",
         "turn_limit",
+        "step_limit",
         "evidence_convergence_limit",
         "context_compaction_failed",
     }
