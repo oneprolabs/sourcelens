@@ -23,6 +23,7 @@ from lens.services import (
     finish_lensnode_run,
     mark_active_runs_awaiting_resume,
     reconcile_lensnode_active_runs,
+    record_lensnode_run_activity,
     record_lensnode_run_event,
     resume_awaiting_run,
     resume_awaiting_runs_for_lensnode,
@@ -137,6 +138,73 @@ class RunLifecycleTests(TransactionTestCase):
 
         self.assertIsNotNone(step)
         self.assertEqual(run.steps.count(), 1)
+
+    def test_record_run_activity_refreshes_active_run(self):
+        run = self._run(
+            Run.Status.STREAMING,
+            timedelta(minutes=10),
+            timedelta(minutes=10),
+        )
+        dispatch_id = uuid.uuid4()
+        run.execution.dispatch_id = dispatch_id
+        run.execution.status = RunExecution.Status.RUNNING
+        run.execution.save(update_fields=["dispatch_id", "status"])
+
+        self.assertTrue(
+            record_lensnode_run_activity(
+                run.uuid, dispatch_id, self.lensnode.uuid
+            )
+        )
+
+        run.refresh_from_db()
+        self.assertLess(
+            (timezone.now() - run.last_activity_at).total_seconds(), 5
+        )
+
+    def test_record_run_activity_rejects_stale_dispatch_and_wrong_node(self):
+        run = self._run(
+            Run.Status.STREAMING,
+            timedelta(minutes=10),
+            timedelta(minutes=10),
+        )
+        dispatch_id = uuid.uuid4()
+        run.execution.dispatch_id = dispatch_id
+        run.execution.status = RunExecution.Status.RUNNING
+        run.execution.save(update_fields=["dispatch_id", "status"])
+        other_lensnode = LensNode.objects.create(
+            name="Other LensNode",
+            status=LensNode.Status.ONLINE,
+            enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+            workspace_path="/other-workspace",
+        )
+
+        self.assertFalse(
+            record_lensnode_run_activity(
+                run.uuid, uuid.uuid4(), self.lensnode.uuid
+            )
+        )
+        self.assertFalse(
+            record_lensnode_run_activity(
+                run.uuid, dispatch_id, other_lensnode.uuid
+            )
+        )
+
+    def test_record_run_activity_rejects_terminal_run(self):
+        run = self._run(
+            Run.Status.FAILED,
+            timedelta(minutes=10),
+            timedelta(minutes=10),
+        )
+        dispatch_id = uuid.uuid4()
+        run.execution.dispatch_id = dispatch_id
+        run.execution.status = RunExecution.Status.RUNNING
+        run.execution.save(update_fields=["dispatch_id", "status"])
+
+        self.assertFalse(
+            record_lensnode_run_activity(
+                run.uuid, dispatch_id, self.lensnode.uuid
+            )
+        )
 
     def test_finish_lensnode_run_persists_awaiting_user_input(self):
         run = self._run(
@@ -270,6 +338,22 @@ class RunLifecycleTests(TransactionTestCase):
         )
         consumer._handle_run_checkpoint_ready.assert_awaited_once_with(
             checkpoint_frame
+        )
+
+    def test_consumer_routes_activity_heartbeat_as_admission_frame(self):
+        consumer = LensNodeConsumer()
+        consumer.lensnode = self.lensnode
+        with patch("lens.consumers.record_lensnode_run_activity") as record_activity:
+            frame = {
+                "type": "run_admitted",
+                "run_uuid": str(uuid.uuid4()),
+                "dispatch_id": str(uuid.uuid4()),
+                "activity_heartbeat": True,
+            }
+            async_to_sync(consumer._handle_run_admitted)(frame)
+
+        record_activity.assert_called_once_with(
+            uuid.UUID(frame["run_uuid"]), frame["dispatch_id"], self.lensnode.uuid
         )
 
     def test_current_dispatch_acknowledgements_are_idempotent(self):
@@ -415,11 +499,35 @@ class RunLifecycleTests(TransactionTestCase):
             timedelta(minutes=10),
         )
 
-        lensnode_cleanup_task()
+        with patch("lens.tasks.cancel_run_on_lensnode") as cancel_run:
+            lensnode_cleanup_task()
 
         run.refresh_from_db()
         self.assertEqual(run.status, Run.Status.FAILED)
         self.assertEqual(run.error, "LENS_RUN_TIMEOUT")
+        cancel_run.assert_called_once()
+        self.assertEqual(cancel_run.call_args.args[0].pk, run.pk)
+
+    def test_idle_reaper_cancels_only_stale_active_run_once(self):
+        stale = self._run(
+            Run.Status.STREAMING, timedelta(minutes=10), timedelta(minutes=10)
+        )
+        fresh = self._run(
+            Run.Status.STREAMING, timedelta(minutes=10), timedelta(seconds=5)
+        )
+        finished = self._run(
+            Run.Status.DONE, timedelta(minutes=10), timedelta(minutes=10)
+        )
+
+        with patch("lens.tasks.cancel_run_on_lensnode") as cancel_run:
+            lensnode_cleanup_task()
+            lensnode_cleanup_task()
+
+        self.assertEqual([call.args[0].pk for call in cancel_run.call_args_list], [stale.pk])
+        fresh.refresh_from_db()
+        finished.refresh_from_db()
+        self.assertEqual(fresh.status, Run.Status.STREAMING)
+        self.assertEqual(finished.status, Run.Status.DONE)
 
     def test_idle_reaper_fails_queued_execution_snapshot(self):
         run = self._run(

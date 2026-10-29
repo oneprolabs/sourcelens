@@ -708,8 +708,9 @@ class HeartbeatOnlyAgent:
         on_activity=None,
         cancel_event=None,
         wrapup_event=None,
+        on_checkpoint_ready=None,
     ):
-        del command, emit_progress, emit_output, cancel_event, wrapup_event
+        del command, emit_progress, emit_output, cancel_event, wrapup_event, on_checkpoint_ready
         for _ in range(10):
             await asyncio.sleep(0.05)
             on_activity()
@@ -721,6 +722,7 @@ class HeartbeatOnlyAgent:
 
 def test_executor_watchdog_survives_on_transport_activity(monkeypatch):
     monkeypatch.setattr("lensnode.executor.WATCHDOG_INTERVAL_S", 0.02)
+    monkeypatch.setattr("lensnode.executor.RUN_ACTIVITY_HEARTBEAT_S", 0.02)
     executor = LensNodeExecutor.__new__(LensNodeExecutor)
     executor.agent = HeartbeatOnlyAgent()
     events = []
@@ -729,6 +731,7 @@ def test_executor_watchdog_survives_on_transport_activity(monkeypatch):
         executor.execute(
             {
                 "run_uuid": "00000000-0000-0000-0000-000000000005",
+                "dispatch_id": "00000000-0000-0000-0000-000000000006",
                 "task": "knowledge_qa",
                 "target_dirs": [],
             },
@@ -738,6 +741,11 @@ def test_executor_watchdog_survives_on_transport_activity(monkeypatch):
 
     done = [event for event in events if event["type"] == "run_done"]
     assert done[-1]["status"] == "done"
+    assert any(
+        event["type"] == "run_admitted"
+        and event.get("activity_heartbeat") is True
+        for event in events
+    )
 
 
 class DeadlineAgent:

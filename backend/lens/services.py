@@ -3675,6 +3675,30 @@ def record_lensnode_run_event(run_uuid, step_type, status, detail):
     return step
 
 
+@transaction.atomic
+def record_lensnode_run_activity(run_uuid, dispatch_id, lensnode_uuid):
+    """Refresh activity for a live Run without creating a visible step."""
+
+    parsed_dispatch_id = _parse_dispatch_id(dispatch_id)
+    if parsed_dispatch_id is None:
+        return False
+    run = Run.objects.select_for_update().filter(
+        uuid=run_uuid,
+        lensnode__uuid=lensnode_uuid,
+        status__in=[
+            Run.Status.RUNNING,
+            Run.Status.STREAMING,
+        ],
+    ).first()
+    if run is None:
+        return False
+    execution = RunExecution.objects.select_for_update().filter(run=run).first()
+    if execution is None or execution.dispatch_id != parsed_dispatch_id:
+        return False
+    touch_run_activity(run.pk)
+    return True
+
+
 def _resolve_lensnode_error(error):
     """Name the bound datasource behind a materialization failure.
 

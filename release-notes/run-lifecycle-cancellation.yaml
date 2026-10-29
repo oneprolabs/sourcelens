@@ -1,0 +1,7 @@
+type: fix
+audience: user
+en: >-
+  Keep long-running Runs active while a LensNode is processing and cancel stale
+  execution after the control plane marks a timeout.
+zh-CN: >-
+  LensNode 处理长时间运行任务时持续刷新 Run 活动状态，并在控制面判定超时后取消失活执行。
