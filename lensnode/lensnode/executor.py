@@ -15,6 +15,7 @@ LOGGER = logging.getLogger("lensnode")
 
 # How often the inactivity watchdog checks for stalled output.
 WATCHDOG_INTERVAL_S = 5
+RUN_ACTIVITY_HEARTBEAT_S = 30
 
 RUN_TIMEOUT_SECONDS = 3600
 _TRANSIENT_STATUS_PATTERN = re.compile(r"\b(?:408|429|5\d{2})\b")
@@ -522,6 +523,33 @@ class LensNodeExecutor:
                 self.agent.answer(command, **answer_options)
             )
 
+            async def emit_run_activity():
+                """Keep the control plane informed during long model calls."""
+
+                interval_s = min(
+                    RUN_ACTIVITY_HEARTBEAT_S,
+                    max(idle_timeout_s / 2, 1),
+                )
+                while True:
+                    await asyncio.sleep(interval_s)
+                    if cancel_event.is_set() or answer_task.done():
+                        return
+                    if (
+                        not command.get("dispatch_id")
+                        or loop.time() - activity["at"] > idle_timeout_s
+                    ):
+                        continue
+                    emit(
+                        {
+                            "type": "run_admitted",
+                            "run_uuid": run_uuid,
+                            "dispatch_id": str(command["dispatch_id"]),
+                            "activity_heartbeat": True,
+                        }
+                    )
+
+            activity_task = asyncio.create_task(emit_run_activity())
+
             def stop_answer_task():
                 """Signal a timed-out worker and track it until it exits."""
 
@@ -606,6 +634,9 @@ class LensNodeExecutor:
                         )
                     )
                 raise
+            finally:
+                activity_task.cancel()
+                await asyncio.gather(activity_task, return_exceptions=True)
             samples = result.get("samples") or []
             sample_paths = [item["path"] for item in samples]
             retrieval_done_message = task_log(

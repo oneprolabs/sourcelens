@@ -21,6 +21,7 @@ from .services import (
     finish_lensnode_run,
     lensnode_group_name,
     reconcile_lensnode_active_runs,
+    record_lensnode_run_activity,
     record_lensnode_run_event,
     resume_awaiting_runs_for_lensnode,
     run_live_cache_key,
@@ -473,7 +474,12 @@ class LensNodeConsumer(AsyncJsonWebsocketConsumer):
         if run_uuid is None:
             await self._send_bad_frame("run_uuid is invalid")
             return
-        await database_sync_to_async(acknowledge_run_admitted)(
+        handler = (
+            record_lensnode_run_activity
+            if content.get("activity_heartbeat") is True
+            else acknowledge_run_admitted
+        )
+        await database_sync_to_async(handler)(
             run_uuid,
             content.get("dispatch_id"),
             self.lensnode.uuid,

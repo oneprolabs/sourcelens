@@ -50,7 +50,7 @@ from .models import (
     Session,
     SessionCleanupOperation,
 )
-from .services import lensnode_group_name
+from .services import cancel_run_on_lensnode, lensnode_group_name
 
 
 @shared_task(name="lens.session_workspace_cleanup", queue="lens")
@@ -4103,24 +4103,26 @@ def lensnode_cleanup_task():
         | Q(last_activity_at__isnull=True, started_at__lt=idle_cutoff)
         | Q(started_at__lt=abs_cutoff)
     )
-    stale_runs = list(stale.values_list("id", "uuid"))
-    stale_ids = [run_id for run_id, _run_uuid in stale_runs]
-    count = len(stale_ids)
-    if count:
-        from .services import fail_running_steps_for_runs
+    with transaction.atomic():
+        stale_runs = list(stale.select_for_update().order_by("pk"))
+        stale_ids = [run.pk for run in stale_runs]
+        count = len(stale_ids)
+        if count:
+            from .services import fail_running_steps_for_runs
 
-        fail_running_steps_for_runs(stale_ids)
-    stale.update(
-        status=Run.Status.FAILED,
-        error="LENS_RUN_TIMEOUT",
-        finished_at=now,
-        updated_at=now,
-    )
+            fail_running_steps_for_runs(stale_ids)
+            Run.objects.filter(pk__in=stale_ids).update(
+                status=Run.Status.FAILED,
+                error="LENS_RUN_TIMEOUT",
+                finished_at=now,
+                updated_at=now,
+            )
     if stale_runs:
         from .alerts import schedule_run_alert_evaluation
 
-        for _run_id, run_uuid in stale_runs:
-            schedule_run_alert_evaluation(run_uuid)
+        for run in stale_runs:
+            transaction.on_commit(lambda run=run: cancel_run_on_lensnode(run))
+            transaction.on_commit(lambda run=run: schedule_run_alert_evaluation(run.uuid))
     # Fail awaiting-resume runs whose node never came back before the resume
     # deadline (see services.get_awaiting_resume_ttl_hours).
     expired_resume = Run.objects.filter(
