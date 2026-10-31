@@ -411,6 +411,7 @@ def post_process_documents(context, sync_result, emit=None):
         context.get("datasource_uuid") or "",
         excluded_roots,
         conversion,
+        vision_available=vision_configured(context),
         changed_paths=(
             sync_result.changed_paths if sync_result.changed_only else None
         ),
@@ -517,6 +518,13 @@ def post_process_documents(context, sync_result, emit=None):
             image_count += 1
             if image_count > max_images:
                 stats = image_skip_stats("CONVERSION_MAX_IMAGES_EXCEEDED")
+                write_skipped_meta(
+                    target,
+                    path,
+                    item,
+                    context,
+                    "CONVERSION_MAX_IMAGES_EXCEEDED",
+                )
                 summary["skipped"] += 1
                 summary["images_skipped"] += 1
                 warnings.append("CONVERSION_MAX_IMAGES_EXCEEDED")
@@ -888,6 +896,7 @@ def conversion_candidates(
     conversion,
     changed_paths=None,
     force=False,
+    vision_available=False,
 ):
     """Return manifest items eligible for conversion."""
 
@@ -903,7 +912,12 @@ def conversion_candidates(
         if (
             changed is not None
             and local_path not in changed
-            and not _conversion_needs_recheck(path, conversion, force)
+            and not _conversion_needs_recheck(
+                path,
+                conversion,
+                force,
+                vision_available=vision_available,
+            )
         ):
             continue
         if not path.is_file() or is_excluded_path(path, excluded_roots):
@@ -921,15 +935,34 @@ def conversion_candidates(
     return candidates
 
 
-def _conversion_needs_recheck(path, conversion, force=False):
+def _conversion_options_for_recheck(conversion):
+    """Return conversion policy fields that affect unchanged-file decisions."""
+
+    return {
+        key: value
+        for key, value in (conversion or {}).items()
+        if key not in {"queue", "workers"}
+    }
+
+
+def _conversion_needs_recheck(
+    path,
+    conversion,
+    force=False,
+    vision_available=False,
+):
     """Return whether an unchanged source still needs conversion evaluation."""
 
     payload = read_json(sidecar_path(path) / "meta.json")
     previous = payload.get("conversion") or {}
-    if force or previous.get("options") != conversion:
+    previous_options = _conversion_options_for_recheck(previous.get("options"))
+    current_options = _conversion_options_for_recheck(conversion)
+    if force or previous_options != current_options:
         return True
     if previous.get("status") == "success":
         return False
+    if previous.get("status") == "skipped":
+        return previous.get("error") == "VISION_NOT_CONFIGURED" and vision_available
     if previous.get("status") == "failed":
         return _conversion_attempts(previous) < (
             MAX_AUTOMATIC_CONVERSION_ATTEMPTS

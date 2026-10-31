@@ -147,7 +147,7 @@ def test_post_process_converts_only_changed_datasource_items(tmp_path):
             {
                 "conversion": {
                     "status": "success",
-                    "options": {"document": True},
+                    "options": {"document": True, "queue": "parallel", "workers": 4},
                 }
             }
         ),
@@ -173,6 +173,44 @@ def test_post_process_converts_only_changed_datasource_items(tmp_path):
     assert summary["converted"] == 1
     assert (tmp_path / "changed.txt.sourcelens" / "content.md").is_file()
     assert not (unchanged_sidecar / "content.md").exists()
+
+
+def test_post_process_does_not_revisit_unchanged_skipped_files(tmp_path):
+    """Scheduled syncs do not retry a skipped file with the same policy."""
+
+    document = tmp_path / "document.txt"
+    document.write_text("content", encoding="utf-8")
+    sidecar = tmp_path / "document.txt.sourcelens"
+    sidecar.mkdir()
+    (sidecar / "meta.json").write_text(
+        json.dumps(
+            {
+                "conversion": {
+                    "status": "skipped",
+                    "error": "CONVERSION_MAX_IMAGES_EXCEEDED",
+                    "options": {"document": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = post_process_documents(
+        {
+            "datasource_uuid": "ds1",
+            "name": "repo",
+            "source_type": "git",
+            "target_path": str(tmp_path),
+            "conversion": {"document": True, "queue": "parallel", "workers": 10},
+        },
+        SyncResult(
+            items=[sync_item(document)],
+            changed_paths=[],
+            changed_only=True,
+        ),
+    )
+
+    assert summary["candidates"] == 0
 
 
 def test_post_process_rechecks_unchanged_files_after_policy_change(tmp_path):
