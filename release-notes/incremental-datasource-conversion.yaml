@@ -1,0 +1,9 @@
+type: fix
+audience: admin
+en: >-
+  Incremental datasource synchronization no longer reprocesses unchanged files that
+  already have terminal conversion results, reducing unnecessary conversion work
+  and avoiding long-running syncs caused by repeated skipped-file evaluation.
+zh-CN: >-
+  增量数据源同步不再重复处理已有终态转换结果的未变化文件，减少无效转换工作，
+  避免因反复评估跳过文件导致同步任务长时间运行。
