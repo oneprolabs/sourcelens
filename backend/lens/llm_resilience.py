@@ -11,7 +11,38 @@ from agentcore_metering.adapters.django.services.litellm_retry import (
 
 LOGGER = logging.getLogger(__name__)
 MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+MODEL_STREAM_ERROR = "MODEL_STREAM_ERROR"
 MAX_FALLBACKS = 3
+EMPTY_RESPONSE_PREFIX = "LLM returned empty response"
+
+
+def is_empty_response_error(error):
+    """Return whether a non-streaming call raised the empty-response error."""
+
+    return isinstance(error, ValueError) and str(error).startswith(
+        EMPTY_RESPONSE_PREFIX
+    )
+
+
+def is_retryable_failover_error(error):
+    """Return whether a failed attempt may safely move to another model."""
+
+    return is_transient_provider_error(error) or is_empty_response_error(error)
+
+
+def _is_empty_stream_result(emitted, terminal):
+    """Return whether a stream emitted no text and produced no tool calls.
+
+    The metering stream yields a chunk only after extracting non-empty
+    content or reasoning text, so ``emitted`` means the user already saw real
+    output and replaying the call would duplicate it.
+    """
+
+    if emitted or not isinstance(terminal, dict):
+        return False
+    if terminal.get("_tool_calls"):
+        return False
+    return terminal.get("_finish_reason") in (None, "stop")
 
 
 def is_transient_provider_error(error):
@@ -115,6 +146,28 @@ def _tracked_attempts(*, on_retry=None, **kwargs):
     candidates = None
     selected = primary
     attempt = 0
+
+    def advance_fallback(code, reason):
+        """Move to the next configured model; return False when exhausted."""
+
+        nonlocal candidates, selected, attempt
+        if candidates is None:
+            candidates = iter(fallback_model_refs(
+                primary, state.get("user_id"), kwargs.get("messages", ())
+            ))
+        selected = next(candidates, None)
+        if selected is None:
+            return False
+        attempt += 1
+        LOGGER.warning(
+            "Model failover call=%s primary=%s selected=%s attempt=%d "
+            "reason=%s",
+            call_id, primary, selected, attempt, reason,
+        )
+        if on_retry is not None:
+            on_retry({"code": code, "attempt": attempt})
+        return True
+
     while True:
         emitted = False
         attempt_state = {
@@ -139,27 +192,19 @@ def _tracked_attempts(*, on_retry=None, **kwargs):
                     emitted = True
                     yield chunk
             except StopIteration as done:
-                return done.value
+                terminal = done.value
+                if _is_empty_stream_result(emitted, terminal):
+                    if advance_fallback(
+                        MODEL_STREAM_ERROR, "empty_response"
+                    ):
+                        continue
+                return terminal
             finally:
                 result.close()
         except Exception as error:
-            if emitted or not is_transient_provider_error(error):
+            if emitted or not is_retryable_failover_error(error):
                 raise
-            if candidates is None:
-                candidates = iter(fallback_model_refs(
-                    primary, state.get("user_id"), kwargs.get("messages", ())
-                ))
-            selected = next(candidates, None)
-            if selected is None:
+            if not advance_fallback(
+                MODEL_UNAVAILABLE, type(error).__name__
+            ):
                 raise
-            attempt += 1
-            LOGGER.warning(
-                "Model failover call=%s primary=%s selected=%s attempt=%d "
-                "error_type=%s",
-                call_id, primary, selected, attempt, type(error).__name__,
-            )
-            if on_retry is not None:
-                on_retry({
-                    "code": MODEL_UNAVAILABLE,
-                    "attempt": attempt,
-                })

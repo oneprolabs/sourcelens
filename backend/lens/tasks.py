@@ -44,6 +44,7 @@ from .models import (
     LensNode,
     PluginInvocation,
     Run,
+    RunDiagnostic,
     RunExecution,
     RunTraceExport,
     ScheduledTask,
@@ -4234,37 +4235,56 @@ def run_retention_task():
     retention_days = setting.value if setting else 30
     cutoff = timezone.now() - timedelta(days=int(retention_days))
 
-    reaped_delegated = _reap_terminal_delegated_sessions(now=timezone.now())
+    try:
+        reaped_delegated = _reap_terminal_delegated_sessions(now=timezone.now())
 
-    terminal_runs = Run.objects.filter(
-        status__in=[
-            Run.Status.AWAITING_USER_INPUT,
-            Run.Status.DONE,
-            Run.Status.FAILED,
-            Run.Status.CANCELLED,
-        ],
-        finished_at__lt=cutoff,
-    )
-    run_ids = list(terminal_runs.values_list("id", flat=True))
-    run_snapshot_ids = list(
-        ExecutionSnapshot.objects.filter(run_id__in=run_ids).values_list(
-            "id",
-            flat=True,
+        terminal_runs = Run.objects.filter(
+            status__in=[
+                Run.Status.AWAITING_USER_INPUT,
+                Run.Status.DONE,
+                Run.Status.FAILED,
+                Run.Status.CANCELLED,
+            ],
+            finished_at__lt=cutoff,
         )
-    )
-    datasource_snapshot_ids = list(
-        ExecutionSnapshot.objects.filter(
-            run__isnull=True,
-            created_at__lt=cutoff,
-        ).values_list("id", flat=True)
-    )
-    snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
-    if snapshot_ids:
-        CredentialLease.objects.filter(snapshot_id__in=snapshot_ids).delete()
-        PluginInvocation.objects.filter(snapshot_id__in=snapshot_ids).delete()
-        ExecutionSnapshot.objects.filter(id__in=snapshot_ids).delete()
+        run_ids = list(terminal_runs.values_list("id", flat=True))
+        run_snapshot_ids = list(
+            ExecutionSnapshot.objects.filter(run_id__in=run_ids).values_list(
+                "id",
+                flat=True,
+            )
+        )
+        datasource_snapshot_ids = list(
+            ExecutionSnapshot.objects.filter(
+                run__isnull=True,
+                created_at__lt=cutoff,
+            ).values_list("id", flat=True)
+        )
+        snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
+        with transaction.atomic():
+            if snapshot_ids:
+                CredentialLease.objects.filter(
+                    snapshot_id__in=snapshot_ids
+                ).delete()
+                PluginInvocation.objects.filter(
+                    snapshot_id__in=snapshot_ids
+                ).delete()
+                ExecutionSnapshot.objects.filter(id__in=snapshot_ids).delete()
 
-    deleted, _ = terminal_runs.delete()
+            # RunDiagnostic references its evidence with PROTECT, so deleting
+            # the Run first would try to cascade into that evidence and raise
+            # ProtectedError. Remove the diagnostics explicitly before the
+            # runs, and keep every destructive step in one transaction so a
+            # later failure cannot drop diagnostics for surviving runs.
+            RunDiagnostic.objects.filter(run_id__in=run_ids).delete()
+
+            deleted, _ = terminal_runs.delete()
+    except Exception as exc:
+        record.last_status = ScheduledTask.Status.FAILED
+        record.last_error = f"{type(exc).__name__}: {exc}"[:2000]
+        record.last_run_at = timezone.now()
+        record.save(update_fields=["last_status", "last_error", "last_run_at"])
+        raise
 
     record.last_status = ScheduledTask.Status.SUCCESS
     record.last_metrics = {

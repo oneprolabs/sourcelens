@@ -89,6 +89,146 @@ class LLMResilienceTests(TestCase):
             with self.assertRaises(ProviderBusyError):
                 next(generator)
 
+    def test_stream_empty_response_falls_back_before_output(self):
+        calls = []
+
+        def tracked_call(**kwargs):
+            calls.append(kwargs["model_uuid"])
+            if len(calls) == 1:
+                def empty_stream():
+                    if False:
+                        yield None
+                    return {"_finish_reason": "stop"}
+
+                return empty_stream()
+
+            def successful_stream():
+                yield "content", "recovered"
+                return {"_finish_reason": "stop"}
+
+            return successful_stream()
+
+        with (
+            patch(
+                "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+                side_effect=tracked_call,
+            ),
+            patch(
+                "lens.llm_resilience.fallback_model_refs",
+                return_value=["fallback"],
+            ),
+        ):
+            generator = call_and_track_with_fallback(
+                messages=[{"role": "user", "content": "hello"}],
+                model_uuid="primary",
+                state={},
+                stream=True,
+            )
+            self.assertEqual(next(generator), ("content", "recovered"))
+
+        self.assertEqual(calls, ["primary", "fallback"])
+
+    def test_stream_empty_response_without_fallback_is_unchanged(self):
+        def tracked_call(**_kwargs):
+            def empty_stream():
+                if False:
+                    yield None
+                return {"_finish_reason": "stop"}
+
+            return empty_stream()
+
+        with (
+            patch(
+                "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+                side_effect=tracked_call,
+            ),
+            patch(
+                "lens.llm_resilience.fallback_model_refs",
+                return_value=[],
+            ),
+        ):
+            generator = call_and_track_with_fallback(
+                messages=[{"role": "user", "content": "hello"}],
+                model_uuid="primary",
+                state={},
+                stream=True,
+            )
+            with self.assertRaises(StopIteration) as stopped:
+                next(generator)
+            self.assertEqual(stopped.exception.value, {"_finish_reason": "stop"})
+
+    def test_stream_tool_call_only_response_is_not_empty(self):
+        calls = []
+
+        def tracked_call(**kwargs):
+            calls.append(kwargs["model_uuid"])
+
+            def tool_stream():
+                if False:
+                    yield None
+                return {
+                    "_finish_reason": "tool_calls",
+                    "_tool_calls": [{"id": "call-1"}],
+                }
+
+            return tool_stream()
+
+        with (
+            patch(
+                "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+                side_effect=tracked_call,
+            ),
+            patch(
+                "lens.llm_resilience.fallback_model_refs",
+                return_value=["fallback"],
+            ),
+        ):
+            generator = call_and_track_with_fallback(
+                messages=[{"role": "user", "content": "hello"}],
+                model_uuid="primary",
+                state={},
+                stream=True,
+            )
+            with self.assertRaises(StopIteration) as stopped:
+                next(generator)
+            self.assertEqual(
+                stopped.exception.value["_tool_calls"], [{"id": "call-1"}]
+            )
+
+        self.assertEqual(calls, ["primary"])
+
+    def test_non_stream_empty_response_falls_back(self):
+        calls = []
+
+        def tracked_call(**kwargs):
+            calls.append(kwargs["model_uuid"])
+            if len(calls) == 1:
+                raise ValueError(
+                    "LLM returned empty response (finish_reason='stop' "
+                    "has_reasoning_content=False reasoning_len=0 model=m)"
+                )
+            return "recovered", {"total_tokens": 1}
+
+        with (
+            patch(
+                "agentcore_metering.adapters.django.LLMTracker.call_and_track",
+                side_effect=tracked_call,
+            ),
+            patch(
+                "lens.llm_resilience.fallback_model_refs",
+                return_value=["fallback"],
+            ),
+        ):
+            content, usage = call_and_track_with_fallback(
+                messages=[{"role": "user", "content": "hello"}],
+                model_uuid="primary",
+                state={},
+            )
+
+        self.assertEqual(content, "recovered")
+        self.assertEqual(usage, {"total_tokens": 1})
+        self.assertEqual(calls, ["primary", "fallback"])
+
     def test_provider_5xx_and_rate_limit_are_transient(self):
         for status_code in (429, 502, 503):
             error = Mock(status_code=status_code)

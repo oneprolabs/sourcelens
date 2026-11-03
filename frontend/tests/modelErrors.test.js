@@ -4,6 +4,10 @@ import { modelErrorMessage } from '../src/utils/modelErrors.js'
 
 test('model failures explain the concrete cause', () => {
   const reasons = {
+    EMPTY_AGENT_RESPONSE: 'errorModelEmptyResponse',
+    MODEL_EMPTY_RESPONSE: 'errorModelEmptyResponse',
+    MODEL_TOOL_PROTOCOL_ERROR: 'errorModelProtocol',
+    CONTEXT_COMPACTION_FAILED: 'errorModelCompactionFailed',
     MODEL_TIMEOUT: 'errorModelTimeout',
     MODEL_QUOTA_EXCEEDED: 'errorModelQuotaExceeded',
     MODEL_AUTHENTICATION_ERROR: 'errorModelAuthentication',

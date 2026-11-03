@@ -1,0 +1,22 @@
+type: fix
+audience: user
+en: >-
+  Fail over to another configured model when a provider returns an empty
+  response instead of failing the run. Delete old diagnostic evidence before
+  pruning Runs so retention works again. Reuse keep-alive connections during
+  datasource sync to cut Feishu folder enumeration time. Attribute model
+  failures to the model service so users contact an administrator instead of
+  retrying a network issue.
+zh-CN: >-
+  模型返回空响应时自动切换到配置的备用模型，不再直接判定运行失败。清理历史
+  Run 前先删除诊断证据，恢复保留策略。数据源同步复用长连接，显著缩短飞书目录
+  枚举耗时。模型异常提示明确归因到模型服务，引导用户联系管理员，而不是误以为
+  是网络问题。
+es: >-
+  Cambia automáticamente a otro modelo configurado cuando el proveedor devuelve
+  una respuesta vacía, en lugar de fallar la ejecución. Elimina la evidencia de
+  diagnóstico antes de depurar ejecuciones antiguas para que la retención vuelva
+  a funcionar. Reutiliza conexiones persistentes durante la sincronización de
+  fuentes para reducir el tiempo de enumeración de carpetas de Feishu. Atribuye
+  los fallos del modelo al servicio del modelo para que los usuarios contacten
+  al administrador en lugar de reintentar un problema de red.
