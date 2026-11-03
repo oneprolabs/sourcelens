@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import tarfile
+import threading
 import time
 import zipfile
 from collections import deque
@@ -13,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib import error, parse, request
+
+import httpx
 
 from . import datasource_manifest as manifest_store
 from .datasource_adapters import DataSourceAdapterRegistry
@@ -5418,22 +5421,82 @@ def _delete_manifest_file(target, file_name):
         path.unlink()
 
 
+_HTTP_CLIENT = None
+_HTTP_CLIENT_LOCK = threading.Lock()
+
+
+def _shared_http_client():
+    """Return the keep-alive client shared by remote API calls."""
+
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        with _HTTP_CLIENT_LOCK:
+            if _HTTP_CLIENT is None:
+                _HTTP_CLIENT = httpx.Client(
+                    timeout=httpx.Timeout(120.0, connect=15.0),
+                    limits=httpx.Limits(
+                        max_connections=32,
+                        max_keepalive_connections=16,
+                    ),
+                    follow_redirects=True,
+                )
+    return _HTTP_CLIENT
+
+
+def _http_request_with_retries(
+    method,
+    url,
+    *,
+    data=None,
+    headers=None,
+    timeout,
+    attempts=3,
+):
+    """Send one pooled request, retrying connection failures briefly."""
+
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return _shared_http_client().request(
+                method,
+                url,
+                content=data,
+                headers=headers or {},
+                timeout=timeout,
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(1)
+    raise last_error
+
+
 def _http_json(url, method="GET", data=None, headers=None):
     """Request a JSON endpoint and return the decoded object."""
 
-    req = request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with _urlopen_with_retries(req, timeout=60) as response:
-            raw = response.read().decode("utf-8")
-    except error.HTTPError as exc:
-        detail = _http_error_detail(exc)
-        raise DataSourceSyncError(detail) from exc
+        response = _http_request_with_retries(
+            method,
+            url,
+            data=data,
+            headers=headers,
+            timeout=60,
+        )
     except Exception as exc:
         raise DataSourceSyncError(
             f"LENS_SOURCE_SYNC_FAILED: {type(exc).__name__}: {exc}"
         ) from exc
+    if response.status_code >= 400:
+        raise DataSourceSyncError(
+            _http_error_detail_text(
+                response.status_code,
+                response.reason_phrase,
+                response.text,
+            )
+        )
     try:
-        payload = json.loads(raw)
+        payload = json.loads(response.text)
     except json.JSONDecodeError as exc:
         raise DataSourceSyncError("LENS_SOURCE_RESPONSE_INVALID") from exc
     _raise_feishu_business_error(payload)
@@ -5443,43 +5506,31 @@ def _http_json(url, method="GET", data=None, headers=None):
 def _http_bytes(url, headers=None):
     """Request a binary endpoint and return bytes."""
 
-    req = request.Request(url, headers=headers or {}, method="GET")
     try:
-        with _urlopen_with_retries(req, timeout=120) as response:
-            return response.read()
-    except error.HTTPError as exc:
-        detail = _http_error_detail(exc)
-        raise DataSourceSyncError(detail) from exc
+        response = _http_request_with_retries(
+            "GET",
+            url,
+            headers=headers,
+            timeout=120,
+        )
     except Exception as exc:
         raise DataSourceSyncError(
             f"LENS_SOURCE_SYNC_FAILED: {type(exc).__name__}: {exc}"
         ) from exc
+    if response.status_code >= 400:
+        raise DataSourceSyncError(
+            _http_error_detail_text(
+                response.status_code,
+                response.reason_phrase,
+                response.text,
+            )
+        )
+    return response.content
 
 
-def _urlopen_with_retries(req, timeout, attempts=3):
-    """Open a URL with short retries for transient network failures."""
-
-    last_error = None
-    for attempt in range(attempts):
-        try:
-            return request.urlopen(req, timeout=timeout)
-        except error.HTTPError:
-            raise
-        except error.URLError as exc:
-            last_error = exc
-            if attempt + 1 >= attempts:
-                raise
-            time.sleep(1)
-    raise last_error
-
-
-def _http_error_detail(exc):
+def _http_error_detail_text(status_code, reason, raw):
     """Return a compact HTTP error detail, including JSON body if present."""
 
-    try:
-        raw = exc.read().decode("utf-8")
-    except Exception:
-        raw = ""
     if raw:
         try:
             payload = json.loads(raw)
@@ -5488,9 +5539,9 @@ def _http_error_detail(exc):
         code = payload.get("code") or payload.get("error")
         msg = payload.get("msg") or payload.get("message")
         if code or msg:
-            return f"HTTP_{exc.code}: {code or ''} {msg or ''}".strip()
-        return f"HTTP_{exc.code}: {raw[:300]}"
-    return f"HTTP_{exc.code}: {exc.reason}"
+            return f"HTTP_{status_code}: {code or ''} {msg or ''}".strip()
+        return f"HTTP_{status_code}: {raw[:300]}"
+    return f"HTTP_{status_code}: {reason}"
 
 
 def _raise_feishu_business_error(payload):

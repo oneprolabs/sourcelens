@@ -3286,7 +3286,7 @@ function mapRunError(code) {
   if (c.includes('GENERAL_CHAT_SKILL_REQUIRED')) {
     return t('lens.chat.errorSkillRequired')
   }
-  return t('lens.chat.emptyAnswerHint')
+  return t('lens.chat.errorRunFailed')
 }
 
 function isTerminalRunStatus(status) {

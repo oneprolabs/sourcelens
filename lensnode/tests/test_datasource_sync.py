@@ -2394,16 +2394,76 @@ def test_sync_feishu_folder_fails_when_every_item_fails(tmp_path, monkeypatch):
 
 
 def test_http_json_preserves_network_error(monkeypatch):
-    def raise_timeout(*args, **kwargs):
-        del args, kwargs
-        raise TimeoutError("timed out")
+    class FailingClient:
+        def request(self, *args, **kwargs):
+            del args, kwargs
+            raise TimeoutError("timed out")
 
-    monkeypatch.setattr("urllib.request.urlopen", raise_timeout)
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._shared_http_client",
+        lambda: FailingClient(),
+    )
 
     with pytest.raises(DataSourceSyncError) as exc:
         _http_json("https://example.invalid")
 
     assert "TimeoutError" in str(exc.value)
+
+
+def test_http_json_retries_connect_errors(monkeypatch):
+    calls = []
+
+    class FlakyClient:
+        def request(self, *args, **kwargs):
+            del args, kwargs
+            calls.append(1)
+            if len(calls) < 3:
+                raise httpx.ConnectError("connect failed")
+            return type(
+                "Response",
+                (),
+                {
+                    "status_code": 200,
+                    "reason_phrase": "OK",
+                    "text": '{"code": 0, "data": {"ok": true}}',
+                    "content": b"",
+                },
+            )()
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._shared_http_client",
+        lambda: FlakyClient(),
+    )
+    monkeypatch.setattr("lensnode.datasource_sync.time.sleep", lambda _s: None)
+
+    assert _http_json("https://example.invalid")["data"]["ok"] is True
+    assert len(calls) == 3
+
+
+def test_http_json_reports_http_error_detail(monkeypatch):
+    class ErrorClient:
+        def request(self, *args, **kwargs):
+            del args, kwargs
+            return type(
+                "Response",
+                (),
+                {
+                    "status_code": 400,
+                    "reason_phrase": "Bad Request",
+                    "text": '{"code": 999, "msg": "bad request"}',
+                    "content": b"",
+                },
+            )()
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._shared_http_client",
+        lambda: ErrorClient(),
+    )
+
+    with pytest.raises(DataSourceSyncError) as exc:
+        _http_json("https://example.invalid")
+
+    assert str(exc.value) == "HTTP_400: 999 bad request"
 
 
 def test_file_upload_initializes_directory_and_keeps_multiple_archives(
