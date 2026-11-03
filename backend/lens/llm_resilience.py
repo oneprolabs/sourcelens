@@ -31,7 +31,12 @@ def is_retryable_failover_error(error):
 
 
 def _is_empty_stream_result(emitted, terminal):
-    """Return whether a stream emitted nothing and produced no tool calls."""
+    """Return whether a stream emitted no text and produced no tool calls.
+
+    The metering stream yields a chunk only after extracting non-empty
+    content or reasoning text, so ``emitted`` means the user already saw real
+    output and replaying the call would duplicate it.
+    """
 
     if emitted or not isinstance(terminal, dict):
         return False

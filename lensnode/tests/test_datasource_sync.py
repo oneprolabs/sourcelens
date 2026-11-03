@@ -2440,6 +2440,57 @@ def test_http_json_retries_connect_errors(monkeypatch):
     assert len(calls) == 3
 
 
+def test_http_json_retries_read_timeout_for_get(monkeypatch):
+    calls = []
+
+    class FlakyClient:
+        def request(self, *args, **kwargs):
+            del args, kwargs
+            calls.append(1)
+            if len(calls) < 2:
+                raise httpx.ReadTimeout("slow response")
+            return type(
+                "Response",
+                (),
+                {
+                    "status_code": 200,
+                    "reason_phrase": "OK",
+                    "text": '{"code": 0, "data": {"ok": true}}',
+                    "content": b"",
+                },
+            )()
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._shared_http_client",
+        lambda: FlakyClient(),
+    )
+    monkeypatch.setattr("lensnode.datasource_sync.time.sleep", lambda _s: None)
+
+    assert _http_json("https://example.invalid")["data"]["ok"] is True
+    assert len(calls) == 2
+
+
+def test_http_json_does_not_retry_read_timeout_for_post(monkeypatch):
+    calls = []
+
+    class FailingClient:
+        def request(self, *args, **kwargs):
+            del args, kwargs
+            calls.append(1)
+            raise httpx.ReadTimeout("slow response")
+
+    monkeypatch.setattr(
+        "lensnode.datasource_sync._shared_http_client",
+        lambda: FailingClient(),
+    )
+    monkeypatch.setattr("lensnode.datasource_sync.time.sleep", lambda _s: None)
+
+    with pytest.raises(DataSourceSyncError):
+        _http_json("https://example.invalid", method="POST", data=b"{}")
+
+    assert len(calls) == 1
+
+
 def test_http_json_reports_http_error_detail(monkeypatch):
     class ErrorClient:
         def request(self, *args, **kwargs):

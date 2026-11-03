@@ -4261,17 +4261,24 @@ def run_retention_task():
             ).values_list("id", flat=True)
         )
         snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
-        if snapshot_ids:
-            CredentialLease.objects.filter(snapshot_id__in=snapshot_ids).delete()
-            PluginInvocation.objects.filter(snapshot_id__in=snapshot_ids).delete()
-            ExecutionSnapshot.objects.filter(id__in=snapshot_ids).delete()
+        with transaction.atomic():
+            if snapshot_ids:
+                CredentialLease.objects.filter(
+                    snapshot_id__in=snapshot_ids
+                ).delete()
+                PluginInvocation.objects.filter(
+                    snapshot_id__in=snapshot_ids
+                ).delete()
+                ExecutionSnapshot.objects.filter(id__in=snapshot_ids).delete()
 
-        # RunDiagnostic references its evidence with PROTECT, so deleting the
-        # Run first would try to cascade into that evidence and raise
-        # ProtectedError. Remove the diagnostics explicitly before the runs.
-        RunDiagnostic.objects.filter(run_id__in=run_ids).delete()
+            # RunDiagnostic references its evidence with PROTECT, so deleting
+            # the Run first would try to cascade into that evidence and raise
+            # ProtectedError. Remove the diagnostics explicitly before the
+            # runs, and keep every destructive step in one transaction so a
+            # later failure cannot drop diagnostics for surviving runs.
+            RunDiagnostic.objects.filter(run_id__in=run_ids).delete()
 
-        deleted, _ = terminal_runs.delete()
+            deleted, _ = terminal_runs.delete()
     except Exception as exc:
         record.last_status = ScheduledTask.Status.FAILED
         record.last_error = f"{type(exc).__name__}: {exc}"[:2000]

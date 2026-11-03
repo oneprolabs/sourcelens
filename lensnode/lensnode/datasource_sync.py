@@ -5466,9 +5466,19 @@ def _http_request_with_retries(
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             last_error = exc
-            if attempt + 1 >= attempts:
+        except (
+            httpx.ReadTimeout,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            # A read failure can arrive after the server accepted the request;
+            # replay only methods that are safe to repeat.
+            if str(method).upper() not in {"GET", "HEAD"}:
                 raise
-            time.sleep(1)
+            last_error = exc
+        if attempt + 1 >= attempts:
+            raise last_error
+        time.sleep(1)
     raise last_error
 
 
