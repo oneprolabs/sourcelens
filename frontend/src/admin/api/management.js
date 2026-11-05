@@ -18,11 +18,13 @@ export const managementApi = {
   },
 
   getAllUsers(params = {}, config = {}) {
+    // Selectors only need identity fields; the full payload expands per-user
+    // access profiles and is roughly eight times slower to serialize.
     return collectPaginatedResults((page) =>
       apiClient
         .get('/v1/management/users/', {
           ...config,
-          params: { page_size: 1000, ...params, page }
+          params: { page_size: 1000, compact: true, ...params, page }
         })
         .then(extractData)
     )
@@ -51,11 +53,12 @@ export const managementApi = {
   },
 
   getAllGroups(params = {}, config = {}) {
+    // Selectors only need id/name; skip the group detail aggregation.
     return collectPaginatedResults((page) =>
       apiClient
         .get('/v1/management/groups/', {
           ...config,
-          params: { page_size: 1000, ...params, page }
+          params: { page_size: 1000, compact: true, ...params, page }
         })
         .then(extractData)
     )
