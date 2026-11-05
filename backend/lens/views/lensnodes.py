@@ -99,6 +99,7 @@ class LensNodeViewSet(BaseAdminViewSet):
                 output_field=BooleanField(),
             ),
         )
+        unusual_events = events
         if connection.vendor == "postgresql":
             # PostgreSQL SUM(bigint) preserves totals beyond the signed 64-bit range.
             regular_totals = events.values("run__lensnode__uuid").annotate(
@@ -112,19 +113,28 @@ class LensNodeViewSet(BaseAdminViewSet):
                         Value(0),
                         output_field=BigIntegerField(),
                     )
-                )
+                ),
+                unusual=Count("pk", filter=Q(regular_token=False)),
             )
+            has_unusual = False
             for row in regular_totals:
                 token_totals[str(row["run__lensnode__uuid"])] = int(row["tokens"] or 0)
-            events = events.filter(regular_token=False)
-        unusual_tokens = events.values_list("run__lensnode__uuid", "payload__usage__total_tokens")
-        for node_uuid, value in unusual_tokens.iterator(chunk_size=1000):
-            try:
-                tokens = max(int(value or 0), 0)
-            except (TypeError, ValueError):
-                tokens = 0
-            node_id = str(node_uuid)
-            token_totals[node_id] = token_totals.get(node_id, 0) + tokens
+                has_unusual = has_unusual or bool(row["unusual"])
+            # Skip the second trace scan when every value was a regular integer.
+            unusual_events = (
+                events.filter(regular_token=False) if has_unusual else None
+            )
+        if unusual_events is not None:
+            unusual_tokens = unusual_events.values_list(
+                "run__lensnode__uuid", "payload__usage__total_tokens"
+            )
+            for node_uuid, value in unusual_tokens.iterator(chunk_size=1000):
+                try:
+                    tokens = max(int(value or 0), 0)
+                except (TypeError, ValueError):
+                    tokens = 0
+                node_id = str(node_uuid)
+                token_totals[node_id] = token_totals.get(node_id, 0) + tokens
         for row in response.data.get("results", []):
             row["total_tokens"] = token_totals.get(str(row["uuid"]), 0)
         node_summary = LensNode.objects.aggregate(

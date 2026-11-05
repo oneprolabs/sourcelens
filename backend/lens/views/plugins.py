@@ -270,10 +270,10 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
             return None
         return f"/api/lens/admin/plugins/{plugin.key}/icon/"
 
-    def list(self, request):
-        """List installed Plugins visible to administrators."""
+    @staticmethod
+    def _installed_plugins():
+        """Return the sorted installed Plugins without retired entries."""
 
-        del request
         plugins = []
         for key in sorted({plugin.key for plugin in discover_plugins()}):
             if key in RETIRED_PLUGIN_KEYS:
@@ -282,6 +282,51 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                 plugins.append(installed_plugin(key))
             except PluginNotFoundError:
                 continue
+        return plugins
+
+    @classmethod
+    def _manifest_payload(cls, plugin):
+        """Return the safe manifest representation for one Plugin."""
+
+        return {
+            "key": plugin.key,
+            "version": plugin.version,
+            "protocol_version": plugin.protocol_version,
+            "capability_family": plugin.capability_family,
+            "plugin_type": plugin.plugin_type,
+            "decisions": list(plugin.decisions),
+            "gate_active_phase": GATE_ACTIVE_PHASE,
+            "gate_phases": dict(GATE_PHASES),
+            "gate_active": {
+                key: gate_is_active(phase)
+                for key, phase in GATE_PHASES.items()
+            },
+            "display_name": plugin.display_name,
+            "description": plugin.description,
+            "assistant_guidance": plugin.assistant_guidance,
+            "icon_url": cls._icon_url(plugin),
+            "datasource_source_type": plugin.datasource_source_type,
+            "datasource": plugin.datasource,
+            "connection_schema": plugin.connection_schema,
+            "datasource_schema": plugin.datasource_schema,
+            "tools": [
+                {
+                    "key": tool.key,
+                    "description": tool.description,
+                    "capability": tool.capability,
+                    "capability_family": tool.capability_family,
+                    "side_effect": tool.side_effect,
+                    "exposure": tool.exposure,
+                    "input_schema": tool.input_schema,
+                }
+                for tool in plugin.tools
+            ],
+        }
+
+    def list(self, request):
+        """List installed Plugins visible to administrators."""
+
+        del request
         return Response(
             [
                 {
@@ -300,7 +345,7 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
                     ),
                     "datasource": plugin.datasource,
                 }
-                for plugin in plugins
+                for plugin in self._installed_plugins()
             ]
         )
 
@@ -337,41 +382,15 @@ class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
             plugin = installed_plugin(key)
         except PluginNotFoundError:
             return Response({"detail": "PLUGIN_NOT_FOUND"}, status=404)
+        return Response(self._manifest_payload(plugin))
+
+    @action(detail=False, methods=["get"], url_path="manifests")
+    def manifests(self, request):
+        """Return manifests for every installed Plugin in one request."""
+
+        del request
         return Response(
-            {
-                "key": plugin.key,
-                "version": plugin.version,
-                "protocol_version": plugin.protocol_version,
-                "capability_family": plugin.capability_family,
-                "plugin_type": plugin.plugin_type,
-                "decisions": list(plugin.decisions),
-                "gate_active_phase": GATE_ACTIVE_PHASE,
-                "gate_phases": dict(GATE_PHASES),
-                "gate_active": {
-                    key: gate_is_active(phase)
-                    for key, phase in GATE_PHASES.items()
-                },
-                "display_name": plugin.display_name,
-                "description": plugin.description,
-                "assistant_guidance": plugin.assistant_guidance,
-                "icon_url": self._icon_url(plugin),
-                "datasource_source_type": plugin.datasource_source_type,
-                "datasource": plugin.datasource,
-                "connection_schema": plugin.connection_schema,
-                "datasource_schema": plugin.datasource_schema,
-                "tools": [
-                    {
-                        "key": tool.key,
-                        "description": tool.description,
-                        "capability": tool.capability,
-                        "capability_family": tool.capability_family,
-                        "side_effect": tool.side_effect,
-                        "exposure": tool.exposure,
-                        "input_schema": tool.input_schema,
-                    }
-                    for tool in plugin.tools
-                ],
-            }
+            [self._manifest_payload(p) for p in self._installed_plugins()]
         )
 
     @action(detail=True, methods=["get"], url_path="icon")

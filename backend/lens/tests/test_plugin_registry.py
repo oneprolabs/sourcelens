@@ -548,6 +548,30 @@ class PluginRegistryTests(TestCase):
         self.assertTrue(response.data["gate_active"]["search_needed"])
         self.assertTrue(response.data["gate_active"]["evidence_requirement"])
 
+    def test_admin_can_read_all_plugin_manifests_in_one_call(self):
+        admin = User.objects.create_user("manifests-admin", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(admin)
+
+        single = client.get("/api/lens/admin/plugins/github/manifest/")
+        bulk = client.get("/api/lens/admin/plugins/manifests/")
+
+        self.assertEqual(single.status_code, 200)
+        self.assertEqual(bulk.status_code, 200)
+        self.assertIsInstance(bulk.data, list)
+        keys = [item["key"] for item in bulk.data]
+        self.assertIn("github", keys)
+        self.assertEqual(len(keys), len(set(keys)))
+        github_manifest = next(
+            item for item in bulk.data if item["key"] == "github"
+        )
+        self.assertEqual(github_manifest, single.data)
+        for manifest in bulk.data:
+            self.assertNotIn("handlers", manifest)
+            self.assertNotIn("path", manifest)
+            self.assertIn("connection_schema", manifest)
+            self.assertIn("tools", manifest)
+
     def test_admin_can_read_the_bundled_plugin_icon(self):
         admin = User.objects.create_user("icon-admin", is_staff=True)
         client = APIClient()

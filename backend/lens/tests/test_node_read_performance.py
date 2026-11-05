@@ -136,6 +136,20 @@ class LensNodeReadPerformanceTests(TestCase):
                 r'(?:^|,\s*)"lens_runtraceevent"\."payload"(?:\s+AS\s+"[^"]+")?(?:\s*,|\s*$)',
             )
 
+    def test_regular_token_totals_use_a_single_trace_scan(self):
+        """Skip the unusual-value scan when every token value is a regular integer."""
+
+        run = self._run()
+        for sequence in range(1, 6):
+            self._event(run, sequence, {"usage": {"total_tokens": sequence}})
+
+        with CaptureQueriesContext(connection) as captured:
+            data = self._list()
+
+        trace_queries = [query for query in captured if '"lens_runtraceevent"' in query["sql"]]
+        self.assertEqual(len(trace_queries), 1)
+        self.assertEqual(data["results"][0]["total_tokens"], 15)
+
     def test_storage_usage_and_fleet_workload_remain_correct_when_paginated(self):
         """Active item sums, stored fallback, and fleet-wide totals stay intact."""
 

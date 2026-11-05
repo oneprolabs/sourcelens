@@ -8,6 +8,13 @@ const assistantListRequests = createInFlightRequestCache()
 // Allow the server's validation deadline and its final in-flight request to finish.
 const DATASOURCE_ACCESS_TIMEOUT = 60000
 
+// Plugin metadata is static for a deployed release. Reuse one catalog per
+// session so switching admin pages does not repeat the manifest/icon N+1.
+const pluginIconRequests = createInFlightRequestCache()
+const pluginIconBlobs = new Map()
+let pluginListPromise = null
+let pluginManifestsPromise = null
+
 function unwrapResponse(response) {
   return response?.data?.data ?? response?.data ?? null
 }
@@ -499,21 +506,61 @@ export async function deleteCredential(uuid) {
   return unwrapResponse(response)
 }
 
-export async function listPlugins() {
-  const response = await api.get('/lens/admin/plugins/')
-  return unwrapList(unwrapResponse(response))
+export function listPlugins() {
+  if (!pluginListPromise) {
+    pluginListPromise = api
+      .get('/lens/admin/plugins/')
+      .then((response) => unwrapList(unwrapResponse(response)))
+      .catch((error) => {
+        pluginListPromise = null
+        throw error
+      })
+  }
+  // Every admin page that lists plugins loads their manifests immediately
+  // afterwards. Start that request in the same wave instead of waiting for
+  // the slowest sibling request before issuing it.
+  void loadPluginManifests().catch(() => {})
+  return pluginListPromise
+}
+
+function loadPluginManifests() {
+  if (!pluginManifestsPromise) {
+    pluginManifestsPromise = api
+      .get('/lens/admin/plugins/manifests/')
+      .then((response) =>
+        Object.fromEntries(
+          unwrapList(unwrapResponse(response)).map((manifest) => [
+            manifest.key,
+            manifest
+          ])
+        )
+      )
+      .catch((error) => {
+        pluginManifestsPromise = null
+        throw error
+      })
+  }
+  return pluginManifestsPromise
 }
 
 export async function getPluginManifest(key) {
+  const manifests = await loadPluginManifests()
+  if (manifests[key]) return manifests[key]
   const response = await api.get(`/lens/admin/plugins/${key}/manifest/`)
   return unwrapResponse(response)
 }
 
-export async function getPluginIcon(key) {
-  const response = await api.get(`/lens/admin/plugins/${key}/icon/`, {
-    responseType: 'blob'
+export function getPluginIcon(key) {
+  if (pluginIconBlobs.has(key)) {
+    return Promise.resolve(pluginIconBlobs.get(key))
+  }
+  return pluginIconRequests.run(key, async () => {
+    const response = await api.get(`/lens/admin/plugins/${key}/icon/`, {
+      responseType: 'blob'
+    })
+    pluginIconBlobs.set(key, response.data)
+    return response.data
   })
-  return response.data
 }
 
 export async function listConnections(params = {}) {

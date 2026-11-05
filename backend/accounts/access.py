@@ -170,7 +170,11 @@ def get_effective_feature_keys(
     if getattr(user, 'is_staff', False):
         return list(FEATURE_KEYS)
 
-    resolved_roles = effective_roles or get_effective_roles(user)
+    resolved_roles = (
+        effective_roles
+        if effective_roles is not None
+        else get_effective_roles(user)
+    )
     feature_keys = []
     for role in resolved_roles:
         feature_keys.extend(normalize_feature_keys(role.visible_features))
@@ -197,10 +201,18 @@ def get_preferred_platform(
     feature_keys=None,
 ) -> str:
     """Resolve the platform to open after login."""
-    resolved_roles = effective_roles or get_effective_roles(user)
-    resolved_feature_keys = feature_keys or get_effective_feature_keys(
-        user,
-        effective_roles=resolved_roles,
+    resolved_roles = (
+        effective_roles
+        if effective_roles is not None
+        else get_effective_roles(user)
+    )
+    resolved_feature_keys = (
+        feature_keys
+        if feature_keys is not None
+        else get_effective_feature_keys(
+            user,
+            effective_roles=resolved_roles,
+        )
     )
 
     profile_platform = _resolve_profile_preferred_platform(user)
@@ -229,10 +241,14 @@ def get_access_profile(
     effective_roles=None,
 ) -> dict[str, object]:
     """Build the effective access profile for a user."""
-    resolved_roles = effective_roles or get_effective_roles(
-        user,
-        direct_roles=direct_roles,
-        groups=groups,
+    resolved_roles = (
+        effective_roles
+        if effective_roles is not None
+        else get_effective_roles(
+            user,
+            direct_roles=direct_roles,
+            groups=groups,
+        )
     )
     feature_keys = get_effective_feature_keys(
         user,

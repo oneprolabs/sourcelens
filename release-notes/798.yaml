@@ -1,0 +1,10 @@
+type: improvement
+audience: admin
+en: >-
+  Admin console lists now load with a bounded number of requests: plugin pages
+  fetch every manifest in one call and reuse cached catalog data, user and group
+  pickers request compact payloads, and LensNode token totals skip the extra
+  trace scan when no unusual values exist.
+zh-CN: >-
+  管理后台列表以更少的请求完成加载：插件页面一次请求获取全部 manifest 并复用缓存的目录数据，
+  用户与用户组选择器改为请求精简数据，LensNode Token 统计在不存在异常值时会跳过额外的 trace 扫描。
