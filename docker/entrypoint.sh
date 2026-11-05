@@ -119,7 +119,7 @@ start_celery_worker() {
         --concurrency=$DEFAULT_CONCURRENCY \
         --queues=$WORKER_QUEUES \
         --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-1000} \
-        --max-memory-per-child=${CELERY_MAX_MEMORY_PER_CHILD:-256000} \
+        --max-memory-per-child=${CELERY_MAX_MEMORY_PER_CHILD:-512000} \
         --logfile=/var/log/celery/worker.log
 }
 

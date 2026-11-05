@@ -5643,6 +5643,30 @@ class LensServiceTests(TransactionTestCase):
         release_datasource_lock(self.datasource.uuid, token="capacity-1")
         self.assertTrue(_datasource_capacity_available(self.lensnode, "capacity-3"))
 
+    def test_datasource_capacity_is_capped_by_global_concurrency_limit(self):
+        self.lensnode.labels = {"datasource_sync_capacity": 10}
+        self.lensnode.save(update_fields=["labels"])
+        GlobalSetting.objects.create(
+            key="lens.datasource_sync.max_concurrent",
+            value=2,
+        )
+        for index in range(3):
+            task_id = f"capped-{index}"
+            TaskExecution.objects.create(
+                task_id=task_id,
+                task_name="datasource_sync:capped",
+                module="lens_datasource",
+                status="PENDING",
+                metadata={
+                    "datasource_uuid": str(self.datasource.uuid),
+                    "lensnode_uuid": str(self.lensnode.uuid),
+                },
+            )
+
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capped-0"))
+        self.assertTrue(_datasource_capacity_available(self.lensnode, "capped-1"))
+        self.assertFalse(_datasource_capacity_available(self.lensnode, "capped-2"))
+
     def test_queue_never_drops_tasks_when_capacity_is_exhausted(self):
         self.lensnode.labels = {"datasource_sync_capacity": 1}
         self.lensnode.save(update_fields=["labels"])

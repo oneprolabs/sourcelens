@@ -322,6 +322,14 @@ def register_periodic_tasks():
     )
 
     TASK_REGISTRY.add(
+        name="lens-result-cleanup",
+        task="lens.cleanup_task_results",
+        schedule=3600,
+        queue="lens",
+        enabled=True,
+    )
+
+    TASK_REGISTRY.add(
         name="lens-datasource-upload-dispatch",
         task="lens.dispatch_pending_uploads",
         schedule=5,

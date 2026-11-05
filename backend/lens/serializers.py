@@ -4090,9 +4090,11 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
             "lensnode.health.offline_threshold_s": "offline_threshold_s",
             "lensnode.health.probe_timeout_s": "probe_timeout_s",
             "lensnode_cleanup.interval_seconds": "interval_seconds",
+            "lensnode_cleanup.run_absolute_timeout_s": "run_absolute_timeout_s",
             "lensnode_health.interval_seconds": "interval_seconds",
             "run_retention.interval_seconds": "interval_seconds",
             "lens.datasource_sync.timeout_s": "timeout_s",
+            "lens.datasource_sync.max_concurrent": "max_concurrent",
             "lens.datasource_sync.workers": "workers",
         }
         if key in positive_integer_keys:

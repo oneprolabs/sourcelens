@@ -514,7 +514,107 @@ def test_reconnect_hello_claims_buffered_terminal_run_before_flush():
     asyncio.run(exercise())
 
 
-def test_datasource_sync_terminal_frame_replays_until_acknowledged():
+def test_datasource_progress_flood_is_coalesced_under_outbox_pressure():
+    """A large sync must not queue one frame per skipped item.
+
+    Aishu-style syncs emit thousands of cumulative progress frames; keeping
+    them all delays control frames and websocket pongs behind the flood.
+    Under pressure only the newest frame per (task, step) is kept.
+    """
+
+    async def exercise():
+        client = _make_client()
+        client._outbox_soft_limit = 3
+        for index in range(100):
+            client._enqueue(
+                {
+                    "type": "datasource_sync_event",
+                    "task_id": "sync-1",
+                    "step": "item_skipped",
+                    "item_name": f"file-{index}",
+                }
+            )
+
+        frames = [
+            frame
+            for frame in client._outbox
+            if frame.get("step") == "item_skipped"
+        ]
+        assert len(frames) <= client._outbox_soft_limit
+        assert frames[-1]["item_name"] == "file-99"
+        assert client._outbox_coalesced == 97
+
+    asyncio.run(exercise())
+
+
+def test_datasource_failure_and_terminal_frames_are_never_coalesced():
+    async def exercise():
+        client = _make_client()
+        client._outbox_soft_limit = 1
+        client._enqueue(
+            {
+                "type": "datasource_sync_event",
+                "task_id": "sync-1",
+                "step": "item_skipped",
+                "item_name": "a",
+            }
+        )
+        client._enqueue(
+            {
+                "type": "datasource_sync_event",
+                "task_id": "sync-1",
+                "step": "item_skipped",
+                "item_name": "b",
+            }
+        )
+        client._enqueue(
+            {
+                "type": "datasource_sync_event",
+                "task_id": "sync-1",
+                "step": "item_failed",
+                "item_name": "c",
+            }
+        )
+        client._enqueue(
+            {
+                "type": "datasource_sync_done",
+                "task_id": "sync-1",
+                "status": "failed",
+            }
+        )
+
+        steps = [frame.get("step") for frame in client._outbox]
+        assert steps == ["item_skipped", "item_failed", None]
+        assert client._outbox[-1]["type"] == "datasource_sync_done"
+
+    asyncio.run(exercise())
+
+
+def test_datasource_progress_is_untouched_below_the_soft_limit():
+    async def exercise():
+        client = _make_client()
+        client._enqueue(
+            {
+                "type": "datasource_sync_event",
+                "task_id": "sync-1",
+                "step": "item_skipped",
+                "item_name": "a",
+            }
+        )
+        client._enqueue(
+            {
+                "type": "datasource_sync_event",
+                "task_id": "sync-1",
+                "step": "item_skipped",
+                "item_name": "b",
+            }
+        )
+
+        assert [frame["item_name"] for frame in client._outbox] == ["a", "b"]
+        assert client._outbox_coalesced == 0
+
+    asyncio.run(exercise())
+
     client = _make_client()
     payload = {
         "type": "datasource_sync_done",

@@ -77,6 +77,23 @@ LOGGER = logging.getLogger("lensnode")
 RUNTIME_CLEANUP_INTERVAL_S = 60 * 60
 OUTPUT_FLUSH_INTERVAL_S = 0.5
 OUTPUT_BATCH_MAX_CHARS = 32_768
+# Datasource progress steps are cumulative snapshots: under outbox pressure we
+# keep the newest frame for each (task, step) instead of queueing every item.
+# Terminal and failure steps are never coalesced.
+DATASOURCE_PROGRESS_STEPS = frozenset(
+    {
+        "item_skipped",
+        "item_started",
+        "item_done",
+        "scan_progress",
+        "scan_folder",
+        "sync_progress",
+        "conversion_progress",
+        "conversion_discovery_progress",
+        "repository_started",
+    }
+)
+OUTBOX_COALESCE_WINDOW = 500
 
 
 class LensNodeClient:
@@ -166,7 +183,14 @@ class LensNodeClient:
         self._outbox = collections.deque()
         self._outbox_ready = asyncio.Event()
         self._outbox_max = int(os.getenv("LENSNODE_OUTBOX_MAX_FRAMES", "10000"))
+        self._outbox_soft_limit = int(
+            os.getenv(
+                "LENSNODE_OUTBOX_SOFT_LIMIT",
+                str(max(200, self._outbox_max // 10)),
+            )
+        )
         self._outbox_dropped = 0
+        self._outbox_coalesced = 0
         self._pending_trace_frames = collections.OrderedDict()
         self._pending_terminal_frames = collections.OrderedDict()
         self._pending_datasource_terminal_frames = collections.OrderedDict()
@@ -276,6 +300,8 @@ class LensNodeClient:
             self._pending_datasource_terminal_frames.move_to_end(task_id)
             while len(self._pending_datasource_terminal_frames) > self._outbox_max:
                 self._pending_datasource_terminal_frames.popitem(last=False)
+        if self._coalesce_progress_frame(payload):
+            return
         while len(self._outbox) >= self._outbox_max:
             self._outbox.popleft()
             self._outbox_dropped += 1
@@ -295,6 +321,36 @@ class LensNodeClient:
                 )
         self._outbox.append(payload)
         self._outbox_ready.set()
+
+    def _coalesce_progress_frame(self, payload):
+        """Replace a queued progress frame while the outbox is under pressure.
+
+        Progress frames are cumulative snapshots, so keeping only the newest
+        one per (task, step) preserves every counter the control plane shows
+        while removing the per-item flood that otherwise delays control frames
+        and websocket pongs behind thousands of queued sends.
+        """
+
+        if len(self._outbox) < self._outbox_soft_limit:
+            return False
+        if payload.get("type") != "datasource_sync_event":
+            return False
+        if str(payload.get("step") or "") not in DATASOURCE_PROGRESS_STEPS:
+            return False
+        key = (payload.get("task_id"), payload.get("step"))
+        start = len(self._outbox) - 1
+        stop = max(-1, start - OUTBOX_COALESCE_WINDOW)
+        for index in range(start, stop, -1):
+            frame = self._outbox[index]
+            if (
+                frame.get("type") == "datasource_sync_event"
+                and (frame.get("task_id"), frame.get("step")) == key
+            ):
+                self._outbox[index] = payload
+                self._outbox_coalesced += 1
+                self._outbox_ready.set()
+                return True
+        return False
 
     async def run_forever(self):
         """Run the client with reconnect backoff until stopped."""
@@ -2329,6 +2385,7 @@ class LensNodeClient:
         }
         metrics.update(self.load_probe.collect())
         metrics["outbox_depth"] = len(self._outbox)
+        metrics["outbox_coalesced"] = self._outbox_coalesced
         metrics["send_ms_max"] = round(send_max_s * 1000, 1)
         return metrics
 

@@ -559,6 +559,63 @@ class RunLifecycleTests(TransactionTestCase):
         run.refresh_from_db()
         self.assertEqual(run.status, Run.Status.STREAMING)
 
+    def test_cleanup_ignores_task_overtime_setting_for_run_reaping(self):
+        # The admin "task overtime period" defaults to 600s. It governs node
+        # tasks, not Runs: a 17-minute run that is still streaming must not be
+        # killed just because the hourly cleanup pass happened to run.
+        from lens.models import GlobalSetting
+
+        GlobalSetting.objects.create(key="lensnode.defaults.timeout", value=600)
+        run = self._run(
+            Run.Status.STREAMING,
+            timedelta(minutes=17),
+            timedelta(seconds=10),
+        )
+
+        lensnode_cleanup_task()
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, Run.Status.STREAMING)
+
+    def test_cleanup_fails_run_past_its_absolute_ceiling(self):
+        from lens.models import GlobalSetting
+
+        GlobalSetting.objects.create(
+            key="lensnode_cleanup.run_absolute_timeout_s",
+            value=600,
+        )
+        run = self._run(
+            Run.Status.STREAMING,
+            timedelta(minutes=17),
+            timedelta(seconds=10),
+        )
+        run.execution.run_timeout_s = None
+        run.execution.save(update_fields=["run_timeout_s"])
+
+        lensnode_cleanup_task()
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, Run.Status.FAILED)
+        self.assertEqual(run.error, "LENS_RUN_TIMEOUT")
+
+    def test_cleanup_never_reaps_below_the_run_snapshot_budget(self):
+        from lens.models import GlobalSetting
+
+        GlobalSetting.objects.create(
+            key="lensnode_cleanup.run_absolute_timeout_s",
+            value=600,
+        )
+        run = self._run(
+            Run.Status.STREAMING,
+            timedelta(minutes=17),
+            timedelta(seconds=10),
+        )
+
+        lensnode_cleanup_task()
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, Run.Status.STREAMING)
+
     def test_reconcile_schedules_confirmation_instead_of_failing_inline(self):
         # LensNode redelivers run_done at-least-once through a durable
         # outbox, so a run absent from a fresh hello's active list may just
