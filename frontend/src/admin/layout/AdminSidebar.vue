@@ -177,6 +177,21 @@
                 <span>{{ t('lensRuns.menu') }}</span>
               </router-link>
               <router-link
+                v-if="userStore.userHasFeature('run_evaluations')"
+                to="/management/lens/evaluation"
+                class="admin-nav-item admin-nav-item-child"
+                :class="
+                  isActive('/management/lens/evaluation')
+                    ? 'admin-nav-item-active'
+                    : ''
+                "
+                @click="isMobile && $emit('close')"
+                @mouseenter="preloadRoute('/management/lens/evaluation')"
+              >
+                <span class="w-4 text-center text-xs">◎</span>
+                <span>Agent Evaluation</span>
+              </router-link>
+              <router-link
                 to="/management/lens/shares"
                 class="admin-nav-item admin-nav-item-child"
                 :class="

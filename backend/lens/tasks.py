@@ -9,6 +9,7 @@ from datetime import timedelta
 from celery import shared_task
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.conf import settings
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -52,6 +53,10 @@ from .models import (
     SessionCleanupOperation,
 )
 from .services import cancel_run_on_lensnode, lensnode_group_name
+
+# Importing the evaluation task module registers its Celery tasks; autodiscovery
+# only loads ``lens.tasks``, not nested task modules.
+from .evaluation import tasks as _evaluation_tasks  # noqa: F401,E402
 
 
 @shared_task(name="lens.session_workspace_cleanup", queue="lens")
@@ -525,15 +530,37 @@ def _datasource_active_statuses(task_status):
     ]
 
 
+DATASOURCE_MAX_CONCURRENCY_SETTING = "lens.datasource_sync.max_concurrent"
+DEFAULT_DATASOURCE_MAX_CONCURRENCY = 3
+
+
+def _datasource_concurrency_limit():
+    """Return the platform-wide cap on concurrent datasource operations per node."""
+
+    setting = GlobalSetting.objects.filter(
+        key=DATASOURCE_MAX_CONCURRENCY_SETTING
+    ).first()
+    try:
+        value = int(setting.value) if setting else DEFAULT_DATASOURCE_MAX_CONCURRENCY
+    except (TypeError, ValueError):
+        value = DEFAULT_DATASOURCE_MAX_CONCURRENCY
+    return max(1, value)
+
+
 def _datasource_capacity(lensnode):
     """Return the datasource execution capacity advertised by a LensNode."""
 
     labels = (lensnode.labels if lensnode else {}) or {}
     value = labels.get("datasource_sync_capacity", 1)
     try:
-        return max(1, int(value))
+        capacity = max(1, int(value))
     except (TypeError, ValueError):
         return 1
+    # A node may advertise a large capacity (prod ran with 10), but every
+    # concurrent sync saturates the control channel with progress frames and
+    # competes for the same remote APIs. Cap the admitted slots so extra
+    # scheduled syncs wait in the existing queue instead of piling on.
+    return max(1, min(capacity, _datasource_concurrency_limit()))
 
 
 def _datasource_capacity_slot_key(lensnode_uuid, slot):
@@ -4068,6 +4095,20 @@ def _probe_lensnode(lensnode, timeout_s):
     return False
 
 
+RUN_ABSOLUTE_TIMEOUT_SECONDS = 14400
+
+
+def _run_snapshot_timeout_s(run):
+    """Return the wall-clock budget frozen on a run's execution snapshot."""
+
+    try:
+        execution = run.execution
+    except RunExecution.DoesNotExist:
+        return 0
+    value = getattr(execution, "run_timeout_s", None)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
 @shared_task(name="lens.lensnode_cleanup", queue="lens")
 def lensnode_cleanup_task():
     """Fail stale non-terminal runs that no LensNode has completed."""
@@ -4087,27 +4128,54 @@ def lensnode_cleanup_task():
     # absolute timeout is a deliberately generous runaway ceiling that
     # still bounds a run which never stops emitting; raise it if you expect
     # single answers to legitimately exceed it.
+    #
+    # The ceiling must not reuse lensnode.defaults.timeout: that setting is
+    # the "task overtime period" default of 600s in the admin UI, so reading
+    # it here killed every healthy run older than ten minutes whenever the
+    # hourly cleanup pass ran. Each run already freezes its own wall-clock
+    # budget on its execution snapshot, so the effective ceiling is the
+    # larger of the two.
     idle_setting = GlobalSetting.objects.filter(
         key="lensnode.defaults.idle_timeout"
     ).first()
     idle_timeout_s = int(idle_setting.value if idle_setting else 300)
-    setting = GlobalSetting.objects.filter(key="lensnode.defaults.timeout").first()
-    timeout_s = int(setting.value if setting else 14400)
+    ceiling_setting = GlobalSetting.objects.filter(
+        key="lensnode_cleanup.run_absolute_timeout_s"
+    ).first()
+    try:
+        absolute_timeout_s = (
+            int(ceiling_setting.value)
+            if ceiling_setting
+            else RUN_ABSOLUTE_TIMEOUT_SECONDS
+        )
+    except (TypeError, ValueError):
+        absolute_timeout_s = RUN_ABSOLUTE_TIMEOUT_SECONDS
+    absolute_timeout_s = max(1, absolute_timeout_s)
     now = timezone.now()
     idle_cutoff = now - timedelta(seconds=idle_timeout_s)
-    abs_cutoff = now - timedelta(seconds=timeout_s)
-    stale = Run.objects.filter(
-        status__in=[Run.Status.RUNNING, Run.Status.STREAMING],
-        resume_by__isnull=True,
-    ).filter(
-        Q(last_activity_at__lt=idle_cutoff)
-        | Q(last_activity_at__isnull=True, started_at__lt=idle_cutoff)
-        | Q(started_at__lt=abs_cutoff)
+    active_runs = list(
+        Run.objects.filter(
+            status__in=[Run.Status.RUNNING, Run.Status.STREAMING],
+            resume_by__isnull=True,
+        )
+        .select_related("execution")
+        .order_by("pk")
     )
+    stale_ids = []
+    for run in active_runs:
+        last_activity = run.last_activity_at or run.started_at or run.created_at
+        if last_activity is None or last_activity < idle_cutoff:
+            stale_ids.append(run.pk)
+            continue
+        started_at = run.started_at or run.created_at
+        timeout_s = max(absolute_timeout_s, _run_snapshot_timeout_s(run))
+        if started_at is not None and started_at < now - timedelta(seconds=timeout_s):
+            stale_ids.append(run.pk)
     with transaction.atomic():
-        stale_runs = list(stale.select_for_update().order_by("pk"))
-        stale_ids = [run.pk for run in stale_runs]
-        count = len(stale_ids)
+        stale_runs = list(
+            Run.objects.select_for_update().filter(pk__in=stale_ids).order_by("pk")
+        )
+        count = len(stale_runs)
         if count:
             from .services import fail_running_steps_for_runs
 
@@ -4167,7 +4235,7 @@ def lensnode_cleanup_task():
         "failed": count,
         "resume_expired": expired_count,
         "idle_timeout_s": idle_timeout_s,
-        "timeout_s": timeout_s,
+        "absolute_timeout_s": absolute_timeout_s,
         "datasource_sync": datasource_sync_metrics,
     }
     record.last_run_at = timezone.now()
@@ -4218,6 +4286,31 @@ def _reap_terminal_delegated_sessions(now=None):
     return len(reaped_session_ids)
 
 
+@shared_task(name="lens.cleanup_task_results", queue="lens")
+def cleanup_task_results_task(batch_size=5000, max_batches=200):
+    """Delete Celery result rows past CELERY_RESULT_EXPIRES in bounded batches."""
+
+    from django_celery_results.models import TaskResult
+
+    expires_s = int(getattr(settings, "CELERY_RESULT_EXPIRES", 0) or 0)
+    if expires_s <= 0:
+        return 0
+    cutoff = timezone.now() - timedelta(seconds=expires_s)
+    deleted_total = 0
+    for _ in range(max_batches):
+        ids = list(
+            TaskResult.objects.filter(date_created__lt=cutoff)
+            .values_list("pk", flat=True)[:batch_size]
+        )
+        if not ids:
+            break
+        deleted, _ = TaskResult.objects.filter(pk__in=ids).delete()
+        deleted_total += deleted
+        if len(ids) < batch_size:
+            break
+    return deleted_total
+
+
 @shared_task(name="lens.run_retention", queue="lens")
 def run_retention_task():
     """Celery entrypoint for deleting old terminal runs."""
@@ -4248,6 +4341,9 @@ def run_retention_task():
             finished_at__lt=cutoff,
         )
         run_ids = list(terminal_runs.values_list("id", flat=True))
+        evaluation_session_ids = list(terminal_runs.filter(
+            source=Run.Source.EVALUATION, session__source=Session.Source.EVALUATION
+        ).values_list("session_id", flat=True))
         run_snapshot_ids = list(
             ExecutionSnapshot.objects.filter(run_id__in=run_ids).values_list(
                 "id",
@@ -4262,6 +4358,9 @@ def run_retention_task():
         )
         snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
         with transaction.atomic():
+            from .evaluation.snapshots import freeze_evaluation_results_for_runs
+
+            freeze_evaluation_results_for_runs(run_ids)
             if snapshot_ids:
                 CredentialLease.objects.filter(
                     snapshot_id__in=snapshot_ids
@@ -4279,6 +4378,9 @@ def run_retention_task():
             RunDiagnostic.objects.filter(run_id__in=run_ids).delete()
 
             deleted, _ = terminal_runs.delete()
+            Session.objects.filter(
+                id__in=evaluation_session_ids, source=Session.Source.EVALUATION, run__isnull=True
+            ).delete()
     except Exception as exc:
         record.last_status = ScheduledTask.Status.FAILED
         record.last_error = f"{type(exc).__name__}: {exc}"[:2000]

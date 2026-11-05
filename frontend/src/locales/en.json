@@ -86,7 +86,8 @@
       "all": "All"
     },
     "showPassword": "Show password",
-    "hidePassword": "Hide password"
+    "hidePassword": "Hide password",
+    "create": "Create"
   },
   "virtualEmail": {
     "yourAddress": "Your AI Email"
@@ -962,7 +963,8 @@
   "platforms": {
     "switchPlatform": "Switch view",
     "workspace": "Workspace",
-    "adminConsole": "Admin Console"
+    "adminConsole": "Admin Console",
+    "runEvaluations": "Agent Evaluation"
   },
   "password": {
     "reset": {
@@ -1609,5 +1611,126 @@
       "empty": "No data sources"
     }
   },
-  "datasourceWaiting": "Preparing data sources. The answer will start after synchronization."
+  "datasourceWaiting": "Preparing data sources. The answer will start after synchronization.",
+  "evaluation": {
+    "status": {
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "runStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "paused": "Paused",
+      "cancelled": "Cancelled",
+      "failed": "Failed",
+      "completed": "Completed"
+    },
+    "datasets": {
+      "title": "Agent Evaluation",
+      "subtitle": "Versioned datasets and benchmark runs for one assistant.",
+      "create": "New dataset",
+      "empty": "No evaluation datasets yet",
+      "emptyHint": "Create a dataset, add cases, then launch a benchmark run.",
+      "name": "Dataset name",
+      "assistant": "Assistant",
+      "version": "Version",
+      "status": "Status",
+      "cases": "Cases",
+      "createdAt": "Created",
+      "open": "Open",
+      "backToList": "Back to datasets",
+      "detailTitle": "Dataset",
+      "namePlaceholder": "e.g. Support quality smoke",
+      "assistantPlaceholder": "Select an assistant",
+      "requiredFields": "Dataset name and assistant are required.",
+      "created": "Dataset created",
+      "deleted": "Dataset deleted",
+      "deleteTitle": "Delete dataset",
+      "deleteMessage": "This removes the dataset and its cases. Datasets with evaluation runs cannot be deleted."
+    },
+    "cases": {
+      "tab": "Cases",
+      "add": "Add case",
+      "edit": "Edit case",
+      "import": "Import",
+      "input": "Input",
+      "inputPlaceholder": "Question or instruction sent to the assistant",
+      "expectedAnswer": "Expected answer",
+      "expectedSources": "Expected sources",
+      "expectedFacts": "Expected facts",
+      "tags": "Tags",
+      "config": "Config (JSON)",
+      "configHint": "Optional JSON object",
+      "listHint": "Separate values with |",
+      "empty": "No cases in this dataset",
+      "emptyHint": "Add cases manually or import JSONL / CSV.",
+      "inputRequired": "Input is required.",
+      "configInvalid": "Config must be valid JSON.",
+      "created": "Case created",
+      "updated": "Case updated",
+      "deleted": "Case deleted",
+      "deleteTitle": "Delete case",
+      "deleteMessage": "This removes the case from the dataset.",
+      "importHint": "Paste JSONL (one object per line) or CSV with input, expected_answer, expected_sources, expected_facts, tags.",
+      "importPlaceholder": "{\"input\":\"...\",\"expected_sources\":[\"report.md\"]}",
+      "importFailed": "Import rejected. Fix these rows and retry:",
+      "importLine": "Line {line}",
+      "importEmpty": "Paste content or choose a file first.",
+      "imported": "Imported {created} cases ({duplicates} duplicates skipped)"
+    },
+    "runs": {
+      "tab": "Runs",
+      "launch": "Run evaluation",
+      "started": "Evaluation run started",
+      "empty": "No evaluation runs yet",
+      "emptyHint": "Launch a run once the dataset has cases.",
+      "status": "Status",
+      "progress": "Progress",
+      "verdicts": "Pass / fail / total",
+      "score": "Scored metrics weighted score",
+      "createdAt": "Created",
+      "open": "Report"
+    },
+    "report": {
+      "title": "Evaluation report",
+      "backToDataset": "Back to dataset",
+      "startedAt": "Started",
+      "finishedAt": "Finished",
+      "cancel": "Cancel",
+      "retry": "Retry failed",
+      "totalCases": "Total cases",
+      "completedCases": "{count} completed",
+      "passed": "Passed",
+      "failed": "Failed",
+      "inconclusive": "Inconclusive",
+      "score": "Scored metrics weighted score",
+      "weightedHint": "Only scored metrics are included. This is not an overall verdict; check coverage and case results.",
+      "coverage": "Metric coverage",
+      "coverageHint": "{scored} of {total} dimensions scored",
+      "metrics": "Metrics",
+      "metric": "Metric",
+      "weight": "Weight",
+      "meanScore": "Mean score",
+      "verdicts": "Pass / fail",
+      "failureClusters": "Failure clusters",
+      "noFailures": "No failing dimensions",
+      "results": "Case results",
+      "noResults": "No results match this filter",
+      "case": "Case",
+      "verdict": "Verdict",
+      "tokens": "Tokens",
+      "detail": "Detail",
+      "resultDetail": "Case result",
+      "duration": "Duration",
+      "output": "Output",
+      "issues": "Issues",
+      "scores": "Scores",
+      "executionMetrics": "Execution metrics",
+      "citations": "Citations",
+      "filterAll": "All",
+      "cancelled": "Evaluation run cancelled",
+      "retried": "Failed cases requeued"
+    }
+  }
 }

@@ -86,7 +86,8 @@
       "all": "Todos"
     },
     "showPassword": "Mostrar contraseña",
-    "hidePassword": "Ocultar contraseña"
+    "hidePassword": "Ocultar contraseña",
+    "create": "Crear"
   },
   "virtualEmail": {
     "yourAddress": "Su correo electrónico de IA"
@@ -962,7 +963,8 @@
   "platforms": {
     "switchPlatform": "Cambiar vista",
     "workspace": "Espacio de trabajo",
-    "adminConsole": "Consola de administración"
+    "adminConsole": "Consola de administración",
+    "runEvaluations": "Evaluación de agentes"
   },
   "password": {
     "reset": {
@@ -1609,5 +1611,126 @@
       "empty": "Sin fuentes de datos"
     }
   },
-  "datasourceWaiting": "Preparando las fuentes de datos."
+  "datasourceWaiting": "Preparando las fuentes de datos.",
+  "evaluation": {
+    "status": {
+      "draft": "Borrador",
+      "active": "Activo",
+      "archived": "Archivado"
+    },
+    "runStatus": {
+      "queued": "En cola",
+      "running": "En ejecución",
+      "paused": "Pausado",
+      "cancelled": "Cancelado",
+      "failed": "Fallido",
+      "completed": "Completado"
+    },
+    "datasets": {
+      "title": "Evaluación de agentes",
+      "subtitle": "Conjuntos de datos versionados y ejecuciones de referencia por asistente.",
+      "create": "Nuevo conjunto",
+      "empty": "Todavía no hay conjuntos de evaluación",
+      "emptyHint": "Crea un conjunto, añade casos y lanza una ejecución.",
+      "name": "Nombre del conjunto",
+      "assistant": "Asistente",
+      "version": "Versión",
+      "status": "Estado",
+      "cases": "Casos",
+      "createdAt": "Creado",
+      "open": "Abrir",
+      "backToList": "Volver a los conjuntos",
+      "detailTitle": "Conjunto",
+      "namePlaceholder": "p. ej. Prueba de calidad de soporte",
+      "assistantPlaceholder": "Selecciona un asistente",
+      "requiredFields": "El nombre y el asistente son obligatorios.",
+      "created": "Conjunto creado",
+      "deleted": "Conjunto eliminado",
+      "deleteTitle": "Eliminar conjunto",
+      "deleteMessage": "Se eliminarán el conjunto y sus casos. Los conjuntos con ejecuciones no se pueden eliminar."
+    },
+    "cases": {
+      "tab": "Casos",
+      "add": "Añadir caso",
+      "edit": "Editar caso",
+      "import": "Importar",
+      "input": "Entrada",
+      "inputPlaceholder": "Pregunta o instrucción enviada al asistente",
+      "expectedAnswer": "Respuesta esperada",
+      "expectedSources": "Fuentes esperadas",
+      "expectedFacts": "Hechos esperados",
+      "tags": "Etiquetas",
+      "config": "Configuración (JSON)",
+      "configHint": "Objeto JSON opcional",
+      "listHint": "Separa los valores con |",
+      "empty": "Este conjunto no tiene casos",
+      "emptyHint": "Añade casos manualmente o importa JSONL / CSV.",
+      "inputRequired": "La entrada es obligatoria.",
+      "configInvalid": "La configuración debe ser JSON válido.",
+      "created": "Caso creado",
+      "updated": "Caso actualizado",
+      "deleted": "Caso eliminado",
+      "deleteTitle": "Eliminar caso",
+      "deleteMessage": "Se eliminará el caso del conjunto.",
+      "importHint": "Pega JSONL (un objeto por línea) o CSV con input, expected_answer, expected_sources, expected_facts, tags.",
+      "importPlaceholder": "{\"input\":\"...\",\"expected_sources\":[\"report.md\"]}",
+      "importFailed": "Importación rechazada. Corrige estas filas y reintenta:",
+      "importLine": "Línea {line}",
+      "importEmpty": "Pega contenido o elige un archivo primero.",
+      "imported": "Se importaron {created} casos ({duplicates} duplicados omitidos)"
+    },
+    "runs": {
+      "tab": "Ejecuciones",
+      "launch": "Ejecutar evaluación",
+      "started": "Ejecución iniciada",
+      "empty": "Todavía no hay ejecuciones",
+      "emptyHint": "Lanza una ejecución cuando el conjunto tenga casos.",
+      "status": "Estado",
+      "progress": "Progreso",
+      "verdicts": "Aprobados / fallidos / total",
+      "score": "Puntuación ponderada de métricas evaluadas",
+      "createdAt": "Creado",
+      "open": "Informe"
+    },
+    "report": {
+      "title": "Informe de evaluación",
+      "backToDataset": "Volver al conjunto",
+      "startedAt": "Inicio",
+      "finishedAt": "Fin",
+      "cancel": "Cancelar ejecución",
+      "retry": "Reintentar fallidos",
+      "totalCases": "Casos totales",
+      "completedCases": "{count} completados",
+      "passed": "Aprobados",
+      "failed": "Fallidos",
+      "inconclusive": "No concluyente",
+      "score": "Puntuación ponderada de métricas evaluadas",
+      "weightedHint": "Solo se incluyen métricas puntuadas. No es un resultado global; revise la cobertura y los casos.",
+      "coverage": "Cobertura de métricas",
+      "coverageHint": "{scored} de {total} dimensiones puntuadas",
+      "metrics": "Métricas",
+      "metric": "Métrica",
+      "weight": "Peso",
+      "meanScore": "Puntuación media",
+      "verdicts": "Aprobados / fallidos",
+      "failureClusters": "Agrupación de fallos",
+      "noFailures": "Ninguna dimensión falló",
+      "results": "Resultados por caso",
+      "noResults": "Ningún resultado coincide con el filtro",
+      "case": "Caso",
+      "verdict": "Veredicto",
+      "tokens": "Tokens",
+      "detail": "Detalle",
+      "resultDetail": "Resultado del caso",
+      "duration": "Duración",
+      "output": "Salida",
+      "issues": "Problemas",
+      "scores": "Puntuaciones",
+      "executionMetrics": "Métricas de ejecución",
+      "citations": "Citas",
+      "filterAll": "Todos",
+      "cancelled": "Ejecución cancelada",
+      "retried": "Casos fallidos reencolados"
+    }
+  }
 }

@@ -33,6 +33,36 @@ export const adminRoutes = [
     meta: { requiresAuth: true, requiredFeature: 'admin_console' }
   },
   {
+    path: '/management/lens/evaluation',
+    name: 'LensEvaluation',
+    component: () => import('@/admin/pages/lens/Evaluation.vue'),
+    meta: {
+      requiresAuth: true,
+      requiredFeature: 'run_evaluations',
+      requiredPermission: 'lens.run_evaluations'
+    }
+  },
+  {
+    path: '/management/lens/evaluation/datasets/:uuid',
+    name: 'LensEvaluationDataset',
+    component: () => import('@/admin/pages/lens/EvaluationDataset.vue'),
+    meta: {
+      requiresAuth: true,
+      requiredFeature: 'run_evaluations',
+      requiredPermission: 'lens.run_evaluations'
+    }
+  },
+  {
+    path: '/management/lens/evaluation/runs/:uuid',
+    name: 'LensEvaluationReport',
+    component: () => import('@/admin/pages/lens/EvaluationReport.vue'),
+    meta: {
+      requiresAuth: true,
+      requiredFeature: 'run_evaluations',
+      requiredPermission: 'lens.run_evaluations'
+    }
+  },
+  {
     path: '/management/lens/shares',
     name: 'LensShareReview',
     component: () => import('@/admin/pages/lens/ShareReview.vue'),

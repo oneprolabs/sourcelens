@@ -151,6 +151,10 @@ def capture_task_alert(task):
     summary = summary if isinstance(summary, dict) else {}
     sync = metadata.get("sync_summary") or result
     sync = sync if isinstance(sync, dict) else {}
+    # Sync tasks report their failures in sync_summary; only conversion tasks
+    # carry conversion_summary. Reading conversion_summary for both is why
+    # every sync_partial alert claimed zero failed files.
+    failure_summary = summary if subject == "processing" else sync
     error = _error_code(task.error)
     reason = _error_code(metadata.get("completion_reason"))
     try:
@@ -159,7 +163,7 @@ def capture_task_alert(task):
         datasource_uuid = None
     datasource = DataSource.objects.filter(uuid=datasource_uuid).select_related("lensnode").first()
     try:
-        failed_files = max(0, int(summary.get("failed") or 0))
+        failed_files = max(0, int(failure_summary.get("failed") or 0))
     except (ValueError, TypeError, OverflowError):
         failed_files = 0
     payload = {

@@ -1,0 +1,23 @@
+type: feature
+audience: admin
+en: >-
+  Add offline Agent Evaluation to the admin console: versioned datasets and
+  cases, configurable metrics, isolated evaluation LensNode pools, batch runs
+  with cancel and retry, trace-based scoring and frozen report snapshots.
+  Production reliability is hardened as well: healthy runs are no longer killed
+  by the hourly cleanup, datasource syncs are concurrency-capped, progress
+  frames are coalesced under outbox pressure, and sync failures are reported
+  accurately.
+zh-CN: >-
+  管理台新增离线 Agent 评估：版本化数据集与用例、可配置指标、独立的评估
+  LensNode 池、支持取消与重试的批次运行、基于轨迹的评分与冻结快照报告。同时
+  加固生产可靠性：修复正常 Run 被每小时清理误杀、限制数据源同步并发、在
+  outbox 压力下合并进度帧、并如实上报同步失败数。
+es: >-
+  Se incorpora la evaluación offline de Agent en la consola de administración:
+  conjuntos de datos y casos versionados, métricas configurables, pools de
+  LensNode aislados, lotes con cancelación y reintento, puntuación basada en
+  trazas e informes con instantáneas congeladas. También se refuerza la
+  fiabilidad: las ejecuciones sanas ya no se cancelan en la limpieza por hora,
+  se limita la concurrencia de sincronización, se agrupan los fotogramas de
+  progreso y se informan correctamente los fallos de sincronización.

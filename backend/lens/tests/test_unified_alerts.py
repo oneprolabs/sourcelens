@@ -140,9 +140,29 @@ class UnifiedAlertTests(TestCase):
             finished_at=timezone.now(),
             result={"conversion_summary": {"failed": 2}},
         )
-        capture_task_alert(task)
+        occurrence = capture_task_alert(task)
+        self.assertEqual(occurrence.payload["failed_files"], 2)
         process_alert_outbox()
         self.assertEqual(AlertEvent.objects.get().event_type, "processing_partial")
+
+    def test_partial_sync_alert_reports_sync_failed_count(self):
+        from agentcore_task.adapters.django.models import TaskExecution
+
+        self.rule.subject = "sync"
+        self.rule.events = ["sync_partial"]
+        self.rule.save()
+        task = TaskExecution.objects.create(
+            task_id="sync-one",
+            task_name="sync",
+            module="lens_datasource",
+            status="SUCCESS",
+            finished_at=timezone.now(),
+            metadata={"sync_summary": {"failed": 3, "partial_success": True}},
+            result={"failed": 3},
+        )
+        occurrence = capture_task_alert(task)
+        self.assertEqual(occurrence.payload["failed_files"], 3)
+        self.assertTrue(occurrence.payload["partial_success"])
 
     def test_regular_user_cannot_manage_admin_rules(self):
         client = APIClient()

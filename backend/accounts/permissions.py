@@ -30,6 +30,22 @@ class HasRunDiagnosticsAccess(BasePermission):
             return False
         if user.is_staff:
             return True
-        return "admin_console" in get_effective_feature_keys(
-            user
-        ) and user.has_perm("lens.run_diagnostics")
+        return "admin_console" in get_effective_feature_keys(user) and user.has_perm(
+            "lens.run_diagnostics"
+        )
+
+
+class HasRunEvaluationsAccess(BasePermission):
+    """Allow operators with the evaluation feature and model permission."""
+
+    def has_permission(self, request, view):
+        del view
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff:
+            return True
+        features = get_effective_feature_keys(user)
+        return "run_evaluations" in features and user.has_perm(
+            "lens.run_evaluations"
+        )

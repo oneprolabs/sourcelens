@@ -177,6 +177,8 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "uuid",
             "name",
             "status",
+            "pool",
+            "evaluation_concurrency_limit",
             "connection_id",
             "workspace_path",
             "available_dirs",
@@ -4090,9 +4092,11 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
             "lensnode.health.offline_threshold_s": "offline_threshold_s",
             "lensnode.health.probe_timeout_s": "probe_timeout_s",
             "lensnode_cleanup.interval_seconds": "interval_seconds",
+            "lensnode_cleanup.run_absolute_timeout_s": "run_absolute_timeout_s",
             "lensnode_health.interval_seconds": "interval_seconds",
             "run_retention.interval_seconds": "interval_seconds",
             "lens.datasource_sync.timeout_s": "timeout_s",
+            "lens.datasource_sync.max_concurrent": "max_concurrent",
             "lens.datasource_sync.workers": "workers",
         }
         if key in positive_integer_keys:
@@ -4514,6 +4518,7 @@ class RunSerializer(serializers.ModelSerializer):
         fields = [
             "uuid",
             "status",
+            "source",
             "input_message",
             "output_message",
             "retry_of_run_uuid",
@@ -4624,6 +4629,7 @@ class SessionSerializer(serializers.ModelSerializer):
             "allowed_assistant_uuids",
             "routing_assistants",
             "user",
+            "source",
             "title",
             "title_manually_edited",
             "title_generation_status",
@@ -4641,6 +4647,7 @@ class SessionSerializer(serializers.ModelSerializer):
             "pinned_at",
             "has_shareable_answer",
             "status",
+            "source",
             "created_at",
             "updated_at",
         ]

@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SourceLens · Agent Evaluation 集成 TODO 看板</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --panel: #ffffff;
+    --ink: #1b2430;
+    --ink-2: #5a6778;
+    --ink-3: #8b97a8;
+    --line: #e3e8ef;
+    --line-2: #eef1f6;
+    --shadow: 0 1px 2px rgba(20, 32, 50, .05), 0 6px 18px rgba(20, 32, 50, .06);
+    --data: #4f46e5;
+    --engine: #0d7a45;
+    --metrics: #d97706;
+    --web: #0ea5e9;
+    --qa: #dc2626;
+    --decision: #6d28d9;
+    --new: #7c3aed;
+    --backlog: #94a3b8;
+    --doing: #3b82f6;
+    --test: #f59e0b;
+    --done: #10b981;
+    --radius: 12px;
+  }
+  html[data-theme="dark"] {
+    --bg: #0f141b;
+    --panel: #161d27;
+    --ink: #e8edf4;
+    --ink-2: #a7b3c4;
+    --ink-3: #74839a;
+    --line: #263141;
+    --line-2: #1e2835;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --data: #818cf8;
+    --engine: #34d399;
+    --metrics: #fbbf24;
+    --web: #38bdf8;
+    --qa: #f87171;
+    --decision: #a78bfa;
+    --new: #c4b5fd;
+    --backlog: #7d8ba1;
+    --doing: #60a5fa;
+    --test: #fbbf24;
+    --done: #34d399;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    background: var(--line-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 28px 24px 64px; }
+
+  .hero {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px 26px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto auto;
+    width: 420px; height: 180px;
+    background: radial-gradient(circle at top right, rgba(79,70,229,.12), transparent 70%);
+    pointer-events: none;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--data); box-shadow: 0 0 0 3px rgba(79,70,229,.16); }
+  .gen-time {
+    position: absolute; top: 22px; right: 26px; z-index: 2;
+    display: inline-flex; align-items: baseline; gap: 7px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 12px;
+    font-size: 12px; color: var(--ink-3);
+  }
+  .gen-time b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  h1 { margin: 10px 0 6px; font-size: 27px; letter-spacing: -.02em; }
+  .verdict {
+    margin: 14px 0 0; padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--data);
+    border-radius: 0 10px 10px 0;
+    background: var(--line-2);
+    color: var(--ink-2);
+    max-width: 1180px;
+  }
+  .verdict b { color: var(--ink); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: var(--line-2);
+    color: var(--ink-2); border-radius: 999px;
+    padding: 4px 10px; font-size: 12px; white-space: nowrap;
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+  .stat { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 14px 16px; }
+  .stat .k { font-size: 12px; color: var(--ink-3); display: flex; align-items: center; gap: 6px; }
+  .stat .v { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stat .v small { font-size: 12px; color: var(--ink-3); font-weight: 500; margin-left: 4px; }
+  .stat .bar { height: 4px; border-radius: 999px; background: var(--line-2); margin-top: 10px; overflow: hidden; }
+  .stat .bar i { display: block; height: 100%; border-radius: 999px; }
+  .k-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+  .step {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid var(--line); background: var(--panel);
+    border-radius: 999px; padding: 5px 11px; font-size: 12px; color: var(--ink-2);
+  }
+  .step i { width: 7px; height: 7px; border-radius: 50%; background: var(--backlog); }
+  .step.todo i { background: var(--backlog); }
+  .step.now i { background: var(--doing); box-shadow: 0 0 0 3px rgba(59,130,246,.16); }
+  .step b { font-weight: 600; color: var(--ink); }
+  .arrow { color: var(--ink-3); font-size: 12px; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin: 22px 0 14px;
+  }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fbtn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .fbtn:hover { border-color: var(--ink-3); }
+  .fbtn.active { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+  .fbtn.active .k-dot { background: var(--panel) !important; }
+  .filter-sep { width: 1px; height: 22px; background: var(--line); }
+  .filter-label { font-size: 12px; color: var(--ink-3); align-self: center; }
+  .spacer { flex: 1; }
+  .search {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; width: 210px;
+    font-family: inherit;
+  }
+  .search:focus { outline: none; border-color: var(--data); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--ink-3); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .theme-btn, .reset-btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .theme-btn:hover, .reset-btn:hover { border-color: var(--ink-3); }
+
+  .new-tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em;
+    color: var(--new); background: rgba(124,58,237,.10);
+    border: 1px solid rgba(124,58,237,.28); border-radius: 999px; padding: 0 6px;
+    line-height: 16px; white-space: nowrap;
+  }
+  html[data-theme="dark"] .new-tag { background: rgba(124,58,237,.18); border-color: rgba(124,58,237,.38); }
+
+  .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .col { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; box-shadow: var(--shadow); }
+  .col-head { display: flex; align-items: center; gap: 8px; }
+  .col-head .bar { width: 4px; height: 16px; border-radius: 999px; }
+  .col-head h2 { margin: 0; font-size: 13.5px; letter-spacing: .01em; }
+  .col-head .count {
+    margin-left: auto; font-size: 11.5px; color: var(--ink-2);
+    background: var(--line-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .col-sub { font-size: 11.5px; color: var(--ink-3); margin: 4px 0 10px; }
+  .cards { display: flex; flex-direction: column; gap: 10px; min-height: 40px; }
+
+  .card {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    padding: 10px 11px; border-left: 3px solid var(--lane-color, var(--backlog));
+  }
+  .card:hover { box-shadow: var(--shadow); }
+  .card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+  .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--ink-3); }
+  .lane-tag { font-size: 10.5px; color: var(--lane-color); border: 1px solid var(--lane-color); border-radius: 999px; padding: 0 6px; line-height: 15px; }
+  .prio { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 5px; line-height: 15px; }
+  .prio.p0 { color: #b91c1c; background: rgba(220,38,38,.10); }
+  .prio.p1 { color: #b45309; background: rgba(245,158,11,.12); }
+  .prio.p2 { color: #475569; background: rgba(148,163,184,.18); }
+  html[data-theme="dark"] .prio.p0 { color: #fca5a5; }
+  html[data-theme="dark"] .prio.p1 { color: #fcd34d; }
+  html[data-theme="dark"] .prio.p2 { color: #cbd5e1; }
+  .est { margin-left: auto; font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .card h3 { margin: 7px 0 4px; font-size: 13px; line-height: 1.4; }
+  .card p { margin: 0; font-size: 11.8px; color: var(--ink-2); }
+  .card .dep { margin-top: 6px; font-size: 11px; color: var(--ink-3); }
+  .card .dep b { color: var(--ink-2); font-weight: 600; }
+  .card .verify {
+    margin-top: 7px; padding: 6px 8px; border-radius: 7px;
+    background: var(--line-2); border: 1px dashed var(--line);
+    font-size: 11.2px; color: var(--ink-2);
+  }
+  .card .verify b { color: var(--ink); }
+  .card .src { margin-top: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--ink-3); }
+  .card .move {
+    margin-top: 8px; width: 100%; text-align: left;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: 7px; padding: 3px 8px; font-size: 11px; cursor: pointer; font-family: inherit;
+  }
+  .card .move:hover { border-color: var(--data); color: var(--data); }
+
+  .section { margin-top: 26px; }
+  .section-head h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+  .section-head p { margin: 4px 0 12px; color: var(--ink-2); font-size: 12.5px; max-width: 1100px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 13px; box-shadow: var(--shadow); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+  th { background: var(--line-2); color: var(--ink-2); font-weight: 600; font-size: 11.5px; letter-spacing: .02em; }
+  tbody tr:last-child td { border-bottom: none; }
+  td b { font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-2); }
+  .pill { display: inline-block; border-radius: 999px; padding: 0 8px; font-size: 11px; line-height: 18px; border: 1px solid var(--line); color: var(--ink-2); background: var(--line-2); }
+  .pill.ok { color: var(--engine); border-color: rgba(13,122,69,.3); background: rgba(13,122,69,.08); }
+  .pill.warn { color: var(--metrics); border-color: rgba(217,119,6,.3); background: rgba(217,119,6,.08); }
+  .pill.no { color: var(--qa); border-color: rgba(220,38,38,.3); background: rgba(220,38,38,.08); }
+
+  .notes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 26px; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .note h3 { margin: 0 0 8px; font-size: 13px; }
+  .note ul { margin: 0; padding-left: 16px; color: var(--ink-2); font-size: 12px; }
+  .note li { margin-bottom: 5px; }
+
+  footer {
+    display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between;
+    margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 11.5px;
+  }
+
+  @media (max-width: 1360px) {
+    .board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 1040px) {
+    .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .notes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 720px) {
+    .board { grid-template-columns: 1fr; }
+    .notes { grid-template-columns: 1fr; }
+    .gen-time { position: static; margin-top: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="gen-time">生成时间 <b>2026-11-03 15:45</b></div>
+    <span class="eyebrow"><span class="dot"></span>SourceLens · Agent Evaluation</span>
+    <h1>Agent Evaluation 集成 TODO 看板</h1>
+    <p class="verdict">
+      <b>结论：可集成。</b>按 <code>backend/lens/evaluation/</code> 模块化子包落地，复用
+      <code>create_execution_run</code> / <code>RunTraceEvent</code> / decision 模型，
+      不新建 Agent Runtime。但原文有 4 处必须改：<b>30 天 Run 保留与结果关联冲突</b>、
+      <b>Judge 重复建设</b>、<b>批量执行无资源隔离</b>、<b>Run.outcome 不可作通过率真值</b>。
+      先定 5 项决策，再进 P0。
+    </p>
+    <div class="meta">
+      <span class="chip">依据 <b>ChatGPT 共享设计（最新一条回复）</b></span>
+      <span class="chip">代码核查 <b>main 工作区 · 2026-11-03</b></span>
+      <span class="chip">范围 <b>47 项任务 · 5 项待决策</b></span>
+      <span class="chip">分期 <b>P0 → P4</b></span>
+      <span class="chip">配套 <b>docs/evaluation-todo.md</b></span>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="flow" id="flow"></div>
+  </header>
+
+  <div class="toolbar">
+    <div class="filters" id="laneFilters">
+      <button class="fbtn active" data-lane="all"><span class="k-dot" style="background:var(--ink)"></span>全部</button>
+      <button class="fbtn" data-lane="decision"><span class="k-dot" style="background:var(--decision)"></span>决策</button>
+      <button class="fbtn" data-lane="data"><span class="k-dot" style="background:var(--data)"></span>数据模型</button>
+      <button class="fbtn" data-lane="engine"><span class="k-dot" style="background:var(--engine)"></span>执行引擎</button>
+      <button class="fbtn" data-lane="metrics"><span class="k-dot" style="background:var(--metrics)"></span>指标判定</button>
+      <button class="fbtn" data-lane="web"><span class="k-dot" style="background:var(--web)"></span>前端</button>
+      <button class="fbtn" data-lane="qa"><span class="k-dot" style="background:var(--qa)"></span>质量回归</button>
+    </div>
+    <span class="filter-sep" aria-hidden="true"></span>
+    <div class="filters" id="statusFilters">
+      <button class="fbtn active" data-flag="all">全部任务</button>
+      <button class="fbtn" data-flag="new"><span class="k-dot" style="background:var(--new)"></span>New</button>
+      <button class="fbtn" data-flag="decision"><span class="k-dot" style="background:var(--decision)"></span>待决策</button>
+      <button class="fbtn" data-flag="p0"><span class="k-dot" style="background:var(--qa)"></span>仅 P0</button>
+    </div>
+    <div class="spacer"></div>
+    <input class="search" id="search" type="search" placeholder="搜索 ID / 标题 / 文件" />
+    <div class="legend">
+      <span><i class="k-dot" style="background:var(--qa)"></i>P0 阻塞</span>
+      <span><i class="k-dot" style="background:var(--metrics)"></i>P1</span>
+      <span><i class="k-dot" style="background:var(--backlog)"></i>P2</span>
+      <span><i class="new-tag">New</i>本次核查新增</span>
+    </div>
+    <button class="reset-btn" id="resetBtn" type="button">重置本地状态</button>
+    <button class="theme-btn" id="themeBtn" type="button">◐ 深色</button>
+  </div>
+
+  <main class="board" id="board"></main>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>与设计原文的 4 处必须修正 <span class="new-tag">New</span></h2>
+      <p>这四条不是优化建议，是按原文实现会直接出问题的点。</p>
+    </div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th style="width:56px">#</th><th style="width:220px">原文建议</th><th>代码事实</th><th style="width:340px">修正方向</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">M1</td>
+            <td><b>EvaluationResult 只关联 Run</b>，不复制执行数据</td>
+            <td><code>tasks.py:4221 run_retention_task</code> 按 <code>retention.run_days</code>（默认 30）删除终态 Run、诊断与快照；PROTECT 会重演 <code>RunDiagnosticEvidence</code> 的 <code>ProtectedError</code></td>
+            <td>关联 + 冻结并存：<code>source_run</code> 用 <code>SET_NULL</code>，output / citations / trace 摘要 / metrics 内联冻结</td>
+          </tr>
+          <tr>
+            <td class="mono">M2</td>
+            <td><b>新建独立 LLM Judge 栈</b>（<code>judges/</code> 全套）</td>
+            <td><code>decisions.py</code> 已有 score / choice / noul rubric，<code>DecisionTracker</code> 已计量；<code>answer_supported</code>、<code>evidence_strength</code> 复核已在用，trace 有 <code>deepagents.evidence.verified</code></td>
+            <td>复用 decision rubric 做 judge，只补 correctness / relevance；不新建 judge 栈</td>
+          </tr>
+          <tr>
+            <td class="mono">M3</td>
+            <td><b>Celery 异步批量执行</b>即可</td>
+            <td><code>LENSNODE_MAX_CONCURRENT_RUNS</code> 默认 8；<code>select_execution_lensnode</code>（<code>services.py:1380</code>）无排队与优先级，无节点直接抛 <code>LENSNODE_UNAVAILABLE</code></td>
+            <td>评估助手硬绑专用 LensNode（<code>assistant.lensnode</code>）+ 评估侧并发上限与退避</td>
+          </tr>
+          <tr>
+            <td class="mono">M4</td>
+            <td><b>用 Run 执行结果</b>判断任务是否完成</td>
+            <td><code>routing.py:266</code> 仍把 <code>plan_execute + action</code> 的 <code>evidence_requirement=none</code> 改写为 <code>tool_result</code>，产生 <code>evidence_unavailable</code> 的 partial（近 14 天 7 次）</td>
+            <td><code>Run.outcome</code> 仅作参考维度，通过率由 trace + 自有 rubric 派生</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>下一步执行顺序</h2>
+      <p>按「先定决策、再拆冲突、再建引擎、最后接页面与门禁」排；每一步都有可判定的完成条件。</p>
+    </div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th style="width:60px">顺序</th><th style="width:210px">批次</th><th>为什么现在做</th><th style="width:330px">完成条件</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">1</td>
+            <td><b>D1 / D5 决策</b></td>
+            <td>定位决定指标体系，保留策略决定冻结快照字段；这两项不定，模型建了就要改。</td>
+            <td>确认第一阶段是 B（RAG 质量）还是 C；确认评估快照长期保留、Run 侧跟随 30 天。</td>
+          </tr>
+          <tr>
+            <td class="mono">2</td>
+            <td><b>P0 冲突修正</b></td>
+            <td>M1–M4 都是「越晚改越贵」的结构性问题，且会污染所有后续分数。</td>
+            <td>删除 Run 后报告仍完整可读；评估批次不占生产节点；已知 misjudged partial 样本不被判失败。</td>
+          </tr>
+          <tr>
+            <td class="mono">3</td>
+            <td><b>P1 数据与执行</b></td>
+            <td>先把「能跑一次 Benchmark」打通，再谈指标漂亮。</td>
+            <td>3 条用例在 dev 栈跑通，产物 / 分数 / 引用 / 耗时全部落库可查。</td>
+          </tr>
+          <tr>
+            <td class="mono">4</td>
+            <td><b>P2 指标与判定</b></td>
+            <td>确定性指标先上，LLM Judge 必须人工校准后才允许作为门禁。</td>
+            <td>20–30 条标注样本与 Judge 一致率达标；缺维度时报告显式标覆盖度。</td>
+          </tr>
+          <tr>
+            <td class="mono">5</td>
+            <td><b>P3 页面与报告</b></td>
+            <td>先做 Dataset / Experiments / Report 三页，不做复杂可视化。</td>
+            <td>结论置顶、失败可跳到 Run 轨迹页、助手版本可对比、三语无缺 key。</td>
+          </tr>
+          <tr>
+            <td class="mono">6</td>
+            <td><b>P4 回归与门禁</b></td>
+            <td>评估只有进入合并流程才有价值，否则只是一次性报告。</td>
+            <td>定时回归可控启停；指定数据集 smoke 不达标阻断合并；失败接现有告警通道。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>指标口径</h2>
+      <p>SourceLens 是 Harness-based Agentic RAG：既评估任务是否完成，也评估是否真的找到了证据。</p>
+    </div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th style="width:170px">指标</th><th style="width:110px">类别</th><th>计算方式</th><th style="width:210px">数据来源</th><th style="width:120px">需要 LLM</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Citation Accuracy</b></td><td>RAG 质量</td><td>引用 path / symbol / 起止行与仓库快照比对</td><td><code>Run.citations</code></td><td><span class="pill ok">否</span></td></tr>
+          <tr><td><b>Faithfulness</b></td><td>RAG 质量</td><td>复核裁决 supported / unsupported / inconclusive</td><td><code>deepagents.evidence.verified</code></td><td><span class="pill warn">复用 decision</span></td></tr>
+          <tr><td><b>Answer Correctness</b></td><td>RAG 质量</td><td>对 expected_answer / expected_facts 打分</td><td>新增 rubric</td><td><span class="pill no">是</span></td></tr>
+          <tr><td><b>Context Coverage</b></td><td>RAG 质量</td><td>expected_sources 是否被检索命中</td><td>trace 证据 + 引用</td><td><span class="pill ok">否</span></td></tr>
+          <tr><td><b>Task Completion</b></td><td>执行质量</td><td>由 trace 派生，<b>不直接读 <code>Run.outcome</code></b></td><td><code>RunTraceEvent</code></td><td><span class="pill ok">否</span></td></tr>
+          <tr><td><b>Tool Success Rate</b></td><td>执行质量</td><td>tool.completed / (completed + failed)</td><td><code>RunTraceEvent</code></td><td><span class="pill ok">否</span></td></tr>
+          <tr><td><b>Efficiency</b></td><td>执行质量</td><td>轮次、重试、耗时、token 与基线对比</td><td>trace + 计量</td><td><span class="pill ok">否</span></td></tr>
+          <tr><td><b>Isolation / 越权</b></td><td>可靠性</td><td>确定性测试：跨助手、跨数据源、无权限引用</td><td>测试用例</td><td><span class="pill ok">否</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="notes">
+    <div class="note">
+      <h3>看板口径</h3>
+      <ul>
+        <li><b>待决策</b>：需先确认产品 / 技术口径，不能按假设实现。</li>
+        <li><b>待开始</b>：设计已明确、代码未开工。</li>
+        <li><b>进行中</b>：已开工，未提交或未自测。</li>
+        <li><b>待测试</b>：需 dev 栈、真实链路或浏览器验收。</li>
+        <li><b>已完成</b>：代码提交且验收条件全部满足。</li>
+        <li>点击卡片底部按钮切换状态，状态存在浏览器本地。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>明确不做</h3>
+      <ul>
+        <li>不做在线实时评估（每次提问都打分）。</li>
+        <li>不做新的 Agent Runtime / Trace Collector。</li>
+        <li>不引入外部评估服务或新基础设施。</li>
+        <li>不做安全性 LLM 评分门禁，越权只用确定性测试。</li>
+        <li>不做完整人工标注平台（仅最小标注与导入）。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>数据与证据</h3>
+      <ul>
+        <li>外部设计：ChatGPT 共享会话（仅最新一条回复可见）。</li>
+        <li>代码核查：<code>models.py</code>、<code>tasks.py</code>、<code>services.py</code>、<code>decisions.py</code>、<code>routing.py</code>、<code>RunTrajectoryPanel.vue</code></li>
+        <li>运行事实：单 Run 0.3–1.6M tokens、TTFT 15–45s（近两周生产抽样）。</li>
+        <li>配套清单：<code>docs/evaluation-todo.md</code></li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>成本预期</h3>
+      <ul>
+        <li>50 用例批次约 17M+ tokens、数小时 wall clock。</li>
+        <li>每用例独立 Session，前缀缓存失效，成本高于日常对话。</li>
+        <li>Judge 是额外调用；未校准前不能作门禁。</li>
+        <li>评估数据源必须是只读副本。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>SourceLens Agent Evaluation 集成看板 · 以当前工作区代码为准</span>
+    <span>文件：docs/evaluation-kanban.html</span>
+  </footer>
+</div>
+
+<script>
+const LANES = {
+  decision: { name: "决策", color: "var(--decision)" },
+  data:     { name: "数据模型", color: "var(--data)" },
+  engine:   { name: "执行引擎", color: "var(--engine)" },
+  metrics:  { name: "指标判定", color: "var(--metrics)" },
+  web:      { name: "前端", color: "var(--web)" },
+  qa:       { name: "质量回归", color: "var(--qa)" }
+};
+
+const COLUMNS = [
+  { id: "decision", name: "待决策", sub: "口径未定，不能按假设实现", color: "var(--decision)" },
+  { id: "backlog",  name: "待开始", sub: "设计明确，代码未开工", color: "var(--backlog)" },
+  { id: "doing",    name: "进行中", sub: "已开工，未提交或未自测", color: "var(--doing)" },
+  { id: "test",     name: "待测试", sub: "需 dev 栈 / 真实链路 / 浏览器", color: "var(--test)" },
+  { id: "done",     name: "已完成", sub: "已提交且验收条件满足", color: "var(--done)" }
+];
+
+const NEXT = { decision: "backlog", backlog: "doing", doing: "test", test: "done", done: "backlog" };
+
+const FLOW = [
+  ["D1/D5 决策", "now"],
+  ["P0 冲突修正", "todo"],
+  ["数据与执行", "todo"],
+  ["指标与判定", "todo"],
+  ["页面与报告", "todo"],
+  ["回归与门禁", "todo"]
+];
+
+const CARDS = [
+  /* ---------- 决策 ---------- */
+  { id:"D1", lane:"decision", col:"decision", prio:"P0", isNew:true, est:"—",
+    title:"产品定位：A / B / C",
+    desc:"A 助手质量平台、B RAG 质量平台、C 完整评估平台。决定指标体系、页面数量与第一阶段范围。",
+    verify:"建议 B 为核心指标 + A 为交付形态；C 的轨迹与成本只做确定性采集。",
+    src:"设计原文 §七 · 待你拍板" },
+  { id:"D2", lane:"decision", col:"decision", prio:"P1", isNew:true, est:"—",
+    title:"评估数据源隔离方式",
+    desc:"独立只读副本 vs 复用生产数据源。决定用例可复现性、权限边界与同步成本。",
+    verify:"建议独立只读副本，评估工作区禁止写入。",
+    src:"Design §四 · 测试数据隔离" },
+  { id:"D3", lane:"decision", col:"decision", prio:"P1", isNew:true, est:"—",
+    title:"评估执行身份",
+    desc:"专用系统用户 vs 数据集创建者身份。影响 Session 归属、权限审计与用户会话列表噪声。",
+    verify:"建议专用系统用户，Session 打 evaluation 来源标记。",
+    src:"models.py Session.user · AssistantAccess" },
+  { id:"D4", lane:"decision", col:"decision", prio:"P1", isNew:true, est:"—",
+    title:"Judge 口径与校准门槛",
+    desc:"复用 decision 模型 vs 独立 judge LLM 配置；是否强制人工标注校准后才允许作门禁。",
+    verify:"建议复用 decision + 独立 model config，20–30 条标注一致率达标后启用门禁。",
+    src:"decisions.py · runtime_decisions.py" },
+  { id:"D5", lane:"decision", col:"decision", prio:"P0", isNew:true, est:"—",
+    title:"评估记录保留策略",
+    desc:"跟随 Run 的 30 天 retention，还是长期保留冻结快照。决定冻结字段范围与表增长。",
+    verify:"建议冻结快照长期保留，Run 侧跟随 retention。",
+    src:"tasks.py:4221 · retention.run_days" },
+
+  /* ---------- P0 冲突修正 ---------- */
+  { id:"EVAL-001", lane:"data", col:"done", prio:"P0", isNew:true, est:"2d",
+    title:"冻结快照：source_run SET_NULL + 结果内联冻结",
+    desc:"output、citations、trace 摘要、metrics 冻结进 EvaluationResult，Run 被 retention 删除后报告仍可完整渲染。",
+    dep:"依赖 D5",
+    verify:"删除 Run 后报告可读；retention 任务不再抛 ProtectedError。",
+    src:"evaluation/models.py · tasks.py" },
+  { id:"EVAL-002", lane:"data", col:"done", prio:"P0", isNew:true, est:"1.5d",
+    title:"评估 Run 标记与清理隔离",
+    desc:"Run 增加来源字段（expand 阶段只加不删），评估 Run 不进用户会话列表，retention 与 session_cleanup 可识别。",
+    dep:"依赖 D3",
+    verify:"用户侧会话列表无评估噪声；清理任务按来源分别处理。",
+    src:"models.py · session_lifecycle.py" },
+  { id:"EVAL-003", lane:"engine", col:"test", prio:"P0", isNew:true, est:"2d",
+    title:"专用 LensNode 绑定 + 并发配额",
+    desc:"评估助手硬绑节点（assistant.lensnode），评估侧独立并发上限与退避，节点繁忙时排队而非 503。",
+    dep:"依赖 M3",
+    verify:"评估批次不占用生产节点；节点不可用时任务进排队态。",
+    src:"services.py:1380 · evaluation/engine/runner.py" },
+  { id:"EVAL-004", lane:"metrics", col:"done", prio:"P0", isNew:true, est:"1.5d",
+    title:"通过率真值派生（不读 Run.outcome）",
+    desc:"由 trace + rubric 判定任务是否完成；已知 evidence_unavailable 误判样本必须判通过。",
+    dep:"依赖 M4",
+    verify:"样本级单测覆盖 misjudged partial；outcome 仅作参考维度。",
+    src:"routing.py:266 · evaluators/" },
+  { id:"EVAL-005", lane:"qa", col:"done", prio:"P0", isNew:true, est:"0.5d",
+    title:"权限与功能开关",
+    desc:"admin_console 下新增 run_evaluations permission 与 feature key，入口按权限与开关显隐。",
+    verify:"无权限账号 403；关开关后入口不可见。",
+    src:"models.py Meta · accounts/access.py · routes.js" },
+
+  /* ---------- P1 数据模型 ---------- */
+  { id:"EVAL-101", lane:"data", col:"backlog", prio:"P1", est:"0.5d",
+    title:"EvaluationDataset",
+    desc:"name / assistant / version / status；数据集版本冻结，后续改助手配置不影响历史数据集。",
+    verify:"CRUD 可用；版本号随内容变更递增。",
+    src:"evaluation/models.py" },
+  { id:"EVAL-102", lane:"data", col:"backlog", prio:"P1", est:"0.5d",
+    title:"EvaluationCase",
+    desc:"input / expected_answer / expected_facts / expected_sources / tags / config。",
+    dep:"依赖 EVAL-101",
+    verify:"必填校验；同一数据集内 input 去重。",
+    src:"evaluation/models.py" },
+  { id:"EVAL-103", lane:"data", col:"backlog", prio:"P1", est:"1d",
+    title:"EvaluationRun + config_snapshot",
+    desc:"批次状态、计数、聚合分；快照含模型、Prompt 版本、Skills、MCP、数据源绑定版本。",
+    dep:"依赖 EVAL-101",
+    verify:"历史批次可复现当时配置，不随后续修改漂移。",
+    src:"evaluation/models.py" },
+  { id:"EVAL-104", lane:"data", col:"backlog", prio:"P1", est:"1d",
+    title:"EvaluationResult",
+    desc:"scores / passed / issues / judge_evidence / execution_metrics + 冻结快照。",
+    dep:"依赖 EVAL-001 / EVAL-103",
+    verify:"单用例可下钻到引用与 trace 摘要。",
+    src:"evaluation/models.py" },
+  { id:"EVAL-105", lane:"data", col:"backlog", prio:"P1", est:"0.5d",
+    title:"EvaluationMetric 定义",
+    desc:"category / evaluator_type / weight / threshold / config；禁用指标不参与聚合。",
+    verify:"改权重与阈值后重算结果一致。",
+    src:"evaluation/models.py" },
+  { id:"EVAL-106", lane:"data", col:"backlog", prio:"P1", est:"1d",
+    title:"数据集导入导出（JSONL / CSV）",
+    desc:"非法行整批失败并给行号；导出可直接作为回归基线。",
+    dep:"依赖 EVAL-102",
+    verify:"1000 行导入耗时与错误定位可接受；导出可回灌。",
+    src:"evaluation/datasets/" },
+  { id:"EVAL-107", lane:"data", col:"backlog", prio:"P1", est:"0.5d",
+    title:"迁移与索引（expand/contract）",
+    desc:"只加表与字段，不在同一发布删改列；蓝绿窗口内旧色不受影响。",
+    dep:"依赖 EVAL-101..105",
+    verify:"空库与存量库迁移各一次通过。",
+    src:"migrations/" },
+
+  /* ---------- P1 执行引擎 ---------- */
+  { id:"EVAL-201", lane:"engine", col:"backlog", prio:"P1", est:"1d",
+    title:"复用 create_execution_run 的执行封装",
+    desc:"不新增 Agent Runtime，参数与线上提问完全一致。",
+    dep:"依赖 EVAL-103",
+    verify:"同 prompt 的评估 Run 与线上 Run 轨迹结构一致。",
+    src:"services.py:1138 · engine/runner.py" },
+  { id:"EVAL-202", lane:"engine", col:"backlog", prio:"P1", est:"0.5d",
+    title:"每用例独立 Session / Run + 幂等键",
+    desc:"避免用例间共享上下文；重跑同一用例不重复建 Session。",
+    dep:"依赖 EVAL-201",
+    verify:"并发用例互不污染；重跑幂等。",
+    src:"engine/runner.py" },
+  { id:"EVAL-203", lane:"engine", col:"backlog", prio:"P1", est:"1d",
+    title:"批次状态机",
+    desc:"queued / running / paused / cancelled / failed / completed；失败支持单用例重试。",
+    verify:"暂停与取消真实生效；终态不出现永久运行中。",
+    src:"engine/runner.py" },
+  { id:"EVAL-204", lane:"engine", col:"backlog", prio:"P1", est:"1d",
+    title:"并发控制、限流与退避",
+    desc:"并发不超配额；节点繁忙时排队并记录等待时长。",
+    dep:"依赖 EVAL-003 / EVAL-201",
+    verify:"压测 20 并发不挤占生产节点。",
+    src:"engine/runner.py" },
+  { id:"EVAL-205", lane:"engine", col:"backlog", prio:"P1", est:"1d",
+    title:"超时与卡死回收",
+    desc:"对齐 run_diagnostics 的 progress 语义，卡死批次自动落 failed 并保留已完成结果。",
+    dep:"依赖 EVAL-203",
+    verify:"人为卡死样本被回收且结果不丢。",
+    src:"evaluation/tasks.py" },
+  { id:"EVAL-206", lane:"engine", col:"backlog", prio:"P1", est:"0.5d",
+    title:"Celery 任务入口",
+    desc:"lens.evaluation_run_case / lens.evaluation_finalize；任务可重入。",
+    dep:"依赖 EVAL-205",
+    verify:"worker 重启后可恢复，无重复计分。",
+    src:"tasks.py" },
+  { id:"EVAL-207", lane:"engine", col:"backlog", prio:"P1", est:"0.5d",
+    title:"取消后的资源清理",
+    desc:"Session 归档、workspace 与附件清理，不留孤儿。",
+    dep:"依赖 EVAL-205",
+    verify:"取消后 workspace 与 Session 状态一致。",
+    src:"session_lifecycle.py" },
+
+  /* ---------- P2 指标判定 ---------- */
+  { id:"EVAL-301", lane:"metrics", col:"backlog", prio:"P1", est:"1d",
+    title:"确定性指标：工具 / 轮次 / 重试 / 耗时 / token",
+    desc:"全部可由 trace 与计量还原，无需 LLM；缺数据标 null 而非 0。",
+    dep:"依赖 EVAL-104",
+    verify:"人工对数 1 个 Run 的统计结果。",
+    src:"evaluators/rule_based.py" },
+  { id:"EVAL-302", lane:"metrics", col:"backlog", prio:"P1", est:"1.5d",
+    title:"引用校验：path / symbol / 起止行",
+    desc:"与仓库快照比对；不存在路径或错行判失败，大小写与相对路径口径统一。",
+    dep:"依赖 EVAL-104",
+    verify:"构造 5 条错引用全部被识别。",
+    src:"evaluators/citation.py" },
+  { id:"EVAL-303", lane:"metrics", col:"backlog", prio:"P1", est:"1d",
+    title:"复用 evidence.verified 得 faithfulness 初判",
+    desc:"无复核事件时明确 inconclusive，不当作通过。",
+    dep:"依赖 EVAL-104",
+    verify:"无复核样本不计入通过率分子分母。",
+    src:"evaluators/groundedness.py" },
+  { id:"EVAL-304", lane:"metrics", col:"backlog", prio:"P1", est:"1.5d",
+    title:"新增 decision rubric：correctness / relevance",
+    desc:"rubric 进 decisions.py catalog，有 schema 校验与版本号。",
+    dep:"依赖 D4",
+    verify:"非法 rubric 输出被拒绝。",
+    src:"decisions.py · judges/" },
+  { id:"EVAL-305", lane:"metrics", col:"backlog", prio:"P1", est:"1d",
+    title:"Judge 调用与计量",
+    desc:"Judge 使用独立 model config；usage 落库可算成本。",
+    dep:"依赖 EVAL-304",
+    verify:"每批评测都能算出 Judge 单独成本。",
+    src:"runtime_decisions.py · judges/" },
+  { id:"EVAL-306", lane:"metrics", col:"backlog", prio:"P1", est:"1d",
+    title:"Judge 输出 schema 与失败降级",
+    desc:"非法输出不污染分数，标 judge_failed 并保留原始响应。",
+    dep:"依赖 EVAL-305",
+    verify:"注入脏输出后分数与通过率不变形。",
+    src:"judges/schemas.py" },
+  { id:"EVAL-307", lane:"metrics", col:"backlog", prio:"P1", est:"1d",
+    title:"聚合与阈值",
+    desc:"加权聚合；缺失维度不虚构，报告显式标覆盖度。",
+    dep:"依赖 EVAL-105 / 301-306",
+    verify:"缺维度时总分标 incomparable。",
+    src:"services/scoring_service.py" },
+  { id:"EVAL-308", lane:"metrics", col:"backlog", prio:"P1", est:"2d",
+    title:"人工标注与一致性校准",
+    desc:"20–30 条样本与 Judge 一致率达标后才允许作门禁。",
+    dep:"依赖 D4 / EVAL-305",
+    verify:"一致率与分歧样本留档。",
+    src:"services/" },
+
+  /* ---------- P3 前端 ---------- */
+  { id:"EVAL-401", lane:"web", col:"backlog", prio:"P1", est:"1.5d",
+    title:"后端 API：datasets / cases / runs / results / report / compare",
+    desc:"分页、权限、错误码与现有 lens 接口口径一致。",
+    dep:"依赖 EVAL-104 / EVAL-307",
+    verify:"OpenAPI 与实际返回一致。",
+    src:"evaluation/views.py · urls.py" },
+  { id:"EVAL-402", lane:"web", col:"backlog", prio:"P1", est:"0.5d",
+    title:"路由与侧边栏入口",
+    desc:"/management/lens/evaluation/* 挂进 lens 子菜单。",
+    dep:"依赖 EVAL-005 / EVAL-401",
+    verify:"权限与开关生效，深链接可直达。",
+    src:"admin/routes.js · AdminSidebar.vue" },
+  { id:"EVAL-403", lane:"web", col:"backlog", prio:"P1", est:"2d",
+    title:"Datasets 页",
+    desc:"列表 / 详情 / 用例编辑 / 导入导出；导入失败给行号。",
+    dep:"依赖 EVAL-401",
+    verify:"空态与导入失败态可验收。",
+    src:"EvaluationDataset.vue" },
+  { id:"EVAL-404", lane:"web", col:"backlog", prio:"P1", est:"2d",
+    title:"Experiments 页",
+    desc:"发起 / 进度 / 暂停 / 取消；进度按用例实时更新。",
+    dep:"依赖 EVAL-401 / EVAL-203",
+    verify:"不出现永久运行中；取消后状态一致。",
+    src:"EvaluationExperiments.vue" },
+  { id:"EVAL-405", lane:"web", col:"backlog", prio:"P1", est:"2.5d",
+    title:"Report 页",
+    desc:"结论置顶、分布、失败聚类、证据下钻；失败可跳 Run 轨迹页。",
+    dep:"依赖 EVAL-401",
+    verify:"任一样本 2 次点击内看到证据原文。",
+    src:"EvaluationReport.vue" },
+  { id:"EVAL-406", lane:"web", col:"backlog", prio:"P2", est:"2d",
+    title:"助手版本对比（A/B）",
+    desc:"同数据集跨版本对比，基于 config_snapshot 展示配置差异。",
+    dep:"依赖 EVAL-405",
+    verify:"两次发布的分数差异与配置差异同屏可见。",
+    src:"EvaluationCompare.vue" },
+  { id:"EVAL-407", lane:"web", col:"backlog", prio:"P1", est:"1d",
+    title:"三语文案 en / zh-CN / es",
+    desc:"后台命名与现有 lensAdmin 保持一致，无缺 key。",
+    dep:"依赖 EVAL-403..406",
+    verify:"三语切换无回退英文残留。",
+    src:"admin/locales/*.json" },
+  { id:"EVAL-408", lane:"web", col:"backlog", prio:"P2", est:"0.5d",
+    title:"空态 / 失败态 / 无权限态验收",
+    desc:"三种状态均有留痕。",
+    dep:"依赖 EVAL-407",
+    verify:"截图归档到 PR 描述。",
+    src:"同上" },
+
+  /* ---------- P4 质量回归 ---------- */
+  { id:"EVAL-501", lane:"qa", col:"backlog", prio:"P1", est:"2d",
+    title:"后端单测：模型 / 状态机 / 权限 / retention 兼容",
+    desc:"覆盖删除 Run 后读报告、越权访问、取消竞态。",
+    dep:"依赖 EVAL-107 / EVAL-203",
+    verify:"新增用例全绿，且能复现 M1 的回归。",
+    src:"lens/tests/" },
+  { id:"EVAL-502", lane:"qa", col:"backlog", prio:"P1", est:"1d",
+    title:"dev 栈真实跑通 3 条 smoke 用例",
+    desc:"产物、分数、引用、耗时全部落库可查。",
+    dep:"依赖 EVAL-206 / EVAL-307",
+    verify:"批次报告可导出，数字与 trace 对得上。",
+    src:"dev 栈" },
+  { id:"EVAL-503", lane:"qa", col:"backlog", prio:"P1", est:"1d",
+    title:"前端单测 + ego-browser 验收",
+    desc:"关键流程浏览器走查留痕，不引入 Playwright。",
+    dep:"依赖 EVAL-408",
+    verify:"三页主流程 + 取消 + 无权限态走查完成。",
+    src:"frontend/tests/" },
+  { id:"EVAL-504", lane:"qa", col:"backlog", prio:"P2", est:"0.5d",
+    title:"定时回归任务注册",
+    desc:"periodic_tasks 注册，支持暂停 / 启停。",
+    dep:"依赖 EVAL-502",
+    verify:"ScheduledTask 里可见且状态正确。",
+    src:"periodic_tasks.py" },
+  { id:"EVAL-505", lane:"qa", col:"backlog", prio:"P2", est:"1d",
+    title:"合并前 smoke 门禁",
+    desc:"指定数据集 N 条，阈值不达标阻断合并。",
+    dep:"依赖 EVAL-504",
+    verify:"故意调低分数能触发阻断。",
+    src:"CI / 脚本" },
+  { id:"EVAL-506", lane:"qa", col:"backlog", prio:"P2", est:"0.5d",
+    title:"告警接入",
+    desc:"批次失败与通过率跌破阈值，复用 alerts.py 与飞书通道。",
+    dep:"依赖 EVAL-504",
+    verify:"构造失败样本能收到告警。",
+    src:"alerts.py" },
+  { id:"EVAL-507", lane:"qa", col:"backlog", prio:"P1", est:"0.5d",
+    title:"文档与 release-notes 片段",
+    desc:"每个 PR 自带 release-notes/<issue>.yaml，设计文档与实现同步。",
+    dep:"全部",
+    verify:"Release Notes validate 通过。",
+    src:"release-notes/ · docs/" }
+];
+
+/* ---------- state ---------- */
+const STORE_KEY = "sourcelens-eval-kanban-v1";
+const saved = (() => {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
+  catch (e) { return {}; }
+})();
+const overrides = saved.status || {};
+const theme = saved.theme || "light";
+
+function statusOf(card) { return overrides[card.id] || card.col; }
+
+function persist() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ status: overrides, theme: document.documentElement.dataset.theme || "light" }));
+  } catch (e) {}
+}
+
+/* ---------- filters ---------- */
+let activeLane = "all";
+let activeFlag = "all";
+let keyword = "";
+
+function matches(card) {
+  if (activeLane !== "all" && card.lane !== activeLane) return false;
+  if (activeFlag === "new" && !card.isNew) return false;
+  if (activeFlag === "decision" && statusOf(card) !== "decision") return false;
+  if (activeFlag === "p0" && card.prio !== "P0") return false;
+  if (keyword) {
+    const hay = [card.id, card.title, card.desc, card.src, card.verify, card.dep || ""].join(" ").toLowerCase();
+    if (!hay.includes(keyword)) return false;
+  }
+  return true;
+}
+
+/* ---------- render ---------- */
+const board = document.getElementById("board");
+const statsEl = document.getElementById("stats");
+const flowEl = document.getElementById("flow");
+
+function cardHTML(card) {
+  const lane = LANES[card.lane];
+  const col = statusOf(card);
+  return `
+    <article class="card" data-lane="${card.lane}" data-col="${col}" data-new="${card.isNew ? "1" : "0"}" style="--lane-color:${lane.color}">
+      <div class="card-top">
+        <span class="id">${card.id}</span>
+        <span class="lane-tag">${lane.name}</span>
+        <span class="prio ${card.prio.toLowerCase()}">${card.prio}</span>
+        ${card.isNew ? '<span class="new-tag">New</span>' : ""}
+        <span class="est">${card.est}</span>
+      </div>
+      <h3>${card.title}</h3>
+      <p>${card.desc}</p>
+      ${card.dep ? `<div class="dep"><b>依赖</b> ${card.dep}</div>` : ""}
+      <div class="verify"><b>完成条件</b> ${card.verify}</div>
+      <div class="src">${card.src}</div>
+      <button class="move" data-move="${card.id}" type="button">标记为「${nextLabel(col)}」</button>
+    </article>`;
+}
+
+function nextLabel(col) {
+  const next = NEXT[col];
+  return COLUMNS.find((item) => item.id === next)?.name || "待开始";
+}
+
+function renderBoard() {
+  board.innerHTML = COLUMNS.map((col) => {
+    const list = CARDS.filter((card) => statusOf(card) === col.id && matches(card));
+    return `
+      <section class="col" data-col="${col.id}">
+        <div class="col-head">
+          <span class="bar" style="background:${col.color}"></span>
+          <h2>${col.name}</h2>
+          <span class="count">${list.length}</span>
+        </div>
+        <div class="col-sub">${col.sub}</div>
+        <div class="cards">${list.map(cardHTML).join("") || '<div class="col-sub">无匹配任务</div>'}</div>
+      </section>`;
+  }).join("");
+}
+
+function renderStats() {
+  const total = CARDS.length;
+  const byStatus = (id) => CARDS.filter((card) => statusOf(card) === id).length;
+  const defs = [
+    { k: "全部任务", v: total, color: "var(--ink-3)", sub: `${CARDS.filter((c) => c.isNew).length} 项本次核查新增` },
+    { k: "待决策", v: byStatus("decision"), color: "var(--decision)", sub: "先定口径再开工" },
+    { k: "P0 阻塞", v: CARDS.filter((c) => c.prio === "P0").length, color: "var(--qa)", sub: "含 4 处冲突修正" },
+    { k: "进行中 / 待测试", v: byStatus("doing") + byStatus("test"), color: "var(--doing)", sub: "当前无开工项" },
+    { k: "已完成", v: byStatus("done"), color: "var(--done)", sub: "等待第一批落地" }
+  ];
+  statsEl.innerHTML = defs.map((item) => `
+    <div class="stat">
+      <div class="k"><span class="k-dot" style="background:${item.color}"></span>${item.k}</div>
+      <div class="v">${item.v}<small>项</small></div>
+      <div class="bar"><i style="background:${item.color};width:${Math.round((item.v / total) * 100)}%"></i></div>
+      <div class="col-sub" style="margin:6px 0 0">${item.sub}</div>
+    </div>`).join("");
+}
+
+flowEl.innerHTML = FLOW.map(([name, state], index) =>
+  `<span class="step ${state}"><i></i><b>${name}</b></span>${index < FLOW.length - 1 ? '<span class="arrow">→</span>' : ""}`
+).join("");
+
+/* ---------- events ---------- */
+document.getElementById("laneFilters").addEventListener("click", (event) => {
+  const button = event.target.closest(".fbtn");
+  if (!button) return;
+  activeLane = button.dataset.lane;
+  document.querySelectorAll("#laneFilters .fbtn").forEach((el) => el.classList.toggle("active", el === button));
+  renderBoard();
+});
+
+document.getElementById("statusFilters").addEventListener("click", (event) => {
+  const button = event.target.closest(".fbtn");
+  if (!button) return;
+  activeFlag = button.dataset.flag;
+  document.querySelectorAll("#statusFilters .fbtn").forEach((el) => el.classList.toggle("active", el === button));
+  renderBoard();
+});
+
+document.getElementById("search").addEventListener("input", (event) => {
+  keyword = event.target.value.trim().toLowerCase();
+  renderBoard();
+});
+
+board.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-move]");
+  if (!button) return;
+  const id = button.dataset.move;
+  const card = CARDS.find((item) => item.id === id);
+  if (!card) return;
+  const current = statusOf(card);
+  overrides[id] = NEXT[current];
+  persist();
+  renderBoard();
+  renderStats();
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  Object.keys(overrides).forEach((key) => delete overrides[key]);
+  persist();
+  renderBoard();
+  renderStats();
+});
+
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const root = document.documentElement;
+  const next = root.dataset.theme === "dark" ? "light" : "dark";
+  root.dataset.theme = next;
+  document.getElementById("themeBtn").textContent = next === "dark" ? "◑ 浅色" : "◐ 深色";
+  persist();
+});
+
+/* ---------- init ---------- */
+document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
+if (theme === "dark") document.getElementById("themeBtn").textContent = "◑ 浅色";
+renderStats();
+renderBoard();
+</script>
+</body>
+</html>
