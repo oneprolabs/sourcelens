@@ -400,6 +400,11 @@ class InstallerPlatformTests(unittest.TestCase):
             "/redis:alpine",
             content,
         )
+        self.assertIn(
+            "image: registry.cn-beijing.aliyuncs.com/oneprolabs"
+            "/sourcelens-backend:0.57.0",
+            content,
+        )
 
     def test_docker_hub_channel_keeps_bare_infrastructure_images(self):
         content = self._patch_compose("oneprolabs")
@@ -407,12 +412,11 @@ class InstallerPlatformTests(unittest.TestCase):
         self.assertIn("image: nginx:latest", content)
         self.assertIn("image: postgres:17", content)
         self.assertIn("image: redis:alpine", content)
+        self.assertIn("image: oneprolabs/sourcelens-backend:0.57.0", content)
+        self.assertNotIn("registry.cn-beijing.aliyuncs.com", content)
 
-    def test_unreachable_docker_hub_falls_back_to_aliyun_registry(self):
+    def test_default_registry_is_aliyun_acr(self):
         result = run_installer_function(
-            'curl() { '
-            'case "$*" in *registry-1.docker.io*) printf "000" ;; '
-            '*) printf "401" ;; esac; }; '
             'CHANNEL=github; DOWNLOAD_SOURCE=github; '
             'detect_download_source; printf "REG=%s\\n" "$REGISTRY"'
         )
@@ -421,10 +425,9 @@ class InstallerPlatformTests(unittest.TestCase):
             "REG=registry.cn-beijing.aliyuncs.com/oneprolabs", result.stdout
         )
 
-    def test_reachable_docker_hub_selects_docker_hub_registry(self):
+    def test_explicit_docker_hub_registry_override_is_preserved(self):
         result = run_installer_function(
-            'curl() { printf "401"; }; '
-            'CHANNEL=github; DOWNLOAD_SOURCE=github; '
+            'REGISTRY=oneprolabs; CHANNEL=github; DOWNLOAD_SOURCE=github; '
             'detect_download_source; printf "REG=%s\\n" "$REGISTRY"'
         )
 

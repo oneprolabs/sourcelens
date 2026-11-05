@@ -24,10 +24,9 @@
 #      setup with hidden API-key input and a connection test.
 #
 # Channels: the download source (github/gitee) selects where release files come
-# from AND which registry the application images are pulled from:
-#   github -> release files from GitHub, images from Docker Hub (oneprolabs/*)
-#   gitee  -> release files from Gitee,  images from Aliyun ACR
-# Docker Hub is always used for the infrastructure images (postgres/redis/nginx).
+# from. Application images are pulled from Aliyun ACR
+# (registry.cn-beijing.aliyuncs.com/oneprolabs) by default; pass
+# --registry oneprolabs to pull them from Docker Hub instead.
 #
 # Requirements: Docker + Docker Compose V2 (`docker compose`). Compose V1
 # (docker-compose 1.x) is NOT supported — the compose files use V2-only features
@@ -53,10 +52,11 @@ GITEE_API="https://gitee.com/api/v5/repos/${GITEE_REPO}"
 GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw"
 DEFAULT_HTTP_PORT=10083
 DEFAULT_HTTPS_PORT=10443
-# Image registry prefixes. Docker Hub uses just the namespace; Aliyun ACR uses
-# host/namespace. Both carry sourcelens-{backend,frontend,lensnode}.
-REGISTRY_GITHUB="oneprolabs"
+# Image registry prefixes. Aliyun ACR is the default image source; Docker Hub
+# (the bare `oneprolabs` namespace) stays available via --registry oneprolabs.
+# Both carry sourcelens-{backend,frontend,lensnode}.
 REGISTRY_CN="registry.cn-beijing.aliyuncs.com/oneprolabs"
+REGISTRY_DEFAULT="${REGISTRY_CN}"
 COMPOSE_FILE="docker-compose.standalone.yml"
 MODEL_SETUP_OVERRIDE="docker-compose.model-setup.yml"
 INSTALLER_VERSION="0.1.0"
@@ -114,8 +114,6 @@ HTTPS_PORT="${SOURCELENS_HTTPS_PORT:-${DEFAULT_HTTPS_PORT}}"
 CHANNEL="${SOURCELENS_CHANNEL:-}"
 GITHUB_REACHABLE_PENDING=1
 GITHUB_REACHABLE=0
-DOCKERHUB_REACHABLE_PENDING=1
-DOCKERHUB_REACHABLE=0
 DOWNLOAD_SOURCE="${SOURCELENS_DOWNLOAD_SOURCE:-}"
 VERSION="${SOURCELENS_VERSION:-}"
 REGISTRY="${SOURCELENS_REGISTRY:-}"
@@ -188,12 +186,12 @@ Options:
       --https-port PORT    HTTPS port (default: ${DEFAULT_HTTPS_PORT})
   -c, --channel CH         Distribution channel: github | cn (default: auto)
       --download-source SRC  Release-file download source: github | gitee
-                             (default: auto; also selects the image registry:
-                             github -> Docker Hub, gitee -> Aliyun ACR)
+                             (default: auto)
   -v, --version VER        Release version to install (default: latest tag)
       --source DIR         Use local installer/deployment files while still
                            pulling application images from the registry
-  -r, --registry REG       Override the application image registry prefix
+  -r, --registry REG       Override the image registry prefix (default:
+                           Aliyun ACR; use "oneprolabs" for Docker Hub)
       --domain HOST        Public hostname / IP (default: auto-detect)
       --admin-user USER    Initial admin username (default: admin)
       --admin-email EMAIL  Initial admin email (default: admin@sourcelens.com)
@@ -385,25 +383,6 @@ probe_github_reachable() {
   fi
 }
 
-# Docker Hub reachability, probed independently of github.com: the two are
-# often asymmetric on mainland CN hosts (github.com may answer while
-# registry-1.docker.io is blocked), and it's the registry — not github.com —
-# that decides whether the Docker Hub or the Aliyun ACR images are usable.
-# /v2/ answers 401 without credentials when it's reachable, so 200|401 = up.
-probe_dockerhub_reachable() {
-  if [[ "${DOCKERHUB_REACHABLE_PENDING}" == "1" ]]; then
-    local code=""
-    code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' \
-      https://registry-1.docker.io/v2/ 2>/dev/null || printf '000')"
-    if [[ "${code}" == "200" || "${code}" == "401" ]]; then
-      DOCKERHUB_REACHABLE=1
-    else
-      DOCKERHUB_REACHABLE=0
-    fi
-    DOCKERHUB_REACHABLE_PENDING=0
-  fi
-}
-
 detect_channel() {
   if [[ -z "${CHANNEL}" ]]; then
     probe_github_reachable
@@ -441,23 +420,10 @@ detect_download_source() {
     github|gitee) ;;
     *) abort "invalid download source '${DOWNLOAD_SOURCE}' (supported: github, gitee)" ;;
   esac
-  # The image registry is chosen from actual network reachability, not from the
-  # download source alone: an explicit --channel cn / --download-source gitee
-  # forces the CN path, otherwise Docker Hub is used only when
-  # registry-1.docker.io actually answers — github.com being reachable does NOT
-  # imply Docker Hub is, which is the common case on mainland CN hosts.
+  # Aliyun ACR is the default image source regardless of the download source;
+  # --registry oneprolabs (or SOURCELENS_REGISTRY) switches to Docker Hub.
   if [[ -z "${REGISTRY}" ]]; then
-    if [[ "${DOWNLOAD_SOURCE}" == "gitee" || "${CHANNEL}" == "cn" ]]; then
-      REGISTRY="${REGISTRY_CN}"
-    else
-      probe_dockerhub_reachable
-      if [[ "${DOCKERHUB_REACHABLE}" == "1" ]]; then
-        REGISTRY="${REGISTRY_GITHUB}"
-      else
-        REGISTRY="${REGISTRY_CN}"
-        log_warn "Docker Hub (registry-1.docker.io) is unreachable; using the Aliyun ACR mirror for images"
-      fi
-    fi
+    REGISTRY="${REGISTRY_DEFAULT}"
   fi
   REGISTRY="${REGISTRY%/}"
 }
@@ -936,21 +902,21 @@ patch_compose() {
   log_step "Patching compose file (channel: ${CHANNEL}, source: ${DOWNLOAD_SOURCE})"
   local compose="${INSTALL_DIR}/${COMPOSE_FILE}"
   [[ -f "${compose}" ]] || abort "compose file missing at ${compose}"
-  # Pin version-consistent image tags and rewrite the registry prefix.
-  # github -> REGISTRY_GITHUB ("oneprolabs", a no-op rewrite);
-  # gitee/cn -> Aliyun ACR host/namespace.
+  # Pin version-consistent image tags and rewrite the registry prefix. The
+  # compose files ship with the Aliyun ACR prefix; an explicit
+  # --registry oneprolabs rewrites them back to the bare Docker Hub namespace.
   # Delimiter is '#' (not '|'): '|' is the ERE alternation operator inside the
   # pattern and would close the expression early on BSD sed.
   sed_inplace "${compose}" -E \
-    "s#image:[[:space:]]*oneprolabs/(sourcelens-(backend|frontend|lensnode)):.*\$#image: ${REGISTRY}/\1:${VERSION}#"
+    "s#image:[[:space:]]*([^[:space:]]*/)?(sourcelens-(backend|frontend|lensnode)):.*\$#image: ${REGISTRY}/\2:${VERSION}#"
   if ! grep -q "image: ${REGISTRY}/sourcelens-backend:${VERSION}" "${compose}"; then
     abort "failed to pin image references in ${compose}"
   fi
   # Infrastructure images (nginx/postgres/redis) are referenced bare in the
   # compose files, i.e. implicitly Docker Hub. On the Aliyun ACR path pull them
-  # from the same namespace, where they are mirrored, because Docker Hub is
-  # unreachable from most mainland CN hosts. Only bare (slash-less) references
-  # are touched, so the already-rewritten oneprolabs/<app> lines are unaffected.
+  # from the same namespace, where they are mirrored. Only bare (slash-less)
+  # references are touched, so the already-rewritten application image lines are
+  # unaffected.
   if [[ "${REGISTRY}" == "${REGISTRY_CN}" ]]; then
     sed_inplace "${compose}" -E \
       "s#image:[[:space:]]*([a-zA-Z0-9][a-zA-Z0-9._-]*):([a-zA-Z0-9][a-zA-Z0-9._-]*)\$#image: ${REGISTRY}/\1:\2#"
@@ -1154,8 +1120,7 @@ pull_image_label() {
 
 # Windows Git Bash and the Aliyun ACR path generate the certificate with the
 # host openssl (required by check_tools) instead of the alpine/openssl
-# container: the CN channel has no Docker Hub access, and the helper image is
-# not mirrored on the Aliyun ACR.
+# container: the helper image is not mirrored on the Aliyun ACR.
 tls_uses_host_openssl() {
   [[ "${PLATFORM}" == "windows" || "${REGISTRY}" == "${REGISTRY_CN}" ]]
 }

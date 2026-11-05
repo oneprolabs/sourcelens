@@ -47,8 +47,8 @@ set -euo pipefail
 REPO="HyperBDR/sourcelens"
 # Must match docker-compose.yml's `image:` lines — used only to prune old
 # version tags after a remote deploy (see prune_old_image_tags below).
-API_IMAGE_REPO="oneprolabs/sourcelens-backend"
-UI_IMAGE_REPO="oneprolabs/sourcelens-frontend"
+API_IMAGE_REPO="registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend"
+UI_IMAGE_REPO="registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-frontend"
 # VERSION_LABEL / color_image_version() come from scripts/lib/deploy-common.sh
 # (sourced below, before either is used).
 
