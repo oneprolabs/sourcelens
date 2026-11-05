@@ -338,6 +338,14 @@ def register_periodic_tasks():
     )
 
     TASK_REGISTRY.add(
+        name="lens-evaluation-reconcile",
+        task="lens.evaluation_reconcile",
+        schedule=120,
+        queue="lens",
+        enabled=True,
+    )
+
+    TASK_REGISTRY.add(
         name="lens-datasource-upload-cleanup",
         task="lens.cleanup_abandoned_uploads",
         schedule=3600,

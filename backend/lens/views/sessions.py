@@ -199,6 +199,7 @@ class SessionViewSet(BaseAuthenticatedViewSet):
             )
             return queryset.filter(
                 status=session_status,
+                source=Session.Source.USER,
             ).filter(
                 ~Exists(delegated_sessions),
             ).annotate(

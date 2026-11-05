@@ -86,7 +86,8 @@
       "all": "全部"
     },
     "showPassword": "显示密码",
-    "hidePassword": "隐藏密码"
+    "hidePassword": "隐藏密码",
+    "create": "创建"
   },
   "virtualEmail": {
     "yourAddress": "您的AI智能邮箱"
@@ -962,7 +963,8 @@
   "platforms": {
     "switchPlatform": "切换视图",
     "workspace": "用户工作台",
-    "adminConsole": "管理员控制台"
+    "adminConsole": "管理员控制台",
+    "runEvaluations": "Agent 评估"
   },
   "password": {
     "reset": {
@@ -1609,5 +1611,126 @@
       "empty": "暂无数据源"
     }
   },
-  "datasourceWaiting": "正在准备数据源，同步完成后将自动回答。"
+  "datasourceWaiting": "正在准备数据源，同步完成后将自动回答。",
+  "evaluation": {
+    "status": {
+      "draft": "草稿",
+      "active": "启用",
+      "archived": "归档"
+    },
+    "runStatus": {
+      "queued": "排队中",
+      "running": "运行中",
+      "paused": "已暂停",
+      "cancelled": "已取消",
+      "failed": "失败",
+      "completed": "已完成"
+    },
+    "datasets": {
+      "title": "Agent 评估",
+      "subtitle": "为同一个助手维护版本化数据集与基准批次。",
+      "create": "新建数据集",
+      "empty": "还没有评估数据集",
+      "emptyHint": "先创建数据集、补充用例，再发起评估批次。",
+      "name": "数据集名称",
+      "assistant": "助手",
+      "version": "版本",
+      "status": "状态",
+      "cases": "用例数",
+      "createdAt": "创建时间",
+      "open": "打开",
+      "backToList": "返回数据集列表",
+      "detailTitle": "数据集",
+      "namePlaceholder": "例如：客服质量冒烟",
+      "assistantPlaceholder": "选择助手",
+      "requiredFields": "数据集名称和助手为必填项。",
+      "created": "数据集已创建",
+      "deleted": "数据集已删除",
+      "deleteTitle": "删除数据集",
+      "deleteMessage": "将同时删除该数据集及其用例。已产生评估批次的数据集不可删除。"
+    },
+    "cases": {
+      "tab": "用例",
+      "add": "新增用例",
+      "edit": "编辑用例",
+      "import": "导入",
+      "input": "输入",
+      "inputPlaceholder": "发送给助手的问题或指令",
+      "expectedAnswer": "期望答案",
+      "expectedSources": "期望来源",
+      "expectedFacts": "期望事实",
+      "tags": "标签",
+      "config": "配置（JSON）",
+      "configHint": "可选 JSON 对象",
+      "listHint": "多个值用 | 分隔",
+      "empty": "该数据集还没有用例",
+      "emptyHint": "手动新增用例，或导入 JSONL / CSV。",
+      "inputRequired": "输入不能为空。",
+      "configInvalid": "配置必须是合法 JSON。",
+      "created": "用例已创建",
+      "updated": "用例已更新",
+      "deleted": "用例已删除",
+      "deleteTitle": "删除用例",
+      "deleteMessage": "将从数据集中移除该用例。",
+      "importHint": "粘贴 JSONL（每行一个对象）或 CSV，列包含 input、expected_answer、expected_sources、expected_facts、tags。",
+      "importPlaceholder": "{\"input\":\"...\",\"expected_sources\":[\"report.md\"]}",
+      "importFailed": "导入被拒绝，请修正以下行后重试：",
+      "importLine": "第 {line} 行",
+      "importEmpty": "请先粘贴内容或选择文件。",
+      "imported": "已导入 {created} 条用例（跳过 {duplicates} 条重复）"
+    },
+    "runs": {
+      "tab": "批次",
+      "launch": "发起评估",
+      "started": "评估批次已启动",
+      "empty": "还没有评估批次",
+      "emptyHint": "数据集有用例后即可发起批次。",
+      "status": "状态",
+      "progress": "进度",
+      "verdicts": "通过 / 失败 / 总数",
+      "score": "已评分指标加权分",
+      "createdAt": "创建时间",
+      "open": "查看报告"
+    },
+    "report": {
+      "title": "评估报告",
+      "backToDataset": "返回数据集",
+      "startedAt": "开始",
+      "finishedAt": "结束",
+      "cancel": "取消批次",
+      "retry": "重跑失败用例",
+      "totalCases": "用例总数",
+      "completedCases": "已完成 {count}",
+      "passed": "通过",
+      "failed": "失败",
+      "inconclusive": "不确定",
+      "score": "已评分指标加权分",
+      "weightedHint": "仅计算有分数的指标，不代表整体通过；请结合覆盖度和用例判定查看。",
+      "coverage": "指标覆盖度",
+      "coverageHint": "{scored}/{total} 个维度有分数",
+      "metrics": "指标",
+      "metric": "指标",
+      "weight": "权重",
+      "meanScore": "平均分",
+      "verdicts": "通过 / 失败",
+      "failureClusters": "失败聚类",
+      "noFailures": "没有失败维度",
+      "results": "用例结果",
+      "noResults": "当前筛选下没有结果",
+      "case": "用例",
+      "verdict": "判定",
+      "tokens": "Token",
+      "detail": "详情",
+      "resultDetail": "用例结果",
+      "duration": "耗时",
+      "output": "输出",
+      "issues": "问题",
+      "scores": "分数",
+      "executionMetrics": "执行指标",
+      "citations": "引用",
+      "filterAll": "全部",
+      "cancelled": "评估批次已取消",
+      "retried": "失败用例已重新排队"
+    }
+  }
 }

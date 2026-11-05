@@ -1149,12 +1149,15 @@ def create_execution_run(
     agent_rounds=None,
     deep_thinking=None,
     request_source=None,
+    run_source=None,
+    evaluation_lensnode=None,
 ):
     """Create a queued run for LensNode execution."""
 
     assistant = lock_assistant_for_new_work(session.assistant, user)
     session = lock_active_session(session)
     session.assistant = assistant
+    run_source = run_source or session.source or Run.Source.USER
 
     explicit_routing_assistant_uuids = (
         routing_assistant_uuids
@@ -1196,9 +1199,10 @@ def create_execution_run(
     requires_document_attachments = any(
         item["kind"] == "document" for item in selected_context
     )
-    lensnode = select_execution_lensnode(
+    lensnode = evaluation_lensnode or select_execution_lensnode(
         assistant,
         require_document_attachments=requires_document_attachments,
+        run_source=run_source,
     )
 
     validate_retry_run(session, retry_of_run)
@@ -1237,6 +1241,7 @@ def create_execution_run(
         lensnode=lensnode,
         idempotency_key=idempotency_key,
         parent_run=parent_run,
+        source=run_source,
     )
     input_message.run = run
     input_message.save(update_fields=["run"])
@@ -1381,15 +1386,22 @@ def select_execution_lensnode(
     assistant,
     *,
     require_document_attachments=False,
+    run_source=Run.Source.USER,
 ):
     """Return the bound node or the least-loaded compatible online node."""
 
     if assistant.lensnode_id:
-        return assistant.lensnode
+        if (
+            run_source != Run.Source.EVALUATION
+            or assistant.lensnode.pool == LensNode.Pool.EVALUATION
+        ):
+            return assistant.lensnode
+        raise LensNodeDispatchError("LENSNODE_EVALUATION_NODE_REQUIRED")
 
     candidates = _compatible_execution_lensnodes(
         assistant,
         require_document_attachments=require_document_attachments,
+        run_source=run_source,
     )
     if not candidates:
         raise LensNodeDispatchError("LENSNODE_UNAVAILABLE")
@@ -1421,6 +1433,7 @@ def _compatible_execution_lensnodes(
     assistant,
     *,
     require_document_attachments=False,
+    run_source=Run.Source.USER,
 ):
     """Return online nodes that can execute an unbound Assistant."""
 
@@ -1441,6 +1454,8 @@ def _compatible_execution_lensnodes(
             ),
         )
     )
+    if run_source == Run.Source.EVALUATION:
+        queryset = queryset.filter(pool=LensNode.Pool.EVALUATION)
     bound_node_ids = _bound_datasource_lensnode_ids(assistant)
     if bound_node_ids is not None:
         queryset = queryset.filter(pk__in=bound_node_ids)
@@ -3946,6 +3961,13 @@ def finish_lensnode_run(
     if run.parent_run_id is None:
         _finalize_delegated_children(run)
 
+    if run.source == Run.Source.EVALUATION:
+        from .evaluation.tasks import schedule_evaluation_case_finalize
+
+        transaction.on_commit(
+            lambda run_uuid=run.uuid: schedule_evaluation_case_finalize(run_uuid)
+        )
+
     _promote_next_queued_run(run.session.assistant)
 
     if run.parent_run_id is None and run.status in {
@@ -4050,13 +4072,18 @@ def _run_has_trace_observations(run):
 
 
 def _promote_next_queued_run(assistant):
-    """Enqueue the oldest queued run for this assistant, if any."""
+    """Enqueue the oldest queued run for this assistant, if any.
+
+    Evaluation batches schedule their own case Runs so node capacity stays
+    under the batch quota, so they are excluded from assistant promotion.
+    """
 
     next_run = (
         Run.objects.filter(
             session__assistant=assistant,
             status=Run.Status.QUEUED,
         )
+        .exclude(source=Run.Source.EVALUATION)
         .order_by("created_at")
         .first()
     )

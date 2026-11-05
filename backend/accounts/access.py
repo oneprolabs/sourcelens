@@ -17,6 +17,11 @@ FEATURE_DEFINITIONS = (
         'label': 'Admin Console',
         'default_path': '/management/users',
     },
+    {
+        'key': 'run_evaluations',
+        'label': 'Agent Evaluation',
+        'default_path': '/management/lens/evaluation',
+    },
 )
 
 FEATURE_KEYS = tuple(item['key'] for item in FEATURE_DEFINITIONS)

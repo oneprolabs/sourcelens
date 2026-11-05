@@ -10,6 +10,14 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
+from .evaluation.models import (
+    EvaluationCase,
+    EvaluationDataset,
+    EvaluationMetric,
+    EvaluationResult,
+    EvaluationRun,
+)
+
 
 class TimestampedUUIDModel(models.Model):
     """Abstract model with a public UUID and timestamps."""
@@ -36,7 +44,18 @@ class LensNode(TimestampedUUIDModel):
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
 
+    class Pool(models.TextChoices):
+        DEFAULT = "default", "Default"
+        EVALUATION = "evaluation", "Evaluation"
+
     name = models.CharField(max_length=160)
+    pool = models.CharField(
+        max_length=16,
+        choices=Pool.choices,
+        default=Pool.DEFAULT,
+        db_index=True,
+    )
+    evaluation_concurrency_limit = models.PositiveSmallIntegerField(default=1)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
@@ -1252,6 +1271,10 @@ class Session(TimestampedUUIDModel):
         ACTIVE = "active", "Active"
         ARCHIVED = "archived", "Archived"
 
+    class Source(models.TextChoices):
+        USER = "user", "User"
+        EVALUATION = "evaluation", "Evaluation"
+
     class RoutingMode(models.TextChoices):
         DIRECT = "direct", "Direct"
         SMART = "smart", "Smart Collaboration"
@@ -1277,6 +1300,13 @@ class Session(TimestampedUUIDModel):
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=Source.choices,
+        default=Source.USER,
+        db_default=Source.USER,
+        db_index=True,
     )
     title = models.CharField(max_length=160, blank=True, default="")
     title_manually_edited = models.BooleanField(
@@ -1464,6 +1494,10 @@ class Run(models.Model):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
+    class Source(models.TextChoices):
+        USER = "user", "User"
+        EVALUATION = "evaluation", "Evaluation"
+
     class Outcome(models.TextChoices):
         COMPLETED = "completed", "Completed"
         PARTIAL = "partial", "Partial"
@@ -1475,6 +1509,13 @@ class Run(models.Model):
 
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     session = models.ForeignKey(Session, on_delete=models.CASCADE)
+    source = models.CharField(
+        max_length=16,
+        choices=Source.choices,
+        default=Source.USER,
+        db_default=Source.USER,
+        db_index=True,
+    )
     status = models.CharField(
         max_length=24,
         choices=Status.choices,

@@ -56,6 +56,13 @@ from .views import (
 )
 from .views.alerts import MessagePublicationViewSet, PersonalAlertSubscriptionViewSet
 from .views.decisions import DecisionCatalogView, LensNodeDecisionGatewayView
+from .views.evaluation import (
+    EvaluationAccessView,
+    EvaluationCaseViewSet,
+    EvaluationDatasetViewSet,
+    EvaluationMetricViewSet,
+    EvaluationRunViewSet,
+)
 
 router = DefaultRouter()
 router.register("assistants", AssistantViewSet, basename="lens-assistants")
@@ -126,7 +133,33 @@ router.register("admin/alert-messages", MessagePublicationViewSet, basename="len
 
 router.register("alert-subscriptions", PersonalAlertSubscriptionViewSet, basename="lens-alert-subscriptions")
 
+router.register(
+    "admin/evaluation/datasets",
+    EvaluationDatasetViewSet,
+    basename="lens-admin-evaluation-datasets",
+)
+router.register(
+    "admin/evaluation/cases",
+    EvaluationCaseViewSet,
+    basename="lens-admin-evaluation-cases",
+)
+router.register(
+    "admin/evaluation/runs",
+    EvaluationRunViewSet,
+    basename="lens-admin-evaluation-runs",
+)
+router.register(
+    "admin/evaluation/metrics",
+    EvaluationMetricViewSet,
+    basename="lens-admin-evaluation-metrics",
+)
+
 urlpatterns = [
+    path(
+        "admin/evaluation/access/",
+        EvaluationAccessView.as_view(),
+        name="lens-admin-evaluation-access",
+    ),
     path("plugin-runtime/<str:plugin_key>/rpc/", PluginRPCView.as_view()),
     path(
         "plugin-runtime/tool-snapshots/",

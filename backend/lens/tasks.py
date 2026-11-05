@@ -54,6 +54,10 @@ from .models import (
 )
 from .services import cancel_run_on_lensnode, lensnode_group_name
 
+# Importing the evaluation task module registers its Celery tasks; autodiscovery
+# only loads ``lens.tasks``, not nested task modules.
+from .evaluation import tasks as _evaluation_tasks  # noqa: F401,E402
+
 
 @shared_task(name="lens.session_workspace_cleanup", queue="lens")
 def session_workspace_cleanup_task():
@@ -4337,6 +4341,9 @@ def run_retention_task():
             finished_at__lt=cutoff,
         )
         run_ids = list(terminal_runs.values_list("id", flat=True))
+        evaluation_session_ids = list(terminal_runs.filter(
+            source=Run.Source.EVALUATION, session__source=Session.Source.EVALUATION
+        ).values_list("session_id", flat=True))
         run_snapshot_ids = list(
             ExecutionSnapshot.objects.filter(run_id__in=run_ids).values_list(
                 "id",
@@ -4351,6 +4358,9 @@ def run_retention_task():
         )
         snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
         with transaction.atomic():
+            from .evaluation.snapshots import freeze_evaluation_results_for_runs
+
+            freeze_evaluation_results_for_runs(run_ids)
             if snapshot_ids:
                 CredentialLease.objects.filter(
                     snapshot_id__in=snapshot_ids
@@ -4368,6 +4378,9 @@ def run_retention_task():
             RunDiagnostic.objects.filter(run_id__in=run_ids).delete()
 
             deleted, _ = terminal_runs.delete()
+            Session.objects.filter(
+                id__in=evaluation_session_ids, source=Session.Source.EVALUATION, run__isnull=True
+            ).delete()
     except Exception as exc:
         record.last_status = ScheduledTask.Status.FAILED
         record.last_error = f"{type(exc).__name__}: {exc}"[:2000]

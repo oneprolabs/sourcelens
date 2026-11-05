@@ -16,6 +16,12 @@ export const FEATURE_DEFINITIONS = [
       '/task-management',
       '/notifier'
     ]
+  },
+  {
+    key: 'run_evaluations',
+    labelKey: 'platforms.runEvaluations',
+    defaultPath: '/management/lens/evaluation',
+    matchers: ['/management/lens/evaluation']
   }
 ]
 
@@ -90,6 +96,8 @@ export function hasFeature(user, featureKey) {
     return !!user
   }
 
+  if (normalizedFeatureKey === 'run_evaluations' && isAdminUser(user)) return true
+
   if (normalizedFeatureKey === 'admin_console') {
     return isAdminUser(user)
   }
@@ -101,7 +109,7 @@ export function hasFeature(user, featureKey) {
 }
 
 export function hasPermission(user, permission) {
-  if (!permission) return true
+  if (!permission || (permission === 'lens.run_evaluations' && isAdminUser(user))) return true
   const permissions = Array.isArray(user?.permissions) ? user.permissions : []
   return permissions.includes(permission)
 }
@@ -132,9 +140,9 @@ export function getLandingPath(user) {
 }
 
 export function getCurrentPlatformKey(path) {
-  const matched = FEATURE_DEFINITIONS.find((item) =>
-    item.matchers.some((matcher) => path.startsWith(matcher))
-  )
+  const matched = FEATURE_DEFINITIONS.flatMap((item) =>
+    item.matchers.filter((matcher) => path.startsWith(matcher)).map((matcher) => ({ item, matcher }))
+  ).sort((a, b) => b.matcher.length - a.matcher.length)[0]?.item
   return matched?.key || 'workspace'
 }
 

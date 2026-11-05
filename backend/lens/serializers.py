@@ -177,6 +177,8 @@ class LensNodeSerializer(serializers.ModelSerializer):
             "uuid",
             "name",
             "status",
+            "pool",
+            "evaluation_concurrency_limit",
             "connection_id",
             "workspace_path",
             "available_dirs",
@@ -4516,6 +4518,7 @@ class RunSerializer(serializers.ModelSerializer):
         fields = [
             "uuid",
             "status",
+            "source",
             "input_message",
             "output_message",
             "retry_of_run_uuid",
@@ -4626,6 +4629,7 @@ class SessionSerializer(serializers.ModelSerializer):
             "allowed_assistant_uuids",
             "routing_assistants",
             "user",
+            "source",
             "title",
             "title_manually_edited",
             "title_generation_status",
@@ -4643,6 +4647,7 @@ class SessionSerializer(serializers.ModelSerializer):
             "pinned_at",
             "has_shareable_answer",
             "status",
+            "source",
             "created_at",
             "updated_at",
         ]
