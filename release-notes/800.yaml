@@ -1,0 +1,9 @@
+type: improvement
+audience: admin
+en: >-
+  Deployments now pull application images from Aliyun ACR by default, and the
+  installer no longer probes Docker Hub before choosing a registry. Pass
+  `--registry oneprolabs` to keep pulling from Docker Hub.
+zh-CN: >-
+  部署默认从阿里云 ACR 拉取应用镜像，安装脚本不再探测 Docker Hub 来决定镜像源；
+  需要 Docker Hub 时显式传 `--registry oneprolabs`。

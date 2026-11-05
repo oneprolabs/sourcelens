@@ -76,7 +76,8 @@ curl -fsSL \
   | bash
 ```
 
-**China network** — release files from Gitee, images from Aliyun ACR
+**China network** — release files from Gitee (images always come from Aliyun
+ACR; pass `--registry oneprolabs` to pull them from Docker Hub instead)
 
 ```bash
 curl -fsSL \
@@ -105,6 +106,7 @@ Open `http://<host>:10083`. User `admin`, password in
 | `--domain HOST` | Public hostname or IP |
 | `--version VER` | Install or upgrade to a specific release |
 | `--channel github\|cn` | Distribution channel (auto-detected) |
+| `--registry REG` | Image registry prefix (default Aliyun ACR; `oneprolabs` for Docker Hub) |
 | `--yes` | Non-interactive; skips the model setup prompt |
 
 Default install dir: `/opt/sourcelens` (Linux), `/Users/Shared/sourcelens`

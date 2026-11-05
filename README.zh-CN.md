@@ -76,7 +76,8 @@ curl -fsSL \
   | bash
 ```
 
-**国内网络** —— 发布文件走 Gitee，镜像走阿里云 ACR
+**国内网络** —— 发布文件走 Gitee（镜像默认始终走阿里云 ACR，加
+`--registry oneprolabs` 可切回 Docker Hub）
 
 ```bash
 curl -fsSL \
@@ -105,6 +106,7 @@ curl -f http://<host>:10083/health
 | `--domain HOST` | 对外域名或 IP |
 | `--version VER` | 安装或升级到指定版本 |
 | `--channel github\|cn` | 分发渠道（默认自动探测） |
+| `--registry REG` | 镜像仓库前缀（默认阿里云 ACR；传 `oneprolabs` 切回 Docker Hub） |
 | `--yes` | 非交互模式，跳过模型配置 |
 
 默认安装目录：Linux `/opt/sourcelens`，macOS `/Users/Shared/sourcelens`，

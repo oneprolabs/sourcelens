@@ -21,7 +21,7 @@ name: sourcelens
 
 services:
   backend-api:
-    image: oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
+    image: registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
     container_name: sourcelens-api
     restart: unless-stopped
     build:
@@ -65,7 +65,7 @@ services:
       start_period: 120s
 
   frontend:
-    image: oneprolabs/sourcelens-frontend:${APP_VERSION:-latest}
+    image: registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-frontend:${APP_VERSION:-latest}
     container_name: sourcelens-ui
     restart: unless-stopped
     build:
@@ -96,7 +96,7 @@ services:
       start_period: 60s
 
   backend-worker:
-    image: oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
+    image: registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
     container_name: sourcelens-worker
     restart: unless-stopped
     stop_grace_period: 120s
@@ -121,7 +121,7 @@ services:
 
 
   backend-scheduler:
-    image: oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
+    image: registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:${APP_VERSION:-latest}
     container_name: sourcelens-scheduler
     restart: unless-stopped
     stop_grace_period: 30s
@@ -147,7 +147,7 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
-    image: oneprolabs/sourcelens-lensnode:${APP_VERSION:-latest}
+    image: registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-lensnode:${APP_VERSION:-latest}
     container_name: sourcelens-lensnode
     restart: unless-stopped
     # On stop/upgrade the node drains in-flight runs (up to
