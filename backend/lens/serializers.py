@@ -4111,6 +4111,7 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
             "lens.skills.generator_model_ref": "generator_model_ref",
             "lens.datasource_conversion.vision_model_ref": ("vision_model_ref"),
             "lens.datasource_conversion.document_model_ref": ("document_model_ref"),
+            "evaluation.judge_model_ref": "judge_model_ref",
         }
         if key in model_ref_keys:
             if value not in [None, ""] and not isinstance(value, str):

@@ -1622,6 +1622,11 @@
       "reason": "审核说明",
       "save": "保存审核",
       "saved": "审核已保存",
+      "agreementTitle": "人工与 Judge 一致率",
+      "agreementHint": "仅统计冻结上下文仍与当前结果和 Judge 输出一致的审核。",
+      "noComparable": "暂无可比审核",
+      "reviewed": "已审核结果",
+      "stale": "过期审核",
       "verdict": {
         "pass": "通过",
         "fail": "失败",
@@ -1642,6 +1647,7 @@
         "different_scoring_version": "评分版本不同",
         "metrics_unknown": "指标配置未知",
         "different_metrics": "指标配置不同",
+        "different_judge": "Judge 模型或提示词版本不同",
         "different_case_selection": "用例选择不同",
         "batch_not_completed": "批次尚未完成",
         "runtime_environment_not_fully_frozen": "执行环境未完全冻结"
@@ -1752,6 +1758,10 @@
       "waitingNode": "没有可用的评估执行节点，批次正在等待派发。",
       "waitingBusy": "评估节点已满，批次正在排队等待。",
       "cancel": "取消批次",
+      "pause": "暂停",
+      "resume": "恢复",
+      "paused": "批次已暂停；在途用例会继续完成，其余等待恢复",
+      "resumed": "批次已恢复",
       "retry": "重跑失败用例",
       "totalCases": "用例总数",
       "completedCases": "已完成 {count}",
@@ -1787,7 +1797,18 @@
       "citations": "引用",
       "filterAll": "全部",
       "cancelled": "评估批次已取消",
-      "retried": "失败用例已重新排队"
+      "retried": "失败用例已重新排队",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Judge 模型",
+      "judgeNotConfigured": "未配置 Judge 模型；语义正确性保持不确定。",
+      "judgeOk": "已判定",
+      "judgeFailed": "Judge 失败",
+      "judgeSkipped": "已跳过",
+      "judgeStatus": {
+        "not_configured": "尚未配置 Judge 模型。",
+        "skipped": "该用例被 Judge 跳过（没有可判定的回答）。",
+        "judge_failed": "Judge 调用或输出失败；确定性分数不受影响。"
+      }
     }
   }
 }

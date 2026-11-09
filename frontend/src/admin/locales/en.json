@@ -2324,6 +2324,8 @@
       "evaluationPoolDesc": "Select the LensNode pool used for evaluation. Shared nodes also serve ordinary runs.",
       "evaluationPoolDefault": "Default (shared)",
       "evaluationPoolDedicated": "Evaluation (dedicated)",
+      "evaluationJudgeTitle": "Evaluation Judge model",
+      "evaluationJudgeDesc": "Model used to judge answer correctness and evidence support. When empty, semantic correctness stays inconclusive and human agreement cannot be computed.",
       "publicSharePolicyTitle": "Public share access policy",
       "publicSharePolicyDesc": "Default policy for public assistant share links: whether a visitor must sign in. An Assistant can override it; when unset the publisher chooses.",
       "publicSharePolicyInherit": "Not configured (assistant or publisher decides)",

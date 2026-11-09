@@ -289,7 +289,8 @@ const defaultSettings = {
   'lens.skills.generator_model_ref': '',
   'lens.smart_collaboration.model_ref': '',
   'lens.public_share.policy': 'inherit',
-  'evaluation.execution_pool': 'default'
+  'evaluation.execution_pool': 'default',
+  'evaluation.judge_model_ref': ''
 }
 
 const settingsForm = ref({ ...defaultSettings })
@@ -380,6 +381,14 @@ const settingDefinitions = computed(() => {
           label: t('lensAdmin.settings.evaluationPoolDedicated')
         }
       ]
+    },
+    {
+      key: 'evaluation.judge_model_ref',
+      group: 'runtime',
+      label: t('lensAdmin.settings.evaluationJudgeTitle'),
+      description: t('lensAdmin.settings.evaluationJudgeDesc'),
+      type: 'model_ref',
+      unit: ''
     },
     {
       key: 'retention.run_days',

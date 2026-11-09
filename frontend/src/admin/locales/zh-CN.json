@@ -2324,6 +2324,8 @@
       "evaluationPoolDesc": "选择评估使用的 LensNode 执行池。默认池同时处理普通任务。",
       "evaluationPoolDefault": "默认池（共享）",
       "evaluationPoolDedicated": "评估池（专用）",
+      "evaluationJudgeTitle": "评估 Judge 模型",
+      "evaluationJudgeDesc": "用于判定回答正确性与证据支持度的模型。留空时语义正确性保持不确定，也无法计算人工一致率。",
       "publicSharePolicyTitle": "公开分享访问策略",
       "publicSharePolicyDesc": "全局默认策略：公开助手分享链接是否必须登录后才能查看。助手可单独覆盖，未配置时分享者可自行选择。",
       "publicSharePolicyInherit": "未配置（由助手或分享者决定）",

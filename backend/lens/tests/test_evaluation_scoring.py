@@ -363,6 +363,73 @@ class CorrectnessTests(SimpleTestCase):
             self.assertFalse(derive_run_quality(run)["passed"])
 
 
+class JudgeVerdictApplicationTests(SimpleTestCase):
+    def _evaluation(self, *, passed=None, outcome_passed=True, deterministic=None):
+        return {
+            "scores": {
+                "answer_correctness": {"score": None, "passed": deterministic, "detail": {}},
+            },
+            "issues": [],
+            "passed": passed,
+            "outcome_passed": outcome_passed,
+        }
+
+    def test_ok_judge_fills_a_semantic_gap(self):
+        from lens.evaluation.scoring import apply_judge_verdict
+
+        evaluation = apply_judge_verdict(
+            self._evaluation(),
+            {
+                "status": "ok",
+                "answer": {"verdict": "pass", "rationale": "Matches."},
+                "model": {"model_ref": "judge-model"},
+            },
+        )
+
+        self.assertIs(evaluation["passed"], True)
+        entry = evaluation["scores"]["answer_correctness"]
+        self.assertIs(entry["passed"], True)
+        self.assertEqual(entry["score"], 1.0)
+        self.assertEqual(entry["detail"]["method"], "judge")
+
+    def test_judge_failure_marks_the_case_failed(self):
+        from lens.evaluation.scoring import apply_judge_verdict
+
+        evaluation = apply_judge_verdict(
+            self._evaluation(),
+            {"status": "ok", "answer": {"verdict": "fail", "rationale": "Wrong."}},
+        )
+
+        self.assertIs(evaluation["passed"], False)
+        self.assertEqual(
+            [issue["code"] for issue in evaluation["issues"]],
+            ["answer_correctness_below_threshold"],
+        )
+
+    def test_deterministic_verdict_wins_over_the_judge(self):
+        from lens.evaluation.scoring import apply_judge_verdict
+
+        evaluation = apply_judge_verdict(
+            self._evaluation(passed=True, deterministic=True),
+            {"status": "ok", "answer": {"verdict": "fail", "rationale": "Wrong."}},
+        )
+
+        self.assertIs(evaluation["passed"], True)
+        self.assertIs(evaluation["scores"]["answer_correctness"]["passed"], True)
+
+    def test_non_ok_judge_never_changes_the_evaluation(self):
+        from lens.evaluation.scoring import apply_judge_verdict
+
+        for status in ("not_configured", "skipped", "judge_failed"):
+            evaluation = apply_judge_verdict(
+                self._evaluation(),
+                {"status": status},
+            )
+
+            self.assertIsNone(evaluation["passed"])
+            self.assertIsNone(evaluation["scores"]["answer_correctness"]["passed"])
+
+
 class ImportFormatTests(SimpleTestCase):
     def test_jsonl_commas_and_csv_are_selected_by_filename(self):
         from lens.evaluation.datasets import parse_import_payload

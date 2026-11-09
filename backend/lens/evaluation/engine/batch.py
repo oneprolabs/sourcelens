@@ -18,10 +18,12 @@ from lens.evaluation.engine.runner import (
     evaluation_node_capacity,
 )
 from lens.evaluation.evaluators.trace import load_trace_events
+from lens.evaluation.judge import judge_config, judge_result
 from lens.evaluation.models import EvaluationResult, EvaluationRun
 from lens.evaluation.scoring import (
     EVALUATION_SCORING_VERSION,
     aggregate_results,
+    apply_judge_verdict,
     ensure_default_metrics,
     evaluate_case_result,
     metrics_snapshot,
@@ -138,6 +140,7 @@ def create_evaluation_run(
         },
         "assistant": _assistant_snapshot(dataset.assistant),
         "metrics": metrics_snapshot(metric_configs),
+        "judge": judge_config(),
         "lensnode_uuid": None,
         "requested_by": str(requested_by.pk) if requested_by else None,
         "created_at": timezone.now().isoformat(),
@@ -536,9 +539,42 @@ def _known_datasource_paths(evaluation_run):
     return keys or None
 
 
-@transaction.atomic
+def _judge_case_result(result, run, case, evaluation):
+    """Return Judge evidence for one scored case without raising on failure.
+
+    The Judge is an optional enrichment: a non-DONE Run, a missing model, a
+    failed call, or invalid output becomes a status payload instead of an
+    exception, so deterministic scores stay authoritative.
+    """
+
+    if run.status != Run.Status.DONE:
+        return {"status": "skipped", "reason": "run_not_done"}
+    judge_settings = (result.evaluation_run.config_snapshot or {}).get("judge")
+    if not isinstance(judge_settings, dict):
+        judge_settings = judge_config()
+    model_ref = str(judge_settings.get("model_ref") or "").strip()
+    if not model_ref:
+        return {
+            "status": "not_configured",
+            "error_code": "EVALUATION_JUDGE_NOT_CONFIGURED",
+        }
+    output = run.output_message.content if run.output_message_id else ""
+    return judge_result(
+        case=case,
+        output=output,
+        citations=run.citations or [],
+        execution_metrics=evaluation["execution_metrics"],
+        model_ref=model_ref,
+        user_id=result.evaluation_run.requested_by_id,
+    )
+
+
 def score_case_result(result):
-    """Score one finished case Run and persist the frozen evidence."""
+    """Score one finished case Run and persist the frozen evidence.
+
+    The Judge call runs before the write block so a slow model never holds a
+    database transaction open.
+    """
 
     run = result.source_run
     if run is None:
@@ -554,26 +590,30 @@ def score_case_result(result):
         known_paths=_known_datasource_paths(result.evaluation_run),
         events=events,
     )
-    freeze_run_result(
-        evaluation_run=result.evaluation_run,
-        case=result.case,
-        run=run,
-        scores=evaluation["scores"],
-        issues=evaluation["issues"],
-        trace_summary=trace_summary_from_events(events),
-    )
-    result.refresh_from_db()
-    result.execution_metrics = evaluation["execution_metrics"]
-    result.passed = evaluation["passed"]
-    result.error = "" if run.status == Run.Status.DONE else (run.error or "")
-    result.save(
-        update_fields=[
-            "execution_metrics",
-            "passed",
-            "error",
-            "updated_at",
-        ]
-    )
+    judge_evidence = _judge_case_result(result, run, case, evaluation)
+    apply_judge_verdict(evaluation, judge_evidence)
+    with transaction.atomic():
+        freeze_run_result(
+            evaluation_run=result.evaluation_run,
+            case=result.case,
+            run=run,
+            scores=evaluation["scores"],
+            issues=evaluation["issues"],
+            judge_evidence=judge_evidence,
+            trace_summary=trace_summary_from_events(events),
+        )
+        result.refresh_from_db()
+        result.execution_metrics = evaluation["execution_metrics"]
+        result.passed = evaluation["passed"]
+        result.error = "" if run.status == Run.Status.DONE else (run.error or "")
+        result.save(
+            update_fields=[
+                "execution_metrics",
+                "passed",
+                "error",
+                "updated_at",
+            ]
+        )
     return result
 
 
@@ -697,7 +737,14 @@ def advance_evaluation_run(evaluation_run_uuid):
     if evaluation_run.status not in {
         EvaluationRun.Status.QUEUED,
         EvaluationRun.Status.RUNNING,
+        EvaluationRun.Status.PAUSED,
     }:
+        return evaluation_run
+    if evaluation_run.status == EvaluationRun.Status.PAUSED:
+        # Drain semantics: in-flight cases still finish and get scored, but no
+        # new case is dispatched until the batch is resumed.
+        _finalize_stale_results(evaluation_run)
+        _aggregate(evaluation_run)
         return evaluation_run
     if evaluation_run.status == EvaluationRun.Status.QUEUED:
         return start_evaluation_run(evaluation_run_uuid)
@@ -791,6 +838,51 @@ def cancel_evaluation_run(evaluation_run_uuid, reason="EVALUATION_CANCELLED"):
 
 
 @transaction.atomic
+def pause_evaluation_run(evaluation_run_uuid, reason=""):
+    """Stop dispatching new cases while in-flight cases drain and get scored."""
+
+    evaluation_run = EvaluationRun.objects.select_for_update().get(uuid=evaluation_run_uuid)
+    if evaluation_run.status not in {
+        EvaluationRun.Status.QUEUED,
+        EvaluationRun.Status.RUNNING,
+    }:
+        raise ValueError("EVALUATION_RUN_NOT_PAUSABLE")
+    snapshot = dict(evaluation_run.config_snapshot or {})
+    snapshot["pause"] = {
+        "paused_at": timezone.now().isoformat(),
+        "reason": str(reason or "")[:200],
+    }
+    snapshot.pop("waiting", None)
+    evaluation_run.config_snapshot = snapshot
+    evaluation_run.status = EvaluationRun.Status.PAUSED
+    evaluation_run.save(update_fields=["config_snapshot", "status", "updated_at"])
+    logger.info("evaluation %s paused", evaluation_run.uuid)
+    return evaluation_run
+
+
+@transaction.atomic
+def resume_evaluation_run(evaluation_run_uuid):
+    """Mark a paused batch active again; the caller dispatches the remainder."""
+
+    evaluation_run = EvaluationRun.objects.select_for_update().get(uuid=evaluation_run_uuid)
+    if evaluation_run.status != EvaluationRun.Status.PAUSED:
+        raise ValueError("EVALUATION_RUN_NOT_PAUSED")
+    snapshot = dict(evaluation_run.config_snapshot or {})
+    pause = snapshot.pop("pause", None)
+    if isinstance(pause, dict):
+        snapshot["last_pause"] = pause
+    snapshot.pop("waiting", None)
+    evaluation_run.config_snapshot = snapshot
+    evaluation_run.status = (
+        EvaluationRun.Status.RUNNING if evaluation_run.started_at else EvaluationRun.Status.QUEUED
+    )
+    evaluation_run.error = ""
+    evaluation_run.save(update_fields=["config_snapshot", "status", "error", "updated_at"])
+    logger.info("evaluation %s resumed", evaluation_run.uuid)
+    return evaluation_run
+
+
+@transaction.atomic
 def retry_failed_cases(evaluation_run_uuid):
     """Reset failed and inconclusive cases so they run again."""
 
@@ -826,6 +918,7 @@ def retry_failed_cases(evaluation_run_uuid):
         result.citations_snapshot = []
         result.trace_summary = {}
         result.execution_metrics = {}
+        result.judge_evidence = {}
         result.save(
             update_fields=[
                 "source_run",
@@ -839,6 +932,7 @@ def retry_failed_cases(evaluation_run_uuid):
                 "citations_snapshot",
                 "trace_summary",
                 "execution_metrics",
+                "judge_evidence",
                 "updated_at",
             ]
         )
@@ -897,7 +991,11 @@ def reconcile_evaluation_runs():
     advanced = 0
     reenqueued = 0
     batch_ids = EvaluationRun.objects.filter(
-        status__in=[EvaluationRun.Status.QUEUED, EvaluationRun.Status.RUNNING]
+        status__in=[
+            EvaluationRun.Status.QUEUED,
+            EvaluationRun.Status.RUNNING,
+            EvaluationRun.Status.PAUSED,
+        ]
     ).values_list("uuid", flat=True)
     for batch_id in list(batch_ids):
         try:
@@ -909,6 +1007,7 @@ def reconcile_evaluation_runs():
         if evaluation_run.status in {
             EvaluationRun.Status.QUEUED,
             EvaluationRun.Status.RUNNING,
+            EvaluationRun.Status.PAUSED,
         }:
             try:
                 reenqueued += _reenqueue_stuck_case_runs(evaluation_run)
@@ -920,6 +1019,28 @@ def reconcile_evaluation_runs():
     if reenqueued:
         logger.info("evaluation reconcile: re-enqueued %d runs", reenqueued)
     return advanced
+
+
+def _judge_summary(results, snapshot):
+    """Summarize Judge coverage so an unconfigured model is explicit."""
+
+    settings_snapshot = snapshot.get("judge")
+    if not isinstance(settings_snapshot, dict):
+        settings_snapshot = {}
+    statuses = {}
+    for result in results:
+        evidence = result.judge_evidence or {}
+        status = str(evidence.get("status") or "missing")
+        statuses[status] = statuses.get(status, 0) + 1
+    model_ref = str(settings_snapshot.get("model_ref") or "")
+    return {
+        "configured": bool(model_ref),
+        "model_ref": model_ref,
+        "prompt_version": settings_snapshot.get("prompt_version") or "",
+        "statuses": statuses,
+        "judged_cases": statuses.get("ok", 0),
+        "failed_cases": statuses.get("judge_failed", 0),
+    }
 
 
 def build_report(evaluation_run):
@@ -948,6 +1069,9 @@ def build_report(evaluation_run):
                 }
             )
     snapshot = evaluation_run.config_snapshot or {}
+    pause = snapshot.get("pause")
+    if not isinstance(pause, dict):
+        pause = {}
     return {
         "evaluation_run": {
             "uuid": str(evaluation_run.uuid),
@@ -965,6 +1089,7 @@ def build_report(evaluation_run):
             "config_snapshot": snapshot,
         },
         "calibration": calibration,
+        "judge": _judge_summary(results, snapshot),
         "provenance": {
             "platform_version": snapshot.get("platform_version", ""),
             "scoring_version": snapshot.get("scoring_version", ""),
@@ -974,6 +1099,8 @@ def build_report(evaluation_run):
                 "agent_version": snapshot.get("lensnode_agent_version") or "",
             },
             "waiting": snapshot.get("waiting") or {},
+            "paused_at": pause.get("paused_at") or "",
+            "pause_reason": pause.get("reason") or "",
         },
         "summary": {
             "total_cases": len(results),
@@ -1007,7 +1134,9 @@ __all__ = [
     "ensure_case_run",
     "finalize_case_result",
     "finalize_evaluation_results_for_retention",
+    "pause_evaluation_run",
     "reconcile_evaluation_runs",
+    "resume_evaluation_run",
     "retry_failed_cases",
     "start_evaluation_run",
 ]

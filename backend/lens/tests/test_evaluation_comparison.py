@@ -30,6 +30,20 @@ class EvaluationComparisonTests(TestCase):
         self.assertIsNone(data["cases"][0]["left"]["passed"])
         self.assertFalse(data["cases"][0]["right"]["passed"])
 
+    def test_different_judge_is_reported_as_a_limitation(self):
+        self.left.config_snapshot = {**self.snapshot, "judge": {"model_ref": "judge-a", "prompt_version": "1"}}
+        self.left.save(update_fields=["config_snapshot"])
+        self.right.config_snapshot = {**self.snapshot, "judge": {"model_ref": "judge-b", "prompt_version": "1"}}
+        self.right.save(update_fields=["config_snapshot"])
+
+        response = self.client.get(
+            f"/api/lens/admin/evaluation/runs/{self.left.uuid}/compare/",
+            {"other": self.right.uuid},
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertIn("different_judge", response.json()["data"]["limitations"])
+
     def test_mismatch_and_invalid_uuid(self):
         self.right.config_snapshot = {"dataset": {"revision": 2}, "scoring_version": "3"}
         self.right.save(update_fields=["config_snapshot"])

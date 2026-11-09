@@ -61,6 +61,24 @@
               {{ t('evaluation.comparison.action') }}
             </BaseButton>
             <BaseButton
+              v-if="canPause"
+              variant="outline"
+              size="sm"
+              :loading="actionLoading"
+              @click="pauseRun"
+            >
+              {{ t('evaluation.report.pause') }}
+            </BaseButton>
+            <BaseButton
+              v-if="isPaused"
+              variant="outline"
+              size="sm"
+              :loading="actionLoading"
+              @click="resumeRun"
+            >
+              {{ t('evaluation.report.resume') }}
+            </BaseButton>
+            <BaseButton
               v-if="isActive"
               variant="outline"
               size="sm"
@@ -166,6 +184,70 @@
                       casePercent: formatPercent(summary.coverage?.case_ratio)
                     })
                   }}
+                </p>
+              </div>
+            </div>
+
+            <div class="mt-4 grid gap-3 lg:grid-cols-2">
+              <div class="rounded-lg border border-line px-4 py-3">
+                <h2 class="text-sm font-semibold text-ink-900">
+                  {{ t('evaluation.report.judgeTitle') }}
+                </h2>
+                <p
+                  v-if="!report.judge?.configured"
+                  class="mt-1 text-xs text-warning-700"
+                >
+                  {{ t('evaluation.report.judgeNotConfigured') }}
+                </p>
+                <p v-else class="mt-1 text-xs text-ink-500">
+                  {{ t('evaluation.report.judgeModel') }}:
+                  <span class="font-mono">{{ report.judge.model_ref }}</span>
+                  · v{{ report.judge.prompt_version }}
+                </p>
+                <div class="mt-2 flex flex-wrap gap-3 text-xs text-ink-600">
+                  <span>
+                    {{ t('evaluation.report.judgeOk') }}:
+                    {{ judgeStatusCount('ok') }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.report.judgeFailed') }}:
+                    {{ report.judge?.failed_cases ?? 0 }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.report.judgeSkipped') }}:
+                    {{ judgeStatusCount('skipped') }}
+                  </span>
+                </div>
+              </div>
+              <div class="rounded-lg border border-line px-4 py-3">
+                <h2 class="text-sm font-semibold text-ink-900">
+                  {{ t('evaluation.calibration.agreementTitle') }}
+                </h2>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('evaluation.calibration.agreementHint') }}
+                </p>
+                <div
+                  class="mt-2 grid gap-2 text-xs text-ink-600 sm:grid-cols-2"
+                >
+                  <span>
+                    {{ t('evaluation.calibration.answer') }}:
+                    {{ agreementText(report.calibration?.dimensions?.answer) }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.calibration.evidence') }}:
+                    {{
+                      agreementText(report.calibration?.dimensions?.evidence)
+                    }}
+                  </span>
+                </div>
+                <p class="mt-2 text-xs text-ink-500">
+                  {{ t('evaluation.calibration.reviewed') }}:
+                  {{
+                    report.calibration?.dimensions?.answer?.reviewed_results ??
+                    0
+                  }}
+                  · {{ t('evaluation.calibration.stale') }}:
+                  {{ report.calibration?.stale_reviews ?? 0 }}
                 </p>
               </div>
             </div>
@@ -462,6 +544,48 @@
           >
         </section>
 
+        <section v-if="detail.judge_evidence">
+          <h3 class="text-sm font-semibold text-ink-900">
+            {{ t('evaluation.report.judgeTitle') }}
+          </h3>
+          <p class="mt-1 text-xs text-ink-500">
+            {{
+              detail.judge_evidence.model?.model_ref ||
+              t('evaluation.report.judgeNotConfigured')
+            }}
+          </p>
+          <div
+            v-for="dimension in ['answer', 'evidence']"
+            :key="dimension"
+            class="mt-2 text-xs text-ink-700"
+          >
+            <template v-if="detail.judge_evidence[dimension]">
+              <span class="font-medium">
+                {{ t(`evaluation.calibration.${dimension}`) }}:
+              </span>
+              {{
+                t(
+                  `evaluation.calibration.verdict.${detail.judge_evidence[dimension].verdict}`
+                )
+              }}
+              <p class="mt-1 whitespace-pre-wrap">
+                {{ detail.judge_evidence[dimension].rationale }}
+              </p>
+            </template>
+          </div>
+          <p
+            v-if="
+              detail.judge_evidence.status &&
+              detail.judge_evidence.status !== 'ok'
+            "
+            class="mt-2 text-xs text-warning-700"
+          >
+            {{
+              t(`evaluation.report.judgeStatus.${detail.judge_evidence.status}`)
+            }}
+          </p>
+        </section>
+
         <section class="rounded-lg border border-line p-3">
           <h3 class="text-sm font-semibold">{{ t('evaluation.calibration.title') }}</h3>
           <p class="mt-1 text-xs text-ink-500">{{ t('evaluation.calibration.description') }}</p>
@@ -567,6 +691,8 @@ import {
   getEvaluationResult,
   getEvaluationRun,
   listEvaluationResults,
+  pauseEvaluationRun,
+  resumeEvaluationRun,
   retryEvaluationRun
 } from '@/api/evaluation'
 import { useToast } from '@/composables/useToast'
@@ -638,6 +764,10 @@ const TERMINAL_STATUSES = ['completed', 'cancelled', 'failed']
 
 const isActive = computed(() => ACTIVE_STATUSES.includes(run.value?.status))
 const isTerminal = computed(() => TERMINAL_STATUSES.includes(run.value?.status))
+const isPaused = computed(() => run.value?.status === 'paused')
+const canPause = computed(() =>
+  ['queued', 'running'].includes(run.value?.status)
+)
 const summary = computed(() => report.value?.summary || {})
 const waitingReason = computed(
   () => run.value?.config_snapshot?.waiting?.reason || ''
@@ -713,6 +843,17 @@ function formatScore(value) {
 function formatPercent(value) {
   if (value === null || value === undefined) return '—'
   return `${Math.round(Number(value) * 100)}%`
+}
+
+function judgeStatusCount(status) {
+  return Number(report.value?.judge?.statuses?.[status] ?? 0)
+}
+
+function agreementText(dimension) {
+  if (!dimension || !dimension.comparable_reviews) {
+    return t('evaluation.calibration.noComparable')
+  }
+  return `${formatPercent(dimension.agreement_rate)} (${dimension.agreed}/${dimension.comparable_reviews})`
 }
 
 function formatDuration(value) {
@@ -858,6 +999,35 @@ async function cancelRun() {
     await cancelEvaluationRun(runUuid.value)
     showSuccess(t('evaluation.report.cancelled'))
     await reload()
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function pauseRun() {
+  actionLoading.value = true
+  try {
+    await pauseEvaluationRun(runUuid.value)
+    showSuccess(t('evaluation.report.paused'))
+    await reload()
+    schedulePoll()
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function resumeRun() {
+  actionLoading.value = true
+  try {
+    await resumeEvaluationRun(runUuid.value)
+    showSuccess(t('evaluation.report.resumed'))
+    page.value = 1
+    await reload()
+    schedulePoll()
   } catch (error) {
     showError(errorMessage(error))
   } finally {

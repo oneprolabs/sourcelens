@@ -101,6 +101,19 @@ export async function cancelEvaluationRun(uuid) {
   return unwrapResponse(response)
 }
 
+export async function pauseEvaluationRun(uuid, payload = {}) {
+  const response = await api.post(
+    `/lens/admin/evaluation/runs/${uuid}/pause/`,
+    payload
+  )
+  return unwrapResponse(response)
+}
+
+export async function resumeEvaluationRun(uuid) {
+  const response = await api.post(`/lens/admin/evaluation/runs/${uuid}/resume/`)
+  return unwrapResponse(response)
+}
+
 export async function retryEvaluationRun(uuid) {
   const response = await api.post(`/lens/admin/evaluation/runs/${uuid}/retry/`)
   return unwrapResponse(response)

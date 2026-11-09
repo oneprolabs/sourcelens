@@ -1622,6 +1622,11 @@
       "reason": "Review explanation",
       "save": "Save review",
       "saved": "Review saved",
+      "agreementTitle": "Human vs Judge agreement",
+      "agreementHint": "Counts only reviews whose frozen context still matches the current result and Judge output.",
+      "noComparable": "No comparable reviews",
+      "reviewed": "Reviewed results",
+      "stale": "Stale reviews",
       "verdict": {
         "pass": "Pass",
         "fail": "Fail",
@@ -1642,6 +1647,7 @@
         "different_scoring_version": "Different scoring versions",
         "metrics_unknown": "Metrics unknown",
         "different_metrics": "Different metric configurations",
+        "different_judge": "Different Judge model or prompt version",
         "different_case_selection": "Different case selections",
         "batch_not_completed": "Batch not completed",
         "runtime_environment_not_fully_frozen": "Runtime environment not fully frozen"
@@ -1752,6 +1758,10 @@
       "waitingNode": "No evaluation node is online; the batch is waiting to be dispatched.",
       "waitingBusy": "The evaluation node is at capacity; the batch is queued.",
       "cancel": "Cancel",
+      "pause": "Pause",
+      "resume": "Resume",
+      "paused": "Batch paused; in-flight cases finish and the rest wait",
+      "resumed": "Batch resumed",
       "retry": "Retry failed",
       "totalCases": "Total cases",
       "completedCases": "{count} completed",
@@ -1787,7 +1797,18 @@
       "citations": "Citations",
       "filterAll": "All",
       "cancelled": "Evaluation run cancelled",
-      "retried": "Failed cases requeued"
+      "retried": "Failed cases requeued",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Judge model",
+      "judgeNotConfigured": "No Judge model configured; semantic correctness stays inconclusive.",
+      "judgeOk": "Judged",
+      "judgeFailed": "Judge failed",
+      "judgeSkipped": "Skipped",
+      "judgeStatus": {
+        "not_configured": "Judge model is not configured.",
+        "skipped": "Judge skipped this case (no answer to judge).",
+        "judge_failed": "Judge call or its output failed; deterministic scores are unaffected."
+      }
     }
   }
 }

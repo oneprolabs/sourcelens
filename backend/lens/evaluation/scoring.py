@@ -328,7 +328,51 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None, events=
         "passed": passed,
         "issues": issues,
         "execution_metrics": execution_metrics,
+        "outcome_passed": outcome_passed,
     }
+
+
+def apply_judge_verdict(evaluation, judge_evidence):
+    """Fold an ``ok`` Judge answer verdict into semantic correctness.
+
+    Deterministic evidence always wins: an exact match, a failed Run, or a
+    failed metric keeps its verdict. The Judge only fills the semantic gap that
+    would otherwise stay inconclusive, and a non-ok Judge payload leaves the
+    evaluation untouched.
+    """
+
+    if not isinstance(judge_evidence, dict) or judge_evidence.get("status") != "ok":
+        return evaluation
+    scores = evaluation.get("scores") or {}
+    entry = scores.get("answer_correctness")
+    if not isinstance(entry, dict) or entry.get("passed") is not None:
+        return evaluation
+    dimension = judge_evidence.get("answer")
+    verdict = str((dimension or {}).get("verdict") or "").strip().lower()
+    if verdict not in {"pass", "fail"}:
+        return evaluation
+    passed = verdict == "pass"
+    entry["score"] = float(passed)
+    entry["passed"] = passed
+    entry["detail"] = {
+        **(entry.get("detail") or {}),
+        "method": "judge",
+        "judge_model_ref": (judge_evidence.get("model") or {}).get("model_ref") or "",
+        "rationale": (dimension or {}).get("rationale") or "",
+    }
+    if passed:
+        if evaluation.get("passed") is None and evaluation.get("outcome_passed") is True:
+            evaluation["passed"] = True
+    else:
+        evaluation["issues"].append(
+            {
+                "metric": "answer_correctness",
+                "code": "answer_correctness_below_threshold",
+                "detail": {},
+            }
+        )
+        evaluation["passed"] = False
+    return evaluation
 
 
 def aggregate_results(results, metric_configs):

@@ -14,10 +14,13 @@ from accounts.permissions import HasRequiredFeature, HasRunEvaluationsAccess
 from lens.evaluation.comparison import compare_batches
 from lens.evaluation.datasets import import_cases, parse_import_payload
 from lens.evaluation.engine.batch import (
+    advance_evaluation_run,
     assistant_can_run_evaluation,
     build_report,
     cancel_evaluation_run,
     create_evaluation_run,
+    pause_evaluation_run,
+    resume_evaluation_run,
     retry_failed_cases,
     start_evaluation_run,
 )
@@ -403,6 +406,31 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
         cancel_evaluation_run(evaluation_run.uuid)
+        evaluation_run.refresh_from_db()
+        return Response(EvaluationRunDetailSerializer(evaluation_run).data)
+
+    @action(detail=True, methods=["post"], url_path="pause")
+    def pause(self, request, uuid=None):
+        """Stop dispatching new cases; in-flight cases still finish."""
+
+        evaluation_run = self.get_object()
+        try:
+            pause_evaluation_run(evaluation_run.uuid, reason=request.data.get("reason", ""))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        evaluation_run.refresh_from_db()
+        return Response(EvaluationRunDetailSerializer(evaluation_run).data)
+
+    @action(detail=True, methods=["post"], url_path="resume")
+    def resume(self, request, uuid=None):
+        """Resume a paused batch and dispatch its remaining cases."""
+
+        evaluation_run = self.get_object()
+        try:
+            resume_evaluation_run(evaluation_run.uuid)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        advance_evaluation_run(evaluation_run.uuid)
         evaluation_run.refresh_from_db()
         return Response(EvaluationRunDetailSerializer(evaluation_run).data)
 

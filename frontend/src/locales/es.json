@@ -1622,6 +1622,11 @@
       "reason": "Explicación",
       "save": "Guardar revisión",
       "saved": "Revisión guardada",
+      "agreementTitle": "Concordancia humano vs Judge",
+      "agreementHint": "Solo cuenta revisiones cuyo contexto congelado sigue coincidiendo con el resultado actual y la salida del Judge.",
+      "noComparable": "Sin revisiones comparables",
+      "reviewed": "Resultados revisados",
+      "stale": "Revisiones obsoletas",
       "verdict": {
         "pass": "Aprobado",
         "fail": "Fallido",
@@ -1642,6 +1647,7 @@
         "different_scoring_version": "Versiones de evaluación distintas",
         "metrics_unknown": "Métricas desconocidas",
         "different_metrics": "Configuraciones de métricas distintas",
+        "different_judge": "Modelo Judge o versión de prompt distintos",
         "different_case_selection": "Selecciones de casos distintas",
         "batch_not_completed": "Lote incompleto",
         "runtime_environment_not_fully_frozen": "Entorno de ejecución no fijado"
@@ -1752,6 +1758,10 @@
       "waitingNode": "No hay ningún nodo de evaluación en línea; el lote espera para ser despachado.",
       "waitingBusy": "El nodo de evaluación está al límite; el lote está en cola.",
       "cancel": "Cancelar ejecución",
+      "pause": "Pausar",
+      "resume": "Reanudar",
+      "paused": "Lote pausado; los casos en curso terminan y el resto espera",
+      "resumed": "Lote reanudado",
       "retry": "Reintentar fallidos",
       "totalCases": "Casos totales",
       "completedCases": "{count} completados",
@@ -1787,7 +1797,18 @@
       "citations": "Citas",
       "filterAll": "Todos",
       "cancelled": "Ejecución cancelada",
-      "retried": "Casos fallidos reencolados"
+      "retried": "Casos fallidos reencolados",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Modelo Judge",
+      "judgeNotConfigured": "No hay modelo Judge configurado; la corrección semántica queda no concluyente.",
+      "judgeOk": "Juzgados",
+      "judgeFailed": "Judge falló",
+      "judgeSkipped": "Omitidos",
+      "judgeStatus": {
+        "not_configured": "El modelo Judge no está configurado.",
+        "skipped": "El Judge omitió este caso (no hay respuesta que juzgar).",
+        "judge_failed": "La llamada o la salida del Judge falló; las puntuaciones deterministas no se ven afectadas."
+      }
     }
   }
 }
