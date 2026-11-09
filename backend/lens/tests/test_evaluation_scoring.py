@@ -4,13 +4,16 @@ from django.test import SimpleTestCase
 
 from lens.evaluation.evaluators.citation import citation_integrity_metric
 from lens.evaluation.evaluators.groundedness import groundedness_metric
+from lens.evaluation.evaluators.outcome import derive_run_quality
 from lens.evaluation.evaluators.rule_based import latency_metric, tool_success_metric
 from lens.evaluation.evaluators.trace import summarize_trace
 from lens.evaluation.scoring import (
     DEFAULT_METRICS,
     aggregate_results,
     metrics_snapshot,
+    resolve_metric_configs,
 )
+from lens.evaluation.snapshots import trace_summary_from_events
 
 
 class RuleBasedMetricTests(SimpleTestCase):
@@ -36,6 +39,35 @@ class RuleBasedMetricTests(SimpleTestCase):
         metric = latency_metric(None, {})
 
         self.assertIsNone(metric["score"])
+
+    def test_tool_success_counts_started_without_terminal_event_as_failure(self):
+        metric = tool_success_metric(
+            {"tool_started": 4, "tools_completed": 2, "tools_failed": 1}
+        )
+
+        self.assertEqual(metric["score"], 0.5)
+        self.assertEqual(metric["detail"]["unfinished"], 1)
+        self.assertEqual(metric["detail"]["total"], 4)
+
+
+class OutcomeVerdictTests(SimpleTestCase):
+    def _run(self, status, termination_detail=None, outcome=""):
+        return SimpleNamespace(
+            status=status,
+            termination_detail=termination_detail or {},
+            outcome=outcome,
+            trace_events=[],
+        )
+
+    def test_failed_and_cancelled_runs_are_failures(self):
+        self.assertIs(derive_run_quality(self._run("failed"))["passed"], False)
+        self.assertIs(derive_run_quality(self._run("cancelled"))["passed"], False)
+
+    def test_awaiting_user_input_is_inconclusive(self):
+        quality = derive_run_quality(self._run("awaiting_user_input"))
+
+        self.assertIsNone(quality["passed"])
+        self.assertEqual(quality["reason"], "awaiting_user_input")
 
 
 class CitationMetricTests(SimpleTestCase):
@@ -97,6 +129,15 @@ class CitationMetricTests(SimpleTestCase):
         self.assertIsNone(metric["score"])
         self.assertEqual(metric["detail"]["reason"], "no_citations")
 
+    def test_no_citations_scores_zero_when_sources_are_expected(self):
+        metric = citation_integrity_metric([], expected_sources=["report.md"])
+
+        self.assertEqual(metric["score"], 0.0)
+        self.assertEqual(
+            metric["detail"]["missing_expected_sources"],
+            ["report.md"],
+        )
+
 
 class TraceSummaryTests(SimpleTestCase):
     def test_step_event_verification_is_collected(self):
@@ -145,6 +186,12 @@ class GroundednessMetricTests(SimpleTestCase):
 
         self.assertEqual(metric["score"], 0.5)
 
+    def test_not_requested_is_inconclusive(self):
+        metric = groundedness_metric({"evidence_verifications": ["not_requested"]})
+
+        self.assertIsNone(metric["score"])
+        self.assertEqual(metric["detail"]["reason"], "verification_not_requested")
+
     def test_planned_evidence_is_used_when_no_review_ran(self):
         metric = groundedness_metric(
             {"evidence_verifications": []},
@@ -155,11 +202,57 @@ class GroundednessMetricTests(SimpleTestCase):
         self.assertEqual(metric["detail"]["source"], "planned_evidence")
 
 
+class TraceSnapshotTests(SimpleTestCase):
+    def test_model_started_payload_is_compacted(self):
+        event = SimpleNamespace(
+            sequence=1,
+            event_type="model.started",
+            timestamp=None,
+            turn=1,
+            step=0,
+            payload={
+                "model": "deepseek-v4.1-flash",
+                "messages": [{"content": "x" * 1000}],
+                "tools": [{"name": "search"}],
+            },
+        )
+
+        summary = trace_summary_from_events([event])
+
+        self.assertEqual(summary["event_count"], 1)
+        self.assertEqual(summary["events"][0]["payload"], {"model": "deepseek-v4.1-flash"})
+        self.assertFalse(summary["truncated"])
+        self.assertEqual(summary["last_sequence"], 1)
+
+
+class MetricCatalogTests(SimpleTestCase):
+    def _row(self, name, enabled=True):
+        return SimpleNamespace(
+            name=name,
+            category="reliability",
+            evaluator_type="tool_success",
+            weight=1,
+            threshold=None,
+            config={},
+            enabled=enabled,
+        )
+
+    def test_disabled_rows_do_not_fall_back_to_defaults(self):
+        configs = resolve_metric_configs([self._row("custom", enabled=False)])
+
+        self.assertEqual(configs, [])
+
+    def test_empty_catalog_uses_defaults(self):
+        configs = resolve_metric_configs([])
+
+        self.assertEqual(len(configs), len(DEFAULT_METRICS))
+
+
 class AggregationTests(SimpleTestCase):
     def _result(self, passed, scores):
         return SimpleNamespace(passed=passed, scores=scores)
 
-    def test_weighted_score_ignores_missing_dimensions(self):
+    def test_weighted_score_is_suppressed_below_case_coverage(self):
         results = [
             self._result(
                 True,
@@ -181,11 +274,46 @@ class AggregationTests(SimpleTestCase):
 
         self.assertEqual(summary["passed_cases"], 1)
         self.assertEqual(summary["inconclusive_cases"], 1)
-        self.assertIsNotNone(summary["aggregate_score"])
+        self.assertIsNone(summary["aggregate_score"])
+        self.assertEqual(summary["coverage"]["case_ratio"], 0.3)
+        self.assertEqual(
+            summary["coverage"]["aggregate_suppressed"],
+            "insufficient_case_coverage",
+        )
         self.assertLess(summary["coverage"]["ratio"], 1.0)
         self.assertEqual(
             summary["coverage"]["per_metric"]["execution_success"]["scored_cases"],
             1,
+        )
+
+    def test_weighted_score_reports_when_case_coverage_is_sufficient(self):
+        results = [
+            self._result(
+                True,
+                {
+                    "execution_success": {"score": 1.0, "passed": True},
+                    "citation_integrity": {"score": 1.0, "passed": True},
+                    "tool_success_rate": {"score": 1.0, "passed": True},
+                },
+            ),
+            self._result(
+                True,
+                {
+                    "execution_success": {"score": 1.0, "passed": True},
+                    "citation_integrity": {"score": 0.5, "passed": False},
+                    "tool_success_rate": {"score": 1.0, "passed": True},
+                },
+            ),
+        ]
+
+        summary = aggregate_results(results, metrics_snapshot(DEFAULT_METRICS))
+
+        self.assertIsNotNone(summary["aggregate_score"])
+        self.assertEqual(summary["coverage"]["scored_cells"], 6)
+        self.assertIsNone(summary["coverage"]["aggregate_suppressed"])
+        self.assertEqual(
+            summary["coverage"]["per_metric"]["execution_success"]["coverage_ratio"],
+            1.0,
         )
 
     def test_no_scored_dimension_leaves_aggregate_empty(self):
@@ -196,10 +324,11 @@ class AggregationTests(SimpleTestCase):
 
         self.assertIsNone(summary["aggregate_score"])
         self.assertEqual(summary["coverage"]["ratio"], 0.0)
+        self.assertEqual(summary["coverage"]["case_ratio"], 0.0)
 
 
 class CorrectnessTests(SimpleTestCase):
-    def test_expected_answer_and_facts_and_renamed_outcome(self):
+    def test_reference_facts_require_semantic_review_without_fabricated_verdict(self):
         from unittest.mock import patch
 
         from lens.evaluation.scoring import evaluate_case_result
@@ -207,18 +336,21 @@ class CorrectnessTests(SimpleTestCase):
 
         run = SimpleNamespace(
             status=Run.Status.DONE, outcome="completed", termination_detail={}, trace_events=[],
-            output_message_id=1, output_message=SimpleNamespace(content="The answer is 42"),
+            output_message_id=1, output_message=SimpleNamespace(content="The answer is not 42"),
             started_at=None, finished_at=None,
         )
         metrics = [{"name": "renamed", "evaluator_type": "outcome", "threshold": 1, "weight": 1}]
         with patch("lens.evaluation.scoring.load_trace_events", return_value=[]):
-            for expected, facts, verdict in [
-                ("The answer is 42", ["42"], True),
-                ("wrong", [], False),
-                ("", ["missing"], False),
-                ("", [], None),
+            for expected, facts, mode, verdict in [
+                ("", ["42"], None, None),
+                ("The answer is 42", [], None, None),
+                ("The answer is 42", [], "exact", False),
+                ("The answer is not 42", [], "exact", True),
+                ("The answer is not 42", ["42"], "exact", None),
+                ("a different answer", ["42"], "exact", False),
+                ("", [], None, None),
             ]:
-                case = SimpleNamespace(expected_answer=expected, expected_facts=facts)
+                case = SimpleNamespace(expected_answer=expected, expected_facts=facts, answer_match_mode=mode)
                 self.assertEqual(evaluate_case_result(run, case, metrics)["passed"], verdict)
 
     def test_partial_and_step_limit_are_not_success(self):

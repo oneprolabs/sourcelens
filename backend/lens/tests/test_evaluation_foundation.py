@@ -13,6 +13,7 @@ from lens.models import (
     EvaluationDataset,
     EvaluationResult,
     EvaluationRun,
+    GlobalSetting,
     LensNode,
     Run,
     Session,
@@ -25,6 +26,7 @@ User = get_user_model()
 
 class EvaluationFoundationTests(TestCase):
     def setUp(self):
+        GlobalSetting.objects.create(key="evaluation.execution_pool", value="evaluation")
         self.client = APIClient()
         self.user = User.objects.create_user(username="evaluation-user")
         self.default_node = LensNode.objects.create(
@@ -58,6 +60,18 @@ class EvaluationFoundationTests(TestCase):
         )
 
         self.assertEqual(selected, self.evaluation_node)
+
+    def test_evaluation_falls_back_to_bound_default_node_without_pool(self):
+        self.assistant.lensnode = self.default_node
+        self.assistant.save(update_fields=["lensnode"])
+        GlobalSetting.objects.filter(key="evaluation.execution_pool").delete()
+
+        selected = select_execution_lensnode(
+            self.assistant,
+            run_source=Run.Source.EVALUATION,
+        )
+
+        self.assertEqual(selected, self.default_node)
 
     def test_user_session_listing_excludes_evaluation_source(self):
         self.assertFalse(

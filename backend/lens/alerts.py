@@ -113,6 +113,10 @@ def capture_run_alert(run):
 
     if run.parent_run_id or run.status not in {Run.Status.DONE, Run.Status.FAILED} or not run.finished_at:
         return None
+    # Evaluation cases are synthetic operator traffic; they must not page the
+    # production alert channel or spend diagnosis budget.
+    if run.source == Run.Source.EVALUATION:
+        return None
     payload = _run_payload(run)
     if (
         AlertRule.objects.filter(enabled=True, subject="run")
@@ -622,6 +626,7 @@ def reconcile_alert_sources(limit=100):
         if subject == "run":
             sources = (
                 Run.objects.filter(status__in=["done", "failed"], finished_at__gte=since, parent_run__isnull=True)
+                .exclude(source=Run.Source.EVALUATION)
                 .annotate(alert_uuid=Replace(Cast("uuid", CharField()), Value("-"), Value("")))
                 .exclude(alert_uuid__in=known)
                 .order_by("finished_at")[:limit]
@@ -652,6 +657,7 @@ def reconcile_alert_sources(limit=100):
         )
         completed = (
             Run.objects.filter(status__in=["done", "failed"], finished_at__gte=since, parent_run__isnull=True)
+            .exclude(source=Run.Source.EVALUATION)
             .annotate(
                 alert_uuid=Replace(Cast("uuid", CharField()), Value("-"), Value("")),
                 checked_at=Coalesce(Subquery(checked, output_field=DateTimeField()), "created_at"),
@@ -662,6 +668,8 @@ def reconcile_alert_sources(limit=100):
             "session__assistant__lensnode", "session__user", "lensnode", "input_message"
         ):
             outbox = capture_run_alert(run)
+            if outbox is None:
+                continue
             AlertOutbox.objects.filter(pk=outbox.pk).update(updated_at=timezone.now())
     if AlertRule.objects.filter(enabled=True, subject="run", evaluation_mode="running").exists():
         checked = (
@@ -672,6 +680,7 @@ def reconcile_alert_sources(limit=100):
         )
         runs = (
             Run.objects.filter(status__in=["running", "streaming"], parent_run__isnull=True)
+            .exclude(source=Run.Source.EVALUATION)
             .annotate(
                 alert_uuid=Replace(Cast("uuid", CharField()), Value("-"), Value("")),
                 checked_at=Coalesce(Subquery(checked, output_field=DateTimeField()), "created_at"),

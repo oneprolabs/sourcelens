@@ -351,6 +351,20 @@ class UnifiedAlertTests(TestCase):
         process_alert_outbox()
         self.assertTrue(AlertEvent.objects.filter(source_uuid=str(run.uuid)).exists())
 
+    def test_reconcile_skips_evaluation_runs_without_alert_outbox(self):
+        """Evaluation runs are excluded before capture so reconciliation stays crash-free."""
+
+        from lens.alerts import reconcile_alert_sources
+
+        self.rule.token_threshold = 1000
+        self.rule.save()
+        self.run_event(source=Run.Source.EVALUATION)
+
+        reconcile_alert_sources()
+
+        self.assertFalse(AlertOutbox.objects.exists())
+        self.assertFalse(AlertEvent.objects.exists())
+
     def test_rule_api_rejects_subject_event_mismatch(self):
         client = APIClient()
         client.force_authenticate(self.admin)

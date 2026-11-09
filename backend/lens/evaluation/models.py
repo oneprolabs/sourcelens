@@ -48,6 +48,22 @@ class EvaluationDataset(models.Model):
         ]
 
 
+class EvaluationDatasetRevision(models.Model):
+    """Immutable snapshot of the examples in a dataset at one revision."""
+
+    dataset = models.ForeignKey(EvaluationDataset, on_delete=models.CASCADE, related_name="revisions")
+    revision = models.PositiveIntegerField()
+    metadata = models.JSONField(default=dict)
+    cases = models.JSONField(default=list)
+    case_count = models.PositiveIntegerField(default=0)
+    content_hash = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-revision"]
+        constraints = [models.UniqueConstraint(fields=["dataset", "revision"], name="lens_eval_dataset_revision_uniq")]
+
+
 class EvaluationCase(models.Model):
     """One deterministic input and its expected answer contract."""
 
@@ -120,6 +136,7 @@ class EvaluationRun(models.Model):
         max_length=16,
         choices=Status.choices,
         default=Status.QUEUED,
+        db_index=True,
     )
     total_cases = models.PositiveIntegerField(default=0)
     completed_cases = models.PositiveIntegerField(default=0)
@@ -162,6 +179,7 @@ class EvaluationResult(models.Model):
         related_name="evaluation_results",
     )
     source_run_uuid = models.UUIDField(null=True, blank=True, editable=False)
+    dispatch_attempts = models.PositiveSmallIntegerField(default=0)
     output_snapshot = models.TextField(blank=True, default="")
     citations_snapshot = models.JSONField(default=list, blank=True)
     trace_summary = models.JSONField(default=dict, blank=True)
@@ -189,3 +207,24 @@ class EvaluationResult(models.Model):
         if self.source_run_id and not self.source_run_uuid:
             self.source_run_uuid = self.source_run.uuid
         super().save(*args, **kwargs)
+
+
+class EvaluationCalibration(models.Model):
+    """An append-only human review of one scored evaluation result."""
+
+    class Verdict(models.TextChoices):
+        PASS = "pass", "Pass"
+        FAIL = "fail", "Fail"
+        INCONCLUSIVE = "inconclusive", "Inconclusive"
+
+    result = models.ForeignKey(EvaluationResult, on_delete=models.CASCADE, related_name="calibrations")
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    answer_verdict = models.CharField(max_length=16, choices=Verdict.choices)
+    evidence_verdict = models.CharField(max_length=16, choices=Verdict.choices)
+    explanation = models.TextField()
+    judge_snapshot = models.JSONField(default=dict)
+    context_snapshot = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]

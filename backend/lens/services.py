@@ -1390,13 +1390,34 @@ def select_execution_lensnode(
 ):
     """Return the bound node or the least-loaded compatible online node."""
 
+    if run_source == Run.Source.EVALUATION:
+        from lens.evaluation.engine.runner import (
+            evaluation_candidate_nodes,
+            evaluation_node_capacity,
+        )
+
+        candidates = evaluation_candidate_nodes(assistant)
+        if not candidates:
+            raise LensNodeDispatchError(
+                "LENSNODE_EVALUATION_NODE_UNAVAILABLE"
+            )
+        available = [
+            node
+            for node in candidates
+            if evaluation_node_capacity(node) > 0
+        ]
+        if not available:
+            raise LensNodeDispatchError("LENSNODE_EVALUATION_NODE_BUSY")
+        return sorted(
+            available,
+            key=lambda node: (
+                0 if node.pool == LensNode.Pool.EVALUATION else 1,
+                -evaluation_node_capacity(node),
+                node.created_at,
+            ),
+        )[0]
     if assistant.lensnode_id:
-        if (
-            run_source != Run.Source.EVALUATION
-            or assistant.lensnode.pool == LensNode.Pool.EVALUATION
-        ):
-            return assistant.lensnode
-        raise LensNodeDispatchError("LENSNODE_EVALUATION_NODE_REQUIRED")
+        return assistant.lensnode
 
     candidates = _compatible_execution_lensnodes(
         assistant,

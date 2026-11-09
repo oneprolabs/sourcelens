@@ -24,6 +24,7 @@ services:
       # Managed overrides contain only local endpoints/identities, never credentials.
       - ${DEV_OVERRIDE_CONFIG:-${DEV_CONFIG:-./.env.dev}}
     environment:
+      APP_VERSION: ${APP_VERSION:-dev}
       LENS_PLUGIN_ROOTS: /opt/plugins
       LENSNODE_NAME: ${LENSNODE_NAME:-local-dev-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-dev-lensnode-token}
@@ -77,6 +78,7 @@ services:
     # Keep one shared configuration home; switching branches must not switch credentials.
     env_file: *dev-env
     environment:
+      APP_VERSION: ${APP_VERSION:-dev}
       LENS_PLUGIN_ROOTS: /opt/plugins
       WORKSPACE_ROOT: /opt/backend
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-dev-lensnode-token}
@@ -115,6 +117,7 @@ services:
     # Keep one shared configuration home; switching branches must not switch credentials.
     env_file: *dev-env
     environment:
+      APP_VERSION: ${APP_VERSION:-dev}
       LENS_PLUGIN_ROOTS: /opt/plugins
       # Development login must not depend on the external Turnstile service.
       TURNSTILE_ENABLED: "false"

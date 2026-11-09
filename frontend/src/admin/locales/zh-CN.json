@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "sourceFilter": "Run 来源",
+    "sourceAll": "全部来源",
+    "sourceUser": "用户问答",
+    "sourceEvaluation": "评估",
+    "openEvaluation": "查看评估报告",
     "fileStatus": {
       "candidate": "候选",
       "published": "已发布",
@@ -2315,6 +2320,10 @@
     "settings": {
       "publicBaseUrlTitle": "对外基础地址",
       "publicBaseUrlDesc": "用于助手分享链接的基础地址（如你自己的域名）。留空则使用当前服务地址。",
+      "evaluationPoolTitle": "评估执行池",
+      "evaluationPoolDesc": "选择评估使用的 LensNode 执行池。默认池同时处理普通任务。",
+      "evaluationPoolDefault": "默认池（共享）",
+      "evaluationPoolDedicated": "评估池（专用）",
       "publicSharePolicyTitle": "公开分享访问策略",
       "publicSharePolicyDesc": "全局默认策略：公开助手分享链接是否必须登录后才能查看。助手可单独覆盖，未配置时分享者可自行选择。",
       "publicSharePolicyInherit": "未配置（由助手或分享者决定）",

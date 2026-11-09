@@ -59,7 +59,7 @@
               class="flex w-full min-w-0 flex-col items-stretch gap-3 xl:flex-row xl:items-center"
             >
               <div
-                class="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+                class="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-5"
               >
                 <input
                   v-model="filters.q"
@@ -105,6 +105,16 @@
                     {{ t('lensRuns.statusCancelled') }}
                   </option>
                 </BaseSelect>
+                <BaseSelect
+                v-model="filters.source"
+                mobile-touch
+                :aria-label="t('lensRuns.sourceFilter')"
+                @change="onFiltersChanged"
+              >
+                <option value="">{{ t('lensRuns.sourceAll') }}</option>
+                <option value="user">{{ t('lensRuns.sourceUser') }}</option>
+                <option value="evaluation">{{ t('lensRuns.sourceEvaluation') }}</option>
+              </BaseSelect>
               </div>
               <div class="flex w-full shrink-0 items-center gap-2 md:w-auto">
                 <BaseButton
@@ -255,6 +265,7 @@
                       >
                         {{ r.question || '-' }}
                       </h2>
+                      <span v-if="r.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
                       <p class="mt-2 text-xs text-ink-500">
                         {{ formatDate(r.created_at) }}
                       </p>
@@ -386,8 +397,11 @@
                           {{ r.lensnode_name || '-' }}
                         </div>
                       </td>
-                      <td class="td text-ink-700 max-w-md truncate">
-                        {{ r.question || '-' }}
+                      <td class="td text-ink-700 max-w-md">
+                        <div class="flex items-center gap-2">
+                          <span v-if="r.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
+                          <span class="min-w-0 truncate">{{ r.question || '-' }}</span>
+                        </div>
                       </td>
                       <td class="td whitespace-nowrap">
                         <span :class="statusClass(r.status)">
@@ -560,6 +574,21 @@
               >
                 {{ t('lensRuns.retryAction') }}
               </BaseButton>
+              <BaseButton
+                v-if="canSetBaseline && detail?.status === 'done' && detail?.outcome === 'completed'"
+                size="sm"
+                variant="outline"
+                @click="openBaseline"
+              >
+                {{ t('evaluation.baseline.action') }}
+              </BaseButton>
+              <router-link
+                v-if="detail?.source === 'evaluation' && detail?.evaluation_run_uuid && canSetBaseline"
+                :to="`/management/lens/evaluation/runs/${detail.evaluation_run_uuid}`"
+                class="text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                {{ t('lensRuns.openEvaluation') }}
+              </router-link>
               <RowActionMenu
                 v-if="detail"
                 data-testid="run-detail-more-actions"
@@ -649,6 +678,7 @@
                       <div class="min-w-0">
                         <p class="overview-eyebrow">
                           {{ t('lensRuns.overviewSummary') }}
+                          <span v-if="detail.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
                         </p>
                         <h3 class="overview-hero-title truncate">
                           {{ detail.assistant_name || '-' }}
@@ -1706,6 +1736,34 @@
         @close="closePreview"
         @download="downloadOutputFile"
       />
+      <BaseModal :show="baselineOpen" :title="t('evaluation.baseline.action')" @close="baselineOpen = false">
+        <div class="space-y-4">
+          <p class="text-sm text-ink-600">{{ t('evaluation.baseline.review') }}</p>
+          <BaseSelect v-model="baselineDataset" :label="t('evaluation.baseline.dataset')">
+            <option value="">{{ t('evaluation.baseline.selectDataset') }}</option>
+            <option v-for="dataset in baselineDatasets" :key="dataset.uuid" :value="dataset.uuid">
+              {{ dataset.name }} · v{{ dataset.version }}
+            </option>
+          </BaseSelect>
+          <p v-if="!baselineDatasets.length && !baselineLoading" class="text-sm text-ink-500">
+            {{ t('evaluation.baseline.noDatasets') }}
+          </p>
+          <div><h3 class="text-sm font-semibold">{{ t('lensRuns.question') }}</h3>
+            <pre class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-xs">{{ detail?.question }}</pre>
+          </div>
+          <div><h3 class="text-sm font-semibold">{{ t('evaluation.baseline.answer') }}</h3>
+            <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ detail?.answer }}</pre>
+          </div>
+        </div>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <BaseButton variant="outline" @click="baselineOpen = false">{{ t('common.cancel') }}</BaseButton>
+            <BaseButton :disabled="!baselineDataset" :loading="baselineLoading" @click="saveBaseline">
+              {{ t('common.confirm') }}
+            </BaseButton>
+          </div>
+        </template>
+      </BaseModal>
       <BaseModal
         :show="!!pendingAction"
         data-testid="run-action-confirm"
@@ -1742,6 +1800,7 @@ import { format } from 'date-fns'
 import { useDebounceFn } from '@vueuse/core'
 import { Download, Eye, FileText, ThumbsDown, ThumbsUp } from '@lucide/vue'
 import { useToast } from '@/composables/useToast'
+import { createEvaluationBaseline, listEvaluationDatasets } from '@/api/evaluation'
 import { extractErrorMessage } from '@/utils/api'
 import { fetchDeliverableBlob, isPreviewable } from '@/utils/filePreview'
 import {
@@ -1778,6 +1837,43 @@ const { showError, showSuccess } = useToast()
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+const baselineOpen = ref(false)
+const baselineLoading = ref(false)
+const baselineDataset = ref('')
+const baselineDatasets = ref([])
+const canSetBaseline = computed(() =>
+  userStore.userInfo?.is_staff ||
+  (userStore.userHasFeature('run_evaluations') && userStore.userHasPermission('lens.run_evaluations'))
+)
+
+async function openBaseline() {
+  baselineOpen.value = true
+  baselineDataset.value = ''
+  baselineDatasets.value = []
+  baselineLoading.value = true
+  try {
+    const data = await listEvaluationDatasets({ assistant_slug: detail.value.assistant_slug, page_size: 100 })
+    baselineDatasets.value = Array.isArray(data) ? data : data?.results || []
+  } catch (error) {
+    showError(extractErrorMessage(error, t('common.error')))
+  } finally {
+    baselineLoading.value = false
+  }
+}
+
+async function saveBaseline() {
+  baselineLoading.value = true
+  try {
+    await createEvaluationBaseline(baselineDataset.value, selectedUuid.value)
+    baselineOpen.value = false
+    showSuccess(t('evaluation.baseline.created'))
+  } catch (error) {
+    showError(extractErrorMessage(error, t('common.error')))
+  } finally {
+    baselineLoading.value = false
+  }
+}
 
 const loading = ref(true)
 const hasLoaded = ref(false)
@@ -1917,6 +2013,7 @@ const filters = ref({
   lensnode: '',
   model: '',
   status: '',
+  source: '',
   start_date: '',
   end_date: ''
 })
@@ -2181,6 +2278,7 @@ function resetFilters() {
     lensnode: '',
     model: '',
     status: '',
+    source: '',
     start_date: '',
     end_date: ''
   }
@@ -2376,6 +2474,9 @@ onMounted(() => {
   filters.value.user_id = String(route.query.user_id || '')
   filters.value.group_id = String(route.query.group_id || '')
   filters.value.username = String(route.query.username || '')
+  filters.value.source = ['user', 'evaluation'].includes(String(route.query.source || ''))
+    ? String(route.query.source)
+    : ''
   filters.value.assistant = String(route.query.assistant || '')
   filters.value.lensnode = String(route.query.lensnode || '')
   filters.value.model = String(route.query.model || '')
@@ -2411,6 +2512,10 @@ onBeforeUnmount(() => clearTimeout(detailRefreshTimer))
 </script>
 
 <style scoped>
+.run-source-badge {
+  @apply inline-flex shrink-0 items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700;
+}
+
 .run-attachment :deep(.auth-image) {
   max-width: 180px;
   max-height: 180px;

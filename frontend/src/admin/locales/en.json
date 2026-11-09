@@ -1,5 +1,10 @@
 {
   "lensRuns": {
+    "sourceFilter": "Run source",
+    "sourceAll": "All sources",
+    "sourceUser": "User chat",
+    "sourceEvaluation": "Evaluation",
+    "openEvaluation": "View evaluation report",
     "fileStatus": {
       "candidate": "Candidate",
       "published": "Published",
@@ -2315,6 +2320,10 @@
     "settings": {
       "publicBaseUrlTitle": "Public Base URL",
       "publicBaseUrlDesc": "Base address used for assistant share links (e.g. your own domain). Leave empty to use the current server address.",
+      "evaluationPoolTitle": "Evaluation execution pool",
+      "evaluationPoolDesc": "Select the LensNode pool used for evaluation. Shared nodes also serve ordinary runs.",
+      "evaluationPoolDefault": "Default (shared)",
+      "evaluationPoolDedicated": "Evaluation (dedicated)",
       "publicSharePolicyTitle": "Public share access policy",
       "publicSharePolicyDesc": "Default policy for public assistant share links: whether a visitor must sign in. An Assistant can override it; when unset the publisher chooses.",
       "publicSharePolicyInherit": "Not configured (assistant or publisher decides)",

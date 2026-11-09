@@ -2,25 +2,39 @@
 
 import logging
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
+from lens.evaluation.calibration import summarize_calibration
 from lens.evaluation.engine.runner import (
+    destination_nodes_with_capacity,
+    evaluation_candidate_nodes,
+    evaluation_execution_pool,
     evaluation_node_capacity,
-    select_evaluation_lensnode,
 )
+from lens.evaluation.evaluators.trace import load_trace_events
 from lens.evaluation.models import EvaluationResult, EvaluationRun
 from lens.evaluation.scoring import (
+    EVALUATION_SCORING_VERSION,
     aggregate_results,
+    ensure_default_metrics,
     evaluate_case_result,
     metrics_snapshot,
     resolve_metric_configs,
 )
-from lens.evaluation.snapshots import freeze_run_result
+from lens.evaluation.snapshots import (
+    freeze_evaluation_results_for_runs,
+    freeze_run_result,
+    trace_summary_from_events,
+)
 from lens.models import (
     EvaluationMetric,
+    GlobalSetting,
     LensNode,
     Run,
     RunExecution,
@@ -36,12 +50,20 @@ TERMINAL_RUN_STATUSES = {
     Run.Status.CANCELLED,
     Run.Status.AWAITING_USER_INPUT,
 }
+WAITING_NO_NODE = "NO_EVALUATION_NODE"
+WAITING_NODE_BUSY = "EVALUATION_NODE_BUSY"
+DEFAULT_NODE_WAIT_TIMEOUT_SECONDS = 1800
+DEFAULT_NODE_BUSY_TIMEOUT_SECONDS = 7200
+MAX_DISPATCH_ATTEMPTS = 3
+QUEUED_REENQUEUE_SECONDS = 900
 
 
 def case_run_key(evaluation_run, case):
     """Return the idempotency key for one case inside one batch."""
 
-    return f"{IDEMPOTENCY_PREFIX}:{evaluation_run.uuid}:{case.uuid}"
+    key = f"{IDEMPOTENCY_PREFIX}:{evaluation_run.uuid}:{case.uuid}"
+    retry_key = (evaluation_run.config_snapshot or {}).get("case_retry_keys", {}).get(str(case.uuid))
+    return f"{key}:{retry_key}" if retry_key else key
 
 
 def _assistant_snapshot(assistant):
@@ -73,11 +95,13 @@ def _assistant_snapshot(assistant):
 
 
 def _metric_rows():
-    """Return configured metric rows, falling back to built-in defaults."""
+    """Return all configured metric rows so disabled ones stay disabled."""
 
-    return list(EvaluationMetric.objects.filter(enabled=True).order_by("name"))
+    ensure_default_metrics()
+    return list(EvaluationMetric.objects.all().order_by("name"))
 
 
+@transaction.atomic
 def create_evaluation_run(
     *,
     dataset,
@@ -87,6 +111,9 @@ def create_evaluation_run(
 ):
     """Create one queued batch with a frozen dataset and metric snapshot."""
 
+    from lens.evaluation.models import EvaluationDataset
+
+    dataset = EvaluationDataset.objects.select_for_update().get(pk=dataset.pk)
     cases = dataset.cases.all()
     if case_uuids:
         try:
@@ -100,29 +127,48 @@ def create_evaluation_run(
     if case_count == 0:
         raise ValueError("EVALUATION_DATASET_EMPTY")
     metric_configs = resolve_metric_configs(_metric_rows())
+    runtime_config = dict(config or {})
+    label = str(runtime_config.pop("label", "") or "")
     snapshot = {
         "dataset": {
             "uuid": str(dataset.uuid),
             "name": dataset.name,
             "version": dataset.version,
+            "revision": dataset.revisions.order_by("-revision").values_list("revision", flat=True).first(),
         },
         "assistant": _assistant_snapshot(dataset.assistant),
         "metrics": metrics_snapshot(metric_configs),
         "lensnode_uuid": None,
         "requested_by": str(requested_by.pk) if requested_by else None,
         "created_at": timezone.now().isoformat(),
+        "platform_version": getattr(settings, "APP_VERSION", "") or "",
+        "scoring_version": EVALUATION_SCORING_VERSION,
         "case_uuids": [str(uuid) for uuid in cases.values_list("uuid", flat=True)],
-        "case_expectations": {str(case.uuid): {"expected_answer": case.expected_answer,
-            "expected_facts": case.expected_facts, "expected_sources": case.expected_sources} for case in cases},
-        **(config or {}),
+        "case_expectations": {
+            str(case.uuid): {
+                "input": case.input,
+                "expected_answer": case.expected_answer,
+                "expected_facts": case.expected_facts,
+                "answer_match_mode": (case.config or {}).get("answer_match_mode"),
+                "expected_sources": case.expected_sources,
+                "baseline": (case.config or {}).get("baseline"),
+            }
+            for case in cases
+        },
+        "label": label,
+        "options": runtime_config,
     }
-    return EvaluationRun.objects.create(
+    evaluation_run = EvaluationRun.objects.create(
         dataset=dataset,
         requested_by=requested_by,
         config_snapshot=snapshot,
         total_cases=case_count,
         status=EvaluationRun.Status.QUEUED,
     )
+    EvaluationResult.objects.bulk_create(
+        [EvaluationResult(evaluation_run=evaluation_run, case=case) for case in cases]
+    )
+    return evaluation_run
 
 
 def _metric_configs_from_snapshot(evaluation_run):
@@ -130,42 +176,163 @@ def _metric_configs_from_snapshot(evaluation_run):
 
     snapshot = evaluation_run.config_snapshot or {}
     metrics = snapshot.get("metrics")
-    if isinstance(metrics, list) and metrics:
+    if isinstance(metrics, list):
         return metrics
     return metrics_snapshot(resolve_metric_configs(_metric_rows()))
 
 
-def _resolve_node(evaluation_run):
-    """Return an online compatible evaluation node for this assistant."""
+def _select_node(evaluation_run):
+    """Return the next dispatch node and a waiting reason when none is free.
 
-    from lens.services import _compatible_execution_lensnodes
+    Only nodes in the globally configured pool are considered.
+    """
 
     assistant = evaluation_run.dataset.assistant
-    if assistant.lensnode_id:
-        candidates = LensNode.objects.filter(
-            pk=assistant.lensnode_id, pool=LensNode.Pool.EVALUATION,
-            status=LensNode.Status.ONLINE, enrollment_status=LensNode.EnrollmentStatus.APPROVED,
-            token_revoked=False,
-        )
-    else:
-        candidates = _compatible_execution_lensnodes(assistant, run_source=Run.Source.EVALUATION)
-    candidates = list(candidates)
+    if not evaluation_candidate_nodes(assistant):
+        return None, WAITING_NO_NODE
+    available = destination_nodes_with_capacity(assistant)
+    if not available:
+        return None, WAITING_NODE_BUSY
     remembered = (evaluation_run.config_snapshot or {}).get("lensnode_uuid")
-    candidates.sort(key=lambda node: (str(node.uuid) != remembered, node.created_at))
-    return next((node for node in candidates if evaluation_node_capacity(node) > 0), None)
+    available.sort(key=lambda node: str(node.uuid) != remembered)
+    return available[0], ""
 
 
 def _remember_node(evaluation_run, node):
-    """Persist the node assignment so capacity checks stay stable."""
+    """Persist node provenance so reports survive later node changes."""
 
     if node is None:
         return
     snapshot = dict(evaluation_run.config_snapshot or {})
-    if snapshot.get("lensnode_uuid") == str(node.uuid):
+    provenance = {
+        "lensnode_uuid": str(node.uuid),
+        "lensnode_pool": node.pool,
+        "lensnode_agent_version": node.agent_version or "",
+        "lensnode_protocol_version": node.protocol_version or "",
+    }
+    changed = {
+        key: value
+        for key, value in provenance.items()
+        if snapshot.get(key) != value
+    }
+    if not changed:
         return
-    snapshot["lensnode_uuid"] = str(node.uuid)
+    snapshot.update(changed)
     evaluation_run.config_snapshot = snapshot
     evaluation_run.save(update_fields=["config_snapshot", "updated_at"])
+
+
+def _setting_seconds(key, default):
+    """Return a positive integer GlobalSetting value or the default."""
+
+    setting = GlobalSetting.objects.filter(key=key).first()
+    if setting is None:
+        return default
+    try:
+        value = int(setting.value)
+    except (TypeError, ValueError):
+        return default
+    return max(value, 1)
+
+
+def _waiting_timeout_seconds():
+    """Return how long a batch may wait for a missing node before failing."""
+
+    return _setting_seconds(
+        "evaluation.node_wait_timeout_s",
+        DEFAULT_NODE_WAIT_TIMEOUT_SECONDS,
+    )
+
+
+def _busy_timeout_seconds():
+    """Return how long a batch may queue behind a full node before failing."""
+
+    return _setting_seconds(
+        "evaluation.node_busy_timeout_s",
+        DEFAULT_NODE_BUSY_TIMEOUT_SECONDS,
+    )
+
+
+def _record_waiting(evaluation_run, reason):
+    """Persist or clear the current waiting reason for the report UI.
+
+    A reason change keeps the original ``since`` so a flapping node cannot
+    restart the expiry clock forever.
+    """
+
+    snapshot = dict(evaluation_run.config_snapshot or {})
+    current = snapshot.get("waiting")
+    if not reason:
+        if snapshot.pop("waiting", None) is None:
+            return
+    else:
+        if isinstance(current, dict) and current.get("reason") == reason:
+            return
+        previous_since = current.get("since") if isinstance(current, dict) else None
+        snapshot["waiting"] = {
+            "reason": reason,
+            "since": previous_since or timezone.now().isoformat(),
+        }
+    evaluation_run.config_snapshot = snapshot
+    evaluation_run.save(update_fields=["config_snapshot", "updated_at"])
+    if reason:
+        logger.warning(
+            "evaluation %s: waiting for node (%s)",
+            evaluation_run.uuid,
+            reason,
+        )
+
+
+def _expire_unserviceable_batch(evaluation_run):
+    """Fail batches that waited too long without any case actually executing.
+
+    A batch with running cases is progressing even when the node has no free
+    slot for the next case, so capacity pressure alone must not expire it.
+    """
+
+    waiting = (evaluation_run.config_snapshot or {}).get("waiting")
+    if not isinstance(waiting, dict):
+        return False
+    runs = Run.objects.select_for_update().filter(
+        pk__in=evaluation_run.results.values("source_run_id")
+    )
+    executing = any(run.status in {Run.Status.RUNNING, Run.Status.STREAMING} for run in runs)
+    if executing:
+        _record_waiting(evaluation_run, "")
+        return False
+    reason = waiting.get("reason")
+    if reason == WAITING_NO_NODE:
+        timeout_seconds = _waiting_timeout_seconds()
+        error = "EVALUATION_NODE_UNAVAILABLE"
+    elif reason == WAITING_NODE_BUSY:
+        timeout_seconds = _busy_timeout_seconds()
+        error = "EVALUATION_NODE_BUSY_TIMEOUT"
+    else:
+        return False
+    since = parse_datetime(str(waiting.get("since") or ""))
+    if since is None:
+        return False
+    if timezone.is_naive(since):
+        since = timezone.make_aware(since, timezone.utc)
+    if timezone.now() - since < timedelta(seconds=timeout_seconds):
+        return False
+    from lens.services import cancel_run_on_lensnode
+
+    cancelled = _cancel_active_runs(evaluation_run, error)
+    transaction.on_commit(lambda runs=cancelled: [cancel_run_on_lensnode(run) for run in runs])
+    evaluation_run.status = EvaluationRun.Status.FAILED
+    evaluation_run.error = error
+    evaluation_run.finished_at = timezone.now()
+    evaluation_run.save(
+        update_fields=["status", "error", "finished_at", "updated_at"]
+    )
+    logger.warning(
+        "evaluation %s: failed after waiting %.0fs (%s)",
+        evaluation_run.uuid,
+        (timezone.now() - since).total_seconds(),
+        reason,
+    )
+    return True
 
 
 def _case_session(evaluation_run, case):
@@ -187,14 +354,15 @@ def ensure_case_run(evaluation_run, case, node=None):
 
     from lens.services import create_execution_run
 
-    key = f"{case_run_key(evaluation_run, case)}:{uuid.uuid4()}"
+    key = case_run_key(evaluation_run, case)
     existing = Run.objects.filter(idempotency_key=key).first()
     if existing is not None:
         return existing
     session = _case_session(evaluation_run, case)
+    frozen = (evaluation_run.config_snapshot or {}).get("case_expectations", {}).get(str(case.uuid), {})
     return create_execution_run(
         session=session,
-        question=case.input,
+        question=frozen.get("input", case.input),
         idempotency_key=key,
         enqueue=False,
         run_source=Run.Source.EVALUATION,
@@ -203,9 +371,23 @@ def ensure_case_run(evaluation_run, case, node=None):
 
 
 def _pending_results(evaluation_run):
-    """Return results whose case Run has not been created yet."""
+    """Return results that still need a case Run.
 
-    return evaluation_run.results.filter(source_run__isnull=True).select_related("case").order_by("created_at", "uuid")
+    ``source_run_uuid`` is retained after retention deletes the source Run, so a
+    result that already executed must never be dispatched again. Results that
+    exhausted their dispatch attempts are permanently failed instead of being
+    retried forever.
+    """
+
+    return (
+        evaluation_run.results.filter(
+            source_run__isnull=True,
+            source_run_uuid__isnull=True,
+            dispatch_attempts__lt=MAX_DISPATCH_ATTEMPTS,
+        )
+        .select_related("case")
+        .order_by("created_at", "uuid")
+    )
 
 
 def _enqueue_run(run):
@@ -217,21 +399,28 @@ def _enqueue_run(run):
 
 
 def dispatch_available_cases(evaluation_run):
-    """Dispatch pending cases while the evaluation node has free capacity."""
+    """Dispatch pending cases while an evaluation node has free capacity."""
 
-    node = _resolve_node(evaluation_run)
+    node, waiting_reason = _select_node(evaluation_run)
     if node is None:
+        _record_waiting(evaluation_run, waiting_reason)
         return 0
     node = LensNode.objects.select_for_update().filter(
-        pk=node.pk, pool=LensNode.Pool.EVALUATION, status=LensNode.Status.ONLINE,
-        enrollment_status=LensNode.EnrollmentStatus.APPROVED, token_revoked=False,
+        pk=node.pk,
+        pool=evaluation_execution_pool(),
+        status=LensNode.Status.ONLINE,
+        enrollment_status=LensNode.EnrollmentStatus.APPROVED,
+        token_revoked=False,
     ).first()
     if node is None:
+        _record_waiting(evaluation_run, WAITING_NO_NODE)
         return 0
     _remember_node(evaluation_run, node)
     remaining = evaluation_node_capacity(node)
     if remaining <= 0:
+        _record_waiting(evaluation_run, WAITING_NODE_BUSY)
         return 0
+    _record_waiting(evaluation_run, "")
     dispatched = 0
     for result in _pending_results(evaluation_run):
         if remaining <= 0:
@@ -239,12 +428,30 @@ def dispatch_available_cases(evaluation_run):
         try:
             run = ensure_case_run(evaluation_run, result.case, node)
         except Exception as exc:
-            result.error = str(exc)
-            result.save(update_fields=["error", "updated_at"])
+            attempts = (result.dispatch_attempts or 0) + 1
+            result.dispatch_attempts = attempts
+            result.error = f"EVALUATION_DISPATCH_FAILED: {str(exc)[:500]}"
+            if attempts >= MAX_DISPATCH_ATTEMPTS:
+                result.passed = False
+                result.execution_metrics = {
+                    "dispatch_failed": True,
+                    "attempts": attempts,
+                }
+            result.save(
+                update_fields=[
+                    "dispatch_attempts",
+                    "error",
+                    "passed",
+                    "execution_metrics",
+                    "updated_at",
+                ]
+            )
             logger.warning(
-                "evaluation %s case %s: dispatch failed: %s",
+                "evaluation %s case %s: dispatch failed (attempt %d/%d): %s",
                 evaluation_run.uuid,
                 result.case_id,
+                attempts,
+                MAX_DISPATCH_ATTEMPTS,
                 exc,
             )
             continue
@@ -277,9 +484,26 @@ def start_evaluation_run(evaluation_run_uuid):
                 evaluation_run=evaluation_run,
                 case=case,
             )
+    result_count = evaluation_run.results.count()
+    if result_count == 0 or result_count != evaluation_run.total_cases:
+        evaluation_run.status = EvaluationRun.Status.FAILED
+        evaluation_run.error = (
+            "EVALUATION_CASES_MISSING" if evaluation_run.total_cases else "EVALUATION_DATASET_EMPTY"
+        )
+        evaluation_run.finished_at = timezone.now()
+        evaluation_run.save(
+            update_fields=["status", "error", "finished_at", "updated_at"]
+        )
+        logger.warning(
+            "evaluation %s: frozen case results do not match the batch",
+            evaluation_run.uuid,
+        )
+        return evaluation_run
     evaluation_run.status = EvaluationRun.Status.RUNNING
     evaluation_run.started_at = evaluation_run.started_at or timezone.now()
-    evaluation_run.save(update_fields=["status", "started_at", "updated_at"])
+    evaluation_run.save(
+        update_fields=["status", "started_at", "updated_at"]
+    )
     dispatched = dispatch_available_cases(evaluation_run)
     if dispatched == 0:
         logger.info(
@@ -300,8 +524,14 @@ def _known_datasource_paths(evaluation_run):
     datasource_ids = evaluation_run.dataset.assistant.datasource_bindings.filter(uuid__in=binding_ids).values_list(
         "datasource_id", flat=True
     )
+    queryset = DataSourceItem.objects.filter(datasource_id__in=datasource_ids)
+    manifest_limit = 5000
+    if queryset.count() > manifest_limit:
+        # A truncated manifest would mark valid citations as unresolved, so skip
+        # the existence check instead of guessing.
+        return None
     keys = list(
-        DataSourceItem.objects.filter(datasource_id__in=datasource_ids).values_list("storage_key", flat=True)[:5000]
+        queryset.order_by("storage_key").values_list("storage_key", flat=True)[:manifest_limit]
     )
     return keys or None
 
@@ -316,11 +546,13 @@ def score_case_result(result):
     metric_configs = _metric_configs_from_snapshot(result.evaluation_run)
     expected = (result.evaluation_run.config_snapshot or {}).get("case_expectations", {}).get(str(result.case.uuid))
     case = SimpleNamespace(**expected) if expected is not None else result.case
+    events = load_trace_events(run)
     evaluation = evaluate_case_result(
         run,
         case,
         metric_configs,
         known_paths=_known_datasource_paths(result.evaluation_run),
+        events=events,
     )
     freeze_run_result(
         evaluation_run=result.evaluation_run,
@@ -328,6 +560,7 @@ def score_case_result(result):
         run=run,
         scores=evaluation["scores"],
         issues=evaluation["issues"],
+        trace_summary=trace_summary_from_events(events),
     )
     result.refresh_from_db()
     result.execution_metrics = evaluation["execution_metrics"]
@@ -380,12 +613,62 @@ def _finalize_stale_results(evaluation_run):
     return finalized
 
 
+def finalize_evaluation_results_for_retention(run_ids):
+    """Score unscored case results before retention deletes their source Runs."""
+
+    if not run_ids:
+        return 0
+    results = (
+        EvaluationResult.objects.filter(source_run_id__in=run_ids, scores={})
+        .select_related(
+            "case",
+            "source_run__output_message",
+            "evaluation_run__dataset__assistant",
+        )
+    )
+    scored = 0
+    for result in results:
+        if result.source_run is None:
+            continue
+        frozen = {
+            "output_snapshot": result.output_snapshot,
+            "citations_snapshot": result.citations_snapshot,
+            "trace_summary": result.trace_summary,
+        }
+        try:
+            score_case_result(result)
+        except Exception:
+            logger.exception(
+                "evaluation %s case %s: pre-retention scoring failed",
+                result.evaluation_run_id,
+                result.case_id,
+            )
+            continue
+        result.refresh_from_db()
+        restore = []
+        for field, value in frozen.items():
+            if value and getattr(result, field) != value:
+                setattr(result, field, value)
+                restore.append(field)
+        if restore:
+            result.save(update_fields=[*restore, "updated_at"])
+        scored += 1
+    freeze_evaluation_results_for_runs(run_ids)
+    return scored
+
+
+def _is_settled_result(result):
+    """Return True when a case result finished or permanently failed."""
+
+    return bool(result.scores) or (result.dispatch_attempts or 0) >= MAX_DISPATCH_ATTEMPTS
+
+
 def _aggregate(evaluation_run):
     """Aggregate scored results into the batch counters and coverage."""
 
     results = list(evaluation_run.results.select_related("case").order_by("created_at", "uuid"))
     summary = aggregate_results(results, _metric_configs_from_snapshot(evaluation_run))
-    completed = sum(1 for result in results if result.scores)
+    completed = sum(1 for result in results if _is_settled_result(result))
     evaluation_run.completed_cases = completed
     evaluation_run.passed_cases = summary["passed_cases"]
     evaluation_run.failed_cases = summary["failed_cases"]
@@ -416,11 +699,13 @@ def advance_evaluation_run(evaluation_run_uuid):
         EvaluationRun.Status.RUNNING,
     }:
         return evaluation_run
-    if evaluation_run.status == EvaluationRun.Status.QUEUED and not evaluation_run.results.exists():
+    if evaluation_run.status == EvaluationRun.Status.QUEUED:
         return start_evaluation_run(evaluation_run_uuid)
     _finalize_stale_results(evaluation_run)
     dispatch_available_cases(evaluation_run)
-    pending = evaluation_run.results.filter(source_run__isnull=True).count()
+    if _expire_unserviceable_batch(evaluation_run):
+        return evaluation_run
+    pending = _pending_results(evaluation_run).count()
     active = evaluation_run.results.filter(
         source_run__status__in=[
             Run.Status.QUEUED,
@@ -445,27 +730,40 @@ def advance_evaluation_run(evaluation_run_uuid):
 
 
 def _cancel_active_runs(evaluation_run, reason):
-    """Cancel in-flight case Runs and freeze their current state."""
+    """Cancel in-flight case Runs without overwriting a Run that just finished."""
 
+    active_statuses = [
+        Run.Status.QUEUED,
+        Run.Status.RUNNING,
+        Run.Status.STREAMING,
+    ]
     active = evaluation_run.results.filter(
-        source_run__status__in=[
-            Run.Status.QUEUED,
-            Run.Status.RUNNING,
-            Run.Status.STREAMING,
-        ]
+        source_run__status__in=active_statuses
     ).select_related("source_run")
     now = timezone.now()
     cancelled = []
     for result in active:
         run = result.source_run
-        run.status = Run.Status.CANCELLED
-        run.error = reason
-        run.finished_at = now
-        run.save(update_fields=["status", "error", "finished_at", "updated_at"])
-        if hasattr(run, "execution"):
-            run.execution.status = RunExecution.Status.CANCELLED
-            run.execution.finished_at = now
-            run.execution.save(update_fields=["status", "finished_at"])
+        updated = Run.objects.filter(
+            pk=run.pk,
+            status__in=active_statuses,
+        ).update(
+            status=Run.Status.CANCELLED,
+            error=reason,
+            finished_at=now,
+            updated_at=now,
+        )
+        if not updated:
+            continue
+        RunExecution.objects.filter(
+            run=run,
+            status__in=[
+                RunExecution.Status.QUEUED,
+                RunExecution.Status.DISPATCHED,
+                RunExecution.Status.RUNNING,
+            ],
+        ).update(status=RunExecution.Status.CANCELLED, finished_at=now)
+        run.refresh_from_db()
         cancelled.append(run)
     return cancelled
 
@@ -506,9 +804,20 @@ def retry_failed_cases(evaluation_run_uuid):
     }:
         raise ValueError("EVALUATION_RUN_ACTIVE")
     retried = 0
-    for result in evaluation_run.results.exclude(passed=True).exclude(source_run__isnull=True):
+    retryable = evaluation_run.results.exclude(passed=True)
+    if evaluation_run.status == EvaluationRun.Status.COMPLETED:
+        retryable = retryable.exclude(
+            source_run__isnull=True,
+            source_run_uuid__isnull=True,
+            dispatch_attempts=0,
+        )
+    snapshot = dict(evaluation_run.config_snapshot or {})
+    retry_keys = dict(snapshot.get("case_retry_keys") or {})
+    for result in retryable:
+        retry_keys[str(result.case_id)] = str(uuid.uuid4())
         result.source_run = None
         result.source_run_uuid = None
+        result.dispatch_attempts = 0
         result.scores = {}
         result.passed = None
         result.issues = []
@@ -521,6 +830,7 @@ def retry_failed_cases(evaluation_run_uuid):
             update_fields=[
                 "source_run",
                 "source_run_uuid",
+                "dispatch_attempts",
                 "scores",
                 "passed",
                 "issues",
@@ -534,35 +844,94 @@ def retry_failed_cases(evaluation_run_uuid):
         )
         retried += 1
     if retried:
+        snapshot["case_retry_keys"] = retry_keys
+        snapshot.pop("waiting", None)
+        evaluation_run.config_snapshot = snapshot
         evaluation_run.status = EvaluationRun.Status.QUEUED
         evaluation_run.finished_at = None
         evaluation_run.error = ""
-        evaluation_run.save(update_fields=["status", "finished_at", "error", "updated_at"])
+        evaluation_run.save(update_fields=["config_snapshot", "status", "finished_at", "error", "updated_at"])
     return retried
 
 
+def _reenqueue_stuck_case_runs(evaluation_run, *, stale_seconds=QUEUED_REENQUEUE_SECONDS):
+    """Re-publish Celery work for queued case Runs whose message was lost."""
+
+    cutoff = timezone.now() - timedelta(seconds=stale_seconds)
+    stuck = (
+        evaluation_run.results.filter(
+            source_run__status=Run.Status.QUEUED,
+            source_run__created_at__lt=cutoff,
+            source_run__execution__status=RunExecution.Status.QUEUED,
+            source_run__execution__dispatch_id__isnull=True,
+        )
+        .select_related("source_run")
+    )
+    reenqueued = 0
+    for result in stuck:
+        run = result.source_run
+        if run is None:
+            continue
+        try:
+            _enqueue_run(run)
+        except Exception:
+            logger.exception(
+                "evaluation %s: failed to re-enqueue run %s",
+                evaluation_run.uuid,
+                run.uuid,
+            )
+            continue
+        reenqueued += 1
+    if reenqueued:
+        logger.info(
+            "evaluation %s: re-enqueued %d queued case runs",
+            evaluation_run.uuid,
+            reenqueued,
+        )
+    return reenqueued
+
+
 def reconcile_evaluation_runs():
-    """Advance queued or stale batches from a periodic worker task."""
+    """Advance queued or stale batches and recover lost case dispatches."""
 
     advanced = 0
+    reenqueued = 0
     batch_ids = EvaluationRun.objects.filter(
         status__in=[EvaluationRun.Status.QUEUED, EvaluationRun.Status.RUNNING]
     ).values_list("uuid", flat=True)
     for batch_id in list(batch_ids):
         try:
-            advance_evaluation_run(batch_id)
+            evaluation_run = advance_evaluation_run(batch_id)
         except Exception:
             logger.exception("evaluation %s: reconcile failed", batch_id)
             continue
         advanced += 1
+        if evaluation_run.status in {
+            EvaluationRun.Status.QUEUED,
+            EvaluationRun.Status.RUNNING,
+        }:
+            try:
+                reenqueued += _reenqueue_stuck_case_runs(evaluation_run)
+            except Exception:
+                logger.exception(
+                    "evaluation %s: re-enqueue sweep failed",
+                    batch_id,
+                )
+    if reenqueued:
+        logger.info("evaluation reconcile: re-enqueued %d runs", reenqueued)
     return advanced
 
 
 def build_report(evaluation_run):
     """Return the live report payload for one batch."""
 
-    results = list(evaluation_run.results.select_related("case").order_by("created_at", "uuid"))
+    results = list(
+        evaluation_run.results.select_related("case")
+        .prefetch_related("calibrations")
+        .order_by("created_at", "uuid")
+    )
     summary = aggregate_results(results, _metric_configs_from_snapshot(evaluation_run))
+    calibration = summarize_calibration(results)
     clusters = {}
     for result in results:
         for issue in result.issues or []:
@@ -578,24 +947,37 @@ def build_report(evaluation_run):
                     "input": (result.case.input or "")[:160],
                 }
             )
+    snapshot = evaluation_run.config_snapshot or {}
     return {
         "evaluation_run": {
             "uuid": str(evaluation_run.uuid),
             "status": evaluation_run.status,
             "dataset": {
                 "uuid": str(evaluation_run.dataset.uuid),
-                "name": evaluation_run.dataset.name,
-                "version": evaluation_run.dataset.version,
+                "name": snapshot.get("dataset", {}).get("name", evaluation_run.dataset.name),
+                "version": snapshot.get("dataset", {}).get("version", evaluation_run.dataset.version),
+                "revision": snapshot.get("dataset", {}).get("revision"),
             },
             "created_at": evaluation_run.created_at,
             "started_at": evaluation_run.started_at,
             "finished_at": evaluation_run.finished_at,
             "error": evaluation_run.error,
-            "config_snapshot": evaluation_run.config_snapshot,
+            "config_snapshot": snapshot,
+        },
+        "calibration": calibration,
+        "provenance": {
+            "platform_version": snapshot.get("platform_version", ""),
+            "scoring_version": snapshot.get("scoring_version", ""),
+            "lensnode": {
+                "uuid": snapshot.get("lensnode_uuid") or "",
+                "pool": snapshot.get("lensnode_pool") or "",
+                "agent_version": snapshot.get("lensnode_agent_version") or "",
+            },
+            "waiting": snapshot.get("waiting") or {},
         },
         "summary": {
             "total_cases": len(results),
-            "completed_cases": sum(1 for result in results if result.scores),
+            "completed_cases": sum(1 for result in results if _is_settled_result(result)),
             "passed_cases": summary["passed_cases"],
             "failed_cases": summary["failed_cases"],
             "inconclusive_cases": summary["inconclusive_cases"],
@@ -608,13 +990,11 @@ def build_report(evaluation_run):
 
 
 def assistant_can_run_evaluation(assistant):
-    """Return whether an assistant can host evaluation runs."""
+    """Return whether an assistant has any online node it can evaluate on."""
 
     if assistant is None:
         return False
-    if assistant.lensnode_id:
-        return assistant.lensnode.pool == LensNode.Pool.EVALUATION
-    return select_evaluation_lensnode() is not None
+    return bool(evaluation_candidate_nodes(assistant))
 
 
 __all__ = [
@@ -626,6 +1006,7 @@ __all__ = [
     "create_evaluation_run",
     "ensure_case_run",
     "finalize_case_result",
+    "finalize_evaluation_results_for_retention",
     "reconcile_evaluation_runs",
     "retry_failed_cases",
     "start_evaluation_run",

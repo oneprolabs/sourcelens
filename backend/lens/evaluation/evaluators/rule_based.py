@@ -4,19 +4,32 @@ DEFAULT_LATENCY_BUDGET_SECONDS = 600.0
 
 
 def tool_success_metric(summary):
-    """Return the share of tool calls that completed without error."""
+    """Return the share of started tool calls that completed without error.
 
+    ``tool_started`` is the denominator so calls that never reported a terminal
+    event (run cancelled or trace truncated) count as failures instead of
+    disappearing from the ratio.
+    """
+
+    started = int(summary.get("tool_started") or 0)
     completed = int(summary.get("tools_completed") or 0)
     failed = int(summary.get("tools_failed") or 0)
-    total = completed + failed
+    total = max(started, completed + failed)
     if total == 0:
         return {
             "score": None,
-            "detail": {"reason": "no_tool_calls", "completed": 0, "failed": 0},
+            "detail": {"reason": "no_tool_calls", "completed": 0, "failed": 0, "started": 0},
         }
+    unfinished = max(total - completed - failed, 0)
     return {
         "score": round(completed / total, 4),
-        "detail": {"completed": completed, "failed": failed, "total": total},
+        "detail": {
+            "started": started,
+            "completed": completed,
+            "failed": failed,
+            "unfinished": unfinished,
+            "total": total,
+        },
     }
 
 

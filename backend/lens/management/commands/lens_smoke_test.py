@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.urls import reverse
 
 EXPECTED_MODELS = {
+    "AlertDiagnosis",
     "AlertRule",
     "AlertEvent",
     "AlertOutbox",
@@ -25,6 +26,13 @@ EXPECTED_MODELS = {
     "DataSourceItem",
     "DataSourceVersion",
     "EnvironmentVariableSet",
+    "EvaluationCase",
+    "EvaluationCalibration",
+    "EvaluationDataset",
+    "EvaluationDatasetRevision",
+    "EvaluationMetric",
+    "EvaluationResult",
+    "EvaluationRun",
     "ExecutionSnapshot",
     "GlobalSetting",
     "MCPServer",

@@ -47,6 +47,9 @@ LENS_PLUGIN_ROOTS = list(dict.fromkeys([
     *_extra_plugin_roots,
 ]))
 
+# Release version stamped into the backend image by the build pipeline.
+APP_VERSION = os.getenv("APP_VERSION", "")
+
 # Environment variables are loaded via docker-compose env_file configuration
 # All settings use os.getenv() to read from environment variables
 

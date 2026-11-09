@@ -4358,9 +4358,9 @@ def run_retention_task():
         )
         snapshot_ids = run_snapshot_ids + datasource_snapshot_ids
         with transaction.atomic():
-            from .evaluation.snapshots import freeze_evaluation_results_for_runs
+            from .evaluation.engine.batch import finalize_evaluation_results_for_retention
 
-            freeze_evaluation_results_for_runs(run_ids)
+            finalize_evaluation_results_for_retention(run_ids)
             if snapshot_ids:
                 CredentialLease.objects.filter(
                     snapshot_id__in=snapshot_ids

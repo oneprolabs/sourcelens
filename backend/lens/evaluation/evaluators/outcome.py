@@ -11,6 +11,11 @@ _EXECUTION_FAILURE_REASONS = {
     "timeout",
 }
 
+_FAILED_STATUS_REASONS = {
+    Run.Status.FAILED: "run_failed",
+    Run.Status.CANCELLED: "run_cancelled",
+}
+
 
 def _trace_events(run) -> list:
     """Return trace events without requiring callers to know the storage shape."""
@@ -30,13 +35,30 @@ def _latest_route(events: Iterable) -> dict:
     return routes[-1] if routes else {}
 
 
-def derive_run_quality(run) -> dict:
+def derive_run_quality(run, events=None) -> dict:
     """Derive a quality verdict without treating ``Run.outcome`` as ground truth.
+
+    Execution-level failure is a failure, never an inconclusive result: a batch
+    whose runs all failed must not report zero failed cases. ``AWAITING_USER_INPUT``
+    stays inconclusive because the run never produced a judgeable answer.
 
     ``evidence_unavailable`` is inconclusive when the selected route explicitly
     required no evidence. This preserves valid direct answers whose execution
     layer reports a partial outcome because a route invariant was applied.
     """
+
+    failed_reason = _FAILED_STATUS_REASONS.get(run.status)
+    if failed_reason:
+        termination = run.termination_detail or {}
+        reason = str(termination.get("reason") or "") or failed_reason
+        return {"passed": False, "status": "failed", "reason": reason}
+
+    if run.status == Run.Status.AWAITING_USER_INPUT:
+        return {
+            "passed": None,
+            "status": "inconclusive",
+            "reason": "awaiting_user_input",
+        }
 
     if run.status != Run.Status.DONE:
         return {
@@ -45,7 +67,7 @@ def derive_run_quality(run) -> dict:
             "reason": "run_not_done",
         }
 
-    events = _trace_events(run)
+    events = _trace_events(run) if events is None else list(events)
     termination = run.termination_detail or {}
     reason = str(termination.get("reason") or "")
     if reason in _EXECUTION_FAILURE_REASONS:

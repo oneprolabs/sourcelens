@@ -132,3 +132,35 @@ export async function listEvaluationMetrics() {
   const response = await api.get('/lens/admin/evaluation/metrics/')
   return unwrapResponse(response)
 }
+
+export async function createEvaluationBaseline(datasetUuid, runUuid) {
+  const response = await api.post(
+    `/lens/admin/evaluation/datasets/${datasetUuid}/baseline/`,
+    { run_uuid: runUuid }
+  )
+  return unwrapResponse(response)
+}
+
+export async function getEvaluationRevisions(datasetUuid, revision = null) {
+  const response = await api.get(`/lens/admin/evaluation/datasets/${datasetUuid}/revisions/`, {
+    params: revision ? { revision } : {}
+  })
+  return unwrapResponse(response)
+}
+
+export async function compareEvaluationRuns(runUuid, otherUuid) {
+  const response = await api.get(`/lens/admin/evaluation/runs/${runUuid}/compare/`, {
+    params: { other: otherUuid }
+  })
+  return unwrapResponse(response)
+}
+
+export async function getEvaluationCalibrations(runUuid, resultUuid) {
+  const response = await api.get(`/lens/admin/evaluation/runs/${runUuid}/results/${resultUuid}/calibrations/`)
+  return unwrapResponse(response)
+}
+
+export async function createEvaluationCalibration(runUuid, resultUuid, payload) {
+  const response = await api.post(`/lens/admin/evaluation/runs/${runUuid}/results/${resultUuid}/calibrations/`, payload)
+  return unwrapResponse(response)
+}

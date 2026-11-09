@@ -1,5 +1,7 @@
 """Metric configuration, per-case scoring and batch aggregation."""
 
+from django.conf import settings
+
 from lens.evaluation.evaluators import derive_run_quality
 from lens.evaluation.evaluators.citation import citation_integrity_metric
 from lens.evaluation.evaluators.groundedness import groundedness_metric
@@ -9,6 +11,7 @@ from lens.evaluation.evaluators.rule_based import (
     tool_success_metric,
 )
 from lens.evaluation.evaluators.trace import load_trace_events, summarize_trace
+from lens.models import Run
 
 DEFAULT_METRICS = (
     {
@@ -55,6 +58,15 @@ DEFAULT_METRICS = (
 
 _INFORMATIONAL_TYPES = {"outcome"}
 
+# An aggregate score is suppressed unless at least this share of
+# (case x metric) cells produced a score. A batch that only measured two of five
+# dimensions on a handful of cases must not surface a confident-looking number.
+MIN_AGGREGATE_CASE_COVERAGE = 0.5
+
+# Bump when deterministic scoring semantics change so historical results stay
+# interpretable after an upgrade.
+EVALUATION_SCORING_VERSION = "3"
+
 
 def _metric_row_to_config(row):
     """Return a plain metric configuration from a persisted metric row."""
@@ -69,13 +81,46 @@ def _metric_row_to_config(row):
     }
 
 
-def resolve_metric_configs(metric_rows=None):
-    """Return enabled metric configs, falling back to the built-in set."""
+def ensure_default_metrics():
+    """Materialize every missing built-in metric row.
 
-    rows = [row for row in (metric_rows or []) if getattr(row, "enabled", True)]
+    The migration seeds these rows for existing deployments; this guard also
+    keeps the catalog complete after a database reset or a test-database flush.
+    Built-in metrics are disabled (never deleted) when an operator retires one.
+    """
+
+    from django.db import IntegrityError
+
+    from lens.models import EvaluationMetric
+
+    for item in DEFAULT_METRICS:
+        try:
+            EvaluationMetric.objects.get_or_create(
+                name=item["name"],
+                defaults={
+                    "category": item["category"],
+                    "evaluator_type": item["evaluator_type"],
+                    "weight": item["weight"],
+                    "threshold": item["threshold"],
+                    "config": dict(item["config"]),
+                    "enabled": True,
+                },
+            )
+        except IntegrityError:
+            return
+
+
+def resolve_metric_configs(metric_rows=None):
+    """Return enabled metric configs, falling back only on an empty catalog.
+
+    Existing rows win even when every one is disabled: an operator must be able
+    to turn metrics off without the built-in set silently coming back.
+    """
+
+    rows = list(metric_rows or [])
     if not rows:
         return [dict(item) for item in DEFAULT_METRICS]
-    return [_metric_row_to_config(row) for row in rows]
+    return [_metric_row_to_config(row) for row in rows if getattr(row, "enabled", True)]
 
 
 def metrics_snapshot(metric_configs):
@@ -102,12 +147,12 @@ def _run_duration_seconds(run):
     return max((run.finished_at - run.started_at).total_seconds(), 0.0)
 
 
-def _evaluate_metric(metric, *, run, case, summary, known_paths):
+def _evaluate_metric(metric, *, run, case, summary, known_paths, events):
     """Dispatch one metric to its deterministic evaluator."""
 
     evaluator_type = metric.get("evaluator_type")
     if evaluator_type == "outcome":
-        return execution_metric(derive_run_quality(run))
+        return execution_metric(derive_run_quality(run, events=events))
     if evaluator_type == "tool_success":
         return tool_success_metric(summary)
     if evaluator_type == "citation_integrity":
@@ -140,14 +185,33 @@ def _metric_passed(metric, outcome):
     return float(score) >= float(threshold)
 
 
-def evaluate_case_result(run, case, metric_configs, *, known_paths=None):
+def _run_provenance(run):
+    """Return the code versions that produced one evaluated case Run."""
+
+    execution = getattr(run, "execution", None)
+    runtime_snapshot = (execution.runtime_snapshot if execution else {}) or {}
+    lensnode_version = runtime_snapshot.get("lensnode_agent_version") or ""
+    if not lensnode_version:
+        lensnode = getattr(run, "lensnode", None)
+        if lensnode is not None:
+            lensnode_version = lensnode.agent_version or ""
+    return {
+        "platform_version": getattr(settings, "APP_VERSION", "") or "",
+        "lensnode_agent_version": lensnode_version,
+        "scoring_version": EVALUATION_SCORING_VERSION,
+    }
+
+
+def evaluate_case_result(run, case, metric_configs, *, known_paths=None, events=None):
     """Return scores, pass verdict and issues for one executed case.
 
     The execution metrics stay separate from the weighted scores so token and
     latency evidence remains visible even when a dimension is not scored.
+    Callers may pass already-loaded ``events`` so scoring and snapshotting share
+    one trace read.
     """
 
-    events = load_trace_events(run)
+    events = load_trace_events(run) if events is None else list(events)
     summary = summarize_trace(events)
     scores = {}
     issues = []
@@ -160,6 +224,7 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None):
             case=case,
             summary=summary,
             known_paths=known_paths,
+            events=events,
         )
         passed = _metric_passed(metric, outcome)
         scores[name] = {
@@ -183,18 +248,54 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None):
     expected_answer = (getattr(case, "expected_answer", "") or "").strip()
     expected_facts = getattr(case, "expected_facts", None) or []
     output = (run.output_message.content if run.output_message_id else "") or ""
-    checks = []
-    if expected_answer:
-        checks.append(output.strip().casefold() == expected_answer.casefold())
-    checks.extend(str(fact).strip().casefold() in output.casefold() for fact in expected_facts if str(fact).strip())
-    correctness = all(checks) if checks else None
-    scores["answer_correctness"] = {"score": None if correctness is None else float(correctness),
-        "passed": correctness, "weight": 0, "threshold": 1.0, "category": "correctness", "detail": {}}
+    mode = getattr(case, "answer_match_mode", None)
+    if mode is None:
+        config = getattr(case, "config", None) or {}
+        mode = config.get("answer_match_mode") if isinstance(config, dict) else None
+    if mode == "exact" and expected_answer:
+        answer_matches = output.strip().casefold() == expected_answer.casefold()
+        if answer_matches and expected_facts:
+            correctness = None
+            detail = {"reason": "facts_require_semantic_review", "method": "exact"}
+        else:
+            correctness = answer_matches
+            detail = {"method": "exact"}
+    else:
+        correctness = None
+        if expected_facts:
+            reason = "facts_require_semantic_review"
+        elif expected_answer:
+            reason = "reference_requires_semantic_review"
+        else:
+            reason = "no_reference"
+        detail = {"reason": reason}
+    scores["answer_correctness"] = {
+        "score": None if correctness is None else float(correctness),
+        "passed": correctness,
+        "weight": 0,
+        "threshold": 1.0,
+        "category": "correctness",
+        "detail": detail,
+    }
     if correctness is False:
-        issues.append({"metric": "answer_correctness", "code": "answer_correctness_below_threshold", "detail": {}})
-    failed = correctness is False or any(passed is False for _name, passed in verdicts)
+        issues.append(
+            {
+                "metric": "answer_correctness",
+                "code": "answer_correctness_below_threshold",
+                "detail": {},
+            }
+        )
+    failed = (
+        run.status in {Run.Status.FAILED, Run.Status.CANCELLED}
+        or correctness is False
+        or any(passed is False for _name, passed in verdicts)
+    )
     outcome_passed = next(
-        (passed for metric, (_name, passed) in zip(metric_configs, verdicts) if metric.get("evaluator_type") == "outcome"),
+        (
+            passed
+            for metric, (_name, passed) in zip(metric_configs, verdicts)
+            if metric.get("evaluator_type") == "outcome"
+        ),
         None,
     )
     if failed:
@@ -220,6 +321,7 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None):
         "ttft_ms_avg": summary["ttft_ms_avg"],
         "model_duration_ms": summary["model_duration_ms"],
         "trace_events": len(events),
+        **_run_provenance(run),
     }
     return {
         "scores": scores,
@@ -285,21 +387,36 @@ def aggregate_results(results, metric_configs):
 
     total_cases = len(results)
     scored_metrics = sum(1 for bucket in per_metric.values() if bucket["scored"])
+    total_cells = total_cases * len(per_metric)
+    scored_cells = sum(bucket["scored"] for bucket in per_metric.values())
+    case_ratio = round(scored_cells / total_cells, 4) if total_cells else 0.0
     coverage = {
         "total_cases": total_cases,
         "scored_metrics": scored_metrics,
         "expected_metrics": len(per_metric),
         "ratio": round(scored_metrics / len(per_metric), 4) if per_metric else 0.0,
+        "scored_cells": scored_cells,
+        "total_cells": total_cells,
+        "case_ratio": case_ratio,
+        "aggregate_min_case_ratio": MIN_AGGREGATE_CASE_COVERAGE,
         "per_metric": {
             name: {
                 "scored_cases": bucket["scored"],
                 "total_cases": total_cases,
+                "coverage_ratio": round(bucket["scored"] / total_cases, 4) if total_cases else 0.0,
                 "mean_score": bucket["mean_score"],
             }
             for name, bucket in per_metric.items()
         },
     }
-    aggregate_score = round(weighted_sum / weight_total, 4) if weight_total > 0 else None
+    aggregate_score = None
+    aggregate_suppressed = None
+    if weight_total > 0:
+        if case_ratio >= MIN_AGGREGATE_CASE_COVERAGE:
+            aggregate_score = round(weighted_sum / weight_total, 4)
+        else:
+            aggregate_suppressed = "insufficient_case_coverage"
+    coverage["aggregate_suppressed"] = aggregate_suppressed
     return {
         "aggregate_score": aggregate_score,
         "coverage": coverage,

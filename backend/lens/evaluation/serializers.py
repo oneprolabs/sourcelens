@@ -87,6 +87,7 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             "uuid",
+            "version",
             "created_by",
             "created_by_email",
             "case_count",
@@ -112,18 +113,17 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
         return obj.cases.count()
 
     def create(self, validated_data):
-        """Create the next version when the caller omits one."""
+        """Create the next version of a named dataset."""
 
-        if "version" not in self.initial_data:
-            assistant = validated_data["assistant"]
-            name = validated_data["name"]
-            latest = (
-                EvaluationDataset.objects.filter(assistant=assistant, name=name)
-                .order_by("-version")
-                .values_list("version", flat=True)
-                .first()
-            )
-            validated_data["version"] = (latest or 0) + 1
+        assistant = validated_data["assistant"]
+        name = validated_data["name"]
+        latest = (
+            EvaluationDataset.objects.filter(assistant=assistant, name=name)
+            .order_by("-version")
+            .values_list("version", flat=True)
+            .first()
+        )
+        validated_data["version"] = (latest or 0) + 1
         return super().create(validated_data)
 
 
@@ -170,7 +170,7 @@ class EvaluationResultListSerializer(serializers.ModelSerializer):
     """One case result without the full frozen trace payload."""
 
     case_uuid = serializers.UUIDField(source="case.uuid", read_only=True)
-    case_input = serializers.CharField(source="case.input", read_only=True)
+    case_input = serializers.SerializerMethodField()
     source_run = serializers.UUIDField(source="source_run_uuid", read_only=True)
     output_excerpt = serializers.SerializerMethodField()
 
@@ -191,6 +191,12 @@ class EvaluationResultListSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
+    def get_case_input(self, obj):
+        """Show the input captured for the batch, with a legacy fallback."""
+
+        expectations = (obj.evaluation_run.config_snapshot or {}).get("case_expectations", {})
+        return (expectations.get(str(obj.case_id)) or {}).get("input", obj.case.input)
+
     def get_output_excerpt(self, obj):
         """Return a bounded excerpt so list payloads stay small."""
 
@@ -200,12 +206,21 @@ class EvaluationResultListSerializer(serializers.ModelSerializer):
 class EvaluationResultDetailSerializer(EvaluationResultListSerializer):
     """One case result with the full frozen snapshot and trace summary."""
 
+    baseline = serializers.SerializerMethodField()
+
+    def get_baseline(self, obj):
+        """Return the baseline frozen when this evaluation batch was created."""
+
+        expectations = (obj.evaluation_run.config_snapshot or {}).get("case_expectations", {})
+        return (expectations.get(str(obj.case_id)) or {}).get("baseline")
+
     class Meta(EvaluationResultListSerializer.Meta):
         fields = EvaluationResultListSerializer.Meta.fields + (
             "output_snapshot",
             "citations_snapshot",
             "trace_summary",
             "judge_evidence",
+            "baseline",
         )
 
 

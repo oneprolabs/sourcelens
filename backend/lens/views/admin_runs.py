@@ -19,14 +19,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.access import get_effective_feature_keys
-from accounts.permissions import HasRequiredFeature
+from accounts.permissions import HasRequiredFeature, HasRunEvaluationsAccess
 from lens.attachments import get_session_image_attachments
 from lens.citations import public_run_citations
 from lens.document_attachments import (
     document_attachment_response,
     get_run_document_attachments,
 )
-from lens.models import LensNode, Run, RunExecution, RunTraceEvent
+from lens.models import EvaluationResult, LensNode, Run, RunExecution, RunTraceEvent, user_sees_all_assistants
 from lens.runtime_events import (
     sanitize_loaded_mcps,
     sanitize_loaded_skills,
@@ -534,6 +534,7 @@ def _admin_run_row(run):
     )
     return {
         "uuid": str(run.uuid),
+        "source": run.source,
         "status": run.status,
         "executor_status": execution.status if execution else run.status,
         "outcome": run.outcome,
@@ -1111,6 +1112,9 @@ class AdminRunListView(APIView):
             .prefetch_related("steps")
             .order_by("-created_at")
         )
+        source = (params.get("source") or "").strip()
+        if source in Run.Source.values:
+            qs = qs.filter(source=source)
         username = (params.get("username") or "").strip()
         if username:
             qs = qs.filter(session__user__username__icontains=username)
@@ -1303,7 +1307,17 @@ class AdminRunDetailView(APIView):
                 {"detail": "Run not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(_admin_run_detail(run))
+        detail = _admin_run_detail(run)
+        evaluation_run_uuid = None
+        if run.source == Run.Source.EVALUATION and HasRunEvaluationsAccess().has_permission(request, self):
+            results = EvaluationResult.objects.filter(source_run=run)
+            if not user_sees_all_assistants(request.user):
+                results = results.filter(evaluation_run__requested_by=request.user)
+            evaluation_run_uuid = results.order_by("created_at", "uuid").values_list(
+                "evaluation_run_id", flat=True
+            ).first()
+        detail["evaluation_run_uuid"] = str(evaluation_run_uuid) if evaluation_run_uuid else None
+        return Response(detail)
 
 
 def _admin_run_for_action(run_uuid, *, lock=False):

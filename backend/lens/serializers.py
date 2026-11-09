@@ -4118,6 +4118,9 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
                     {"value": f"{model_ref_keys[key]} must be a string or empty"}
                 )
 
+        if key == "evaluation.execution_pool" and value not in ("default", "evaluation"):
+            raise serializers.ValidationError({"value": "must be default or evaluation"})
+
         if key == "lens.history_budget":
             if not isinstance(value, dict):
                 raise serializers.ValidationError({"value": "must be a JSON object"})
