@@ -15,26 +15,18 @@ from lens.models import Run
 
 DEFAULT_METRICS = (
     {
-        "name": "execution_success",
+        "name": "answer_correctness",
         "category": "correctness",
-        "evaluator_type": "outcome",
-        "weight": 0.35,
+        "evaluator_type": "answer_correctness",
+        "weight": 0.4,
         "threshold": 1.0,
-        "config": {},
-    },
-    {
-        "name": "tool_success_rate",
-        "category": "reliability",
-        "evaluator_type": "tool_success",
-        "weight": 0.2,
-        "threshold": 0.9,
         "config": {},
     },
     {
         "name": "citation_integrity",
         "category": "groundedness",
         "evaluator_type": "citation_integrity",
-        "weight": 0.2,
+        "weight": 0.15,
         "threshold": 0.8,
         "config": {},
     },
@@ -42,15 +34,31 @@ DEFAULT_METRICS = (
         "name": "evidence_verified",
         "category": "groundedness",
         "evaluator_type": "groundedness",
+        "weight": 0.1,
+        "threshold": 1.0,
+        "config": {},
+    },
+    {
+        "name": "execution_success",
+        "category": "reliability",
+        "evaluator_type": "outcome",
         "weight": 0.15,
         "threshold": 1.0,
+        "config": {},
+    },
+    {
+        "name": "tool_success_rate",
+        "category": "reliability",
+        "evaluator_type": "tool_success",
+        "weight": 0.15,
+        "threshold": 0.9,
         "config": {},
     },
     {
         "name": "latency_budget",
         "category": "efficiency",
         "evaluator_type": "latency",
-        "weight": 0.1,
+        "weight": 0.05,
         "threshold": 0.5,
         "config": {"budget_seconds": 600},
     },
@@ -58,14 +66,24 @@ DEFAULT_METRICS = (
 
 _INFORMATIONAL_TYPES = {"outcome"}
 
+# Metric categories are split into two scores that are never mixed: evidence
+# about the answer itself, and evidence about how the run executed.
+QUALITY_CATEGORIES = {"correctness", "groundedness"}
+HEALTH_CATEGORIES = {"reliability", "efficiency"}
+
 # An aggregate score is suppressed unless at least this share of
 # (case x metric) cells produced a score. A batch that only measured two of five
 # dimensions on a handful of cases must not surface a confident-looking number.
 MIN_AGGREGATE_CASE_COVERAGE = 0.5
 
+# The quality score needs answer-correctness coverage: a batch without
+# references or a Judge must not report a "quality" number built only from
+# execution health.
+MIN_QUALITY_CASE_COVERAGE = 0.5
+
 # Bump when deterministic scoring semantics change so historical results stay
 # interpretable after an upgrade.
-EVALUATION_SCORING_VERSION = "3"
+EVALUATION_SCORING_VERSION = "4"
 
 
 def _metric_row_to_config(row):
@@ -202,6 +220,45 @@ def _run_provenance(run):
     }
 
 
+def answer_correctness_metric(run, case):
+    """Return the deterministic correctness verdict for one case answer.
+
+    Exact matching is the only deterministic signal. Every other shape stays
+    inconclusive so the Judge or a human reviewer decides it later instead of
+    the scorer inventing a verdict.
+    """
+
+    expected_answer = (getattr(case, "expected_answer", "") or "").strip()
+    expected_facts = getattr(case, "expected_facts", None) or []
+    output = (run.output_message.content if run.output_message_id else "") or ""
+    mode = getattr(case, "answer_match_mode", None)
+    if mode is None:
+        config = getattr(case, "config", None) or {}
+        mode = config.get("answer_match_mode") if isinstance(config, dict) else None
+    if mode == "exact" and expected_answer:
+        answer_matches = output.strip().casefold() == expected_answer.casefold()
+        if answer_matches and expected_facts:
+            correctness = None
+            detail = {"reason": "facts_require_semantic_review", "method": "exact"}
+        else:
+            correctness = answer_matches
+            detail = {"method": "exact"}
+    else:
+        correctness = None
+        if expected_facts:
+            reason = "facts_require_semantic_review"
+        elif expected_answer:
+            reason = "reference_requires_semantic_review"
+        else:
+            reason = "no_reference"
+        detail = {"reason": reason}
+    return {
+        "score": None if correctness is None else float(correctness),
+        "passed": correctness,
+        "detail": detail,
+    }
+
+
 def evaluate_case_result(run, case, metric_configs, *, known_paths=None, events=None):
     """Return scores, pass verdict and issues for one executed case.
 
@@ -245,37 +302,19 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None, events=
                 }
             )
 
-    expected_answer = (getattr(case, "expected_answer", "") or "").strip()
-    expected_facts = getattr(case, "expected_facts", None) or []
-    output = (run.output_message.content if run.output_message_id else "") or ""
-    mode = getattr(case, "answer_match_mode", None)
-    if mode is None:
-        config = getattr(case, "config", None) or {}
-        mode = config.get("answer_match_mode") if isinstance(config, dict) else None
-    if mode == "exact" and expected_answer:
-        answer_matches = output.strip().casefold() == expected_answer.casefold()
-        if answer_matches and expected_facts:
-            correctness = None
-            detail = {"reason": "facts_require_semantic_review", "method": "exact"}
-        else:
-            correctness = answer_matches
-            detail = {"method": "exact"}
-    else:
-        correctness = None
-        if expected_facts:
-            reason = "facts_require_semantic_review"
-        elif expected_answer:
-            reason = "reference_requires_semantic_review"
-        else:
-            reason = "no_reference"
-        detail = {"reason": reason}
+    correctness_metric = next(
+        (item for item in metric_configs if item.get("name") == "answer_correctness"),
+        None,
+    )
+    correctness_outcome = answer_correctness_metric(run, case)
+    correctness = correctness_outcome["passed"]
     scores["answer_correctness"] = {
-        "score": None if correctness is None else float(correctness),
+        "score": correctness_outcome["score"],
         "passed": correctness,
-        "weight": 0,
-        "threshold": 1.0,
-        "category": "correctness",
-        "detail": detail,
+        "weight": (correctness_metric or {}).get("weight") or 0,
+        "threshold": (correctness_metric or {}).get("threshold", 1.0),
+        "category": (correctness_metric or {}).get("category", "correctness"),
+        "detail": correctness_outcome["detail"],
     }
     if correctness is False:
         issues.append(
@@ -332,18 +371,56 @@ def evaluate_case_result(run, case, metric_configs, *, known_paths=None, events=
     }
 
 
+def _apply_judge_evidence(evaluation, scores, judge_evidence):
+    """Fill the evidence metric from the Judge only when it stayed inconclusive.
+
+    Deterministic verification always wins; the Judge may only decide a gap.
+    A Judge-recorded evidence failure blocks the case from passing because an
+    unsupported answer is a quality failure even when execution succeeded.
+    """
+
+    entry = scores.get("evidence_verified")
+    if not isinstance(entry, dict) or entry.get("passed") is not None:
+        return
+    dimension = judge_evidence.get("evidence")
+    verdict = str((dimension or {}).get("verdict") or "").strip().lower()
+    if verdict not in {"pass", "fail"}:
+        return
+    passed = verdict == "pass"
+    entry["score"] = float(passed)
+    entry["passed"] = passed
+    entry["detail"] = {
+        **(entry.get("detail") or {}),
+        "method": "judge",
+        "judge_model_ref": (judge_evidence.get("model") or {}).get("model_ref") or "",
+        "rationale": (dimension or {}).get("rationale") or "",
+    }
+    if passed:
+        return
+    evaluation.setdefault("issues", []).append(
+        {
+            "metric": "evidence_verified",
+            "code": "evidence_verified_below_threshold",
+            "detail": {},
+        }
+    )
+    evaluation["passed"] = False
+
+
 def apply_judge_verdict(evaluation, judge_evidence):
-    """Fold an ``ok`` Judge answer verdict into semantic correctness.
+    """Fold an ``ok`` Judge verdict into correctness and evidence support.
 
     Deterministic evidence always wins: an exact match, a failed Run, or a
     failed metric keeps its verdict. The Judge only fills the semantic gap that
     would otherwise stay inconclusive, and a non-ok Judge payload leaves the
-    evaluation untouched.
+    evaluation untouched. An evidence failure is conclusive on its own because
+    it means the answer is not supported by its citations.
     """
 
     if not isinstance(judge_evidence, dict) or judge_evidence.get("status") != "ok":
         return evaluation
     scores = evaluation.get("scores") or {}
+    _apply_judge_evidence(evaluation, scores, judge_evidence)
     entry = scores.get("answer_correctness")
     if not isinstance(entry, dict) or entry.get("passed") is not None:
         return evaluation
@@ -375,8 +452,53 @@ def apply_judge_verdict(evaluation, judge_evidence):
     return evaluation
 
 
-def aggregate_results(results, metric_configs):
-    """Return the weighted batch score, coverage and pass distribution."""
+def metric_group(category):
+    """Return the score group of one metric category."""
+
+    if category in QUALITY_CATEGORIES:
+        return "quality"
+    if category in HEALTH_CATEGORIES:
+        return "health"
+    return ""
+
+
+def _weighted_group_score(names, per_metric):
+    """Return the weighted mean score over the scored metrics of one group."""
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for name in names:
+        bucket = per_metric.get(name)
+        if not bucket or not bucket["scored"]:
+            continue
+        weight = bucket["weight"] or 0.0
+        if weight <= 0:
+            continue
+        weighted_sum += bucket["mean_score"] * weight
+        weight_total += weight
+    if weight_total <= 0:
+        return None
+    return round(weighted_sum / weight_total, 4)
+
+
+def _group_coverage(names, per_metric, total_cases):
+    """Return how many cells of one metric group produced a score."""
+
+    if not names or not total_cases:
+        return 0.0
+    scored = sum(per_metric[name]["scored"] for name in names)
+    return round(scored / (total_cases * len(names)), 4)
+
+
+def aggregate_results(results, metric_configs, *, legacy_overall=False):
+    """Return per-metric, quality and health scores for one batch.
+
+    Quality (correctness + groundedness) and health (reliability + efficiency)
+    are separate scores and are never averaged together. ``aggregate_score`` is
+    the quality score, so a batch without references cannot look good merely
+    because it executed cleanly. Batches frozen under an older scoring version
+    keep their legacy overall score so historical reports do not change meaning.
+    """
 
     results = list(results)
     per_metric = {}
@@ -414,18 +536,11 @@ def aggregate_results(results, metric_configs):
             elif entry.get("passed") is False:
                 bucket["failed"] += 1
 
-    weighted_sum = 0.0
-    weight_total = 0.0
     for name, bucket in per_metric.items():
         if not bucket["scored"]:
             bucket["mean_score"] = None
             continue
-        mean_score = bucket["score_sum"] / bucket["scored"]
-        bucket["mean_score"] = round(mean_score, 4)
-        weight = bucket["weight"] or 0.0
-        if weight > 0:
-            weighted_sum += mean_score * weight
-            weight_total += weight
+        bucket["mean_score"] = round(bucket["score_sum"] / bucket["scored"], 4)
     for bucket in per_metric.values():
         bucket.pop("score_sum", None)
 
@@ -434,6 +549,50 @@ def aggregate_results(results, metric_configs):
     total_cells = total_cases * len(per_metric)
     scored_cells = sum(bucket["scored"] for bucket in per_metric.values())
     case_ratio = round(scored_cells / total_cells, 4) if total_cells else 0.0
+    quality_names = [
+        name for name, bucket in per_metric.items() if metric_group(bucket["category"]) == "quality"
+    ]
+    health_names = [name for name, bucket in per_metric.items() if metric_group(bucket["category"]) == "health"]
+
+    quality_score = None
+    health_score = None
+    quality_suppressed = None
+    health_suppressed = None
+    aggregate_score = None
+
+    if legacy_overall:
+        if case_ratio >= MIN_AGGREGATE_CASE_COVERAGE:
+            aggregate_score = _weighted_group_score(list(per_metric), per_metric)
+        if aggregate_score is not None:
+            quality_suppressed = "legacy_scoring_version"
+        elif case_ratio >= MIN_AGGREGATE_CASE_COVERAGE:
+            quality_suppressed = "no_scored_metrics"
+        else:
+            quality_suppressed = "insufficient_case_coverage"
+        health_suppressed = "legacy_scoring_version"
+    else:
+        correctness = per_metric.get("answer_correctness")
+        correctness_ratio = 0.0
+        if correctness and total_cases:
+            correctness_ratio = correctness["scored"] / total_cases
+        if correctness is None:
+            quality_suppressed = "correctness_metric_not_configured"
+        elif correctness_ratio < MIN_QUALITY_CASE_COVERAGE:
+            quality_suppressed = "insufficient_correctness_coverage"
+        elif case_ratio < MIN_AGGREGATE_CASE_COVERAGE:
+            quality_suppressed = "insufficient_case_coverage"
+        else:
+            quality_score = _weighted_group_score(quality_names, per_metric)
+            if quality_score is None:
+                quality_suppressed = "no_quality_scores"
+        if case_ratio < MIN_AGGREGATE_CASE_COVERAGE:
+            health_suppressed = "insufficient_case_coverage"
+        else:
+            health_score = _weighted_group_score(health_names, per_metric)
+            if health_score is None:
+                health_suppressed = "no_health_scores"
+        aggregate_score = quality_score
+
     coverage = {
         "total_cases": total_cases,
         "scored_metrics": scored_metrics,
@@ -443,6 +602,14 @@ def aggregate_results(results, metric_configs):
         "total_cells": total_cells,
         "case_ratio": case_ratio,
         "aggregate_min_case_ratio": MIN_AGGREGATE_CASE_COVERAGE,
+        "aggregate_suppressed": quality_suppressed,
+        "correctness_case_ratio": (
+            round(per_metric["answer_correctness"]["scored"] / total_cases, 4)
+            if per_metric.get("answer_correctness") and total_cases
+            else 0.0
+        ),
+        "quality_case_ratio": _group_coverage(quality_names, per_metric, total_cases),
+        "health_case_ratio": _group_coverage(health_names, per_metric, total_cases),
         "per_metric": {
             name: {
                 "scored_cases": bucket["scored"],
@@ -453,16 +620,17 @@ def aggregate_results(results, metric_configs):
             for name, bucket in per_metric.items()
         },
     }
-    aggregate_score = None
-    aggregate_suppressed = None
-    if weight_total > 0:
-        if case_ratio >= MIN_AGGREGATE_CASE_COVERAGE:
-            aggregate_score = round(weighted_sum / weight_total, 4)
-        else:
-            aggregate_suppressed = "insufficient_case_coverage"
-    coverage["aggregate_suppressed"] = aggregate_suppressed
+    conclusion = None
+    if quality_score is not None:
+        conclusion = "no_verdicts" if passed_cases + failed_cases == 0 else "ok"
     return {
         "aggregate_score": aggregate_score,
+        "quality_score": quality_score,
+        "health_score": health_score,
+        "quality_suppressed": quality_suppressed,
+        "health_suppressed": health_suppressed,
+        "quality_conclusion": conclusion,
+        "legacy_overall": legacy_overall,
         "coverage": coverage,
         "per_metric": per_metric,
         "passed_cases": passed_cases,

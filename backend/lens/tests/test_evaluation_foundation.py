@@ -11,6 +11,7 @@ from lens.models import (
     Assistant,
     EvaluationCase,
     EvaluationDataset,
+    EvaluationMetric,
     EvaluationResult,
     EvaluationRun,
     GlobalSetting,
@@ -150,3 +151,14 @@ class EvaluationFoundationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["feature"], "run_evaluations")
+
+    def test_builtin_metric_catalog_scores_answer_quality(self):
+        metrics = {metric.name: metric for metric in EvaluationMetric.objects.all()}
+
+        self.assertEqual(metrics["answer_correctness"].category, "correctness")
+        self.assertAlmostEqual(float(metrics["answer_correctness"].weight), 0.4)
+        self.assertEqual(metrics["execution_success"].category, "reliability")
+        self.assertAlmostEqual(
+            sum(float(metric.weight) for metric in metrics.values() if metric.enabled),
+            1.0,
+        )

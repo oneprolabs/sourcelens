@@ -257,6 +257,7 @@ class AggregationTests(SimpleTestCase):
             self._result(
                 True,
                 {
+                    "answer_correctness": {"score": 1.0, "passed": True},
                     "execution_success": {"score": 1.0, "passed": True},
                     "citation_integrity": {"score": 1.0, "passed": True},
                 },
@@ -264,6 +265,7 @@ class AggregationTests(SimpleTestCase):
             self._result(
                 None,
                 {
+                    "answer_correctness": {"score": None, "passed": None},
                     "execution_success": {"score": None, "passed": None},
                     "citation_integrity": {"score": 0.5, "passed": False},
                 },
@@ -275,7 +277,7 @@ class AggregationTests(SimpleTestCase):
         self.assertEqual(summary["passed_cases"], 1)
         self.assertEqual(summary["inconclusive_cases"], 1)
         self.assertIsNone(summary["aggregate_score"])
-        self.assertEqual(summary["coverage"]["case_ratio"], 0.3)
+        self.assertEqual(summary["coverage"]["case_ratio"], 0.3333)
         self.assertEqual(
             summary["coverage"]["aggregate_suppressed"],
             "insufficient_case_coverage",
@@ -291,6 +293,7 @@ class AggregationTests(SimpleTestCase):
             self._result(
                 True,
                 {
+                    "answer_correctness": {"score": 1.0, "passed": True},
                     "execution_success": {"score": 1.0, "passed": True},
                     "citation_integrity": {"score": 1.0, "passed": True},
                     "tool_success_rate": {"score": 1.0, "passed": True},
@@ -299,6 +302,7 @@ class AggregationTests(SimpleTestCase):
             self._result(
                 True,
                 {
+                    "answer_correctness": {"score": 1.0, "passed": True},
                     "execution_success": {"score": 1.0, "passed": True},
                     "citation_integrity": {"score": 0.5, "passed": False},
                     "tool_success_rate": {"score": 1.0, "passed": True},
@@ -309,12 +313,71 @@ class AggregationTests(SimpleTestCase):
         summary = aggregate_results(results, metrics_snapshot(DEFAULT_METRICS))
 
         self.assertIsNotNone(summary["aggregate_score"])
-        self.assertEqual(summary["coverage"]["scored_cells"], 6)
+        self.assertEqual(summary["coverage"]["scored_cells"], 8)
         self.assertIsNone(summary["coverage"]["aggregate_suppressed"])
         self.assertEqual(
             summary["coverage"]["per_metric"]["execution_success"]["coverage_ratio"],
             1.0,
         )
+
+    def test_quality_score_is_suppressed_without_correctness_scores(self):
+        results = [
+            self._result(
+                None,
+                {
+                    "execution_success": {"score": 1.0, "passed": True},
+                    "citation_integrity": {"score": 1.0, "passed": True},
+                    "tool_success_rate": {"score": 1.0, "passed": True},
+                },
+            )
+        ]
+
+        summary = aggregate_results(results, metrics_snapshot(DEFAULT_METRICS))
+
+        self.assertIsNone(summary["aggregate_score"])
+        self.assertIsNone(summary["quality_score"])
+        self.assertEqual(summary["quality_suppressed"], "insufficient_correctness_coverage")
+        self.assertIsNotNone(summary["health_score"])
+
+    def test_quality_score_counts_correctness_at_its_weight(self):
+        results = [
+            self._result(
+                False,
+                {
+                    "answer_correctness": {"score": 0.0, "passed": False},
+                    "citation_integrity": {"score": 1.0, "passed": True},
+                    "evidence_verified": {"score": 1.0, "passed": True},
+                    "execution_success": {"score": 1.0, "passed": True},
+                    "tool_success_rate": {"score": 1.0, "passed": True},
+                    "latency_budget": {"score": 1.0, "passed": True},
+                },
+            )
+        ]
+
+        summary = aggregate_results(results, metrics_snapshot(DEFAULT_METRICS))
+
+        self.assertEqual(summary["aggregate_score"], 0.3846)
+        self.assertEqual(summary["health_score"], 1.0)
+
+    def test_legacy_batches_keep_the_overall_score(self):
+        results = [
+            self._result(
+                True,
+                {
+                    "execution_success": {"score": 1.0, "passed": True},
+                    "citation_integrity": {"score": 1.0, "passed": True},
+                    "tool_success_rate": {"score": 1.0, "passed": True},
+                    "evidence_verified": {"score": 1.0, "passed": True},
+                    "latency_budget": {"score": 1.0, "passed": True},
+                },
+            )
+        ]
+
+        summary = aggregate_results(results, metrics_snapshot(DEFAULT_METRICS), legacy_overall=True)
+
+        self.assertEqual(summary["aggregate_score"], 1.0)
+        self.assertIsNone(summary["quality_score"])
+        self.assertEqual(summary["quality_suppressed"], "legacy_scoring_version")
 
     def test_no_scored_dimension_leaves_aggregate_empty(self):
         summary = aggregate_results(

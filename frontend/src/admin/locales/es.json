@@ -2326,6 +2326,8 @@
       "evaluationPoolDedicated": "Evaluación (dedicado)",
       "evaluationJudgeTitle": "Modelo Judge de evaluación",
       "evaluationJudgeDesc": "Modelo que juzga la corrección de la respuesta y el respaldo de evidencia. Si está vacío, la corrección semántica queda no concluyente y no se puede calcular la concordancia humana.",
+      "evaluationJudgeSecondaryTitle": "Modelo Judge de verificación cruzada",
+      "evaluationJudgeSecondaryDesc": "Segundo modelo Judge opcional. Si se define, ejecuta el mismo prompt como verificación; el veredicto principal manda y se informa la concordancia.",
       "publicSharePolicyTitle": "Política de acceso a compartir público",
       "publicSharePolicyDesc": "Política predeterminada para los enlaces de compartir de asistentes públicos: si un visitante debe iniciar sesión. Un asistente puede anularla; si no está definida, quien comparte decide.",
       "publicSharePolicyInherit": "Sin configurar (decide el asistente o quien comparte)",

@@ -146,7 +146,7 @@ class EvaluationEngineTests(TestCase):
         self.assertIn("execution_success", result.scores)
         self.assertEqual(result.scores["execution_success"]["score"], 1.0)
         self.assertEqual(result.execution_metrics["total_tokens"], 120)
-        self.assertEqual(result.execution_metrics["scoring_version"], "3")
+        self.assertEqual(result.execution_metrics["scoring_version"], "4")
         self.assertEqual(result.output_snapshot, "Answer")
         self.assertEqual(enqueue.call_count, 1)
 
@@ -185,8 +185,8 @@ class EvaluationEngineTests(TestCase):
         self.assertEqual(evaluation_run.completed_cases, 2)
         self.assertEqual(evaluation_run.passed_cases, 2)
         self.assertIsNotNone(evaluation_run.aggregate_score)
-        self.assertEqual(evaluation_run.coverage["ratio"], 0.8)
-        self.assertEqual(evaluation_run.coverage["scored_metrics"], 4)
+        self.assertEqual(evaluation_run.coverage["ratio"], 0.8333)
+        self.assertEqual(evaluation_run.coverage["scored_metrics"], 5)
 
     def test_cancel_marks_active_case_runs_cancelled(self):
         evaluation_run, _enqueue = self._start()
@@ -471,7 +471,7 @@ class EvaluationEngineTests(TestCase):
         evaluation_run.refresh_from_db()
         snapshot = evaluation_run.config_snapshot
         self.assertEqual(snapshot["platform_version"], "0.63.8")
-        self.assertEqual(snapshot["scoring_version"], "3")
+        self.assertEqual(snapshot["scoring_version"], "4")
         self.assertEqual(snapshot["lensnode_agent_version"], "0.63.8")
         self.assertEqual(snapshot["lensnode_pool"], LensNode.Pool.EVALUATION)
 

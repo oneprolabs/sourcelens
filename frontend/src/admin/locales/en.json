@@ -2326,6 +2326,8 @@
       "evaluationPoolDedicated": "Evaluation (dedicated)",
       "evaluationJudgeTitle": "Evaluation Judge model",
       "evaluationJudgeDesc": "Model used to judge answer correctness and evidence support. When empty, semantic correctness stays inconclusive and human agreement cannot be computed.",
+      "evaluationJudgeSecondaryTitle": "Evaluation Judge cross-check model",
+      "evaluationJudgeSecondaryDesc": "Optional second Judge model. When set, it runs the same prompt as a cross-check; the primary verdict stays authoritative and the agreement rate is reported.",
       "publicSharePolicyTitle": "Public share access policy",
       "publicSharePolicyDesc": "Default policy for public assistant share links: whether a visitor must sign in. An Assistant can override it; when unset the publisher chooses.",
       "publicSharePolicyInherit": "Not configured (assistant or publisher decides)",

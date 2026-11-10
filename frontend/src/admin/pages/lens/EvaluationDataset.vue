@@ -231,6 +231,12 @@
                   </td>
                   <td class="table-cell tabular-nums">
                     {{ formatScore(row.aggregate_score) }}
+                    <span
+                      v-if="row.legacy_overall"
+                      class="ml-1 text-xs text-ink-500"
+                    >
+                      {{ t('evaluation.runs.legacyTag') }}
+                    </span>
                   </td>
                   <td class="table-cell whitespace-nowrap">
                     {{ formatDate(row.created_at) }}

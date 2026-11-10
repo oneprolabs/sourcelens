@@ -10,7 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from lens.evaluation.calibration import summarize_calibration
+from lens.evaluation.calibration import judge_gate, summarize_calibration
 from lens.evaluation.engine.runner import (
     destination_nodes_with_capacity,
     evaluation_candidate_nodes,
@@ -565,6 +565,7 @@ def _judge_case_result(result, run, case, evaluation):
         citations=run.citations or [],
         execution_metrics=evaluation["execution_metrics"],
         model_ref=model_ref,
+        secondary_model_ref=judge_settings.get("secondary_model_ref") or "",
         user_id=result.evaluation_run.requested_by_id,
     )
 
@@ -703,11 +704,22 @@ def _is_settled_result(result):
     return bool(result.scores) or (result.dispatch_attempts or 0) >= MAX_DISPATCH_ATTEMPTS
 
 
+def _legacy_overall(evaluation_run):
+    """Return True when a batch was frozen under an older scoring version."""
+
+    snapshot = evaluation_run.config_snapshot or {}
+    return str(snapshot.get("scoring_version") or "") != EVALUATION_SCORING_VERSION
+
+
 def _aggregate(evaluation_run):
     """Aggregate scored results into the batch counters and coverage."""
 
     results = list(evaluation_run.results.select_related("case").order_by("created_at", "uuid"))
-    summary = aggregate_results(results, _metric_configs_from_snapshot(evaluation_run))
+    summary = aggregate_results(
+        results,
+        _metric_configs_from_snapshot(evaluation_run),
+        legacy_overall=_legacy_overall(evaluation_run),
+    )
     completed = sum(1 for result in results if _is_settled_result(result))
     evaluation_run.completed_cases = completed
     evaluation_run.passed_cases = summary["passed_cases"]
@@ -1028,18 +1040,27 @@ def _judge_summary(results, snapshot):
     if not isinstance(settings_snapshot, dict):
         settings_snapshot = {}
     statuses = {}
+    inter_judge = {"comparable_cases": 0, "answer_agree": 0, "evidence_agree": 0}
     for result in results:
         evidence = result.judge_evidence or {}
         status = str(evidence.get("status") or "missing")
         statuses[status] = statuses.get(status, 0) + 1
+        agreement = evidence.get("inter_judge")
+        if not isinstance(agreement, dict) or agreement.get("status") != "ok":
+            continue
+        inter_judge["comparable_cases"] += 1
+        inter_judge["answer_agree"] += 1 if agreement.get("answer_agree") is True else 0
+        inter_judge["evidence_agree"] += 1 if agreement.get("evidence_agree") is True else 0
     model_ref = str(settings_snapshot.get("model_ref") or "")
     return {
         "configured": bool(model_ref),
         "model_ref": model_ref,
+        "secondary_model_ref": str(settings_snapshot.get("secondary_model_ref") or ""),
         "prompt_version": settings_snapshot.get("prompt_version") or "",
         "statuses": statuses,
         "judged_cases": statuses.get("ok", 0),
         "failed_cases": statuses.get("judge_failed", 0),
+        "inter_judge": inter_judge,
     }
 
 
@@ -1051,8 +1072,13 @@ def build_report(evaluation_run):
         .prefetch_related("calibrations")
         .order_by("created_at", "uuid")
     )
-    summary = aggregate_results(results, _metric_configs_from_snapshot(evaluation_run))
+    summary = aggregate_results(
+        results,
+        _metric_configs_from_snapshot(evaluation_run),
+        legacy_overall=_legacy_overall(evaluation_run),
+    )
     calibration = summarize_calibration(results)
+    judge_summary = _judge_summary(results, evaluation_run.config_snapshot or {})
     clusters = {}
     for result in results:
         for issue in result.issues or []:
@@ -1089,7 +1115,8 @@ def build_report(evaluation_run):
             "config_snapshot": snapshot,
         },
         "calibration": calibration,
-        "judge": _judge_summary(results, snapshot),
+        "judge": judge_summary,
+        "judge_gate": judge_gate(calibration, judge_summary["configured"]),
         "provenance": {
             "platform_version": snapshot.get("platform_version", ""),
             "scoring_version": snapshot.get("scoring_version", ""),
@@ -1109,6 +1136,12 @@ def build_report(evaluation_run):
             "failed_cases": summary["failed_cases"],
             "inconclusive_cases": summary["inconclusive_cases"],
             "aggregate_score": summary["aggregate_score"],
+            "quality_score": summary["quality_score"],
+            "health_score": summary["health_score"],
+            "quality_suppressed": summary["quality_suppressed"],
+            "health_suppressed": summary["health_suppressed"],
+            "quality_conclusion": summary["quality_conclusion"],
+            "legacy_overall": summary["legacy_overall"],
             "coverage": summary["coverage"],
         },
         "metrics": summary["per_metric"],

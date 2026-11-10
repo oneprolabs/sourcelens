@@ -1,12 +1,13 @@
 """Judge wiring: real verdicts, schema validation, degradation and calibration."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from lens.evaluation.calibration import summarize_calibration
+from lens.evaluation.calibration import judge_gate, summarize_calibration
 from lens.evaluation.engine.batch import (
     build_report,
     create_evaluation_run,
@@ -114,9 +115,15 @@ class EvaluationJudgeTests(TestCase):
         self.assertEqual(result.judge_evidence["evidence"]["verdict"], "fail")
         self.assertEqual(result.judge_evidence["model"]["model_ref"], "judge-model")
         self.assertEqual(completion.call_args.kwargs["model_ref"], "judge-model")
-        self.assertIs(result.passed, True)
+        self.assertIs(result.passed, False)
         self.assertIs(result.scores["answer_correctness"]["passed"], True)
         self.assertEqual(result.scores["answer_correctness"]["detail"]["method"], "judge")
+        self.assertIs(result.scores["evidence_verified"]["passed"], False)
+        self.assertEqual(result.scores["evidence_verified"]["detail"]["method"], "judge")
+        self.assertIn(
+            "evidence_verified_below_threshold",
+            [issue["code"] for issue in result.issues],
+        )
 
         EvaluationCalibration.objects.create(
             result=result,
@@ -264,3 +271,79 @@ class EvaluationJudgeTests(TestCase):
         self.assertEqual(summary["dimensions"]["answer"]["reviewed_results"], 1)
         self.assertEqual(summary["dimensions"]["answer"]["comparable_reviews"], 0)
         self.assertIsNone(summary["dimensions"]["answer"]["agreement_rate"])
+
+    @patch("lens.evaluation.judge.run_completion")
+    @patch("lens.evaluation.engine.batch.load_trace_events")
+    def test_deterministic_evidence_wins_over_judge_evidence(self, load_events, completion):
+        self._configure()
+        completion.return_value = LensLLMResult(content=VALID_JUDGE_OUTPUT, usage={}, metered=True)
+        load_events.return_value = [
+            SimpleNamespace(
+                event_type="deepagents.evidence.verified",
+                call_id="verify-1",
+                sequence=1,
+                payload={"action": "accept"},
+            )
+        ]
+        _batch, result, _run = self._result_with_run()
+
+        score_case_result(result)
+        result.refresh_from_db()
+
+        self.assertEqual(result.judge_evidence["evidence"]["verdict"], "fail")
+        self.assertIs(result.scores["evidence_verified"]["passed"], True)
+        self.assertNotIn("method", result.scores["evidence_verified"]["detail"])
+        self.assertNotIn(
+            "evidence_verified_below_threshold",
+            [issue["code"] for issue in result.issues],
+        )
+
+    @patch("lens.evaluation.judge.run_completion")
+    def test_secondary_judge_records_cross_check_agreement(self, completion):
+        self._configure()
+        GlobalSetting.objects.create(
+            key="evaluation.judge_secondary_model_ref",
+            value="judge-model-2",
+        )
+        completion.side_effect = [
+            LensLLMResult(content=VALID_JUDGE_OUTPUT, usage={}, metered=True),
+            LensLLMResult(
+                content=json.dumps(
+                    {
+                        "answer": {"verdict": "pass", "rationale": "Same."},
+                        "evidence": {"verdict": "pass", "rationale": "Different."},
+                    }
+                ),
+                usage={},
+                metered=True,
+            ),
+        ]
+        _batch, result, _run = self._result_with_run()
+
+        score_case_result(result)
+        result.refresh_from_db()
+
+        evidence = result.judge_evidence
+        self.assertEqual(evidence["secondary"]["status"], "ok")
+        self.assertEqual(evidence["secondary"]["model"]["model_ref"], "judge-model-2")
+        self.assertEqual(evidence["inter_judge"]["status"], "ok")
+        self.assertIs(evidence["inter_judge"]["answer_agree"], True)
+        self.assertIs(evidence["inter_judge"]["evidence_agree"], False)
+        self.assertEqual(
+            [call.kwargs["model_ref"] for call in completion.call_args_list],
+            ["judge-model", "judge-model-2"],
+        )
+
+    def test_judge_gate_requires_enough_agreed_samples(self):
+        def summary(samples, rate):
+            dimension = {"comparable_reviews": samples, "agreement_rate": rate}
+            return {"dimensions": {"answer": dimension, "evidence": dict(dimension)}}
+
+        self.assertEqual(judge_gate(summary(0, None), False)["status"], "not_configured")
+        self.assertEqual(judge_gate(summary(19, 1.0), True)["status"], "insufficient_samples")
+        self.assertEqual(judge_gate(summary(20, 0.75), True)["status"], "below_threshold")
+        gate = judge_gate(summary(20, 0.9), True)
+
+        self.assertEqual(gate["status"], "ok")
+        self.assertEqual(gate["min_samples"], 20)
+        self.assertEqual(gate["min_agreement"], 0.8)

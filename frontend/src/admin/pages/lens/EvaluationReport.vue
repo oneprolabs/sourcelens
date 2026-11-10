@@ -115,7 +115,7 @@
               {{ waitingMessage }}
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div class="admin-metric-card">
                 <p
                   class="text-xs font-medium uppercase tracking-wide text-ink-500"
@@ -154,17 +154,30 @@
                 <p
                   class="text-xs font-medium uppercase tracking-wide text-ink-500"
                 >
-                  {{ t('evaluation.report.score') }}
+                  {{
+                    summary.legacy_overall
+                      ? t('evaluation.report.legacyScore')
+                      : t('evaluation.report.qualityScore')
+                  }}
                 </p>
                 <p class="admin-metric-value mt-1">
                   {{ formatScore(summary.aggregate_score) }}
                 </p>
                 <p class="mt-1 text-xs text-ink-500">
-                  {{
-                    summary.coverage?.aggregate_suppressed
-                      ? t('evaluation.report.scoreSuppressed')
-                      : t('evaluation.report.weightedHint')
-                  }}
+                  {{ qualityHint }}
+                </p>
+              </div>
+              <div class="admin-metric-card">
+                <p
+                  class="text-xs font-medium uppercase tracking-wide text-ink-500"
+                >
+                  {{ t('evaluation.report.healthScore') }}
+                </p>
+                <p class="admin-metric-value mt-1">
+                  {{ formatScore(summary.health_score) }}
+                </p>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ healthHint }}
                 </p>
               </div>
               <div class="admin-metric-card">
@@ -218,6 +231,24 @@
                     {{ judgeStatusCount('skipped') }}
                   </span>
                 </div>
+                <p
+                  v-if="report.judge?.secondary_model_ref"
+                  class="mt-1 text-xs text-ink-500"
+                >
+                  {{ t('evaluation.report.judgeSecondary') }}:
+                  <span class="font-mono">{{
+                    report.judge.secondary_model_ref
+                  }}</span>
+                  · {{ t('evaluation.report.judgeInterAgreement') }}:
+                  {{ formatPercent(interJudgeRate) }}
+                </p>
+                <p
+                  v-if="judgeGateText"
+                  class="mt-1 text-xs"
+                  :class="judgeGateClass"
+                >
+                  {{ judgeGateText }}
+                </p>
               </div>
               <div class="rounded-lg border border-line px-4 py-3">
                 <h2 class="text-sm font-semibold text-ink-900">
@@ -413,7 +444,7 @@
                         {{ t('evaluation.report.verdict') }}
                       </th>
                       <th class="table-head">
-                        {{ t('evaluation.report.score') }}
+                        {{ t('evaluation.report.caseScore') }}
                       </th>
                       <th class="table-head">
                         {{ t('evaluation.report.tokens') }}
@@ -769,6 +800,57 @@ const canPause = computed(() =>
   ['queued', 'running'].includes(run.value?.status)
 )
 const summary = computed(() => report.value?.summary || {})
+
+function suppressionText(reason) {
+  if (!reason) return ''
+  const key = `evaluation.report.suppressed.${reason}`
+  const text = t(key)
+  return text === key ? t('evaluation.report.scoreSuppressed') : text
+}
+
+const qualityHint = computed(() => {
+  const data = summary.value
+  if (data.legacy_overall) return t('evaluation.report.legacyHint')
+  if (data.quality_suppressed) return suppressionText(data.quality_suppressed)
+  return t('evaluation.report.qualityHint')
+})
+
+const healthHint = computed(() => {
+  const data = summary.value
+  if (data.health_suppressed) return suppressionText(data.health_suppressed)
+  return t('evaluation.report.healthHint')
+})
+
+const judgeGateText = computed(() => {
+  const gate = report.value?.judge_gate
+  if (!gate) return ''
+  if (gate.status === 'insufficient_samples') {
+    return t('evaluation.report.judgeGate.insufficientSamples', {
+      count: gate.answer?.comparable_reviews ?? 0,
+      min: gate.min_samples
+    })
+  }
+  if (gate.status === 'below_threshold') {
+    return t('evaluation.report.judgeGate.belowThreshold', {
+      rate: formatPercent(gate.answer?.agreement_rate),
+      min: formatPercent(gate.min_agreement)
+    })
+  }
+  if (gate.status === 'ok') return t('evaluation.report.judgeGate.ok')
+  return ''
+})
+
+const judgeGateClass = computed(() =>
+  report.value?.judge_gate?.status === 'ok'
+    ? 'text-success-700'
+    : 'text-warning-700'
+)
+
+const interJudgeRate = computed(() => {
+  const pair = report.value?.judge?.inter_judge
+  if (!pair?.comparable_cases) return null
+  return pair.answer_agree / pair.comparable_cases
+})
 const waitingReason = computed(
   () => run.value?.config_snapshot?.waiting?.reason || ''
 )

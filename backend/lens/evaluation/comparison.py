@@ -25,7 +25,11 @@ def compare_batches(left, right):
         reasons.append("different_metrics")
     aj = a.get("judge") if isinstance(a.get("judge"), dict) else {}
     bj = b.get("judge") if isinstance(b.get("judge"), dict) else {}
-    if aj.get("model_ref") != bj.get("model_ref") or aj.get("prompt_version") != bj.get("prompt_version"):
+    if (
+        aj.get("model_ref") != bj.get("model_ref")
+        or aj.get("secondary_model_ref") != bj.get("secondary_model_ref")
+        or aj.get("prompt_version") != bj.get("prompt_version")
+    ):
         reasons.append("different_judge")
     if set(a.get("case_uuids") or []) != set(b.get("case_uuids") or []):
         reasons.append("different_case_selection")

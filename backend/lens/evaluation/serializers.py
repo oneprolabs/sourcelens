@@ -9,6 +9,7 @@ from lens.evaluation.models import (
     EvaluationResult,
     EvaluationRun,
 )
+from lens.evaluation.scoring import EVALUATION_SCORING_VERSION
 from lens.models import Assistant
 
 CASE_LIST_FIELDS = (
@@ -234,6 +235,7 @@ class _EvaluationRunBaseSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     progress = serializers.SerializerMethodField()
+    legacy_overall = serializers.SerializerMethodField()
 
     class Meta:
         model = EvaluationRun
@@ -250,6 +252,7 @@ class _EvaluationRunBaseSerializer(serializers.ModelSerializer):
             "aggregate_score",
             "coverage",
             "progress",
+            "legacy_overall",
             "error",
             "started_at",
             "finished_at",
@@ -265,6 +268,12 @@ class _EvaluationRunBaseSerializer(serializers.ModelSerializer):
         if total <= 0:
             return 0
         return min(int((obj.completed_cases or 0) * 100 / total), 100)
+
+    def get_legacy_overall(self, obj):
+        """Return True when the batch was scored under an older version."""
+
+        snapshot = obj.config_snapshot or {}
+        return str(snapshot.get("scoring_version") or "") != EVALUATION_SCORING_VERSION
 
 
 class EvaluationRunListSerializer(_EvaluationRunBaseSerializer):

@@ -12,6 +12,7 @@ from lens.models import GlobalSetting
 logger = logging.getLogger(__name__)
 
 JUDGE_MODEL_SETTING = "evaluation.judge_model_ref"
+JUDGE_SECONDARY_MODEL_SETTING = "evaluation.judge_secondary_model_ref"
 JUDGE_PROMPT_VERSION = "1"
 JUDGE_NODE_NAME = "evaluation_judge"
 JUDGE_VERDICTS = {"pass", "fail", "inconclusive"}
@@ -57,12 +58,22 @@ def judge_model_ref():
     return value.strip() if isinstance(value, str) else ""
 
 
+def judge_secondary_model_ref():
+    """Return the optional second Judge model used as a cross-check."""
+
+    setting = GlobalSetting.objects.filter(key=JUDGE_SECONDARY_MODEL_SETTING).first()
+    value = setting.value if setting is not None else ""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def judge_config():
     """Return the frozen Judge configuration for one evaluation batch."""
 
     model_ref = judge_model_ref()
+    secondary_model_ref = judge_secondary_model_ref()
     return {
         "model_ref": model_ref,
+        "secondary_model_ref": secondary_model_ref,
         "prompt_version": JUDGE_PROMPT_VERSION,
         "enabled": bool(model_ref),
     }
@@ -180,36 +191,9 @@ def _model_provenance(model_ref):
     return {"model_ref": model_ref, "prompt_version": JUDGE_PROMPT_VERSION}
 
 
-def judge_result(
-    *,
-    case,
-    output,
-    citations,
-    execution_metrics,
-    model_ref=None,
-    user_id=None,
-):
-    """Return Judge evidence for one evaluated case.
+def _call_judge(*, case, output, citations, execution_metrics, model_ref, user_id=None):
+    """Return one Judge verdict set for one model reference."""
 
-    A missing model, an empty answer, a call failure, or invalid output never
-    raises: the deterministic scores stay authoritative and the Judge status
-    makes the gap visible instead of silently marking the case correct.
-    """
-
-    if model_ref is None:
-        model_ref = judge_model_ref()
-    model_ref = str(model_ref or "").strip()
-    if not model_ref:
-        return {
-            "status": "not_configured",
-            "error_code": "EVALUATION_JUDGE_NOT_CONFIGURED",
-        }
-    if not str(output or "").strip():
-        return {
-            "status": "skipped",
-            "reason": "empty_answer",
-            "model": _model_provenance(model_ref),
-        }
     payload = build_judge_input(
         case=case,
         output=output,
@@ -266,3 +250,81 @@ def judge_result(
         "usage": completion.usage or {},
         "judged_at": timezone.now().isoformat(),
     }
+
+
+def _inter_judge(primary, secondary):
+    """Return whether two Judge models agree on each conclusive dimension."""
+
+    if primary.get("status") != "ok" or secondary.get("status") != "ok":
+        return {"status": "incomplete", "answer_agree": None, "evidence_agree": None}
+
+    def agrees(dimension):
+        left = str((primary.get(dimension) or {}).get("verdict") or "")
+        right = str((secondary.get(dimension) or {}).get("verdict") or "")
+        if left not in {"pass", "fail"} or right not in {"pass", "fail"}:
+            return None
+        return left == right
+
+    return {
+        "status": "ok",
+        "answer_agree": agrees("answer"),
+        "evidence_agree": agrees("evidence"),
+    }
+
+
+def judge_result(
+    *,
+    case,
+    output,
+    citations,
+    execution_metrics,
+    model_ref=None,
+    secondary_model_ref=None,
+    user_id=None,
+):
+    """Return Judge evidence for one evaluated case.
+
+    A missing model, an empty answer, a call failure, or invalid output never
+    raises: the deterministic scores stay authoritative and the Judge status
+    makes the gap visible instead of silently marking the case correct.
+
+    When a secondary model is configured it runs the same prompt as a
+    cross-check. The primary verdict stays authoritative and the pair's
+    agreement is recorded for humans to inspect.
+    """
+
+    if model_ref is None:
+        model_ref = judge_model_ref()
+    model_ref = str(model_ref or "").strip()
+    if not model_ref:
+        return {
+            "status": "not_configured",
+            "error_code": "EVALUATION_JUDGE_NOT_CONFIGURED",
+        }
+    if not str(output or "").strip():
+        return {
+            "status": "skipped",
+            "reason": "empty_answer",
+            "model": _model_provenance(model_ref),
+        }
+    result = _call_judge(
+        case=case,
+        output=output,
+        citations=citations,
+        execution_metrics=execution_metrics,
+        model_ref=model_ref,
+        user_id=user_id,
+    )
+    secondary_ref = str(secondary_model_ref or "").strip()
+    if secondary_ref and secondary_ref != model_ref:
+        secondary = _call_judge(
+            case=case,
+            output=output,
+            citations=citations,
+            execution_metrics=execution_metrics,
+            model_ref=secondary_ref,
+            user_id=user_id,
+        )
+        result["secondary"] = secondary
+        result["inter_judge"] = _inter_judge(result, secondary)
+    return result

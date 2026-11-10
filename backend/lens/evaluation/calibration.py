@@ -1,5 +1,45 @@
 """Summarize human calibration without treating unreviewed results as correct."""
 
+# A Judge may only gate quality once humans have reviewed enough samples and
+# agreed often enough. Both numbers are intentionally conservative defaults.
+MIN_CALIBRATION_SAMPLES = 20
+MIN_AGREEMENT_RATE = 0.8
+
+
+def judge_gate(summary, configured):
+    """Return whether human calibration allows the Judge to gate quality.
+
+    The answer dimension drives the gate because that verdict feeds the quality
+    score. Evidence agreement is reported alongside it as secondary evidence.
+    """
+
+    dimensions = (summary or {}).get("dimensions") or {}
+    answer = dimensions.get("answer") or {}
+    evidence = dimensions.get("evidence") or {}
+    comparable = int(answer.get("comparable_reviews") or 0)
+    rate = answer.get("agreement_rate")
+    if not configured:
+        status = "not_configured"
+    elif comparable < MIN_CALIBRATION_SAMPLES:
+        status = "insufficient_samples"
+    elif rate is None or float(rate) < MIN_AGREEMENT_RATE:
+        status = "below_threshold"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "min_samples": MIN_CALIBRATION_SAMPLES,
+        "min_agreement": MIN_AGREEMENT_RATE,
+        "answer": {
+            "comparable_reviews": comparable,
+            "agreement_rate": rate,
+        },
+        "evidence": {
+            "comparable_reviews": int(evidence.get("comparable_reviews") or 0),
+            "agreement_rate": evidence.get("agreement_rate"),
+        },
+    }
+
 
 def summarize_calibration(results):
     """Count current-result human reviews and their agreement with recorded Judge labels.

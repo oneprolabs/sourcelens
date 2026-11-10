@@ -2326,6 +2326,8 @@
       "evaluationPoolDedicated": "评估池（专用）",
       "evaluationJudgeTitle": "评估 Judge 模型",
       "evaluationJudgeDesc": "用于判定回答正确性与证据支持度的模型。留空时语义正确性保持不确定，也无法计算人工一致率。",
+      "evaluationJudgeSecondaryTitle": "评估 Judge 交叉模型",
+      "evaluationJudgeSecondaryDesc": "可选的第二个 Judge 模型。配置后用同一提示词交叉判定，主 Judge 结论仍为准，交叉一致率用于检查 Judge 可靠性。",
       "publicSharePolicyTitle": "公开分享访问策略",
       "publicSharePolicyDesc": "全局默认策略：公开助手分享链接是否必须登录后才能查看。助手可单独覆盖，未配置时分享者可自行选择。",
       "publicSharePolicyInherit": "未配置（由助手或分享者决定）",

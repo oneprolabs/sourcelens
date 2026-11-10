@@ -10,14 +10,23 @@ en: >-
   status without changing deterministic scores. Batches can also be paused and
   resumed: in-flight cases finish, and the remainder waits. Batch reports show
   per-metric coverage, suppressed aggregates, Judge coverage, and the platform
-  and LensNode versions that produced each result.
+  and LensNode versions that produced each result. Quality and health are now
+  separate scores: quality only counts answer correctness and grounding and is
+  withheld when correctness coverage is missing, while health reports execution
+  success, tool success and latency on its own. Judge evidence verdicts now
+  affect case outcomes, an optional second Judge model cross-checks verdicts,
+  and human calibration must reach 20 samples at 80% agreement before the
+  Judge is labelled gate-ready.
 zh-CN: >-
   智能体评估现在为数据集保存不可变修订快照，可将已完成的 Run 固化为基线用例，
   在对比批次时明确列出哪些差异使两者不可直接比较，并支持对 Judge 结论追加人工校准。
   新增可配置的 LLM Judge，产出回答正确性与证据支持判定，使人工校准一致率可计算，
   语义用例不再一律停留在不确定；未配置或调用失败时以显式状态降级，不影响确定性分数。
   批次还支持暂停与恢复：在途用例继续完成，其余等待恢复。批次报告同时展示逐指标
-  覆盖率、被抑制的综合分、Judge 覆盖情况，以及产出结果时的平台与 LensNode 版本。
+  覆盖率、被抑制的综合分、Judge 覆盖情况，以及产出结果时的平台与 LensNode 版本。质量分与健康分现在分开计算：质量分只统计
+  回答正确性与依据类指标，缺少正确性覆盖时不出分；健康分单独展示执行成功、工具成功率
+  与耗时。Judge 的证据判定现在参与用例结论，可选第二个 Judge 模型做交叉核验；人工校准
+  需达到 20 条样本且一致率不低于 80%，才会标注 Judge 可作门禁参考。
 es: >-
   La evaluación de agentes ahora guarda revisiones inmutables de cada conjunto de
   datos, convierte un Run completado en un caso de referencia, compara lotes
@@ -30,4 +39,10 @@ es: >-
   pueden pausar y reanudar: los casos en curso terminan y el resto espera. El
   informe muestra la cobertura por métrica, los agregados suprimidos, la
   cobertura del Judge y las versiones de plataforma y LensNode que produjeron
-  cada resultado.
+  cada resultado. La calidad y la salud ahora son puntuaciones separadas: la
+  calidad solo cuenta correctitud y fundamento y se omite si falta cobertura de
+  correctitud, mientras la salud informa por separado éxito de ejecución, éxito
+  de herramientas y latencia. Los veredictos de evidencia del Judge ahora afectan
+  el resultado del caso, un segundo modelo Judge opcional hace verificación
+  cruzada, y la calibración humana debe alcanzar 20 muestras con 80% de
+  concordancia antes de marcar al Judge como apto para puerta.

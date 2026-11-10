@@ -290,7 +290,8 @@ const defaultSettings = {
   'lens.smart_collaboration.model_ref': '',
   'lens.public_share.policy': 'inherit',
   'evaluation.execution_pool': 'default',
-  'evaluation.judge_model_ref': ''
+  'evaluation.judge_model_ref': '',
+  'evaluation.judge_secondary_model_ref': ''
 }
 
 const settingsForm = ref({ ...defaultSettings })
@@ -387,6 +388,14 @@ const settingDefinitions = computed(() => {
       group: 'runtime',
       label: t('lensAdmin.settings.evaluationJudgeTitle'),
       description: t('lensAdmin.settings.evaluationJudgeDesc'),
+      type: 'model_ref',
+      unit: ''
+    },
+    {
+      key: 'evaluation.judge_secondary_model_ref',
+      group: 'runtime',
+      label: t('lensAdmin.settings.evaluationJudgeSecondaryTitle'),
+      description: t('lensAdmin.settings.evaluationJudgeSecondaryDesc'),
       type: 'model_ref',
       unit: ''
     },
