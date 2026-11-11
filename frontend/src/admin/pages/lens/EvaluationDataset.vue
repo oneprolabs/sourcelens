@@ -31,6 +31,9 @@
             >
               {{ t('common.refresh') }}
             </BaseButton>
+            <BaseButton variant="outline" size="sm" @click="openRevisions">
+              {{ t('evaluation.revisions.title') }}
+            </BaseButton>
             <BaseButton
               size="sm"
               :loading="launching"
@@ -228,6 +231,12 @@
                   </td>
                   <td class="table-cell tabular-nums">
                     {{ formatScore(row.aggregate_score) }}
+                    <span
+                      v-if="row.legacy_overall"
+                      class="ml-1 text-xs text-ink-500"
+                    >
+                      {{ t('evaluation.runs.legacyTag') }}
+                    </span>
                   </td>
                   <td class="table-cell whitespace-nowrap">
                     {{ formatDate(row.created_at) }}
@@ -256,6 +265,28 @@
         </div>
       </section>
     </div>
+
+    <BaseModal :show="revisionsOpen" :title="t('evaluation.revisions.title')" max-width="xl" @close="revisionsOpen = false">
+      <BaseLoading v-if="revisionsLoading" />
+      <div v-else class="space-y-3">
+        <p v-if="!revisions.length" class="text-sm text-ink-500">{{ t('evaluation.revisions.empty') }}</p>
+        <div v-for="item in revisions" :key="item.revision" class="flex items-center justify-between gap-4 border-b border-line py-2">
+          <span class="text-sm">#{{ item.revision }} · {{ formatDate(item.created_at) }} · {{ item.case_count }} {{ t('evaluation.cases.tab') }}</span>
+          <BaseButton size="sm" variant="outline" @click="loadRevision(item.revision)">{{ t('common.viewDetails') }}</BaseButton>
+        </div>
+        <div v-if="selectedRevision" class="space-y-2">
+          <h3 class="font-semibold">{{ t('evaluation.revisions.snapshot') }} #{{ selectedRevision.revision }}</h3>
+          <div v-for="item in selectedRevision.cases" :key="item.uuid" class="rounded-lg bg-surface-sunken p-3 text-sm">
+            <div class="font-medium whitespace-pre-wrap">{{ item.input }}</div>
+            <div class="mt-1 whitespace-pre-wrap text-ink-600">{{ item.expected_answer || item.config?.baseline?.answer || '—' }}</div>
+            <details v-if="item.config?.baseline?.metadata" class="mt-2 text-xs text-ink-600">
+              <summary>{{ t('evaluation.revisions.metadata') }}</summary>
+              <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{{ JSON.stringify(item.config.baseline.metadata, null, 2) }}</pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </BaseModal>
 
     <BaseModal
       :show="caseFormOpen"
@@ -343,10 +374,10 @@
           class="block w-full text-sm text-ink-600"
           @change="onImportFile"
         />
-        <select v-model="importFormat" class="rounded-lg border border-line bg-surface p-2" aria-label="Import format">
+        <BaseSelect v-model="importFormat" aria-label="Import format">
           <option value="jsonl">JSONL</option>
           <option value="csv">CSV</option>
-        </select>
+        </BaseSelect>
         <textarea
           v-model="importText"
           rows="10"
@@ -412,12 +443,14 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import {
   createEvaluationCase,
   deleteEvaluationCase,
   getEvaluationDataset,
+  getEvaluationRevisions,
   importEvaluationCases,
   listDatasetRuns,
   listEvaluationCases,
@@ -434,6 +467,31 @@ const { showSuccess, showError } = useToast()
 
 const datasetUuid = computed(() => route.params.uuid)
 const dataset = ref(null)
+const revisionsOpen = ref(false)
+const revisionsLoading = ref(false)
+const revisions = ref([])
+const selectedRevision = ref(null)
+
+async function openRevisions() {
+  revisionsOpen.value = true
+  revisionsLoading.value = true
+  selectedRevision.value = null
+  try {
+    revisions.value = await getEvaluationRevisions(datasetUuid.value)
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    revisionsLoading.value = false
+  }
+}
+
+async function loadRevision(revision) {
+  try {
+    selectedRevision.value = await getEvaluationRevisions(datasetUuid.value, revision)
+  } catch (error) {
+    showError(errorMessage(error))
+  }
+}
 const activeTab = ref('cases')
 const rows = ref([])
 const total = ref(0)

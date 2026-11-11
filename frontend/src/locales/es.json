@@ -1613,6 +1613,62 @@
   },
   "datasourceWaiting": "Preparando las fuentes de datos.",
   "evaluation": {
+    "calibration": {
+      "title": "Calibración humana",
+      "description": "Cada revisión se conserva sin sobrescribir el veredicto del modelo.",
+      "answer": "Corrección de la respuesta",
+      "evidence": "Respaldo de evidencia",
+      "select": "Seleccione",
+      "reason": "Explicación",
+      "save": "Guardar revisión",
+      "saved": "Revisión guardada",
+      "agreementTitle": "Concordancia humano vs Judge",
+      "agreementHint": "Solo cuenta revisiones cuyo contexto congelado sigue coincidiendo con el resultado actual y la salida del Judge.",
+      "noComparable": "Sin revisiones comparables",
+      "reviewed": "Resultados revisados",
+      "stale": "Revisiones obsoletas",
+      "verdict": {
+        "pass": "Aprobado",
+        "fail": "Fallido",
+        "inconclusive": "No concluyente"
+      }
+    },
+    "comparison": {
+      "action": "Comparar lotes",
+      "other": "UUID del lote de comparación",
+      "current": "Lote actual",
+      "otherLabel": "Lote de comparación",
+      "warning": "El entorno no está completamente fijado. Comparación manual, no un juicio de calidad.",
+      "limitations": {
+        "different_dataset": "Conjuntos distintos",
+        "dataset_revision_unknown": "Revisión desconocida",
+        "different_dataset_revision": "Revisiones distintas",
+        "scoring_version_unknown": "Versión de evaluación desconocida",
+        "different_scoring_version": "Versiones de evaluación distintas",
+        "metrics_unknown": "Métricas desconocidas",
+        "different_metrics": "Configuraciones de métricas distintas",
+        "different_judge": "Modelo Judge o versión de prompt distintos",
+        "different_case_selection": "Selecciones de casos distintas",
+        "batch_not_completed": "Lote incompleto",
+        "runtime_environment_not_fully_frozen": "Entorno de ejecución no fijado"
+      }
+    },
+    "revisions": {
+      "title": "Versiones del conjunto",
+      "empty": "Aún no hay versiones",
+      "snapshot": "Instantánea de versión",
+      "metadata": "Metadatos de la ejecución de referencia (los valores ausentes son desconocidos)"
+    },
+    "baseline": {
+      "action": "Establecer ejecución de referencia",
+      "review": "Revise la pregunta y la respuesta antes de añadir el caso. La referencia se usa para comparación manual, no para evaluar automáticamente la corrección.",
+      "dataset": "Conjunto de evaluación",
+      "selectDataset": "Seleccione un conjunto",
+      "noDatasets": "No hay conjuntos de evaluación disponibles para este asistente.",
+      "answer": "Respuesta de referencia",
+      "created": "Caso de referencia añadido",
+      "manualComparison": "Solo comparación manual; no se realizó una evaluación semántica."
+    },
     "status": {
       "draft": "Borrador",
       "active": "Activo",
@@ -1673,7 +1729,7 @@
       "deleteTitle": "Eliminar caso",
       "deleteMessage": "Se eliminará el caso del conjunto.",
       "importHint": "Pega JSONL (un objeto por línea) o CSV con input, expected_answer, expected_sources, expected_facts, tags.",
-      "importPlaceholder": "{\"input\":\"...\",\"expected_sources\":[\"report.md\"]}",
+      "importPlaceholder": "Ejemplo: {\"input\":\"...\",\"expected_sources\":[\"report.md\"]}",
       "importFailed": "Importación rechazada. Corrige estas filas y reintenta:",
       "importLine": "Línea {line}",
       "importEmpty": "Pega contenido o elige un archivo primero.",
@@ -1688,7 +1744,8 @@
       "status": "Estado",
       "progress": "Progreso",
       "verdicts": "Aprobados / fallidos / total",
-      "score": "Puntuación ponderada de métricas evaluadas",
+      "score": "Puntuación de calidad",
+      "legacyTag": "heredado",
       "createdAt": "Creado",
       "open": "Informe"
     },
@@ -1697,17 +1754,49 @@
       "backToDataset": "Volver al conjunto",
       "startedAt": "Inicio",
       "finishedAt": "Fin",
+      "platformVersion": "Versión de la plataforma",
+      "lensnodeVersion": "Versión del nodo",
+      "waitingNode": "No hay ningún nodo de evaluación en línea; el lote espera para ser despachado.",
+      "waitingBusy": "El nodo de evaluación está al límite; el lote está en cola.",
       "cancel": "Cancelar ejecución",
+      "pause": "Pausar",
+      "resume": "Reanudar",
+      "paused": "Lote pausado; los casos en curso terminan y el resto espera",
+      "resumed": "Lote reanudado",
       "retry": "Reintentar fallidos",
       "totalCases": "Casos totales",
       "completedCases": "{count} completados",
-      "passed": "Aprobados",
+      "passed": "Veredicto aprobado",
+      "passedHint": "El veredicto automático requiere una respuesta exacta o un Judge; si no, queda no concluyente.",
       "failed": "Fallidos",
       "inconclusive": "No concluyente",
-      "score": "Puntuación ponderada de métricas evaluadas",
-      "weightedHint": "Solo se incluyen métricas puntuadas. No es un resultado global; revise la cobertura y los casos.",
-      "coverage": "Cobertura de métricas",
-      "coverageHint": "{scored} de {total} dimensiones puntuadas",
+      "score": "Puntuación de calidad",
+      "weightedHint": "La puntuación de calidad solo incluye correctitud de la respuesta y fundamento. La salud de ejecución se informa por separado.",
+      "scoreSuppressed": "Este lote no tiene cobertura de correctitud suficiente, así que no se emite puntuación de calidad.",
+      "qualityScore": "Puntuación de calidad",
+      "caseScore": "Puntuación ponderada",
+      "qualityHint": "Solo correctitud de la respuesta y fundamento. La salud de ejecución se informa aparte y nunca se mezcla.",
+      "healthScore": "Puntuación de salud",
+      "healthHint": "Solo éxito de ejecución, éxito de herramientas y latencia. No indica la calidad de la respuesta.",
+      "legacyScore": "Puntuación global histórica",
+      "legacyHint": "Este lote se congeló con la versión anterior de puntuación; no se recalculan calidad ni salud.",
+      "suppressed": {
+        "insufficient_case_coverage": "La cobertura de casos es insuficiente para emitir una puntuación.",
+        "insufficient_correctness_coverage": "La cobertura de correctitud es insuficiente (requiere respuestas esperadas o Judge), así que no se emite puntuación de calidad.",
+        "correctness_metric_not_configured": "La métrica de correctitud está deshabilitada, así que no se emite puntuación de calidad.",
+        "no_quality_scores": "Ninguna métrica de calidad produjo puntuación.",
+        "no_health_scores": "Ninguna métrica de salud produjo puntuación.",
+        "legacy_scoring_version": "Versión de puntuación anterior; se muestra la puntuación global histórica.",
+        "no_scored_metrics": "Ninguna métrica produjo puntuación."
+      },
+      "judgeGate": {
+        "insufficientSamples": "Muestras de calibración insuficientes ({count}/{min}); el Judge aún no puede servir de puerta.",
+        "belowThreshold": "La concordancia humana {rate} está por debajo de {min}; el Judge aún no puede servir de puerta.",
+        "ok": "El Judge superó la calibración y puede usarse como referencia de puerta."
+      },
+      "coverage": "Cobertura de casos",
+      "coverageHint": "{scored} de {total} dimensiones puntuadas; cobertura de casos {casePercent}",
+      "metricCoverage": "{percent} de los casos",
       "metrics": "Métricas",
       "metric": "Métrica",
       "weight": "Peso",
@@ -1730,7 +1819,20 @@
       "citations": "Citas",
       "filterAll": "Todos",
       "cancelled": "Ejecución cancelada",
-      "retried": "Casos fallidos reencolados"
+      "retried": "Casos fallidos reencolados",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Modelo Judge",
+      "judgeNotConfigured": "No hay modelo Judge configurado; la corrección semántica queda no concluyente.",
+      "judgeOk": "Juzgados",
+      "judgeFailed": "Judge falló",
+      "judgeSkipped": "Omitidos",
+      "judgeSecondary": "Modelo Judge cruzado",
+      "judgeInterAgreement": "Concordancia cruzada",
+      "judgeStatus": {
+        "not_configured": "El modelo Judge no está configurado.",
+        "skipped": "El Judge omitió este caso (no hay respuesta que juzgar).",
+        "judge_failed": "La llamada o la salida del Judge falló; las puntuaciones deterministas no se ven afectadas."
+      }
     }
   }
 }

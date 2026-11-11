@@ -1613,6 +1613,62 @@
   },
   "datasourceWaiting": "正在准备数据源，同步完成后将自动回答。",
   "evaluation": {
+    "calibration": {
+      "title": "人工校准",
+      "description": "保留每次人工审核记录，不覆盖模型判定。",
+      "answer": "回答正确性",
+      "evidence": "证据支持",
+      "select": "请选择",
+      "reason": "审核说明",
+      "save": "保存审核",
+      "saved": "审核已保存",
+      "agreementTitle": "人工与 Judge 一致率",
+      "agreementHint": "仅统计冻结上下文仍与当前结果和 Judge 输出一致的审核。",
+      "noComparable": "暂无可比审核",
+      "reviewed": "已审核结果",
+      "stale": "过期审核",
+      "verdict": {
+        "pass": "通过",
+        "fail": "失败",
+        "inconclusive": "无法判定"
+      }
+    },
+    "comparison": {
+      "action": "批次对照",
+      "other": "对照批次 UUID",
+      "current": "当前批次",
+      "otherLabel": "对照批次",
+      "warning": "执行环境尚未完全冻结，仅供人工对照，不能据此判定质量变化。",
+      "limitations": {
+        "different_dataset": "数据集不同",
+        "dataset_revision_unknown": "数据集修订未知",
+        "different_dataset_revision": "数据集修订不同",
+        "scoring_version_unknown": "评分版本未知",
+        "different_scoring_version": "评分版本不同",
+        "metrics_unknown": "指标配置未知",
+        "different_metrics": "指标配置不同",
+        "different_judge": "Judge 模型或提示词版本不同",
+        "different_case_selection": "用例选择不同",
+        "batch_not_completed": "批次尚未完成",
+        "runtime_environment_not_fully_frozen": "执行环境未完全冻结"
+      }
+    },
+    "revisions": {
+      "title": "数据集版本",
+      "empty": "尚无版本记录",
+      "snapshot": "版本快照",
+      "metadata": "基准 Run 元数据（缺失项为未知）"
+    },
+    "baseline": {
+      "action": "设为基准 Run",
+      "review": "确认问题和参考回答后，将其添加到所选评估数据集。参考回答用于人工对照，不会自动判定正确性。",
+      "dataset": "评估数据集",
+      "selectDataset": "选择数据集",
+      "noDatasets": "该助手没有可用的评估数据集。",
+      "answer": "基准回答",
+      "created": "已添加基准用例",
+      "manualComparison": "仅供人工对照，未进行语义判定。"
+    },
     "status": {
       "draft": "草稿",
       "active": "启用",
@@ -1688,7 +1744,8 @@
       "status": "状态",
       "progress": "进度",
       "verdicts": "通过 / 失败 / 总数",
-      "score": "已评分指标加权分",
+      "score": "质量分",
+      "legacyTag": "旧口径",
       "createdAt": "创建时间",
       "open": "查看报告"
     },
@@ -1697,17 +1754,49 @@
       "backToDataset": "返回数据集",
       "startedAt": "开始",
       "finishedAt": "结束",
+      "platformVersion": "程序版本",
+      "lensnodeVersion": "执行节点版本",
+      "waitingNode": "没有可用的评估执行节点，批次正在等待派发。",
+      "waitingBusy": "评估节点已满，批次正在排队等待。",
       "cancel": "取消批次",
+      "pause": "暂停",
+      "resume": "恢复",
+      "paused": "批次已暂停；在途用例会继续完成，其余等待恢复",
+      "resumed": "批次已恢复",
       "retry": "重跑失败用例",
       "totalCases": "用例总数",
       "completedCases": "已完成 {count}",
-      "passed": "通过",
+      "passed": "判定通过",
+      "passedHint": "自动判定需要 exact 答案或 Judge；否则为不确定。",
       "failed": "失败",
       "inconclusive": "不确定",
-      "score": "已评分指标加权分",
-      "weightedHint": "仅计算有分数的指标，不代表整体通过；请结合覆盖度和用例判定查看。",
-      "coverage": "指标覆盖度",
-      "coverageHint": "{scored}/{total} 个维度有分数",
+      "score": "质量分",
+      "weightedHint": "质量分只统计回答正确性与依据（引用、证据）指标，执行健康度单独计算。",
+      "scoreSuppressed": "当前批次没有可用的回答正确性覆盖，暂不出质量分。",
+      "qualityScore": "质量分",
+      "caseScore": "加权分",
+      "qualityHint": "只统计回答正确性与依据类指标；执行健康度单独计算，不混入质量分。",
+      "healthScore": "健康分",
+      "healthHint": "只反映执行成功、工具成功率与耗时，不代表回答质量。",
+      "legacyScore": "历史综合分（旧口径）",
+      "legacyHint": "该批次按旧评分口径冻结，质量分与健康分不回溯重算。",
+      "suppressed": {
+        "insufficient_case_coverage": "用例覆盖不足，暂不出分。",
+        "insufficient_correctness_coverage": "回答正确性覆盖不足（需要期望答案或 Judge），暂不出质量分。",
+        "correctness_metric_not_configured": "回答正确性指标未启用，暂不出质量分。",
+        "no_quality_scores": "没有质量类指标产生分数。",
+        "no_health_scores": "没有健康类指标产生分数。",
+        "legacy_scoring_version": "旧评分口径批次，按历史综合分展示。",
+        "no_scored_metrics": "没有指标产生分数。"
+      },
+      "judgeGate": {
+        "insufficientSamples": "校准样本不足（{count}/{min}），Judge 暂不能作为门禁。",
+        "belowThreshold": "人工一致率 {rate} 低于 {min}，Judge 暂不能作为门禁。",
+        "ok": "Judge 已通过校准，可作为门禁参考。"
+      },
+      "coverage": "用例覆盖度",
+      "coverageHint": "其中 {scored}/{total} 个维度有分数，用例覆盖率 {casePercent}",
+      "metricCoverage": "用例覆盖 {percent}",
       "metrics": "指标",
       "metric": "指标",
       "weight": "权重",
@@ -1730,7 +1819,20 @@
       "citations": "引用",
       "filterAll": "全部",
       "cancelled": "评估批次已取消",
-      "retried": "失败用例已重新排队"
+      "retried": "失败用例已重新排队",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Judge 模型",
+      "judgeNotConfigured": "未配置 Judge 模型；语义正确性保持不确定。",
+      "judgeOk": "已判定",
+      "judgeFailed": "Judge 失败",
+      "judgeSkipped": "已跳过",
+      "judgeSecondary": "交叉 Judge 模型",
+      "judgeInterAgreement": "交叉一致率",
+      "judgeStatus": {
+        "not_configured": "尚未配置 Judge 模型。",
+        "skipped": "该用例被 Judge 跳过（没有可判定的回答）。",
+        "judge_failed": "Judge 调用或输出失败；确定性分数不受影响。"
+      }
     }
   }
 }

@@ -288,7 +288,10 @@ const defaultSettings = {
   'run_retention.interval_seconds': 86400,
   'lens.skills.generator_model_ref': '',
   'lens.smart_collaboration.model_ref': '',
-  'lens.public_share.policy': 'inherit'
+  'lens.public_share.policy': 'inherit',
+  'evaluation.execution_pool': 'default',
+  'evaluation.judge_model_ref': '',
+  'evaluation.judge_secondary_model_ref': ''
 }
 
 const settingsForm = ref({ ...defaultSettings })
@@ -359,6 +362,40 @@ const settingDefinitions = computed(() => {
       group: 'runtime',
       label: t('lensAdmin.settings.smartCollaborationModelTitle'),
       description: t('lensAdmin.settings.smartCollaborationModelDesc'),
+      type: 'model_ref',
+      unit: ''
+    },
+    {
+      key: 'evaluation.execution_pool',
+      group: 'runtime',
+      label: t('lensAdmin.settings.evaluationPoolTitle'),
+      description: t('lensAdmin.settings.evaluationPoolDesc'),
+      type: 'select',
+      unit: '',
+      options: [
+        {
+          value: 'default',
+          label: t('lensAdmin.settings.evaluationPoolDefault')
+        },
+        {
+          value: 'evaluation',
+          label: t('lensAdmin.settings.evaluationPoolDedicated')
+        }
+      ]
+    },
+    {
+      key: 'evaluation.judge_model_ref',
+      group: 'runtime',
+      label: t('lensAdmin.settings.evaluationJudgeTitle'),
+      description: t('lensAdmin.settings.evaluationJudgeDesc'),
+      type: 'model_ref',
+      unit: ''
+    },
+    {
+      key: 'evaluation.judge_secondary_model_ref',
+      group: 'runtime',
+      label: t('lensAdmin.settings.evaluationJudgeSecondaryTitle'),
+      description: t('lensAdmin.settings.evaluationJudgeSecondaryDesc'),
       type: 'model_ref',
       unit: ''
     },
@@ -511,7 +548,7 @@ async function saveSettings() {
         setting.type === 'number'
           ? Math.max(1, Number(settingsForm.value[setting.key]) || 1)
           : setting.type === 'select'
-            ? settingsForm.value[setting.key] || 'inherit'
+            ? settingsForm.value[setting.key] || defaultSettings[setting.key]
             : settingsForm.value[setting.key] || ''
       const payload = {
         key: setting.key,

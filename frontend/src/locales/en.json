@@ -1613,6 +1613,62 @@
   },
   "datasourceWaiting": "Preparing data sources. The answer will start after synchronization.",
   "evaluation": {
+    "calibration": {
+      "title": "Human calibration",
+      "description": "Every review is retained without overwriting the model verdict.",
+      "answer": "Answer correctness",
+      "evidence": "Evidence support",
+      "select": "Select",
+      "reason": "Review explanation",
+      "save": "Save review",
+      "saved": "Review saved",
+      "agreementTitle": "Human vs Judge agreement",
+      "agreementHint": "Counts only reviews whose frozen context still matches the current result and Judge output.",
+      "noComparable": "No comparable reviews",
+      "reviewed": "Reviewed results",
+      "stale": "Stale reviews",
+      "verdict": {
+        "pass": "Pass",
+        "fail": "Fail",
+        "inconclusive": "Inconclusive"
+      }
+    },
+    "comparison": {
+      "action": "Compare batches",
+      "other": "Comparison batch UUID",
+      "current": "Current batch",
+      "otherLabel": "Comparison batch",
+      "warning": "The runtime environment is not fully frozen. This is a manual comparison, not a quality verdict.",
+      "limitations": {
+        "different_dataset": "Different datasets",
+        "dataset_revision_unknown": "Dataset revision unknown",
+        "different_dataset_revision": "Different dataset revisions",
+        "scoring_version_unknown": "Scoring version unknown",
+        "different_scoring_version": "Different scoring versions",
+        "metrics_unknown": "Metrics unknown",
+        "different_metrics": "Different metric configurations",
+        "different_judge": "Different Judge model or prompt version",
+        "different_case_selection": "Different case selections",
+        "batch_not_completed": "Batch not completed",
+        "runtime_environment_not_fully_frozen": "Runtime environment not fully frozen"
+      }
+    },
+    "revisions": {
+      "title": "Dataset revisions",
+      "empty": "No revisions yet",
+      "snapshot": "Revision snapshot",
+      "metadata": "Baseline Run metadata (missing values are unknown)"
+    },
+    "baseline": {
+      "action": "Set as baseline Run",
+      "review": "Review the question and reference answer before adding the case. The reference is for manual comparison, not automatic correctness scoring.",
+      "dataset": "Evaluation dataset",
+      "selectDataset": "Select a dataset",
+      "noDatasets": "No evaluation datasets are available for this assistant.",
+      "answer": "Baseline answer",
+      "created": "Baseline case added",
+      "manualComparison": "Manual comparison only; no semantic judgment was performed."
+    },
     "status": {
       "draft": "Draft",
       "active": "Active",
@@ -1688,7 +1744,8 @@
       "status": "Status",
       "progress": "Progress",
       "verdicts": "Pass / fail / total",
-      "score": "Scored metrics weighted score",
+      "score": "Quality score",
+      "legacyTag": "legacy",
       "createdAt": "Created",
       "open": "Report"
     },
@@ -1697,17 +1754,49 @@
       "backToDataset": "Back to dataset",
       "startedAt": "Started",
       "finishedAt": "Finished",
+      "platformVersion": "Platform version",
+      "lensnodeVersion": "Node version",
+      "waitingNode": "No evaluation node is online; the batch is waiting to be dispatched.",
+      "waitingBusy": "The evaluation node is at capacity; the batch is queued.",
       "cancel": "Cancel",
+      "pause": "Pause",
+      "resume": "Resume",
+      "paused": "Batch paused; in-flight cases finish and the rest wait",
+      "resumed": "Batch resumed",
       "retry": "Retry failed",
       "totalCases": "Total cases",
       "completedCases": "{count} completed",
-      "passed": "Passed",
+      "passed": "Verdict passed",
+      "passedHint": "An automatic verdict requires an exact answer or a Judge; otherwise it stays inconclusive.",
       "failed": "Failed",
       "inconclusive": "Inconclusive",
-      "score": "Scored metrics weighted score",
-      "weightedHint": "Only scored metrics are included. This is not an overall verdict; check coverage and case results.",
-      "coverage": "Metric coverage",
-      "coverageHint": "{scored} of {total} dimensions scored",
+      "score": "Quality score",
+      "weightedHint": "The quality score only includes answer correctness and grounding metrics. Execution health is reported separately.",
+      "scoreSuppressed": "This batch has no usable answer-correctness coverage, so no quality score is reported.",
+      "qualityScore": "Quality score",
+      "caseScore": "Weighted score",
+      "qualityHint": "Only answer correctness and grounding metrics. Execution health is reported separately and never mixed in.",
+      "healthScore": "Health score",
+      "healthHint": "Only execution success, tool success and latency. It says nothing about answer quality.",
+      "legacyScore": "Legacy overall score",
+      "legacyHint": "This batch was frozen under the older scoring version; quality and health scores are not recomputed.",
+      "suppressed": {
+        "insufficient_case_coverage": "Case coverage is too low to report a score.",
+        "insufficient_correctness_coverage": "Answer-correctness coverage is too low (needs expected answers or a Judge), so no quality score is reported.",
+        "correctness_metric_not_configured": "The answer-correctness metric is disabled, so no quality score is reported.",
+        "no_quality_scores": "No quality metric produced a score.",
+        "no_health_scores": "No health metric produced a score.",
+        "legacy_scoring_version": "Legacy scoring version; showing the historical overall score.",
+        "no_scored_metrics": "No metric produced a score."
+      },
+      "judgeGate": {
+        "insufficientSamples": "Calibration samples are insufficient ({count}/{min}); the Judge cannot gate quality yet.",
+        "belowThreshold": "Human agreement {rate} is below {min}; the Judge cannot gate quality yet.",
+        "ok": "The Judge passed calibration and can be used as a gate reference."
+      },
+      "coverage": "Case coverage",
+      "coverageHint": "{scored} of {total} dimensions scored; case coverage {casePercent}",
+      "metricCoverage": "{percent} of cases",
       "metrics": "Metrics",
       "metric": "Metric",
       "weight": "Weight",
@@ -1730,7 +1819,20 @@
       "citations": "Citations",
       "filterAll": "All",
       "cancelled": "Evaluation run cancelled",
-      "retried": "Failed cases requeued"
+      "retried": "Failed cases requeued",
+      "judgeTitle": "LLM Judge",
+      "judgeModel": "Judge model",
+      "judgeNotConfigured": "No Judge model configured; semantic correctness stays inconclusive.",
+      "judgeOk": "Judged",
+      "judgeFailed": "Judge failed",
+      "judgeSkipped": "Skipped",
+      "judgeSecondary": "Judge cross-check model",
+      "judgeInterAgreement": "Cross-check agreement",
+      "judgeStatus": {
+        "not_configured": "Judge model is not configured.",
+        "skipped": "Judge skipped this case (no answer to judge).",
+        "judge_failed": "Judge call or its output failed; deterministic scores are unaffected."
+      }
     }
   }
 }

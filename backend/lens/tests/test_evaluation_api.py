@@ -9,6 +9,9 @@ from rest_framework.test import APIClient
 from lens.models import (
     Assistant,
     EvaluationCase,
+    EvaluationResult,
+    EvaluationRun,
+    GlobalSetting,
     LensNode,
     Run,
 )
@@ -18,6 +21,7 @@ User = get_user_model()
 
 class EvaluationApiTests(TestCase):
     def setUp(self):
+        GlobalSetting.objects.create(key="evaluation.execution_pool", value="evaluation")
         self.client = APIClient()
         self.operator = User.objects.create_user(
             username="evaluation-admin",
@@ -66,6 +70,61 @@ class EvaluationApiTests(TestCase):
         self.assertEqual(first["version"], 1)
         self.assertEqual(second["version"], 2)
         self.assertEqual(first["assistant"], str(self.assistant.uuid))
+
+    def test_dataset_version_is_read_only(self):
+        dataset = self._create_dataset()
+
+        response = self.client.patch(
+            f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/",
+            {"version": 99},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["version"], dataset["version"])
+
+    def test_create_ignores_supplied_version(self):
+        response = self.client.post(
+            "/api/lens/admin/evaluation/datasets/",
+            {
+                "name": "Forced",
+                "assistant": str(self.assistant.uuid),
+                "version": 99,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["data"]["version"], 1)
+
+    def test_delete_rejects_dataset_with_runs(self):
+        dataset = self._create_dataset()
+        EvaluationRun.objects.create(dataset_id=dataset["uuid"])
+
+        response = self.client.delete(
+            f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/"
+        )
+
+        self.assertEqual(response.status_code, 409, response.content)
+
+    def test_delete_rejects_case_with_results(self):
+        dataset = self._create_dataset()
+        case = self.client.post(
+            f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/cases/",
+            {"input": "Question"},
+            format="json",
+        ).json()["data"]
+        evaluation_run = EvaluationRun.objects.create(dataset_id=dataset["uuid"])
+        EvaluationResult.objects.create(
+            evaluation_run=evaluation_run,
+            case_id=case["uuid"],
+        )
+
+        response = self.client.delete(
+            f"/api/lens/admin/evaluation/cases/{case['uuid']}/"
+        )
+
+        self.assertEqual(response.status_code, 409, response.content)
 
     def test_case_creation_rejects_duplicate_input(self):
         dataset = self._create_dataset()
@@ -158,6 +217,40 @@ class EvaluationApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["data"]["detail"], "EVALUATION_DATASET_EMPTY")
 
+    def test_launch_rejects_when_no_online_node_is_available(self):
+        dataset = self._create_dataset()
+        cases_url = f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/cases/"
+        self.client.post(cases_url, {"input": "Question"}, format="json")
+        self.node.status = LensNode.Status.OFFLINE
+        self.node.save(update_fields=["status"])
+        runs_url = f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/runs/"
+
+        response = self.client.post(runs_url, {}, format="json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["data"]["detail"],
+            "LENSNODE_EVALUATION_NODE_UNAVAILABLE",
+        )
+
+    def test_launch_runs_on_the_shared_default_pool(self):
+        GlobalSetting.objects.filter(key="evaluation.execution_pool").update(
+            value="default"
+        )
+        self.node.pool = LensNode.Pool.DEFAULT
+        self.node.save(update_fields=["pool"])
+        dataset = self._create_dataset()
+        cases_url = f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/cases/"
+        self.client.post(cases_url, {"input": "Question"}, format="json")
+        runs_url = f"/api/lens/admin/evaluation/datasets/{dataset['uuid']}/runs/"
+
+        with patch("lens.evaluation.engine.batch._enqueue_run"):
+            response = self.client.post(runs_url, {}, format="json")
+
+        self.assertEqual(response.status_code, 201, response.content)
+        run = Run.objects.get(source=Run.Source.EVALUATION)
+        self.assertEqual(run.lensnode, self.node)
+
     def test_metrics_endpoint_lists_defaults_after_creation(self):
         response = self.client.post(
             "/api/lens/admin/evaluation/metrics/",
@@ -177,3 +270,15 @@ class EvaluationApiTests(TestCase):
         self.assertEqual(listed.status_code, 200)
         names = [item["name"] for item in listed.json()["data"]["results"]]
         self.assertIn("custom_tool_success", names)
+        self.assertIn("execution_success", names)
+        self.assertIn("latency_budget", names)
+
+    def test_builtin_metric_cannot_be_deleted(self):
+        listed = self.client.get("/api/lens/admin/evaluation/metrics/").json()["data"]["results"]
+        metric = next(item for item in listed if item["name"] == "execution_success")
+
+        response = self.client.delete(
+            f"/api/lens/admin/evaluation/metrics/{metric['uuid']}/"
+        )
+
+        self.assertEqual(response.status_code, 409, response.content)

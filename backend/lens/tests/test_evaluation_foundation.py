@@ -11,8 +11,10 @@ from lens.models import (
     Assistant,
     EvaluationCase,
     EvaluationDataset,
+    EvaluationMetric,
     EvaluationResult,
     EvaluationRun,
+    GlobalSetting,
     LensNode,
     Run,
     Session,
@@ -25,6 +27,7 @@ User = get_user_model()
 
 class EvaluationFoundationTests(TestCase):
     def setUp(self):
+        GlobalSetting.objects.create(key="evaluation.execution_pool", value="evaluation")
         self.client = APIClient()
         self.user = User.objects.create_user(username="evaluation-user")
         self.default_node = LensNode.objects.create(
@@ -58,6 +61,18 @@ class EvaluationFoundationTests(TestCase):
         )
 
         self.assertEqual(selected, self.evaluation_node)
+
+    def test_evaluation_falls_back_to_bound_default_node_without_pool(self):
+        self.assistant.lensnode = self.default_node
+        self.assistant.save(update_fields=["lensnode"])
+        GlobalSetting.objects.filter(key="evaluation.execution_pool").delete()
+
+        selected = select_execution_lensnode(
+            self.assistant,
+            run_source=Run.Source.EVALUATION,
+        )
+
+        self.assertEqual(selected, self.default_node)
 
     def test_user_session_listing_excludes_evaluation_source(self):
         self.assertFalse(
@@ -136,3 +151,14 @@ class EvaluationFoundationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["feature"], "run_evaluations")
+
+    def test_builtin_metric_catalog_scores_answer_quality(self):
+        metrics = {metric.name: metric for metric in EvaluationMetric.objects.all()}
+
+        self.assertEqual(metrics["answer_correctness"].category, "correctness")
+        self.assertAlmostEqual(float(metrics["answer_correctness"].weight), 0.4)
+        self.assertEqual(metrics["execution_success"].category, "reliability")
+        self.assertAlmostEqual(
+            sum(float(metric.weight) for metric in metrics.values() if metric.enabled),
+            1.0,
+        )

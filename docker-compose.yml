@@ -42,6 +42,7 @@ x-sourcelens-api-common: &sourcelens-api-common
   env_file:
     - ./.env
   environment: &backend-lensnode-environment
+    APP_VERSION: ${APP_VERSION:-0.0.0}
     LENSNODE_NAME: ${LENSNODE_NAME:-local-lensnode}
     LENSNODE_TOKEN: ${LENSNODE_TOKEN:-change-me-lensnode-token}
     LENSNODE_WORKSPACE_PATH: /workspace

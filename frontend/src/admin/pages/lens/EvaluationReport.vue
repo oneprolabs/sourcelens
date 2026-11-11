@@ -18,7 +18,8 @@
             </h1>
             <p class="admin-page-subtitle">
               <span v-if="run">
-                {{ run.dataset_name }} · v{{ run.dataset_version }} ·
+                {{ run.config_snapshot?.dataset?.name || run.dataset_name }} · v{{ run.config_snapshot?.dataset?.version || run.dataset_version }} ·
+                <span v-if="run.config_snapshot?.dataset?.revision">{{ t('evaluation.revisions.title') }} #{{ run.config_snapshot.dataset.revision }} ·</span>
                 <span class="font-mono text-xs">{{ shortUuid(run.uuid) }}</span>
               </span>
             </p>
@@ -37,6 +38,14 @@
                 {{ t('evaluation.report.finishedAt') }}:
                 {{ formatDate(run.finished_at) }}
               </span>
+              <span v-if="platformVersion">
+                {{ t('evaluation.report.platformVersion') }}:
+                {{ platformVersion }}
+              </span>
+              <span v-if="lensnodeVersion">
+                {{ t('evaluation.report.lensnodeVersion') }}:
+                {{ lensnodeVersion }}
+              </span>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -47,6 +56,27 @@
               @click="reload"
             >
               {{ t('common.refresh') }}
+            </BaseButton>
+            <BaseButton variant="outline" size="sm" @click="comparisonOpen = true">
+              {{ t('evaluation.comparison.action') }}
+            </BaseButton>
+            <BaseButton
+              v-if="canPause"
+              variant="outline"
+              size="sm"
+              :loading="actionLoading"
+              @click="pauseRun"
+            >
+              {{ t('evaluation.report.pause') }}
+            </BaseButton>
+            <BaseButton
+              v-if="isPaused"
+              variant="outline"
+              size="sm"
+              :loading="actionLoading"
+              @click="resumeRun"
+            >
+              {{ t('evaluation.report.resume') }}
             </BaseButton>
             <BaseButton
               v-if="isActive"
@@ -78,8 +108,14 @@
             >
               {{ run.error }}
             </div>
+            <div
+              v-else-if="waitingReason"
+              class="mb-4 rounded-lg bg-warning-50 px-4 py-3 text-sm text-warning-700"
+            >
+              {{ waitingMessage }}
+            </div>
 
-            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div class="admin-metric-card">
                 <p
                   class="text-xs font-medium uppercase tracking-wide text-ink-500"
@@ -105,6 +141,9 @@
                   {{ summary.passed_cases }}
                 </p>
                 <p class="mt-1 text-xs text-ink-500">
+                  {{ t('evaluation.report.passedHint') }}
+                </p>
+                <p class="mt-1 text-xs text-ink-500">
                   {{ t('evaluation.report.failed') }}:
                   {{ summary.failed_cases }} ·
                   {{ t('evaluation.report.inconclusive') }}:
@@ -115,13 +154,30 @@
                 <p
                   class="text-xs font-medium uppercase tracking-wide text-ink-500"
                 >
-                  {{ t('evaluation.report.score') }}
+                  {{
+                    summary.legacy_overall
+                      ? t('evaluation.report.legacyScore')
+                      : t('evaluation.report.qualityScore')
+                  }}
                 </p>
                 <p class="admin-metric-value mt-1">
                   {{ formatScore(summary.aggregate_score) }}
                 </p>
                 <p class="mt-1 text-xs text-ink-500">
-                  {{ t('evaluation.report.weightedHint') }}
+                  {{ qualityHint }}
+                </p>
+              </div>
+              <div class="admin-metric-card">
+                <p
+                  class="text-xs font-medium uppercase tracking-wide text-ink-500"
+                >
+                  {{ t('evaluation.report.healthScore') }}
+                </p>
+                <p class="admin-metric-value mt-1">
+                  {{ formatScore(summary.health_score) }}
+                </p>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ healthHint }}
                 </p>
               </div>
               <div class="admin-metric-card">
@@ -131,15 +187,98 @@
                   {{ t('evaluation.report.coverage') }}
                 </p>
                 <p class="admin-metric-value mt-1">
-                  {{ formatPercent(summary.coverage?.ratio) }}
+                  {{ formatPercent(summary.coverage?.case_ratio) }}
                 </p>
                 <p class="mt-1 text-xs text-ink-500">
                   {{
                     t('evaluation.report.coverageHint', {
                       scored: summary.coverage?.scored_metrics ?? 0,
-                      total: summary.coverage?.expected_metrics ?? 0
+                      total: summary.coverage?.expected_metrics ?? 0,
+                      casePercent: formatPercent(summary.coverage?.case_ratio)
                     })
                   }}
+                </p>
+              </div>
+            </div>
+
+            <div class="mt-4 grid gap-3 lg:grid-cols-2">
+              <div class="rounded-lg border border-line px-4 py-3">
+                <h2 class="text-sm font-semibold text-ink-900">
+                  {{ t('evaluation.report.judgeTitle') }}
+                </h2>
+                <p
+                  v-if="!report.judge?.configured"
+                  class="mt-1 text-xs text-warning-700"
+                >
+                  {{ t('evaluation.report.judgeNotConfigured') }}
+                </p>
+                <p v-else class="mt-1 text-xs text-ink-500">
+                  {{ t('evaluation.report.judgeModel') }}:
+                  <span class="font-mono">{{ report.judge.model_ref }}</span>
+                  · v{{ report.judge.prompt_version }}
+                </p>
+                <div class="mt-2 flex flex-wrap gap-3 text-xs text-ink-600">
+                  <span>
+                    {{ t('evaluation.report.judgeOk') }}:
+                    {{ judgeStatusCount('ok') }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.report.judgeFailed') }}:
+                    {{ report.judge?.failed_cases ?? 0 }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.report.judgeSkipped') }}:
+                    {{ judgeStatusCount('skipped') }}
+                  </span>
+                </div>
+                <p
+                  v-if="report.judge?.secondary_model_ref"
+                  class="mt-1 text-xs text-ink-500"
+                >
+                  {{ t('evaluation.report.judgeSecondary') }}:
+                  <span class="font-mono">{{
+                    report.judge.secondary_model_ref
+                  }}</span>
+                  · {{ t('evaluation.report.judgeInterAgreement') }}:
+                  {{ formatPercent(interJudgeRate) }}
+                </p>
+                <p
+                  v-if="judgeGateText"
+                  class="mt-1 text-xs"
+                  :class="judgeGateClass"
+                >
+                  {{ judgeGateText }}
+                </p>
+              </div>
+              <div class="rounded-lg border border-line px-4 py-3">
+                <h2 class="text-sm font-semibold text-ink-900">
+                  {{ t('evaluation.calibration.agreementTitle') }}
+                </h2>
+                <p class="mt-1 text-xs text-ink-500">
+                  {{ t('evaluation.calibration.agreementHint') }}
+                </p>
+                <div
+                  class="mt-2 grid gap-2 text-xs text-ink-600 sm:grid-cols-2"
+                >
+                  <span>
+                    {{ t('evaluation.calibration.answer') }}:
+                    {{ agreementText(report.calibration?.dimensions?.answer) }}
+                  </span>
+                  <span>
+                    {{ t('evaluation.calibration.evidence') }}:
+                    {{
+                      agreementText(report.calibration?.dimensions?.evidence)
+                    }}
+                  </span>
+                </div>
+                <p class="mt-2 text-xs text-ink-500">
+                  {{ t('evaluation.calibration.reviewed') }}:
+                  {{
+                    report.calibration?.dimensions?.answer?.reviewed_results ??
+                    0
+                  }}
+                  · {{ t('evaluation.calibration.stale') }}:
+                  {{ report.calibration?.stale_reviews ?? 0 }}
                 </p>
               </div>
             </div>
@@ -188,6 +327,16 @@
                         </td>
                         <td class="table-cell tabular-nums">
                           {{ formatScore(metric.mean_score) }}
+                          <p
+                            v-if="metric.coverage_ratio !== undefined"
+                            class="text-xs text-ink-500"
+                          >
+                            {{
+                              t('evaluation.report.metricCoverage', {
+                                percent: formatPercent(metric.coverage_ratio)
+                              })
+                            }}
+                          </p>
                         </td>
                         <td class="table-cell text-xs tabular-nums">
                           <span class="text-success-700">{{
@@ -295,7 +444,7 @@
                         {{ t('evaluation.report.verdict') }}
                       </th>
                       <th class="table-head">
-                        {{ t('evaluation.report.score') }}
+                        {{ t('evaluation.report.caseScore') }}
                       </th>
                       <th class="table-head">
                         {{ t('evaluation.report.tokens') }}
@@ -362,6 +511,26 @@
       </section>
     </div>
 
+    <BaseDrawer :show="comparisonOpen" :title="t('evaluation.comparison.action')" width="2xl" @close="comparisonOpen = false">
+      <div class="flex flex-col gap-4">
+        <label class="text-sm font-medium">{{ t('evaluation.comparison.other') }}
+          <input v-model="comparisonUuid" class="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2" />
+        </label>
+        <BaseButton :disabled="!comparisonUuid.trim()" :loading="comparisonLoading" @click="loadComparison">{{ t('evaluation.comparison.action') }}</BaseButton>
+        <template v-if="comparison">
+          <p class="rounded-md bg-warning-50 p-3 text-sm text-warning-700">{{ t('evaluation.comparison.warning') }}</p>
+          <ul class="text-xs text-ink-600"><li v-for="reason in comparison.limitations" :key="reason">{{ t(`evaluation.comparison.limitations.${reason}`) }}</li></ul>
+          <div v-for="item in comparison.cases" :key="item.case_uuid" class="rounded-lg border border-line p-3">
+            <div class="font-mono text-xs text-ink-500">{{ item.case_uuid }}</div>
+            <div class="mt-2 grid gap-3 md:grid-cols-2">
+              <div><h3 class="text-sm font-semibold">{{ t('evaluation.comparison.current') }} · {{ item.left ? verdictLabel(item.left.passed) : '—' }}</h3><pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ item.left?.output || '—' }}</pre></div>
+              <div><h3 class="text-sm font-semibold">{{ t('evaluation.comparison.otherLabel') }} · {{ item.right ? verdictLabel(item.right.passed) : '—' }}</h3><pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ item.right?.output || '—' }}</pre></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </BaseDrawer>
+
     <BaseDrawer
       :show="detailOpen"
       :title="t('evaluation.report.resultDetail')"
@@ -385,6 +554,17 @@
           </span>
         </div>
 
+        <section v-if="detail.baseline">
+          <h3 class="text-sm font-semibold text-ink-900">{{ t('evaluation.baseline.answer') }}</h3>
+          <p class="mt-1 text-xs text-ink-500">Run: {{ detail.baseline.run_uuid }}</p>
+          <details class="mt-2 text-xs text-ink-600">
+            <summary>{{ t('evaluation.revisions.metadata') }}</summary>
+            <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{{ prettyJson(detail.baseline.metadata || {}) }}</pre>
+          </details>
+          <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-sunken p-3 text-xs text-ink-700">{{ detail.baseline.answer }}</pre>
+          <p class="mt-1 text-xs text-ink-500">{{ t('evaluation.baseline.manualComparison') }}</p>
+        </section>
+
         <section>
           <h3 class="text-sm font-semibold text-ink-900">
             {{ t('evaluation.report.output') }}
@@ -393,6 +573,75 @@
             class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-sunken p-3 text-xs text-ink-700"
             >{{ detail.output_snapshot || '—' }}</pre
           >
+        </section>
+
+        <section v-if="detail.judge_evidence">
+          <h3 class="text-sm font-semibold text-ink-900">
+            {{ t('evaluation.report.judgeTitle') }}
+          </h3>
+          <p class="mt-1 text-xs text-ink-500">
+            {{
+              detail.judge_evidence.model?.model_ref ||
+              t('evaluation.report.judgeNotConfigured')
+            }}
+          </p>
+          <div
+            v-for="dimension in ['answer', 'evidence']"
+            :key="dimension"
+            class="mt-2 text-xs text-ink-700"
+          >
+            <template v-if="detail.judge_evidence[dimension]">
+              <span class="font-medium">
+                {{ t(`evaluation.calibration.${dimension}`) }}:
+              </span>
+              {{
+                t(
+                  `evaluation.calibration.verdict.${detail.judge_evidence[dimension].verdict}`
+                )
+              }}
+              <p class="mt-1 whitespace-pre-wrap">
+                {{ detail.judge_evidence[dimension].rationale }}
+              </p>
+            </template>
+          </div>
+          <p
+            v-if="
+              detail.judge_evidence.status &&
+              detail.judge_evidence.status !== 'ok'
+            "
+            class="mt-2 text-xs text-warning-700"
+          >
+            {{
+              t(`evaluation.report.judgeStatus.${detail.judge_evidence.status}`)
+            }}
+          </p>
+        </section>
+
+        <section class="rounded-lg border border-line p-3">
+          <h3 class="text-sm font-semibold">{{ t('evaluation.calibration.title') }}</h3>
+          <p class="mt-1 text-xs text-ink-500">{{ t('evaluation.calibration.description') }}</p>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <BaseSelect v-model="calibrationAnswer" :label="t('evaluation.calibration.answer')">
+              <option value="">{{ t('evaluation.calibration.select') }}</option>
+              <option value="pass">{{ t('evaluation.report.passed') }}</option>
+              <option value="fail">{{ t('evaluation.report.failed') }}</option>
+              <option value="inconclusive">{{ t('evaluation.report.inconclusive') }}</option>
+            </BaseSelect>
+            <BaseSelect v-model="calibrationEvidence" :label="t('evaluation.calibration.evidence')">
+              <option value="">{{ t('evaluation.calibration.select') }}</option>
+              <option value="pass">{{ t('evaluation.report.passed') }}</option>
+              <option value="fail">{{ t('evaluation.report.failed') }}</option>
+              <option value="inconclusive">{{ t('evaluation.report.inconclusive') }}</option>
+            </BaseSelect>
+          </div>
+          <label class="mt-3 block text-sm">{{ t('evaluation.calibration.reason') }}
+            <textarea v-model="calibrationReason" maxlength="4000" class="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2" />
+          </label>
+          <BaseButton class="mt-2" size="sm" :disabled="!calibrationAnswer || !calibrationEvidence || !calibrationReason.trim()" :loading="calibrationSaving" @click="saveCalibration">{{ t('evaluation.calibration.save') }}</BaseButton>
+          <div v-for="row in calibrations" :key="row.id" class="mt-3 border-t border-line pt-2 text-xs">
+            {{ row.reviewer || '—' }} · {{ formatDate(row.created_at) }} · {{ t('evaluation.calibration.answer') }}: {{ t(`evaluation.calibration.verdict.${row.answer_verdict}`) }} · {{ t('evaluation.calibration.evidence') }}: {{ t(`evaluation.calibration.verdict.${row.evidence_verdict}`) }}
+            <p class="mt-1 whitespace-pre-wrap">{{ row.explanation }}</p>
+          </div>
         </section>
 
         <section v-if="detail.issues?.length">
@@ -462,13 +711,19 @@ import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import {
   cancelEvaluationRun,
+  compareEvaluationRuns,
+  createEvaluationCalibration,
+  getEvaluationCalibrations,
   getEvaluationReport,
   getEvaluationResult,
   getEvaluationRun,
   listEvaluationResults,
+  pauseEvaluationRun,
+  resumeEvaluationRun,
   retryEvaluationRun
 } from '@/api/evaluation'
 import { useToast } from '@/composables/useToast'
@@ -492,6 +747,45 @@ const verdictFilter = ref('all')
 const detailOpen = ref(false)
 const detail = ref(null)
 const detailLoading = ref(false)
+const calibrations = ref([])
+const calibrationAnswer = ref('')
+const calibrationEvidence = ref('')
+const calibrationReason = ref('')
+const calibrationSaving = ref(false)
+
+async function saveCalibration() {
+  calibrationSaving.value = true
+  try {
+    calibrations.value = await createEvaluationCalibration(runUuid.value, detail.value.uuid, {
+      answer_verdict: calibrationAnswer.value,
+      evidence_verdict: calibrationEvidence.value,
+      explanation: calibrationReason.value.trim()
+    })
+    calibrationReason.value = ''
+    showSuccess(t('evaluation.calibration.saved'))
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    calibrationSaving.value = false
+  }
+}
+
+const comparisonOpen = ref(false)
+const comparisonLoading = ref(false)
+const comparisonUuid = ref('')
+const comparison = ref(null)
+
+async function loadComparison() {
+  comparisonLoading.value = true
+  comparison.value = null
+  try {
+    comparison.value = await compareEvaluationRuns(runUuid.value, comparisonUuid.value.trim())
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    comparisonLoading.value = false
+  }
+}
 let pollTimer = null
 let resultsRequestVersion = 0
 let disposed = false
@@ -501,7 +795,82 @@ const TERMINAL_STATUSES = ['completed', 'cancelled', 'failed']
 
 const isActive = computed(() => ACTIVE_STATUSES.includes(run.value?.status))
 const isTerminal = computed(() => TERMINAL_STATUSES.includes(run.value?.status))
+const isPaused = computed(() => run.value?.status === 'paused')
+const canPause = computed(() =>
+  ['queued', 'running'].includes(run.value?.status)
+)
 const summary = computed(() => report.value?.summary || {})
+
+function suppressionText(reason) {
+  if (!reason) return ''
+  const key = `evaluation.report.suppressed.${reason}`
+  const text = t(key)
+  return text === key ? t('evaluation.report.scoreSuppressed') : text
+}
+
+const qualityHint = computed(() => {
+  const data = summary.value
+  if (data.legacy_overall) return t('evaluation.report.legacyHint')
+  if (data.quality_suppressed) return suppressionText(data.quality_suppressed)
+  return t('evaluation.report.qualityHint')
+})
+
+const healthHint = computed(() => {
+  const data = summary.value
+  if (data.health_suppressed) return suppressionText(data.health_suppressed)
+  return t('evaluation.report.healthHint')
+})
+
+const judgeGateText = computed(() => {
+  const gate = report.value?.judge_gate
+  if (!gate) return ''
+  if (gate.status === 'insufficient_samples') {
+    return t('evaluation.report.judgeGate.insufficientSamples', {
+      count: gate.answer?.comparable_reviews ?? 0,
+      min: gate.min_samples
+    })
+  }
+  if (gate.status === 'below_threshold') {
+    return t('evaluation.report.judgeGate.belowThreshold', {
+      rate: formatPercent(gate.answer?.agreement_rate),
+      min: formatPercent(gate.min_agreement)
+    })
+  }
+  if (gate.status === 'ok') return t('evaluation.report.judgeGate.ok')
+  return ''
+})
+
+const judgeGateClass = computed(() =>
+  report.value?.judge_gate?.status === 'ok'
+    ? 'text-success-700'
+    : 'text-warning-700'
+)
+
+const interJudgeRate = computed(() => {
+  const pair = report.value?.judge?.inter_judge
+  if (!pair?.comparable_cases) return null
+  return pair.answer_agree / pair.comparable_cases
+})
+const waitingReason = computed(
+  () => run.value?.config_snapshot?.waiting?.reason || ''
+)
+const waitingMessage = computed(() =>
+  waitingReason.value === 'EVALUATION_NODE_BUSY'
+    ? t('evaluation.report.waitingBusy')
+    : t('evaluation.report.waitingNode')
+)
+const platformVersion = computed(
+  () =>
+    run.value?.config_snapshot?.platform_version ||
+    report.value?.provenance?.platform_version ||
+    ''
+)
+const lensnodeVersion = computed(
+  () =>
+    run.value?.config_snapshot?.lensnode_agent_version ||
+    report.value?.provenance?.lensnode?.agent_version ||
+    ''
+)
 
 const verdictFilters = computed(() => [
   { key: 'all', label: t('evaluation.report.filterAll') },
@@ -556,6 +925,17 @@ function formatScore(value) {
 function formatPercent(value) {
   if (value === null || value === undefined) return '—'
   return `${Math.round(Number(value) * 100)}%`
+}
+
+function judgeStatusCount(status) {
+  return Number(report.value?.judge?.statuses?.[status] ?? 0)
+}
+
+function agreementText(dimension) {
+  if (!dimension || !dimension.comparable_reviews) {
+    return t('evaluation.calibration.noComparable')
+  }
+  return `${formatPercent(dimension.agreement_rate)} (${dimension.agreed}/${dimension.comparable_reviews})`
 }
 
 function formatDuration(value) {
@@ -680,9 +1060,14 @@ function changePageSize(value) {
 async function openResult(row) {
   detailOpen.value = true
   detail.value = null
+  calibrations.value = []
+  calibrationAnswer.value = ''
+  calibrationEvidence.value = ''
+  calibrationReason.value = ''
   detailLoading.value = true
   try {
     detail.value = await getEvaluationResult(runUuid.value, row.uuid)
+    calibrations.value = await getEvaluationCalibrations(runUuid.value, row.uuid)
   } catch (error) {
     showError(errorMessage(error))
   } finally {
@@ -696,6 +1081,35 @@ async function cancelRun() {
     await cancelEvaluationRun(runUuid.value)
     showSuccess(t('evaluation.report.cancelled'))
     await reload()
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function pauseRun() {
+  actionLoading.value = true
+  try {
+    await pauseEvaluationRun(runUuid.value)
+    showSuccess(t('evaluation.report.paused'))
+    await reload()
+    schedulePoll()
+  } catch (error) {
+    showError(errorMessage(error))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function resumeRun() {
+  actionLoading.value = true
+  try {
+    await resumeEvaluationRun(runUuid.value)
+    showSuccess(t('evaluation.report.resumed'))
+    page.value = 1
+    await reload()
+    schedulePoll()
   } catch (error) {
     showError(errorMessage(error))
   } finally {

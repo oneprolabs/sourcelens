@@ -11,8 +11,10 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .evaluation.models import (
+    EvaluationCalibration,
     EvaluationCase,
     EvaluationDataset,
+    EvaluationDatasetRevision,
     EvaluationMetric,
     EvaluationResult,
     EvaluationRun,

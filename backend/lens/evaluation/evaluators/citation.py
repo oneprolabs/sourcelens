@@ -43,6 +43,26 @@ def _matches_known_path(path, known_paths):
     )
 
 
+def _normalize_source(value):
+    """Return a case-folded, slash-normalized path for source matching."""
+
+    return str(value or "").strip().strip("/").casefold()
+
+
+def _source_matches(expected, path):
+    """Return True when a citation path covers one expected source."""
+
+    expected_path = _normalize_source(expected)
+    citation_path = _normalize_source(path)
+    if not expected_path or not citation_path:
+        return False
+    return (
+        citation_path == expected_path
+        or citation_path.endswith("/" + expected_path)
+        or expected_path.endswith("/" + citation_path)
+    )
+
+
 def citation_integrity_metric(citations, expected_sources=None, known_paths=None):
     """Return structural and coverage scores for one answer's citations.
 
@@ -52,7 +72,18 @@ def citation_integrity_metric(citations, expected_sources=None, known_paths=None
     """
 
     citations = citations if isinstance(citations, list) else []
+    expected = [str(value).strip() for value in (expected_sources or []) if str(value).strip()]
     if not citations:
+        if expected:
+            return {
+                "score": 0.0,
+                "detail": {
+                    "reason": "no_citations",
+                    "count": 0,
+                    "missing_expected_sources": expected,
+                    "existence_checked": False,
+                },
+            }
         return {
             "score": None,
             "detail": {"reason": "no_citations", "count": 0},
@@ -70,8 +101,9 @@ def citation_integrity_metric(citations, expected_sources=None, known_paths=None
             invalid.append({"path": path, "reason": "invalid_line_range"})
     valid_ratio = (len(citations) - len(invalid)) / len(citations)
 
-    expected = [str(value).strip() for value in (expected_sources or []) if str(value).strip()]
-    missing_expected = [value for value in expected if not any(value in path for path in paths)]
+    missing_expected = [
+        value for value in expected if not any(_source_matches(value, path) for path in paths)
+    ]
     coverage_ratio = 1.0
     if expected:
         coverage_ratio = (len(expected) - len(missing_expected)) / len(expected)

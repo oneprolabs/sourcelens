@@ -1,0 +1,42 @@
+type: feature
+audience: admin
+en: >-
+  Agent Evaluation now snapshots every dataset revision, turns a completed Run
+  into a baseline case, compares batches while listing what blocks a
+  like-for-like reading, and records append-only human calibration of Judge
+  verdicts. A configurable LLM Judge produces answer-correctness and evidence
+  verdicts; a missing or failing Judge degrades to an explicit status without
+  changing deterministic scores. Batches can be paused and resumed, keeping
+  in-flight cases running. Reports show per-metric coverage, suppressed
+  aggregates, Judge coverage, and the platform and LensNode versions behind
+  each result. Quality and health are now separate: quality counts only answer
+  correctness and grounding and is withheld without correctness coverage,
+  while health reports execution success, tool success and latency. Judge
+  evidence verdicts affect case outcomes, an optional second Judge model
+  cross-checks them, and human calibration must reach 20 samples at 80%
+  agreement before the Judge is gate-ready.
+zh-CN: >-
+  智能体评估现在为数据集保存不可变修订快照，可将已完成的 Run 固化为基线用例，
+  在对比批次时明确列出哪些差异使两者不可直接比较，并支持对 Judge 结论追加人工校准。
+  新增可配置的 LLM Judge，产出回答正确性与证据支持判定，使人工校准一致率可计算，
+  语义用例不再一律停留在不确定；未配置或调用失败时以显式状态降级，不影响确定性分数。
+  批次还支持暂停与恢复：在途用例继续完成，其余等待恢复。批次报告同时展示逐指标
+  覆盖率、被抑制的综合分、Judge 覆盖情况，以及产出结果时的平台与 LensNode 版本。质量分与健康分现在分开计算：质量分只统计
+  回答正确性与依据类指标，缺少正确性覆盖时不出分；健康分单独展示执行成功、工具成功率
+  与耗时。Judge 的证据判定现在参与用例结论，可选第二个 Judge 模型做交叉核验；人工校准
+  需达到 20 条样本且一致率不低于 80%，才会标注 Judge 可作门禁参考。
+es: >-
+  La evaluación de agentes ahora guarda revisiones inmutables de cada conjunto
+  de datos, convierte un Run completado en caso de referencia, compara lotes
+  indicando qué impide compararlos y registra calibración humana de solo adición
+  sobre los veredictos del Judge. Un LLM Judge configurable produce veredictos de
+  corrección y evidencia; si falta o falla, se degrada a un estado explícito sin
+  cambiar las puntuaciones deterministas. Los lotes se pueden pausar y reanudar,
+  dejando terminar los casos en curso. El informe muestra cobertura por métrica,
+  agregados suprimidos, cobertura del Judge y las versiones de plataforma y
+  LensNode. Calidad y salud son separadas: la calidad solo cuenta
+  correctitud y fundamento y se omite sin esa cobertura, mientras la salud
+  informa éxito de ejecución y latencia. Los veredictos de evidencia afectan el
+  resultado, un segundo Judge opcional verifica en cruz, y la calibración humana
+  debe llegar a 20 muestras con 80% de concordancia para marcar al Judge como
+  apto.
