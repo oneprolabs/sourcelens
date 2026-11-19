@@ -4,9 +4,11 @@ from django.core.exceptions import PermissionDenied
 from rest_framework import exceptions, permissions, viewsets
 from rest_framework.renderers import BaseRenderer
 
+from accounts.access import get_user_tenant
 from accounts.authentication import AgentRestrictedJWTAuthentication
 from lens.lensnode_auth import token_matches
 from lens.models import LensNode, Run
+from lens.run_access import scope_run_queryset
 
 
 class BaseAuthenticatedViewSet(viewsets.ModelViewSet):
@@ -47,8 +49,12 @@ def _authenticate_stream_request(request):
     except exceptions.AuthenticationFailed:
         return None
     if authenticated is not None:
-        user, _ = authenticated
+        user, request.auth = authenticated
+        request.user = user
         return user
+    if request.headers.get("Authorization"):
+        return None
+    request.auth = None
     user = getattr(request, "user", None)
     return user if user is not None and user.is_authenticated else None
 
@@ -56,8 +62,9 @@ def _authenticate_stream_request(request):
 def _get_user_run(run_uuid, user):
     """Return a run visible to the authenticated user."""
 
+    tenant = get_user_tenant(user)
     return (
-        Run.objects.filter(uuid=run_uuid, session__user=user)
+        scope_run_queryset(Run.objects.filter(uuid=run_uuid, session__user=user), tenant.pk if tenant else None)
         .select_related("output_message")
         .first()
     )

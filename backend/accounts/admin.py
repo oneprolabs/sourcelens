@@ -2,7 +2,26 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 
-from .models import Profile, Role
+from .models import Profile, Role, Tenant, TenantMembership
+
+
+@admin.register(Tenant)
+class TenantAdmin(admin.ModelAdmin):
+    """Admin interface for tenant records."""
+
+    list_display = ['name', 'slug', 'status', 'created_at']
+    list_filter = ['status']
+    search_fields = ['name', 'slug']
+
+
+@admin.register(TenantMembership)
+class TenantMembershipAdmin(admin.ModelAdmin):
+    """Admin interface for tenant memberships."""
+
+    list_display = ['user', 'tenant', 'role', 'status', 'joined_at']
+    list_filter = ['role', 'status', 'tenant']
+    search_fields = ['user__username', 'user__email', 'tenant__name']
+    raw_id_fields = ['user', 'tenant']
 
 
 @admin.register(Role)
@@ -29,12 +48,14 @@ class ProfileAdmin(admin.ModelAdmin):
     """
     list_display = [
         'user',
+        'platform_role',
         'registration_completed',
         'language',
         'timezone',
         'nickname',
     ]
     list_filter = [
+        'platform_role',
         'registration_completed',
         'language',
         'timezone',
@@ -67,6 +88,7 @@ class ProfileAdmin(admin.ModelAdmin):
                 'language',
                 'timezone',
                 'preferred_platform',
+                'platform_role',
             )
         }),
     )

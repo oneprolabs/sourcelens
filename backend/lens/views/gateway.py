@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from django.conf import settings
+from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -177,6 +178,21 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
         }
         correlation = {}
         run_uuid = request.data.get("run_uuid")
+        conversion_token = request.data.get("conversion_token")
+        if conversion_token:
+            if not isinstance(conversion_token, str) or len(conversion_token) > 16384:
+                return Response({"detail": "Invalid conversion authorization."}, status=400)
+            if run_uuid or request.data.get("stream") or request.data.get("tools") or request.data.get("trace_context"):
+                return Response({"detail": "Invalid conversion model request."}, status=400)
+            from lens.datasource.model_access import conversion_tracker_state
+            from lens.models import DataSource
+
+            try:
+                tracker_state = conversion_tracker_state(conversion_token, lensnode, model_ref)
+            except (signing.BadSignature, ValueError, TypeError, KeyError, DataSource.DoesNotExist, ValidationError):
+                return Response({"detail": "Conversion model authorization is unavailable."}, status=403)
+        elif not run_uuid:
+            return Response({"detail": "run_uuid is required for model authorization."}, status=400)
         trace_context = request.data.get("trace_context")
         if trace_context is not None and not self._valid_trace_context(
             trace_context,
@@ -203,7 +219,23 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             tracker_state["user_id"] = run.session.user_id
+            tracker_state["_model_scope"] = (run.tenant,)
+            from lens.model_scope import authorized_model_ref
+
+            snapshot = getattr(getattr(run, "execution", None), "runtime_snapshot", {}) or {}
+            allowed_refs = set((snapshot.get("model_refs") or {}).values())
+            allowed_refs.update(
+                item.get("agent_model_ref") for item in snapshot.get("subagents", []) if isinstance(item, dict)
+            )
+            if str(model_ref) not in {str(ref) for ref in allowed_refs if ref}:
+                return Response({"detail": "Model is not bound to this Run."}, status=403)
+            try:
+                authorized_model_ref(model_ref, run.tenant)
+            except ValueError:
+                return Response({"detail": "Model is not authorized for this Run."}, status=403)
             correlation["run_uuid"] = str(run.uuid)
+            if run.session.api_key_id:
+                correlation["api_key_uuid"] = str(run.session.api_key_id)
             correlation["is_subagent"] = bool(
                 request.data.get("is_subagent")
             )
@@ -211,7 +243,7 @@ class LensNodeAIGatewayView(LensNodeAuthMixin, APIView):
             tracker_state["metadata"] = correlation
             tracker_state["litellm_metadata"] = {
                 "session_id": str(run.session.uuid),
-                "trace_user_id": str(run.session.user_id),
+                "trace_user_id": str(run.session.user_id) if run.session.user_id is not None else None,
                 "trace_name": "sourcelens.run",
                 "trace_id": run.uuid.hex,
                 "existing_trace_id": run.uuid.hex,
@@ -921,6 +953,7 @@ class LensNodeDeliverableUploadView(LensNodeAuthMixin, APIView):
 
         staged = str(request.data.get("staged") or "").lower() == "true"
         output = RunOutputFile(
+            tenant_id=run.tenant_id,
             run=run,
             message=None if staged else run.output_message,
             session=run.session,

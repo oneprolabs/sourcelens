@@ -60,6 +60,31 @@ export function isAdminUser(user) {
   return !!(user?.is_staff || user?.is_superuser)
 }
 
+export function isPlatformAdmin(user) {
+  return user?.platform_role === 'super_admin' || !!user?.is_superuser
+}
+
+export function getManagementEntry(user) {
+  return isPlatformAdmin(user)
+    ? '/management/platform/overview'
+    : '/management/overview'
+}
+
+export function getConsoleRedirect(user, meta, delegation = null) {
+  if (meta.console === 'platform') return isPlatformAdmin(user) ? null : '/'
+  if (meta.console !== 'tenant') return null
+  if (isPlatformAdmin(user)) {
+    if (
+      !delegation?.delegation_id ||
+      !(Date.parse(delegation.expires_at) > Date.now())
+    ) {
+      return '/management/platform/tenants'
+    }
+    return meta.tenantIdentityOnly ? '/management/lens/assistants' : null
+  }
+  return hasFeature(user, 'admin_console') ? null : '/'
+}
+
 export function normalizeFeatureKeys(values) {
   if (!Array.isArray(values)) return []
 
@@ -96,20 +121,34 @@ export function hasFeature(user, featureKey) {
     return !!user
   }
 
-  if (normalizedFeatureKey === 'run_evaluations' && isAdminUser(user)) return true
-
-  if (normalizedFeatureKey === 'admin_console') {
-    return isAdminUser(user)
-  }
-
   const visibleFeatures = normalizeFeatureKeys(
     getAccessProfile(user).visible_features
   )
+  if (normalizedFeatureKey === 'run_evaluations') {
+    return (
+      isAdminUser(user) ||
+      isPlatformAdmin(user) ||
+      user?.tenant_role === 'tenant_admin' ||
+      visibleFeatures.includes(normalizedFeatureKey)
+    )
+  }
+  if (normalizedFeatureKey === 'admin_console') {
+    return (
+      isAdminUser(user) ||
+      isPlatformAdmin(user) ||
+      user?.tenant_role === 'tenant_admin' ||
+      visibleFeatures.includes(normalizedFeatureKey)
+    )
+  }
   return visibleFeatures.includes(normalizedFeatureKey)
 }
 
 export function hasPermission(user, permission) {
-  if (!permission || (permission === 'lens.run_evaluations' && isAdminUser(user))) return true
+  if (
+    !permission ||
+    (permission === 'lens.run_evaluations' && isAdminUser(user))
+  )
+    return true
   const permissions = Array.isArray(user?.permissions) ? user.permissions : []
   return permissions.includes(permission)
 }
@@ -141,7 +180,9 @@ export function getLandingPath(user) {
 
 export function getCurrentPlatformKey(path) {
   const matched = FEATURE_DEFINITIONS.flatMap((item) =>
-    item.matchers.filter((matcher) => path.startsWith(matcher)).map((matcher) => ({ item, matcher }))
+    item.matchers
+      .filter((matcher) => path.startsWith(matcher))
+      .map((matcher) => ({ item, matcher }))
   ).sort((a, b) => b.matcher.length - a.matcher.length)[0]?.item
   return matched?.key || 'workspace'
 }

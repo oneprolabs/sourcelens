@@ -15,21 +15,25 @@ class PublicationConflict(ValueError):
 
 
 @transaction.atomic
-def publish_message(*, topic, idempotency_key, title, body, publisher, translations=None):
+def publish_message(*, topic, idempotency_key, title, body, publisher, translations=None, tenant=None):
     """Persist validated plain-text content once per topic and business key.
 
     Callers must validate the public input contract with MessagePublicationSerializer.
     The publisher must be an authenticated operator authorized by the caller.
     """
 
-    identity = json.dumps([topic, idempotency_key], ensure_ascii=False)
+    identity = json.dumps([str(tenant.pk) if tenant else None, topic, idempotency_key], ensure_ascii=False)
     source_uuid = hashlib.sha256(identity.encode()).hexdigest()
     content = {"topic": topic, "idempotency_key": idempotency_key, "title": title, "body": body}
     if translations:
         content["translations"] = translations
-    publication, created = AlertOutbox.objects.get_or_create(
+    legacy_identity = json.dumps([topic, idempotency_key], ensure_ascii=False)
+    legacy_uuid = hashlib.sha256(legacy_identity.encode()).hexdigest()
+    legacy = AlertOutbox.objects.filter(tenant=tenant, source_key=f"message:{legacy_uuid}:terminal").first()
+    publication, created = (legacy, False) if legacy else AlertOutbox.objects.get_or_create(
         source_key=f"message:{source_uuid}:terminal",
         defaults={
+            "tenant": tenant,
             "subject": "message",
             "source_uuid": source_uuid,
             "payload": {

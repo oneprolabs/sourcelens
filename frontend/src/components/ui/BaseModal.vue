@@ -34,6 +34,7 @@
             <div
               v-if="show"
               tabindex="-1"
+              data-modal-panel
               class="relative transform overflow-hidden rounded-lg bg-surface text-left shadow-xl transition-all w-full max-h-[90vh] sm:max-h-[90vh] flex flex-col my-4 sm:my-8"
               :class="maxWidthClass"
               @click.stop

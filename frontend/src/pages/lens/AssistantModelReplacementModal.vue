@@ -318,7 +318,8 @@ import {
 
 const props = defineProps({
   assistants: { type: Array, required: true },
-  selectedUuids: { type: Array, required: true }
+  selectedUuids: { type: Array, required: true },
+  initialField: { type: String, default: 'agent_model_ref' }
 })
 const emit = defineEmits(['close', 'updated', 'refresh'])
 const { t } = useI18n()
@@ -389,7 +390,7 @@ function handleAssistantPickerTab(event) {
     closeAssistantPicker()
   }
 }
-const field = ref('agent_model_ref')
+const field = ref(props.initialField)
 const target = ref('')
 const models = ref([])
 const loading = ref(true)

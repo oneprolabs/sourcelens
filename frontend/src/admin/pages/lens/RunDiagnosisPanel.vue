@@ -28,11 +28,15 @@
           <p class="mt-1 text-sm leading-6 text-gray-500">
             {{ t('lensRuns.diagnosisEmptyDescription') }}
           </p>
-          <p v-if="!canGenerate" class="mt-1 text-xs text-amber-700">
+          <p
+            v-if="!readonly && !canGenerate"
+            class="mt-1 text-xs text-amber-700"
+          >
             {{ t('lensRuns.diagnosisTerminalOnly') }}
           </p>
         </div>
         <BaseButton
+          v-if="!readonly"
           class="shrink-0"
           size="sm"
           :disabled="!canGenerate"
@@ -57,7 +61,7 @@
               </span>
             </div>
             <BaseButton
-              v-if="isStalePending"
+              v-if="!readonly && isStalePending"
               variant="outline"
               size="sm"
               :disabled="!canGenerate"
@@ -109,6 +113,7 @@
                 {{ diagnosisErrorLabel }}
               </p>
               <BaseButton
+                v-if="!readonly"
                 class="mt-3"
                 variant="outline"
                 size="sm"
@@ -417,7 +422,7 @@
     </div>
 
     <form
-      v-if="latest?.status === 'completed'"
+      v-if="!readonly && canGenerate && latest?.status === 'completed'"
       class="diagnosis-card mt-4"
       data-testid="diagnosis-follow-up"
       @submit.prevent="submitFollowUp"
@@ -479,7 +484,8 @@ import EvidenceLinks from './RunDiagnosisEvidenceLinks.vue'
 const props = defineProps({
   runUuid: { type: String, required: true },
   active: { type: Boolean, default: false },
-  canGenerate: { type: Boolean, default: true }
+  canGenerate: { type: Boolean, default: true },
+  readonly: { type: Boolean, default: false }
 })
 const emit = defineEmits(['navigate'])
 const { t } = useI18n()
@@ -621,7 +627,13 @@ async function load({ quiet = false } = {}) {
 }
 
 async function generate() {
-  if (!props.runUuid || !props.canGenerate || generating.value) return
+  if (
+    props.readonly ||
+    !props.runUuid ||
+    !props.canGenerate ||
+    generating.value
+  )
+    return
   const version = ++requestVersion
   generating.value = true
   loadError.value = ''
@@ -645,7 +657,14 @@ async function generate() {
 
 async function submitFollowUp() {
   const value = question.value.trim()
-  if (!value || !latest.value || submitting.value) return
+  if (
+    props.readonly ||
+    !props.canGenerate ||
+    !value ||
+    !latest.value ||
+    submitting.value
+  )
+    return
   const version = ++requestVersion
   submitting.value = true
   try {

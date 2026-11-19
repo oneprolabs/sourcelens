@@ -112,6 +112,7 @@ export function syncTagClass(status) {
 }
 
 export function formatDataSourcePolicyLine(syncPolicy) {
+  if (syncPolicy?.mode === 'manual') return 'Manual'
   if (syncPolicy?.mode === 'crontab') {
     const cron = syncPolicy.cron || EMPTY_VALUE
     const timezone = syncPolicy.timezone || 'UTC'
@@ -157,4 +158,45 @@ export function latestUploadTasksByFilename(tasks) {
     latestFiles.set(name, task)
   })
   return latestFiles
+}
+
+export function dataSourcePolicyLabel(row, t) {
+  if (
+    ['upload', 'managed_workspace'].includes(row?.source_type) ||
+    row?.plugin_key === 'file_upload'
+  ) {
+    return t('lensAdmin.knowledgeList.manual')
+  }
+  const policy = row?.sync_policy || {}
+  if (policy.mode === 'manual') return t('lensAdmin.knowledgeList.manual')
+  if (policy.mode === 'crontab')
+    return `${policy.cron || EMPTY_VALUE} · ${policy.timezone || 'UTC'}`
+  const seconds = Number(policy.interval_seconds ?? 86400)
+  if (!Number.isFinite(seconds) || seconds <= 0) return EMPTY_VALUE
+  return t('lensAdmin.table.intervalSeconds', { seconds })
+}
+
+export function dataSourceStorageLabel(row, t) {
+  const usage = row?.storage_usage
+  if (
+    !usage ||
+    usage.status !== 'complete' ||
+    usage.total_bytes == null ||
+    usage.total_bytes === ''
+  ) {
+    return t('lensAdmin.datasourceDetail.storage.notMeasured')
+  }
+  const bytes = Number(usage.total_bytes)
+  if (!Number.isFinite(bytes) || bytes < 0)
+    return t('lensAdmin.datasourceDetail.storage.notMeasured')
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let size = bytes
+  let unit = 'B'
+  for (const candidate of units) {
+    size /= 1024
+    unit = candidate
+    if (size < 1024 || candidate === 'TB') break
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${unit}`
 }

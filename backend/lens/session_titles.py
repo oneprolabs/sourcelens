@@ -65,10 +65,9 @@ def _title_system_prompt(answer_language):
 def _run_answer_language(run):
     execution = getattr(run, "execution", None)
     runtime_snapshot = execution.runtime_snapshot if execution else {}
-    profile = getattr(run.session.user, "profile", None)
     return normalize_answer_language(
         runtime_snapshot.get("answer_language")
-        or getattr(profile, "language", None)
+        or run.session.preferred_language
     )
 
 
@@ -113,6 +112,7 @@ def generate_semantic_session_title(session_uuid, run_uuid):
             user=user_prompt,
             node_name="lens.session_title",
             user_id=session.user_id,
+            run_uuid=run.uuid,
         )
         title = normalize_generated_title(result.content)
     except Exception as exc:

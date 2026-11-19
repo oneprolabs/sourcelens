@@ -41,7 +41,7 @@ test('reprocess uses a modal confirmation instead of a native prompt', async () 
   assert.match(page, /function closeReprocessConfirmation/)
 })
 
-test('sync records list sync, upload, and processing tasks in one table', async () => {
+test('sync records list sync, upload, and processing tasks in one timeline', async () => {
   const [drawer, api] = await Promise.all([
     source('pages/lens/DataSourceDetailDrawer.vue'),
     source('api/lens.js')
@@ -53,8 +53,9 @@ test('sync records list sync, upload, and processing tasks in one table', async 
     drawer,
     /lensAdmin\.datasourceDetail\.details\.taskTypeConversion/
   )
-  assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colTaskType/)
-  assert.match(drawer, /lensAdmin\.datasourceDetail\.details\.colFileName/)
+  assert.match(drawer, /taskTypeLabel\(task\)/)
+  assert.match(drawer, /task\.metadata\?\.filename/)
+  assert.match(drawer, /dataSourceTaskSummary\(task, t\)/)
   assert.match(drawer, /function taskTypeLabel/)
   assert.doesNotMatch(drawer, /taskTypeOptions|watch\(taskType/)
   assert.match(api, /task_type/)

@@ -114,6 +114,9 @@ def build_assistant_decision_model(assistant):
 
     if not assistant.decision_model_ref:
         return {}
+    from .model_scope import authorized_model_ref
+
+    authorized_model_ref(assistant.decision_model_ref, assistant.tenant, "decision")
     gates = (
         default_control_gates(DEFINITION, assistant.capability) if assistant.decision_auto else assistant.decision_gates
     )

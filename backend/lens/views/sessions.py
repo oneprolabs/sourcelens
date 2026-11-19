@@ -2,9 +2,9 @@
 
 import json
 import logging
+from contextlib import aclosing
 
-from asgiref.sync import async_to_sync, sync_to_async
-from channels.layers import get_channel_layer
+from asgiref.sync import sync_to_async
 from django.db import transaction
 from django.db.models import Exists, F, OuterRef
 from django.http import (
@@ -25,9 +25,15 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.principals import session_owner_filter
+from accounts.access import get_user_tenant
+from accounts.authentication import (
+    tenant_api_key_allows_assistant,
+    tenant_api_key_selected_assistants,
+)
 from accounts.authentication import AGENT_SCOPE_CLAIM, AGENT_TOKEN_SCOPE
 from accounts.models import normalize_answer_language
-from lens.assistant_lifecycle import AssistantNotRunnableError
+from lens.assistant_lifecycle import AssistantNotRunnableError, lock_work_user
 from lens.attachments import AttachmentError, store_message_attachment
 from lens.citations import (
     citation_source_payload,
@@ -36,7 +42,6 @@ from lens.citations import (
 from lens.document_attachments import (
     DocumentAttachmentError,
     delete_document_attachment,
-    delete_session_document_attachments,
     document_attachment_response,
     document_attachment_storage,
     get_document_attachment,
@@ -48,21 +53,23 @@ from lens.document_attachments import (
 )
 from lens.models import (
     Assistant,
-    CredentialLease,
-    ExecutionSnapshot,
     Message,
     MessageAttachment,
-    PluginInvocation,
     Run,
-    RunDiagnostic,
     RunExecution,
     RunOutputFile,
     Session,
     SessionCleanupOperation,
     SharedQA,
 )
-from lens.services import lensnode_group_name
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
+from lens.run_access import (
+    CanUseConversations,
+    can_access_session_content,
+    can_audit_session_content,
+    scope_run_queryset,
+)
+from lens.session_deletion import delete_sessions
 from lens.session_lifecycle import (
     SessionStateError,
     archive_session,
@@ -91,6 +98,7 @@ from lens.services import (
     stream_run_events_async,
 )
 from lens.shared_qa_files import snapshot_shared_qa_files
+from lens.stream_access import StreamAuthority, authorized_stream_events
 
 from .base import (
     BaseAuthenticatedViewSet,
@@ -131,13 +139,12 @@ def _session_assistant_is_runnable(session, user):
     """Return whether a session may start work for its owning user."""
 
     assistant = session.assistant
-    if assistant.status != Assistant.Status.ACTIVE:
+    if assistant.status != Assistant.Status.ACTIVE or not assistant.is_enabled:
         return False
+    if assistant.is_system:
+        return session.routing_mode == Session.RoutingMode.SMART and assistant.tenant_id == session.tenant_id
     if session.routing_mode == Session.RoutingMode.SMART:
-        return assistant.is_system or (
-            assistant.mode_handler.supports_members
-            and assistant.is_accessible_by(user)
-        )
+        return assistant.mode_handler.supports_members and assistant.is_accessible_by(user)
     return assistant.is_accessible_by(user)
 
 
@@ -147,15 +154,20 @@ async def run_stream_view(request, uuid):
     user = await sync_to_async(_authenticate_stream_request)(request)
     if user is None:
         return HttpResponse("Unauthorized", status=401)
+    if not await sync_to_async(CanUseConversations().has_permission)(request, None):
+        return HttpResponse("Forbidden", status=403)
 
     run = await sync_to_async(_get_user_run)(uuid, user)
     if run is None:
         return HttpResponse("Not found", status=404)
 
+    authority, check = await sync_to_async(_run_stream_authority)(request, run)
+
     async def event_stream():
-        async for event in stream_run_events_async(run):
-            payload = json.dumps(event, ensure_ascii=False)
-            yield f"data: {payload}\n\n".encode("utf-8")
+        async with aclosing(authorized_stream_events(stream_run_events_async(run), authority, check)) as events:
+            async for event in events:
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n".encode("utf-8")
 
     response = StreamingHttpResponse(
         event_stream(),
@@ -166,8 +178,23 @@ async def run_stream_view(request, uuid):
     return response
 
 
+def _run_stream_authority(request, run):
+    """Keep a usage stream bound to the original run, session, owner and tenant."""
+    authority = StreamAuthority(request)
+    run_id, session_id = run.pk, run.session_id
+
+    def check():
+        return CanUseConversations().has_permission(request, None) and scope_run_queryset(
+            Run.objects.filter(pk=run_id, session_id=session_id, session__user_id=authority.user_id), authority.tenant_id
+        ).exists()
+
+    return authority, check
+
+
 class SessionViewSet(BaseAuthenticatedViewSet):
     """CRUD for sessions and nested run/message actions."""
+
+    permission_classes = [permissions.IsAuthenticated, CanUseConversations]
 
     queryset = Session.objects.select_related("assistant", "user")
     serializer_class = SessionSerializer
@@ -180,7 +207,16 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         routing_mode = self.request.query_params.get("routing_mode")
         if routing_mode:
             queryset = queryset.filter(routing_mode=routing_mode)
-        queryset = queryset.filter(user=self.request.user)
+        queryset = queryset.filter(**session_owner_filter(self.request.user))
+        tenant = get_user_tenant(self.request.user)
+        queryset = queryset.filter(tenant_id=tenant.pk if tenant is not None else None)
+        selected_assistants = tenant_api_key_selected_assistants(
+            self.request
+        )
+        if selected_assistants is not None:
+            queryset = queryset.filter(
+                assistant__uuid__in=selected_assistants
+            )
         if self.action == "list":
             archived = self.request.query_params.get("archived", "").lower()
             session_status = (
@@ -229,7 +265,7 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         )
         serializer.is_valid(raise_exception=True)
         session = serializer.save()
-        return Response(SessionSerializer(session).data, status=201)
+        return Response(SessionSerializer(session, context=self.get_serializer_context()).data, status=201)
 
     @action(detail=True, methods=["get"])
     def messages(self, request, uuid=None):
@@ -266,71 +302,9 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         return Response(serializer.data)
 
     def perform_destroy(self, instance):
-        """Delete protected dependents in dependency order.
+        """Use the shared dependency and storage cleanup transaction."""
 
-        Django's deletion collector checks PROTECT constraints while it
-        collects related objects. Delete Plugin execution audit records and
-        diagnostics before their evidence cascades from Run, then delete Runs
-        before Messages cascade from the Session.
-        """
-        session_uuid = instance.uuid
-        user_id = instance.user_id
-        lensnode_uuids = list(
-            instance.run_set.filter(lensnode__isnull=False)
-            .values_list("lensnode__uuid", flat=True)
-            .distinct()
-        )
-        with transaction.atomic():
-            for lensnode_uuid in lensnode_uuids:
-                SessionCleanupOperation.objects.get_or_create(
-                    session_uuid=session_uuid,
-                    lensnode_uuid=lensnode_uuid,
-                )
-            run_ids = list(
-                instance.run_set.values_list("id", flat=True)
-            )
-            snapshot_ids = list(
-                ExecutionSnapshot.objects.filter(
-                    run_id__in=run_ids,
-                ).values_list("id", flat=True)
-            )
-            if snapshot_ids:
-                CredentialLease.objects.filter(
-                    snapshot_id__in=snapshot_ids,
-                ).delete()
-                PluginInvocation.objects.filter(
-                    snapshot_id__in=snapshot_ids,
-                ).delete()
-                ExecutionSnapshot.objects.filter(
-                    id__in=snapshot_ids,
-                ).delete()
-            PluginInvocation.objects.filter(run_id__in=run_ids).delete()
-            RunDiagnostic.objects.filter(run__session=instance).delete()
-            instance.run_set.all().delete()
-            instance.delete()
-        try:
-            delete_session_document_attachments(
-                session_uuid,
-                user_id=user_id,
-            )
-        except Exception:
-            logger.exception(
-                "Unable to delete temporary documents for Session %s.",
-                session_uuid,
-            )
-        channel_layer = get_channel_layer()
-        if channel_layer is not None:
-            for lensnode_uuid in lensnode_uuids:
-                async_to_sync(channel_layer.group_send)(
-                    lensnode_group_name(lensnode_uuid),
-                    {
-                        "type": "lensnode.command",
-                        "payload": {
-                            "type": "session_cleanup",
-                            "session_uuid": str(session_uuid),
-                        },
-                    },
-                )
+        delete_sessions(Session.objects.filter(pk=instance.pk))
 
     @action(detail=True, methods=["get"], url_path="cleanup-status")
     def cleanup_status(self, request, uuid=None):
@@ -407,6 +381,11 @@ class SessionViewSet(BaseAuthenticatedViewSet):
         """Create an execution run for a session."""
 
         session = self.get_object()
+        if not tenant_api_key_allows_assistant(
+            request,
+            session.assistant.uuid,
+        ):
+            raise PermissionDenied("API_KEY_ASSISTANT_FORBIDDEN")
         if not _session_assistant_is_runnable(session, request.user):
             raise PermissionDenied(
                 "You do not have access to this assistant."
@@ -489,21 +468,20 @@ class SessionViewSet(BaseAuthenticatedViewSet):
 
 
 class LensAttachmentView(APIView):
-    """Serve a question attachment to its owner or any admin."""
+    """Serve a question attachment within the owner or tenant audit scope."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanUseConversations]
 
     def get(self, request, uuid):
-        """Return the image bytes for the session owner or a staff admin."""
+        """Return image bytes within the owner or tenant audit scope."""
 
         attachment = (
-            MessageAttachment.objects.select_related("session")
+            MessageAttachment.objects.select_related("session__assistant")
             .filter(uuid=uuid)
             .first()
         )
         if attachment is not None:
-            is_owner = attachment.session.user_id == request.user.id
-            if not is_owner and not request.user.is_staff:
+            if not can_access_session_content(request, attachment.session):
                 raise PermissionDenied("You do not have access to this image.")
             response = FileResponse(
                 attachment.file.open("rb"),
@@ -517,8 +495,8 @@ class LensAttachmentView(APIView):
         metadata = get_document_attachment(uuid)
         if metadata is None:
             raise Http404
-        is_owner = metadata["uploaded_by_id"] == request.user.id
-        if not is_owner and not request.user.is_staff:
+        session = get_object_or_404(Session.objects.select_related("assistant"), uuid=metadata["session_uuid"])
+        if not can_access_session_content(request, session):
             raise PermissionDenied("You do not have access to this document.")
         storage = document_attachment_storage()
         if not storage.exists(metadata["storage_name"]):
@@ -540,8 +518,8 @@ class LensAttachmentView(APIView):
         metadata = get_document_attachment(uuid)
         if metadata is None:
             raise Http404
-        is_owner = metadata["uploaded_by_id"] == request.user.id
-        if not is_owner and not request.user.is_staff:
+        session = get_object_or_404(Session.objects.select_related("assistant"), uuid=metadata["session_uuid"])
+        if not can_access_session_content(request, session):
             raise PermissionDenied("You do not have access to this document.")
         run_uuid = metadata.get("run_uuid")
         if (
@@ -564,14 +542,14 @@ class LensAttachmentView(APIView):
 
 
 class RunOutputFileDownloadView(APIView):
-    """Serve a delivered run output file to its owner or any admin.
+    """Serve a delivered run output file to its owner or a tenant auditor.
 
     Always sent as an attachment (Content-Disposition: attachment) so
     untrusted agent-produced content is downloaded rather than rendered
     inline in the app origin; preview is handled separately later.
 
     Authorization is DELIBERATELY private: only the session owner (or a
-    staff admin with a web credential) may download. Agent credentials
+    tenant administrator with a web credential) may download. Agent credentials
     always require ownership and a published message link.
     Sharing a run (SharedQA) copies the Q&A
     text only and does NOT expose output files or this URL, so shared
@@ -584,18 +562,22 @@ class RunOutputFileDownloadView(APIView):
 
     @extend_schema(responses={(200, "application/octet-stream"): OpenApiTypes.BINARY})
     def get(self, request, uuid):
-        """Return the file bytes for the session owner or a staff admin."""
+        """Return file bytes for the session owner or an authorized tenant auditor."""
 
         is_agent = request.auth is not None and request.auth.get(AGENT_SCOPE_CLAIM) == AGENT_TOKEN_SCOPE
-        can_audit = request.user.is_staff and not is_agent
+        can_audit = can_audit_session_content(request)
         output = get_object_or_404(
-            RunOutputFile.objects.select_related("session").filter(
+            RunOutputFile.objects.select_related("session__assistant", "run").filter(
                 **({} if can_audit else {"message__isnull": False})
             ),
             uuid=uuid,
         )
-        is_owner = output.session.user_id == request.user.id
-        if not is_owner and not can_audit:
+        if (
+            output.tenant_id != output.session.tenant_id
+            or output.run.tenant_id != output.session.tenant_id
+            or output.run.session_id != output.session_id
+            or not can_access_session_content(request, output.session)
+        ):
             raise PermissionDenied("You do not have access to this file.")
         response = FileResponse(
             output.file.open("rb"),
@@ -608,17 +590,21 @@ class RunOutputFileDownloadView(APIView):
 
 
 class RunCitationSourceView(APIView):
-    """Serve a captured source citation to the run owner or a staff admin."""
+    """Serve a captured source citation within the owner or tenant audit scope."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, run_uuid, citation_id):
-        """Return line-numbered source without exposing a physical path."""
+        """Return authorized line-numbered source without a physical path."""
 
-        runs = Run.objects.filter(uuid=run_uuid)
-        if not request.user.is_staff:
-            runs = runs.filter(session__user=request.user)
+        tenant = get_user_tenant(request.user)
+        runs = scope_run_queryset(
+            Run.objects.select_related("session__assistant").filter(uuid=run_uuid),
+            tenant.pk if tenant is not None else None,
+        )
         run = get_object_or_404(runs)
+        if not can_access_session_content(request, run.session):
+            raise Http404
         citation = next(
             (
                 item
@@ -637,8 +623,10 @@ class RunCitationSourceView(APIView):
 class RunViewSet(BaseAuthenticatedViewSet):
     """CRUD for runs."""
 
+    permission_classes = [permissions.IsAuthenticated, CanUseConversations]
+
     queryset = Run.objects.select_related(
-        "session",
+        "session__assistant",
         "input_message",
         "output_message",
         "lensnode",
@@ -651,7 +639,17 @@ class RunViewSet(BaseAuthenticatedViewSet):
         queryset = super().get_queryset()
         if self.action == "output_files":
             queryset = queryset.prefetch_related(None)
-        return queryset.filter(session__user=self.request.user)
+        queryset = queryset.filter(**session_owner_filter(self.request.user, "session__"))
+        tenant = get_user_tenant(self.request.user)
+        queryset = scope_run_queryset(queryset, tenant.pk if tenant is not None else None)
+        selected_assistants = tenant_api_key_selected_assistants(
+            self.request
+        )
+        if selected_assistants is not None:
+            queryset = queryset.filter(
+                session__assistant__uuid__in=selected_assistants
+            )
+        return queryset
 
     @extend_schema(responses=RunOutputFileSerializer(many=True))
     @action(detail=True, methods=["get"], url_path="output-files", serializer_class=RunOutputFileSerializer)
@@ -709,7 +707,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
                 .first()
             )
             if existing is not None:
-                return Response(RunSerializer(existing).data)
+                return Response(RunSerializer(existing, context=self.get_serializer_context()).data)
             selected_image_uuids = (
                 run.execution.runtime_snapshot or {}
             ).get("session_attachment_uuids", [])
@@ -755,7 +753,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
             run.save(
                 update_fields=["clarification_answered_at", "updated_at"]
             )
-        return Response(RunSerializer(continuation).data, status=201)
+        return Response(RunSerializer(continuation, context=self.get_serializer_context()).data, status=201)
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, uuid=None):
@@ -803,10 +801,13 @@ class RunViewSet(BaseAuthenticatedViewSet):
 
         run = self.get_object()
 
+        authority, check = _run_stream_authority(request, run)
+
         async def event_stream():
-            async for event in stream_run_events_async(run):
-                payload = json.dumps(event, ensure_ascii=False)
-                yield f"data: {payload}\n\n"
+            async with aclosing(authorized_stream_events(stream_run_events_async(run), authority, check)) as events:
+                async for event in events:
+                    payload = json.dumps(event, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
 
         response = StreamingHttpResponse(
             event_stream(),
@@ -827,7 +828,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
             Run.Status.FAILED,
             Run.Status.CANCELLED,
         ]:
-            return Response(RunSerializer(run).data)
+            return Response(RunSerializer(run, context=self.get_serializer_context()).data)
 
         now = timezone.now()
         descendants = []
@@ -853,7 +854,7 @@ class RunViewSet(BaseAuthenticatedViewSet):
         cancel_run_on_lensnode(run)
         for descendant in descendants:
             cancel_run_on_lensnode(descendant)
-        return Response(RunSerializer(run).data)
+        return Response(RunSerializer(run, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"])
     def share(self, request, uuid=None):
@@ -894,6 +895,14 @@ class RunViewSet(BaseAuthenticatedViewSet):
             title = _shared_qa_default_title(question)
         require_login = _share_require_login_choice(request, assistant)
         with transaction.atomic():
+            try:
+                lock_work_user(request.user)
+            except AssistantNotRunnableError:
+                raise PermissionDenied("Member is unavailable.") from None
+            if not Assistant.objects.select_for_update().filter(pk=assistant.pk).exists():
+                return Response({"detail": "Assistant is unavailable."}, status=404)
+            if not Session.objects.select_for_update().filter(pk=run.session_id).exists():
+                return Response({"detail": "Session is unavailable."}, status=404)
             share = SharedQA.objects.create(
                 token=_unique_share_token(),
                 run=run,

@@ -1,5 +1,6 @@
 const LENSNODE_ERROR_KEYS = {
   ASSISTANT_ARCHIVED: 'assistantArchived',
+  ASSISTANT_DISABLED: 'assistantDisabled',
   LENSNODE_REQUIRED: 'required',
   LENSNODE_UNAVAILABLE: 'offline',
   LENSNODE_OFFLINE: 'offline',

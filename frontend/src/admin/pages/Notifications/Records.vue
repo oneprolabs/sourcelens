@@ -61,7 +61,7 @@
                 compact
                 :max="filters.end_date || undefined"
                 :mobile-touch="false"
-                @change="onFiltersChanged"
+                @change="onDateFilterChanged"
               />
               <span class="text-gray-400">–</span>
               <BaseDateInput
@@ -69,7 +69,7 @@
                 compact
                 :min="filters.start_date || undefined"
                 :mobile-touch="false"
-                @change="onFiltersChanged"
+                @change="onDateFilterChanged"
               />
             </div>
             <div class="flex items-center gap-2">
@@ -472,6 +472,7 @@
 import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { format } from 'date-fns'
 import { useDebounceFn } from '@vueuse/core'
 import { useToast } from '@/composables/useToast'
@@ -506,12 +507,32 @@ function getDefaultDetailDateRange() {
 }
 
 const defaultDateRange = getDefaultDetailDateRange()
+const initialQuery = useRoute().query
+const initialWindow = ref(null)
+if (
+  typeof initialQuery.start_date === 'string' &&
+  typeof initialQuery.end_date === 'string' &&
+  Number.isFinite(Date.parse(initialQuery.start_date)) &&
+  Number.isFinite(Date.parse(initialQuery.end_date)) &&
+  Date.parse(initialQuery.start_date) <= Date.parse(initialQuery.end_date)
+) {
+  initialWindow.value = {
+    start_date: initialQuery.start_date,
+    end_date: initialQuery.end_date
+  }
+}
 const filters = ref({
   source_app: '',
   source_type: '',
-  status: '',
-  start_date: defaultDateRange.start_date,
-  end_date: defaultDateRange.end_date
+  status: ['success', 'failed', 'merged', 'silenced', 'pending'].includes(
+    initialQuery.status
+  )
+    ? initialQuery.status
+    : '',
+  start_date:
+    initialWindow.value?.start_date.slice(0, 10) || defaultDateRange.start_date,
+  end_date:
+    initialWindow.value?.end_date.slice(0, 10) || defaultDateRange.end_date
 })
 
 const totalPages = computed(() =>
@@ -547,7 +568,13 @@ const debouncedFetch = useDebounceFn(() => {
   fetchRecords()
 }, 300)
 
+function onDateFilterChanged() {
+  initialWindow.value = null
+  onFiltersChanged()
+}
+
 function resetFilters() {
+  initialWindow.value = null
   const range = getDefaultDetailDateRange()
   filters.value = {
     source_app: '',
@@ -611,8 +638,11 @@ async function fetchRecords() {
     if (filters.value.source_type)
       params.source_type = filters.value.source_type
     if (filters.value.status) params.status = filters.value.status
-    if (filters.value.start_date) params.start_date = filters.value.start_date
-    if (filters.value.end_date) params.end_date = filters.value.end_date
+    if (filters.value.start_date)
+      params.start_date =
+        initialWindow.value?.start_date || filters.value.start_date
+    if (filters.value.end_date)
+      params.end_date = initialWindow.value?.end_date || filters.value.end_date
     const data = await notificationsAdminApi.getRecords(params)
     records.value = data?.results ?? []
     total.value = data?.total ?? 0

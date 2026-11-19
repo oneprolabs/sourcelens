@@ -222,6 +222,7 @@ def append_run_trace_events(run_uuid, lensnode_uuid, events):
             continue
         pending.append(
             RunTraceEvent(
+                tenant_id=run.tenant_id,
                 run=run,
                 **{
                     key: value

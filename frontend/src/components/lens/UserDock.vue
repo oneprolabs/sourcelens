@@ -66,16 +66,38 @@
           :class="{ 'dock-section-collapsed': isCollapsed }"
         >
           <router-link
-            to="/management/users"
+            :to="getManagementEntry(userStore.userInfo)"
             class="dock-link"
             :class="{ 'dock-link-collapsed': isCollapsed }"
-            :aria-label="isCollapsed ? t('platforms.adminConsole') : undefined"
-            :title="isCollapsed ? t('platforms.adminConsole') : undefined"
+            :aria-label="
+              isCollapsed
+                ? t(
+                    isPlatformAdmin(userStore.userInfo)
+                      ? 'management.platformConsole'
+                      : 'management.tenantManagement'
+                  )
+                : undefined
+            "
+            :title="
+              isCollapsed
+                ? t(
+                    isPlatformAdmin(userStore.userInfo)
+                      ? 'management.platformConsole'
+                      : 'management.tenantManagement'
+                  )
+                : undefined
+            "
             @click="openAdminConsole"
           >
             <Shield :size="18" :stroke-width="2" aria-hidden="true" />
             <span v-if="!collapsed || isMobile" class="truncate">
-              {{ t('platforms.adminConsole') }}
+              {{
+                t(
+                  isPlatformAdmin(userStore.userInfo)
+                    ? 'management.platformConsole'
+                    : 'management.tenantManagement'
+                )
+              }}
             </span>
           </router-link>
         </div>
@@ -153,7 +175,11 @@ import { LogIn, LogOut, Settings, Share2, Shield } from '@lucide/vue'
 
 import { useUserStore } from '@/store/user'
 import { useUiStore } from '@/store/ui'
-import { saveAdminReturnPath } from '@/utils/platformAccess'
+import {
+  getManagementEntry,
+  isPlatformAdmin,
+  saveAdminReturnPath
+} from '@/utils/platformAccess'
 
 const props = defineProps({
   collapsed: { type: Boolean, default: false },

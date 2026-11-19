@@ -290,6 +290,11 @@ urlpatterns = [
         name="lens-admin-global-settings-system-health",
     ),
     path(
+        "admin/global-settings/public-config/",
+        GlobalSettingViewSet.as_view({"get": "public_config"}),
+        name="lens-admin-public-config",
+    ),
+    path(
         "admin/global-settings/<str:key>/",
         GlobalSettingViewSet.as_view(
             {

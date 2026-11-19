@@ -12,6 +12,9 @@ from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.utils import timezone
+
+from accounts.access import get_user_tenant
+from accounts.permissions import HasTenantOrLegacyAdminAccess
 from lens.datasource.services import (
     DATASOURCE_UPLOAD_EXTENSIONS,
     DATASOURCE_UPLOAD_HTTP_CHUNK_BYTES,
@@ -49,6 +52,8 @@ from lens.plugins.providers import (
 from lens.periodic_tasks import ensure_datasource_periodic_task
 from lens.serializers import (
     DataSourceConversionRequestSerializer,
+    DataSourceDetailSettingsSerializer,
+    DataSourceScheduleSerializer,
     DataSourceSerializer,
     DataSourceItemSerializer,
     DataSourceVersionSerializer,
@@ -75,7 +80,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from .base import BaseAdminViewSet
+from .base import BaseAuthenticatedViewSet
 
 logger = logging.getLogger(__name__)
 
@@ -189,9 +194,10 @@ def _finalize_datasource_cancellation(task, datasource, reason, user=None):
     return task
 
 
-class DataSourceViewSet(BaseAdminViewSet):
+class DataSourceViewSet(BaseAuthenticatedViewSet):
     """CRUD for datasources."""
 
+    permission_classes = [HasTenantOrLegacyAdminAccess]
     queryset = DataSource.objects.all()
     serializer_class = DataSourceSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]
@@ -384,22 +390,20 @@ class DataSourceViewSet(BaseAdminViewSet):
         return Response(serializer.data)
 
     def get_queryset(self):
-        """Return datasources filtered by optional search query."""
+        """Return datasources filtered by tenant and optional search query."""
 
-        queryset = (
-            super()
-            .get_queryset()
-            .select_related(
-                "connection",
-                "lensnode",
-                "credential",
-            )
+        queryset = super().get_queryset().filter(tenant=get_user_tenant(self.request.user))
+        queryset = queryset.select_related(
+            "connection",
+            "lensnode",
+            "credential",
         )
         # These actions only load the datasource to scope a task listing, so
         # prefetching its deployment copies would be work nobody reads.
         if getattr(self, "action", "") not in {
             "conversion_tasks",
             "sync_tasks",
+            "sync_task_detail",
         }:
             queryset = queryset.prefetch_related(
                 Prefetch(
@@ -508,7 +512,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         return response
 
     def destroy(self, request, *args, **kwargs):
-        """Reject deletion while a datasource sync is still active."""
+        """Reject deletion while a datasource operation is still active."""
 
         from agentcore_task.adapters.django.models import TaskExecution
         from agentcore_task.constants import TaskStatus
@@ -524,7 +528,7 @@ class DataSourceViewSet(BaseAdminViewSet):
                 DATASOURCE_CANCELLING_STATUS,
             ]
             active_sync = TaskExecution.objects.filter(
-                module="lens_datasource",
+                module__in=DATASOURCE_TASK_TYPES,
                 metadata__datasource_uuid=str(datasource.uuid),
                 status__in=active_statuses,
             ).exists()
@@ -705,7 +709,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         return Response(
             {
                 "uuid": str(datasource.uuid),
-                "task_id": task_id,
+                "task_id": task_execution.task_id,
                 "task_execution_id": task_execution.id,
                 "status": datasource.status,
             },
@@ -727,7 +731,13 @@ class DataSourceViewSet(BaseAdminViewSet):
             stored = (datasource.sync_policy or {}).get("conversion")
             if stored:
                 payload["conversion"] = stored
-        serializer = DataSourceConversionRequestSerializer(data=payload)
+        serializer = DataSourceConversionRequestSerializer(
+            data=payload,
+            context={
+                "tenant": datasource.tenant,
+                "stored_conversion": (datasource.sync_policy or {}).get("conversion") or {},
+            },
+        )
         serializer.is_valid(raise_exception=True)
         conversion = serializer.validated_data["conversion"]
         force = serializer.validated_data["force"]
@@ -1198,6 +1208,39 @@ class DataSourceViewSet(BaseAdminViewSet):
             )
             return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=["post"], url_path="sync-policy")
+    def set_sync_policy(self, request, uuid=None):
+        """Change scheduling while preserving the latest content processing settings."""
+
+        datasource = self.get_object()
+        with transaction.atomic():
+            datasource = DataSource.objects.select_for_update().get(pk=datasource.pk, tenant=datasource.tenant)
+            serializer = DataSourceScheduleSerializer(datasource, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            if datasource.source_type in (DataSource.SourceType.MANAGED_WORKSPACE, DataSource.SourceType.UPLOAD):
+                return Response({"detail": "DATASOURCE_SYNC_NOT_SUPPORTED"}, status=status.HTTP_409_CONFLICT)
+            serializer.save()
+            ensure_datasource_periodic_task(datasource)
+        return Response(DataSourceSerializer(datasource).data)
+
+    @action(detail=True, methods=["post"], url_path="settings")
+    def set_detail_settings(self, request, uuid=None):
+        """Save supported inline settings without revalidating external credentials."""
+
+        datasource = self.get_object()
+        with transaction.atomic():
+            datasource = DataSource.objects.select_for_update().get(pk=datasource.pk, tenant=datasource.tenant)
+            serializer = DataSourceDetailSettingsSerializer(datasource, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            if "schedule" in serializer.validated_data and datasource.source_type in (
+                DataSource.SourceType.MANAGED_WORKSPACE, DataSource.SourceType.UPLOAD
+            ):
+                return Response({"detail": "DATASOURCE_SYNC_NOT_SUPPORTED"}, status=status.HTTP_409_CONFLICT)
+            serializer.save()
+            if "schedule" in serializer.validated_data:
+                ensure_datasource_periodic_task(datasource)
+        return Response(DataSourceSerializer(datasource).data)
+
     @action(detail=True, methods=["post"], url_path="set-enabled")
     def set_enabled(self, request, uuid=None):
         """Enable or disable a datasource and sync its schedule."""
@@ -1210,13 +1253,13 @@ class DataSourceViewSet(BaseAdminViewSet):
             )
 
         datasource = self.get_object()
-        next_status = (
-            DataSource.Status.ACTIVE if enabled else DataSource.Status.DISABLED
-        )
-        if datasource.status != next_status:
-            datasource.status = next_status
-            datasource.save(update_fields=["status", "updated_at"])
-        ensure_datasource_periodic_task(datasource)
+        next_status = DataSource.Status.ACTIVE if enabled else DataSource.Status.DISABLED
+        with transaction.atomic():
+            datasource = DataSource.objects.select_for_update().get(pk=datasource.pk, tenant=datasource.tenant)
+            if datasource.status != next_status:
+                datasource.status = next_status
+                datasource.save(update_fields=["status", "updated_at"])
+            ensure_datasource_periodic_task(datasource)
         return Response(DataSourceSerializer(datasource).data)
 
     @action(
@@ -1379,7 +1422,7 @@ class DataSourceViewSet(BaseAdminViewSet):
             )
 
         datasources = list(
-            DataSource.objects.filter(uuid__in=datasource_uuids).only(
+            DataSource.objects.filter(tenant=get_user_tenant(request.user), uuid__in=datasource_uuids).only(
                 "uuid",
                 "source_type",
                 "status",
@@ -1412,14 +1455,36 @@ class DataSourceViewSet(BaseAdminViewSet):
             ]
         )
 
+    @action(detail=True, methods=["get"], url_path=r"sync-tasks/(?P<execution_id>\d+)")
+    def sync_task_detail(self, request, uuid=None, execution_id=None):
+        """Expose datasource progress without global execution arguments or results."""
+        from agentcore_task.adapters.django.models import TaskExecution
+        from django.shortcuts import get_object_or_404
+
+        from accounts.access import is_platform_super_admin
+        from lens.task_projection import DataSourceTaskSerializer
+
+        if get_user_tenant(request.user) is None and not is_platform_super_admin(request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Tenant context is required.")
+        datasource = self.get_object()
+        task = get_object_or_404(
+            TaskExecution.objects.select_related("created_by").defer(
+                "task_args", "task_kwargs", "result", "error", "traceback"
+            ),
+            pk=execution_id,
+            module__in=DATASOURCE_TASK_TYPES,
+            metadata__datasource_uuid=str(datasource.uuid),
+        )
+        return Response(DataSourceTaskSerializer(task, context={"request": request}).data)
+
     @action(detail=True, methods=["get"], url_path="sync-tasks")
     def sync_tasks(self, request, uuid=None):
         """List sync and conversion task executions for this datasource."""
 
         from agentcore_task.adapters.django.models import TaskExecution
-        from agentcore_task.adapters.django.serializers import (
-            TaskExecutionListSerializer,
-        )
+        from lens.task_projection import DataSourceTaskSerializer
 
         datasource = self.get_object()
         task_type = str(request.query_params.get("task_type") or "").strip()
@@ -1466,9 +1531,9 @@ class DataSourceViewSet(BaseAdminViewSet):
             "context": {"request": request},
         }
         if page is not None:
-            serializer = TaskExecutionListSerializer(page, **serializer_args)
+            serializer = DataSourceTaskSerializer(page, **serializer_args)
             return self.get_paginated_response(serializer.data)
-        serializer = TaskExecutionListSerializer(
+        serializer = DataSourceTaskSerializer(
             queryset,
             **serializer_args,
         )
@@ -1479,9 +1544,7 @@ class DataSourceViewSet(BaseAdminViewSet):
         """List managed workspace conversion tasks (paginated)."""
 
         from agentcore_task.adapters.django.models import TaskExecution
-        from agentcore_task.adapters.django.serializers import (
-            TaskExecutionListSerializer,
-        )
+        from lens.task_projection import DataSourceTaskSerializer
 
         datasource = self.get_object()
         queryset = TaskExecution.objects.filter(
@@ -1490,9 +1553,9 @@ class DataSourceViewSet(BaseAdminViewSet):
         ).order_by("-created_at")
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = TaskExecutionListSerializer(page, many=True)
+            serializer = DataSourceTaskSerializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-        serializer = TaskExecutionListSerializer(queryset, many=True)
+        serializer = DataSourceTaskSerializer(queryset, many=True)
         return Response(serializer.data)
 
     def _conversion_recovery_task(self, datasource, task_id):

@@ -7,10 +7,12 @@
     >
       <div class="mb-6 text-center">
         <h1 class="text-2xl font-semibold text-gray-900">
-          {{ t('password.reset.title') }}
+          {{ t(invitation ? 'invitation.title' : 'password.reset.title') }}
         </h1>
         <p class="mt-2 text-sm text-gray-500">
-          {{ t('password.reset.subtitle') }}
+          {{
+            t(invitation ? 'invitation.subtitle' : 'password.reset.subtitle')
+          }}
         </p>
       </div>
 
@@ -19,7 +21,13 @@
         class="mb-4 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-700"
       >
         <p class="font-medium text-green-800">
-          {{ t('password.reset.successTitle') }}
+          {{
+            t(
+              invitation
+                ? 'invitation.successTitle'
+                : 'password.reset.successTitle'
+            )
+          }}
         </p>
         <p class="mt-1">
           {{ successMessage }}
@@ -68,7 +76,11 @@
           :loading="submitting"
           :disabled="submitting"
         >
-          {{ submitting ? t('common.loading') : t('password.reset.submit') }}
+          {{
+            submitting
+              ? t('common.loading')
+              : t(invitation ? 'invitation.submit' : 'password.reset.submit')
+          }}
         </BaseButton>
       </form>
 
@@ -85,7 +97,7 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { authApi } from '@/api/auth'
@@ -93,9 +105,13 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import { getFirstApiError, getPasswordPolicyError } from '@/utils/password'
 
+const props = defineProps({ invitation: Boolean })
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const invitationToken = computed(
+  () => new URLSearchParams((route.hash || '').slice(1)).get('token') || ''
+)
 
 const form = reactive({
   newPassword1: '',
@@ -149,7 +165,11 @@ const validateForm = () => {
 }
 
 const handleSubmit = async () => {
-  if (!validateForm()) {
+  if (submitting.value || !validateForm()) {
+    return
+  }
+  if (props.invitation && !invitationToken.value) {
+    errorMessage.value = t('invitation.invalid')
     return
   }
 
@@ -157,20 +177,35 @@ const handleSubmit = async () => {
   errorMessage.value = ''
 
   try {
-    const response = await authApi.confirmPasswordReset({
-      uid: route.params.uid,
-      token: route.params.token,
+    const data = {
       newPassword1: form.newPassword1,
       newPassword2: form.newPassword2
-    })
+    }
+    const response = props.invitation
+      ? await authApi.acceptTenantInvitation({
+          ...data,
+          token: invitationToken.value
+        })
+      : await authApi.confirmPasswordReset({
+          ...data,
+          uid: route.params.uid,
+          token: route.params.token
+        })
 
     const responseData = response?.data?.data || response?.data || response
-    successMessage.value =
-      responseData?.message || t('password.reset.successMessage')
+    successMessage.value = props.invitation
+      ? t('invitation.successMessage')
+      : responseData?.message || t('password.reset.successMessage')
     resetComplete.value = true
+    form.newPassword1 = ''
+    form.newPassword2 = ''
+    if (props.invitation) router.replace({ path: route.path, hash: '' })
   } catch (error) {
+    const message = getFirstApiError(error)
     errorMessage.value =
-      getFirstApiError(error) || t('password.reset.unknownError')
+      props.invitation && message === 'INVITATION_INVALID_OR_EXPIRED'
+        ? t('invitation.invalid')
+        : message || t('password.reset.unknownError')
   } finally {
     submitting.value = false
   }

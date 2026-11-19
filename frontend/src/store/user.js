@@ -15,6 +15,17 @@ export const useUserStore = defineStore('user', () => {
 
   // State
   const user = ref(null)
+  const delegation = ref(
+    (() => {
+      try {
+        return JSON.parse(
+          sessionStorage.getItem('tenant_delegation') || 'null'
+        )
+      } catch {
+        return null
+      }
+    })()
+  )
   const token = ref(localStorage.getItem('access_token'))
   const loading = ref(false)
   const error = ref(null)
@@ -110,12 +121,25 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  const setDelegation = (value) => {
+    delegation.value = value
+    if (value) {
+      sessionStorage.setItem('tenant_delegation', JSON.stringify(value))
+    } else {
+      sessionStorage.removeItem('tenant_delegation')
+    }
+  }
+
+  const clearDelegation = () => setDelegation(null)
+
   const clearAuthState = () => {
     user.value = null
     token.value = null
+    delegation.value = null
     pendingAuthCheck = Promise.resolve()
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
+    sessionStorage.removeItem('tenant_delegation')
   }
 
   const logout = async () => {
@@ -254,6 +278,7 @@ export const useUserStore = defineStore('user', () => {
     // Getters
     isAuthenticated,
     userInfo,
+    delegation,
     availablePlatforms,
     landingPath,
     // Actions
@@ -264,6 +289,8 @@ export const useUserStore = defineStore('user', () => {
     checkAuthStatus,
     updateProfile,
     updateLanguage,
+    setDelegation,
+    clearDelegation,
     setUser,
     setToken,
     userHasFeature,

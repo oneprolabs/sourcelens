@@ -376,7 +376,9 @@ class CompleteRegistrationView(APIView):
         try:
             profile = Profile.objects.select_related('user').get(
                 registration_token=token,
-                registration_completed=False
+                registration_completed=False,
+                user__is_active=True,
+                user__membership__isnull=True,
             )
         except Profile.DoesNotExist:
             username = safe_request_data.get('virtual_email_username', 'N/A')

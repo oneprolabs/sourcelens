@@ -61,6 +61,10 @@ export const authApi = {
     return api.post('/v1/auth/password/reset/confirm', data)
   },
 
+  acceptTenantInvitation(data) {
+    return api.post('/v1/auth/invitations/accept', data)
+  },
+
   // Change password (requires authentication)
   changePassword(passwordData) {
     return api.post('/v1/auth/password/change', passwordData)

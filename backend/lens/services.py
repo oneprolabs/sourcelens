@@ -23,6 +23,7 @@ from accounts.models import normalize_answer_language
 from .assistant_lifecycle import (
     AssistantNotRunnableError,
     lock_assistant_for_new_work,
+    lock_work_user,
     smart_collaboration_assistants,
 )
 from .attachments import (
@@ -1130,8 +1131,7 @@ def resolve_run_answer_language(session, question, retry_of_run=None):
     if session_language:
         return normalize_answer_language(session_language)
 
-    profile = getattr(session.user, "profile", None)
-    return normalize_answer_language(getattr(profile, "language", None))
+    return normalize_answer_language(session.preferred_language)
 
 
 @transaction.atomic
@@ -1154,8 +1154,17 @@ def create_execution_run(
 ):
     """Create a queued run for LensNode execution."""
 
+    lock_work_user(user or session.execution_principal)
+    if session.api_key_id:
+        user = session.execution_principal
+        if session.tenant_id != user.tenant.pk:
+            raise AssistantNotRunnableError
     assistant = lock_assistant_for_new_work(session.assistant, user)
     session = lock_active_session(session)
+    if assistant.is_system and (
+        session.routing_mode != Session.RoutingMode.SMART or assistant.tenant_id != session.tenant_id
+    ):
+        raise AssistantNotRunnableError
     session.assistant = assistant
     run_source = run_source or session.source or Run.Source.USER
 
@@ -1168,7 +1177,7 @@ def create_execution_run(
         explicit_routing_assistant_uuids = None
     routing_assistant_uuids = _validated_routing_assistant_uuids(
         session,
-        user or session.user,
+        user or session.execution_principal,
         explicit_routing_assistant_uuids,
     )
 
@@ -1233,6 +1242,7 @@ def create_execution_run(
         sequence=input_message.sequence + 1,
     )
     run = Run.objects.create(
+        tenant=session.tenant,
         session=session,
         status=Run.Status.QUEUED,
         input_message=input_message,
@@ -1501,11 +1511,13 @@ def create_delegated_run(
 ):
     """Create one attempt in a logical delegated task."""
 
+    lock_work_user(parent_run.session.execution_principal)
     parent_run = (
-        Run.objects.select_for_update()
+        Run.objects.select_for_update(of=("self",))
         .select_related(
             "session",
             "session__user",
+            "session__api_key__tenant",
         )
         .get(pk=parent_run.pk)
     )
@@ -1574,10 +1586,11 @@ def create_delegated_run(
         }:
             return previous_attempt
     assistant = (
-        Assistant.objects.visible_to(parent_run.session.user)
+        Assistant.objects.visible_to(parent_run.session.execution_principal)
         .filter(
             visibility__in=[
                 Assistant.Visibility.PUBLIC,
+                Assistant.Visibility.TENANT,
                 Assistant.Visibility.PRIVATE,
             ],
             uuid=assistant_uuid,
@@ -1587,6 +1600,7 @@ def create_delegated_run(
                 Assistant.Capability.KNOWLEDGE_QA,
             ],
             status=Assistant.Status.ACTIVE,
+            is_enabled=True,
             is_system=False,
         )
         .first()
@@ -1600,8 +1614,10 @@ def create_delegated_run(
         raise LensNodeDispatchError("SUBAGENT_CYCLE")
     if previous_attempt is None:
         session = Session.objects.create(
+            tenant=parent_run.tenant,
             assistant=assistant,
             user=parent_run.session.user,
+            api_key=parent_run.session.api_key,
             title=f"Delegated: {parent_run.uuid}",
             title_manually_edited=True,
         )
@@ -1780,6 +1796,7 @@ def analyze_multimodal_intent(run):
             image_data_urls=image_data_urls,
             node_name="lens.multimodal_intent",
             user_id=run.session.user_id,
+            run_uuid=run.uuid,
         )
     except Exception as exc:
         logger.warning("multimodal intent failed for run %s: %s", run.uuid, exc)
@@ -1810,12 +1827,17 @@ def analyze_multimodal_intent(run):
 def build_loaded_skills(assistant):
     """Snapshot active skill bindings for LensNode dispatch."""
 
+    from lens.catalog import usable_catalog_resources
+    from lens.models import Skill
+
+    usable = usable_catalog_resources(Skill.objects.all(), assistant.tenant)
     loaded = []
     for binding in assistant.skill_bindings.select_related(
         "skill", "environment_variable_set"
     ).filter(
         enabled=True,
         skill__enabled=True,
+        skill__in=usable,
     ):
         skill = binding.skill
         content_hash = skill.package_hash or _content_hash(skill.definition)
@@ -1845,10 +1867,14 @@ def build_loaded_skills(assistant):
 def build_loaded_mcps(assistant):
     """Snapshot active MCP bindings for LensNode dispatch."""
 
+    from lens.catalog import usable_catalog_resources
+    from lens.models import MCPServer
+
+    usable = usable_catalog_resources(MCPServer.objects.all(), assistant.tenant)
     loaded = []
     for binding in assistant.mcp_bindings.select_related(
         "mcp", "environment_variable_set"
-    ).filter(enabled=True).exclude(mcp__transport="plugin"):
+    ).filter(enabled=True, mcp__in=usable).exclude(mcp__transport="plugin"):
         loaded.append(
             {
                 "mcp_uuid": str(binding.mcp.uuid),
@@ -1880,6 +1906,10 @@ def build_loaded_mcps(assistant):
 def build_loaded_plugins(assistant):
     """Snapshot non-sensitive Plugin tool bindings for LensNode dispatch."""
 
+    from lens.catalog import usable_catalog_resources
+    from lens.models import MCPServer
+
+    usable_mcps = usable_catalog_resources(MCPServer.objects.all(), assistant.tenant)
     loaded = []
     plugins = {}
     direct_bindings = assistant.plugin_bindings.select_related(
@@ -1887,14 +1917,17 @@ def build_loaded_plugins(assistant):
     ).filter(
         enabled=True,
         connection__status="active",
+        connection__tenant=assistant.tenant,
     ).order_by("connection__plugin_key", "connection__uuid")
     adapter_bindings = assistant.mcp_bindings.select_related(
         "mcp__connection__secret_version__material"
     ).filter(
         enabled=True,
         mcp__enabled=True,
+        mcp__in=usable_mcps,
         mcp__transport="plugin",
         mcp__connection__status="active",
+        mcp__connection__tenant=assistant.tenant,
     ).order_by(
         "mcp__connection__plugin_key",
         "mcp__connection__uuid",
@@ -2296,14 +2329,22 @@ def available_dir_paths(lensnode):
     return paths
 
 
+def validate_assistant_dispatch(assistant):
+    """Check current availability before preparation and dispatch of queued work."""
+
+    assistant.refresh_from_db(fields=["status", "is_enabled"])
+    if assistant.status != Assistant.Status.ACTIVE:
+        raise LensNodeDispatchError("ASSISTANT_ARCHIVED")
+    if not assistant.is_enabled:
+        raise LensNodeDispatchError("ASSISTANT_DISABLED")
+
+
 def validate_run_dispatch(run):
     """Validate current runtime state and the frozen execution snapshot."""
 
-    assistant = run.session.assistant
+    validate_assistant_dispatch(run.session.assistant)
     lensnode = run.lensnode
     execution = run.execution
-    if assistant.status != Assistant.Status.ACTIVE:
-        raise LensNodeDispatchError("ASSISTANT_ARCHIVED")
     if lensnode is None:
         raise LensNodeDispatchError("LENSNODE_REQUIRED")
     if lensnode.status == LensNode.Status.DRAINING:
@@ -2332,6 +2373,12 @@ def validate_run_dispatch(run):
             if path not in available:
                 raise LensNodeDispatchError("LENSNODE_DIR_UNAVAILABLE")
 
+    validate_loaded_environments(runtime_skills, runtime_mcps, execution.loaded_mcps)
+
+
+def validate_loaded_environments(runtime_skills, runtime_mcps, loaded_mcps):
+    """Validate required and referenced values in an ephemeral runtime projection."""
+
     for skill in runtime_skills:
         declarations = (skill.get("definition") or {}).get("environment") or []
         required = {
@@ -2345,7 +2392,7 @@ def validate_run_dispatch(run):
 
     for mcp, snapshot_mcp in zip(
         runtime_mcps,
-        execution.loaded_mcps or [],
+        loaded_mcps or [],
         strict=True,
     ):
         declarations = mcp.get("environment_schema") or []
@@ -2485,9 +2532,8 @@ def create_run_execution_snapshot(
     max_turns = max_turns if type(max_turns) is int and max_turns >= 0 else 0
     if max_tokens:
         token_budget = {"profile": "standard", "max_tokens": max_tokens, "final_reserve_tokens": max_tokens // 5}
-    profile = getattr(run.session.user, "profile", None)
     answer_language = normalize_answer_language(
-        answer_language or getattr(profile, "language", None)
+        answer_language or run.session.preferred_language
     )
     runtime_snapshot = _build_run_runtime_snapshot(
         assistant,
@@ -2564,10 +2610,11 @@ def _build_run_runtime_snapshot(
             else session.allowed_assistant_uuids or []
         )
         subagents = list(
-            Assistant.objects.visible_to(session.user)
+            Assistant.objects.visible_to(session.execution_principal)
             .filter(
                 uuid__in=configured,
                 status=Assistant.Status.ACTIVE,
+                is_enabled=True,
                 capability__in=[
                     Assistant.Capability.GENERAL_CHAT,
                     Assistant.Capability.CODE_ANALYSIS,
@@ -3105,6 +3152,7 @@ def rewrite_query(run):
             user=user,
             node_name="lens.query_rewrite",
             user_id=run.session.user_id,
+            run_uuid=run.uuid,
         )
     except Exception as exc:
         return {"question": original, "rewritten": False, "error": str(exc)}
@@ -3217,12 +3265,11 @@ def dispatch_run_to_lensnode(
         else 0
     )
     remaining_run_timeout_s = max(run_timeout_s - elapsed_s, 0)
-    profile = getattr(run.session.user, "profile", None)
     history_artifacts = (
         build_run_history_artifacts(run) if execution.task == "general_chat" else []
     )
     answer_language = normalize_answer_language(
-        runtime_snapshot.get("answer_language") or getattr(profile, "language", None)
+        runtime_snapshot.get("answer_language") or run.session.preferred_language
     )
     selected_image_uuids = set(runtime_snapshot.get("session_attachment_uuids") or [])
     image_attachments = MessageAttachment.objects.filter(
@@ -3387,6 +3434,8 @@ def cancel_descendant_runs(root_run):
         child_ids = list(
             Run.objects.filter(
                 parent_run_id=parent_id,
+                tenant_id=root_run.tenant_id,
+                session__tenant_id=root_run.tenant_id,
                 status__in=[
                     Run.Status.QUEUED,
                     Run.Status.RUNNING,
@@ -4398,6 +4447,8 @@ def _run_stream_steps(run):
 
     result = [(run, step) for step in run.steps.all()]
     for child in run.delegated_runs.all():
+        if child.tenant_id != run.tenant_id or child.session.tenant_id != run.tenant_id:
+            continue
         result.extend((child, step) for step in child.steps.all())
     return sorted(
         result,
@@ -4475,6 +4526,8 @@ def _build_sync_event(run):
 def _terminal_stream_event(run):
     """Build the terminal SSE event for a run."""
 
+    from .runtime_events import public_run_error
+
     if run.status == Run.Status.AWAITING_USER_INPUT:
         return {
             "type": "awaiting_user_input",
@@ -4490,8 +4543,8 @@ def _terminal_stream_event(run):
             "outcome": run.outcome,
             "termination_detail": sanitize_termination_detail(run.termination_detail),
             "error": {
-                "code": run.error or "LENS_RUN_FAILED",
-                "message": run.error or "Run failed.",
+                "code": public_run_error(run.error) or "LENS_RUN_FAILED",
+                "message": "Run failed.",
             },
             "ts": timezone.now().isoformat(),
         }

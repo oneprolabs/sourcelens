@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout>
+  <component :is="embedded ? 'div' : AdminLayout" :class="{ hidden: embedded }">
     <div class="flex max-w-full flex-col gap-4 py-4">
       <section
         class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
@@ -10,7 +10,11 @@
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h1 class="text-xl font-semibold text-ink-900">
-                {{ t('lensAdmin.pages.mcp.title') }}
+                {{
+                  officialCatalog
+                    ? t('catalog.officialMcp')
+                    : t('catalog.privateMcp')
+                }}
               </h1>
             </div>
           </div>
@@ -77,6 +81,23 @@
                       :status="row.enabled ? 'enabled' : 'disabled'"
                     />
                   </td>
+                  <td
+                    v-if="officialCatalog"
+                    class="table-cell text-xs text-ink-500"
+                  >
+                    <p>
+                      {{
+                        t('catalog.enabledTenants', {
+                          count: row.enabled_tenant_count || 0
+                        })
+                      }}
+                    </p>
+                    <p>
+                      {{
+                        t('catalog.boundCount', { count: row.bound_count || 0 })
+                      }}
+                    </p>
+                  </td>
                   <td class="table-cell">
                     <RowActions :row="row" @edit="startEdit" @delete="remove" />
                   </td>
@@ -96,122 +117,141 @@
         </div>
       </section>
 
-      <BaseModal :show="showModal" :title="modalTitle" @close="closeModal">
-        <form class="space-y-4" @submit.prevent="save">
-          <FormRow :label="t('lensAdmin.fields.name')">
-            <input v-model="form.name" class="form-input" required />
-          </FormRow>
-          <div class="grid gap-4 md:grid-cols-2">
-            <FormRow :label="t('lensAdmin.fields.transport')">
-              <BaseSelect v-model="form.transport">
-                <option value="url">url</option>
-                <option value="stdio">stdio</option>
-                <option value="plugin">plugin</option>
-              </BaseSelect>
+      <component
+        :is="embedded ? BaseDrawer : BaseModal"
+        :show="showModal"
+        :title="modalTitle"
+        @close="closeModal"
+      >
+        <form id="mcp-form" @submit.prevent="save">
+          <fieldset :disabled="saving" class="min-w-0 space-y-4">
+            <FormRow :label="t('lensAdmin.fields.name')">
+              <input v-model="form.name" class="form-input" required />
             </FormRow>
-            <FormRow
-              v-if="form.transport !== 'plugin'"
-              :label="t('lensAdmin.fields.endpoint')"
-            >
-              <input v-model="form.endpoint" class="form-input" />
-            </FormRow>
-          </div>
-          <template v-if="form.transport === 'plugin'">
-            <FormRow :label="t('lensAdmin.mcp.pluginConnection')">
-              <BaseSelect
-                :model-value="form.connection_uuid"
-                @update:model-value="handleConnectionChange"
+            <div class="grid gap-4 md:grid-cols-2">
+              <FormRow :label="t('lensAdmin.fields.transport')">
+                <BaseSelect v-model="form.transport">
+                  <option value="url">url</option>
+                  <option value="stdio">stdio</option>
+                  <option v-if="!officialCatalog" value="plugin">plugin</option>
+                </BaseSelect>
+              </FormRow>
+              <FormRow
+                v-if="form.transport !== 'plugin'"
+                :label="t('lensAdmin.fields.endpoint')"
               >
-                <option value="">
-                  {{ t('lensAdmin.mcp.selectConnection') }}
-                </option>
-                <option
-                  v-for="connection in pluginConnections"
-                  :key="connection.uuid"
-                  :value="connection.uuid"
+                <input v-model="form.endpoint" class="form-input" />
+              </FormRow>
+            </div>
+            <template v-if="form.transport === 'plugin'">
+              <FormRow :label="t('lensAdmin.mcp.pluginConnection')">
+                <BaseSelect
+                  :model-value="form.connection_uuid"
+                  @update:model-value="handleConnectionChange"
                 >
-                  {{ connection.name }} · {{ connection.plugin_key }}
-                </option>
-              </BaseSelect>
-            </FormRow>
-            <FormRow :label="t('lensAdmin.mcp.pluginTools')">
-              <div class="space-y-2 rounded-lg border border-line p-3">
-                <label
-                  v-for="tool in pluginTools"
-                  :key="tool.key"
-                  class="flex items-start gap-2 text-sm text-ink-700"
-                >
-                  <input
-                    type="checkbox"
-                    class="mt-1"
-                    :checked="form.tools.includes(tool.key)"
-                    @change="togglePluginTool(tool.key)"
-                  />
-                  <span>
-                    <span class="font-medium text-ink-900">{{ tool.key }}</span>
-                    <span class="mt-0.5 block text-xs text-ink-500">
-                      {{ tool.description }}
+                  <option value="">
+                    {{ t('lensAdmin.mcp.selectConnection') }}
+                  </option>
+                  <option
+                    v-for="connection in pluginConnections"
+                    :key="connection.uuid"
+                    :value="connection.uuid"
+                  >
+                    {{ connection.name }} · {{ connection.plugin_key }}
+                  </option>
+                </BaseSelect>
+              </FormRow>
+              <FormRow :label="t('lensAdmin.mcp.pluginTools')">
+                <div class="space-y-2 rounded-lg border border-line p-3">
+                  <label
+                    v-for="tool in pluginTools"
+                    :key="tool.key"
+                    class="flex items-start gap-2 text-sm text-ink-700"
+                  >
+                    <input
+                      type="checkbox"
+                      class="mt-1"
+                      :checked="form.tools.includes(tool.key)"
+                      @change="togglePluginTool(tool.key)"
+                    />
+                    <span>
+                      <span class="font-medium text-ink-900">{{
+                        tool.key
+                      }}</span>
+                      <span class="mt-0.5 block text-xs text-ink-500">
+                        {{ tool.description }}
+                      </span>
                     </span>
-                  </span>
-                </label>
-                <p v-if="!pluginTools.length" class="text-xs text-ink-500">
-                  {{ t('lensAdmin.mcp.noPluginTools') }}
+                  </label>
+                  <p v-if="!pluginTools.length" class="text-xs text-ink-500">
+                    {{ t('lensAdmin.mcp.noPluginTools') }}
+                  </p>
+                </div>
+                <p class="mt-2 text-xs leading-5 text-ink-500">
+                  {{ t('lensAdmin.mcp.pluginAdapterHint') }}
                 </p>
-              </div>
-              <p class="mt-2 text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.mcp.pluginAdapterHint') }}
-              </p>
-            </FormRow>
-          </template>
-          <template v-else>
-            <FormRow :label="t('lensAdmin.fields.config')">
-              <KeyValueEditor
-                v-model="form.config_rows"
-                :key-label="t('lensAdmin.fields.configKey')"
-                :value-label="t('lensAdmin.fields.configValue')"
-                :mask-sensitive-values="true"
-                :configured-label="t('lensAdmin.mcp.secretConfigured')"
+              </FormRow>
+            </template>
+            <template v-else>
+              <FormRow :label="t('lensAdmin.fields.config')">
+                <KeyValueEditor
+                  v-model="form.config_rows"
+                  :key-label="t('lensAdmin.fields.configKey')"
+                  :value-label="t('lensAdmin.fields.configValue')"
+                  :mask-sensitive-values="true"
+                  :configured-label="t('lensAdmin.mcp.secretConfigured')"
+                />
+                <p class="mt-2 text-xs leading-5 text-ink-500">
+                  {{ t('lensAdmin.mcp.sensitiveConfigHint') }}
+                </p>
+              </FormRow>
+              <SkillEnvironmentEditor
+                v-model="form.environment"
+                :help-text="t('lensAdmin.mcp.environmentVariablesHelp')"
               />
-              <p class="mt-2 text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.mcp.sensitiveConfigHint') }}
+              <p class="text-xs leading-5 text-ink-500">
+                {{
+                  t('lensAdmin.mcp.environmentPlaceholderHint', {
+                    placeholder: '${VARIABLE_NAME}'
+                  })
+                }}
               </p>
-            </FormRow>
-            <SkillEnvironmentEditor
-              v-model="form.environment"
-              :help-text="t('lensAdmin.mcp.environmentVariablesHelp')"
-            />
-            <p class="text-xs leading-5 text-ink-500">
-              {{
-                t('lensAdmin.mcp.environmentPlaceholderHint', {
-                  placeholder: '${VARIABLE_NAME}'
-                })
-              }}
-            </p>
-          </template>
-          <BooleanRow v-model="form.enabled" />
+            </template>
+            <BooleanRow v-model="form.enabled" />
 
-          <p v-if="formError" class="text-sm text-danger-700">
-            {{ formError }}
-          </p>
+            <p v-if="formError" class="text-sm text-danger-700">
+              {{ formError }}
+            </p>
+          </fieldset>
         </form>
         <template #footer>
           <div class="flex flex-row-reverse gap-2">
-            <BaseButton :loading="saving" variant="primary" @click="save">
+            <BaseButton
+              :loading="saving"
+              variant="primary"
+              type="submit"
+              form="mcp-form"
+            >
               {{ t('common.save') }}
             </BaseButton>
-            <BaseButton variant="outline" @click="closeModal">
+            <BaseButton
+              variant="outline"
+              :disabled="saving"
+              @click="closeModal"
+            >
               {{ t('common.cancel') }}
             </BaseButton>
           </div>
         </template>
-      </BaseModal>
+      </component>
     </div>
-  </AdminLayout>
+  </component>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import {
@@ -225,6 +265,7 @@ import {
 } from '@/api/lens'
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -245,7 +286,14 @@ import {
   mcpRowsToConfig
 } from './mcpConfig'
 
+const props = defineProps({
+  embedded: Boolean,
+  initialMcpUuid: { type: String, default: '' }
+})
+const emit = defineEmits(['saved', 'close'])
 const { t } = useI18n()
+const route = useRoute()
+const officialCatalog = computed(() => route.meta.catalogMode === 'official')
 const { showSuccess, showError } = useToast()
 
 const mcps = ref([])
@@ -281,11 +329,13 @@ const pluginTools = computed(() => {
   return tools.filter((tool) => tool.exposure !== 'internal')
 })
 
-const columns = computed(() =>
-  ['mcpServer', 'transport', 'endpoint', 'status', 'actions'].map((column) =>
+const columns = computed(() => [
+  ...['mcpServer', 'transport', 'endpoint', 'status'].map((column) =>
     t(`lensAdmin.columns.${column}`)
-  )
-)
+  ),
+  ...(officialCatalog.value ? [t('catalog.usage')] : []),
+  t('lensAdmin.columns.actions')
+])
 
 const totalPages = computed(() =>
   Math.max(1, Math.ceil(mcps.value.length / pageSize.value))
@@ -369,27 +419,36 @@ function buildPayload() {
   }
 }
 
+let loadRequestId = 0
 async function load() {
+  const requestId = ++loadRequestId
   loading.value = true
   formError.value = ''
   try {
     const [mcpRows, connectionRows, installedPlugins] = await Promise.all([
-      listMcpServers(),
-      listConnections(),
-      listPlugins()
+      listMcpServers({
+        catalog: officialCatalog.value ? 'official' : 'private'
+      }),
+      officialCatalog.value ? [] : listConnections(),
+      officialCatalog.value ? [] : listPlugins()
     ])
     const manifests = await Promise.all(
       installedPlugins.map((plugin) => getPluginManifest(plugin.key))
     )
+    if (requestId !== loadRequestId) return false
     mcps.value = normalizeList(mcpRows)
     connections.value = connectionRows
     pluginManifests.value = Object.fromEntries(
       manifests.map((manifest) => [manifest.key, manifest])
     )
+    return true
   } catch (error) {
-    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+    if (requestId === loadRequestId) {
+      showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+    }
+    return false
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
 
@@ -428,6 +487,7 @@ function startEdit(row) {
 }
 
 function closeModal() {
+  if (saving.value) return
   showModal.value = false
   form.value = {}
   formError.value = ''
@@ -442,13 +502,16 @@ async function saveByMode(uuid, payload) {
 }
 
 async function save() {
+  if (saving.value) return
   saving.value = true
   formError.value = ''
   try {
     await saveByMode(form.value.uuid, buildPayload())
     showSuccess(t('lensAdmin.messages.saveSuccess'))
+    saving.value = false
     closeModal()
-    await load()
+    if (props.embedded) emit('saved')
+    else await load()
   } catch (error) {
     formError.value = extractErrorMessage(
       error,
@@ -470,7 +533,28 @@ async function remove(row) {
   }
 }
 
-onMounted(load)
+watch(showModal, (visible, previous) => {
+  if (props.embedded && previous && !visible) emit('close')
+})
+watch(
+  officialCatalog,
+  async () => {
+    mcps.value = []
+    currentPage.value = 1
+    closeModal()
+    const loaded = await load()
+    if (props.embedded) {
+      if (!loaded) return emit('close')
+      const row = mcps.value.find((item) => item.uuid === props.initialMcpUuid)
+      if (props.initialMcpUuid && !row) {
+        showError(t('lensAdmin.messages.loadFailed'))
+        emit('close')
+      } else if (row) startEdit(row)
+      else startCreate()
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

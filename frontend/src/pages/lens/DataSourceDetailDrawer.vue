@@ -1,14 +1,16 @@
 <template>
   <BaseDrawer
     :show="show"
-    :title="t('lensAdmin.datasourceDetail.title')"
-    :subtitle="datasource?.name || ''"
+    :title="datasource?.name || t('lensAdmin.datasourceDetail.title')"
+    :subtitle="detailSubtitle"
     width="5xl"
-    @close="$emit('close')"
+    panel-class="knowledge-drawer knowledge-detail-drawer"
+    :close-on-backdrop="!settingsBusy"
+    @close="!settingsBusy && $emit('close')"
   >
     <template v-if="datasource" #tabs>
-      <div class="border-b border-line bg-surface">
-        <div class="flex gap-5 px-6">
+      <div>
+        <div class="knowledge-detail-tabs">
           <button
             type="button"
             class="detail-tab"
@@ -38,73 +40,10 @@
     </template>
 
     <div v-if="datasource">
-      <div v-show="activeTab === 'basic'" class="space-y-4">
-        <DrawerSection
-          :title="t('lensAdmin.datasourceDetail.basicInfo')"
-          spacing="none"
-          class="datasource-overview-block rounded-xl border border-line bg-surface p-4"
-        >
-          <template #actions
-            ><StatusBadge :status="datasource.status"
-          /></template>
-          <dl
-            class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line"
-          >
-            <div
-              v-for="item in datasourceOverviewDetails"
-              :key="item.label"
-              class="min-w-0 bg-surface-sunken px-3 py-2.5"
-              :class="item.wide ? 'col-span-2' : ''"
-            >
-              <dt class="text-[11px] font-medium text-ink-500">
-                {{ item.label }}
-              </dt>
-              <dd
-                class="mt-1 truncate text-sm font-medium text-ink-900"
-                :class="item.mono ? 'font-mono text-xs' : ''"
-                :title="item.value"
-              >
-                {{ item.value }}
-              </dd>
-            </div>
-          </dl>
-          <div
-            v-if="datasource.deployments?.length"
-            class="mt-4 rounded-lg border border-line bg-surface-sunken p-3"
-          >
-            <div class="mb-2 text-xs font-semibold text-ink-700">
-              {{ t('lensAdmin.fields.lensnode') }}
-            </div>
-            <div class="space-y-2">
-              <div
-                v-for="deployment in datasource.deployments"
-                :key="deployment.uuid"
-                class="grid grid-cols-2 gap-3 rounded-md border border-line bg-surface px-3 py-2"
-              >
-                <div class="min-w-0">
-                  <div class="text-[11px] text-ink-500">
-                    {{ t('lensAdmin.fields.lensnode') }}
-                  </div>
-                  <div class="truncate text-sm font-medium text-ink-900">
-                    {{ deployment.lensnode_name || deployment.lensnode_uuid }}
-                  </div>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-[11px] text-ink-500">
-                    {{ t('lensAdmin.fields.targetPath') }}
-                  </div>
-                  <div class="truncate font-mono text-xs text-ink-700">
-                    {{ deployment.target_path || '-' }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </DrawerSection>
-
+      <div v-show="activeTab === 'basic'" class="knowledge-detail-basic">
         <DrawerSection
           :title="t('lensAdmin.datasourceDetail.storage.title')"
-          class="datasource-storage-block rounded-xl border border-line bg-surface p-4"
+          class="datasource-storage-block knowledge-detail-section knowledge-detail-storage"
         >
           <dl v-if="datasourceStorageUsage" class="mt-3 grid grid-cols-3 gap-2">
             <div
@@ -124,389 +63,454 @@
             {{ t('lensAdmin.datasourceDetail.storage.notMeasured') }}
           </p>
         </DrawerSection>
-
-        <section
-          v-if="isUploadDatasource && originalUploadFiles.length"
-          class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
-        >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.originalFiles') }}
-          </h3>
-          <div class="mt-3 overflow-hidden rounded-lg border border-line">
+        <section class="knowledge-detail-section">
+          <h3>{{ t('lensAdmin.datasourceDetail.settings.configuration') }}</h3>
+          <dl class="knowledge-detail-kv mt-3">
             <div
-              class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
-            >
-              <span>{{ t('lensAdmin.datasourceDetail.fileName') }}</span>
-              <span>{{ t('lensAdmin.datasourceDetail.uploadedAt') }}</span>
-              <span class="text-right">{{
-                t('lensAdmin.datasourceDetail.fileSize')
-              }}</span>
-              <span class="text-right">{{
-                t('lensAdmin.datasourceDetail.uploadStatus.label')
-              }}</span>
-            </div>
-            <div
-              v-for="file in originalUploadFiles"
-              :key="file.name"
-              class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] items-center gap-3 border-t border-line px-3 py-2 text-sm"
-            >
-              <span class="min-w-0 truncate text-ink-800" :title="file.name">{{
-                file.name
-              }}</span>
-              <span class="text-xs text-ink-500">{{
-                formatDate(file.uploadedAt)
-              }}</span>
-              <span class="text-right text-xs text-ink-500">{{
-                formatFileSize(file.size)
-              }}</span>
-              <span class="text-right">
-                <span
-                  class="inline-flex rounded border px-1.5 py-0.5 text-[11px] font-medium"
-                  :class="UPLOAD_STATUS_CLASS[file.status]"
-                >
-                  {{
-                    t(`lensAdmin.datasourceDetail.uploadStatus.${file.status}`)
-                  }}
-                </span>
-              </span>
-            </div>
-          </div>
-        </section>
-
-        <section
-          v-if="
-            !isUploadDatasource &&
-            (datasourceResourceDetails.length ||
-              organizationRepositories.length)
-          "
-          class="datasource-resource-block rounded-xl border border-line bg-surface p-4"
-        >
-          <h3 class="text-sm font-semibold text-ink-900">
-            {{ t('lensAdmin.datasourceDetail.resourceAndTarget') }}
-          </h3>
-          <dl
-            class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line"
-          >
-            <div
-              v-for="item in datasourceResourceDetails"
+              v-for="item in datasourceConfigurationDetails"
               :key="item.label"
-              class="min-w-0 bg-surface-sunken px-3 py-2.5"
-              :class="item.wide ? 'col-span-2' : ''"
             >
-              <dt class="text-[11px] font-medium text-ink-500">
-                {{ item.label }}
-              </dt>
-              <dd
-                class="mt-1 break-words text-sm font-medium text-ink-900"
-                :class="item.mono ? 'font-mono text-xs' : ''"
-              >
-                <a
-                  v-if="item.href"
-                  class="line-clamp-2 break-all text-brand-600 hover:text-brand-700"
-                  :href="item.href"
-                  :title="item.value"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {{ item.value }}
-                </a>
-                <template v-else>{{ item.value }}</template>
-              </dd>
+              <dt>{{ item.label }}</dt>
+              <dd :class="item.mono ? 'font-mono' : ''">{{ item.value }}</dd>
             </div>
           </dl>
-          <div v-if="organizationRepositories.length" class="mt-3 space-y-2">
-            <div
-              v-for="repo in organizationRepositories"
-              :key="repo.repo_url || repo.name || repo.path"
-              class="rounded-lg border border-line bg-surface-sunken px-3 py-2"
-            >
-              <div class="flex min-w-0 items-center gap-2">
-                <PluginIcon
-                  :plugin-key="datasource.plugin_key"
-                  :src="pluginIconUrls[datasource.plugin_key]"
-                  :label="datasource.plugin_key || datasource.source_type"
-                />
-                <span
-                  class="min-w-0 flex-1 truncate text-xs font-medium text-ink-800"
-                  :title="repo.name || repo.path || repo.repo_url"
-                >
-                  {{ repo.name || repo.path || repo.repo_url }}
-                </span>
-                <span
-                  v-if="repo.branch"
-                  class="max-w-40 shrink-0 truncate rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[11px] text-ink-500"
-                  :title="repo.branch"
-                >
-                  {{ repo.branch }}
-                </span>
-              </div>
-              <a
-                v-if="repo.repo_url"
-                class="mt-1 block truncate font-mono text-xs text-brand-600 hover:text-brand-700"
-                :href="repo.repo_url"
-                :title="repo.repo_url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {{ repo.repo_url }}
-              </a>
-            </div>
-          </div>
         </section>
-
-        <DrawerSection
-          v-if="isSyncableDatasource"
-          :title="t('lensAdmin.datasourceDetail.sync')"
-          class="datasource-sync-block rounded-xl border border-line bg-surface p-4"
-        >
-          <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <div
-              v-for="item in datasourceSyncDetails"
-              :key="item.label"
-              class="min-w-0 rounded-lg bg-surface-sunken px-3 py-2.5"
-              :class="item.wide ? 'col-span-2 sm:col-span-3' : ''"
+        <DataSourceDetailSettings
+          ref="settingsForm"
+          :show="show"
+          :datasource="datasource"
+          :blocked="readonly"
+          @busy="settingsBusy = $event"
+          @dirty="settingsDirty = $event"
+          @saved="$emit('settings-saved', $event)"
+        />
+        <details class="knowledge-detail-advanced">
+          <summary>
+            {{ t('lensAdmin.datasourceDetail.settings.advanced') }}
+          </summary>
+          <div class="knowledge-detail-basic">
+            <DrawerSection
+              :title="t('lensAdmin.datasourceDetail.basicInfo')"
+              spacing="none"
+              class="datasource-overview-block knowledge-detail-section"
             >
-              <dt class="text-[11px] font-medium text-ink-500">
-                {{ item.label }}
-              </dt>
-              <dd
-                class="mt-1 truncate text-sm font-medium text-ink-900"
-                :class="item.mono ? 'font-mono text-xs' : ''"
-                :title="item.value"
-              >
-                {{ item.value }}
-              </dd>
-            </div>
-          </dl>
-          <div
-            v-if="datasourceSyncError"
-            class="mt-3 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5"
-          >
-            <p class="text-[11px] font-medium text-danger-600">
-              {{ t('lensAdmin.datasourceDetail.lastError') }}
-            </p>
-            <p class="mt-1 break-words font-mono text-xs text-danger-700">
-              {{ datasourceSyncError }}
-            </p>
-          </div>
-        </DrawerSection>
-
-        <DrawerSection
-          v-if="isSyncableDatasource"
-          :title="t('lensAdmin.datasourceDetail.retrieval')"
-          class="datasource-retrieval-block rounded-xl border border-line bg-surface p-4"
-        >
-          <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <article
-              v-for="group in datasourceRetrievalGroups"
-              :key="group.key"
-              class="rounded-lg bg-surface-sunken p-3"
-              :class="group.wide ? 'sm:col-span-2' : ''"
-            >
-              <h4 class="text-xs font-semibold text-ink-800">
-                {{ group.title }}
-              </h4>
-              <dl
-                class="mt-3 grid grid-cols-2 gap-x-4 gap-y-3"
-                :class="group.wide ? 'sm:grid-cols-4' : ''"
-              >
+              <template #actions
+                ><StatusBadge :status="datasource.status"
+              /></template>
+              <dl class="knowledge-detail-kv mt-3">
                 <div
-                  v-for="item in group.items"
+                  v-for="item in datasourceOverviewDetails"
                   :key="item.label"
-                  class="min-w-0"
+                  class="min-w-0 bg-surface-sunken px-3 py-2.5"
                   :class="item.wide ? 'col-span-2' : ''"
                 >
-                  <dt class="text-[11px] leading-4 text-ink-500">
+                  <dt class="text-[11px] font-medium text-ink-500">
                     {{ item.label }}
                   </dt>
                   <dd
-                    class="mt-1 break-words text-xs font-medium text-ink-800"
-                    :class="[
-                      item.mono ? 'font-mono' : '',
-                      item.enabled === true ? 'text-success-700' : '',
-                      item.enabled === false ? 'text-ink-500' : ''
-                    ]"
+                    class="mt-1 truncate text-sm font-medium text-ink-900"
+                    :class="item.mono ? 'font-mono text-xs' : ''"
+                    :title="item.value"
                   >
                     {{ item.value }}
                   </dd>
                 </div>
               </dl>
-            </article>
-          </div>
-        </DrawerSection>
-      </div>
-      <div v-show="activeTab === 'details'" class="space-y-6">
-        <div
-          class="relative overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
-        >
-          <ul class="divide-y divide-line bg-surface">
-            <li
-              class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 bg-surface-sunken px-4 py-2 text-xs font-semibold uppercase tracking-wider text-ink-600 sm:grid"
-            >
-              <span class="text-left">{{
-                t('lensAdmin.datasourceDetail.details.colTaskType')
-              }}</span>
-              <span class="text-left">{{
-                t('lensAdmin.datasourceDetail.details.colFileName')
-              }}</span>
-              <span>{{
-                t('lensAdmin.datasourceDetail.details.colStartedAt')
-              }}</span>
-              <span>{{
-                t('lensAdmin.datasourceDetail.details.colStatus')
-              }}</span>
-              <span>{{
-                t('lensAdmin.datasourceDetail.details.colTrigger')
-              }}</span>
-              <span>{{
-                t('lensAdmin.datasourceDetail.details.colDuration')
-              }}</span>
-              <span></span>
-            </li>
-            <li
-              v-if="tasksLoading"
-              class="px-4 py-6 text-center text-sm text-ink-500"
-            >
-              {{ t('common.loading') }}
-            </li>
-            <li
-              v-else-if="!tasks.length"
-              class="px-4 py-6 text-center text-sm text-ink-500"
-            >
-              {{ t('common.noData') }}
-            </li>
-            <template v-else>
-              <li
-                v-for="task in tasks"
-                :key="task.id"
-                class="transition-colors duration-150"
-                :class="
-                  expandedTaskId === task.id
-                    ? 'border-primary-500 bg-primary-50'
-                    : 'border-transparent hover:bg-surface-sunken'
-                "
+              <div
+                v-if="datasource.deployments?.length"
+                class="mt-4 rounded-lg border border-line bg-surface-sunken p-3"
               >
-                <div
-                  class="px-3 py-3 sm:hidden"
-                  :class="
-                    tasksLoading
-                      ? 'cursor-not-allowed opacity-60'
-                      : 'cursor-pointer'
-                  "
-                  @click="toggleTaskExpand(task)"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <span class="min-w-0 flex-1">
-                      <span
-                        class="block truncate text-sm font-medium text-ink-900"
-                      >
-                        {{ taskTypeLabel(task) }}
-                      </span>
-                      <span
-                        v-if="task.metadata?.filename"
-                        class="block truncate text-xs text-ink-500"
-                        :title="task.metadata.filename"
-                        >{{ task.metadata.filename }}</span
-                      >
-                    </span>
-                    <div class="flex shrink-0 items-center gap-2">
-                      <StatusBadge :status="mapTaskStatus(task.status)" />
-                      <span
-                        class="text-ink-400 transition-transform duration-150"
-                        :class="expandedTaskId === task.id ? 'rotate-90' : ''"
-                        >▸</span
-                      >
+                <div class="mb-2 text-xs font-semibold text-ink-700">
+                  {{ t('lensAdmin.fields.lensnode') }}
+                </div>
+                <div class="space-y-2">
+                  <div
+                    v-for="deployment in datasource.deployments"
+                    :key="deployment.uuid"
+                    class="grid grid-cols-2 gap-3 rounded-md border border-line bg-surface px-3 py-2"
+                  >
+                    <div class="min-w-0">
+                      <div class="text-[11px] text-ink-500">
+                        {{ t('lensAdmin.fields.lensnode') }}
+                      </div>
+                      <div class="truncate text-sm font-medium text-ink-900">
+                        {{
+                          deployment.lensnode_name || deployment.lensnode_uuid
+                        }}
+                      </div>
+                    </div>
+                    <div class="min-w-0">
+                      <div class="text-[11px] text-ink-500">
+                        {{ t('lensAdmin.fields.targetPath') }}
+                      </div>
+                      <div class="truncate font-mono text-xs text-ink-700">
+                        {{ deployment.target_path || '-' }}
+                      </div>
                     </div>
                   </div>
-                  <dl class="mt-3 grid grid-cols-3 gap-2">
-                    <div class="min-w-0">
-                      <dt class="text-[11px] text-ink-500">
-                        {{
-                          t('lensAdmin.datasourceDetail.details.colStartedAt')
-                        }}
+                </div>
+              </div>
+            </DrawerSection>
+
+            <section
+              v-if="isUploadDatasource && originalUploadFiles.length"
+              class="datasource-resource-block knowledge-detail-section"
+            >
+              <h3 class="text-sm font-semibold text-ink-900">
+                {{ t('lensAdmin.datasourceDetail.originalFiles') }}
+              </h3>
+              <div
+                class="knowledge-original-files mt-3 rounded-lg border border-line"
+              >
+                <div
+                  class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] gap-3 bg-surface-sunken px-3 py-2 text-xs font-semibold text-ink-600"
+                >
+                  <span>{{ t('lensAdmin.datasourceDetail.fileName') }}</span>
+                  <span>{{ t('lensAdmin.datasourceDetail.uploadedAt') }}</span>
+                  <span class="text-right">{{
+                    t('lensAdmin.datasourceDetail.fileSize')
+                  }}</span>
+                  <span class="text-right">{{
+                    t('lensAdmin.datasourceDetail.uploadStatus.label')
+                  }}</span>
+                </div>
+                <div
+                  v-for="file in originalUploadFiles"
+                  :key="file.name"
+                  class="grid grid-cols-[minmax(0,1fr)_8rem_5rem_6rem] items-center gap-3 border-t border-line px-3 py-2 text-sm"
+                >
+                  <span
+                    class="min-w-0 truncate text-ink-800"
+                    :title="file.name"
+                    >{{ file.name }}</span
+                  >
+                  <span class="text-xs text-ink-500">{{
+                    formatDateTime(file.uploadedAt)
+                  }}</span>
+                  <span class="text-right text-xs text-ink-500">{{
+                    formatFileSize(file.size)
+                  }}</span>
+                  <span class="text-right">
+                    <span
+                      class="inline-flex rounded border px-1.5 py-0.5 text-[11px] font-medium"
+                      :class="UPLOAD_STATUS_CLASS[file.status]"
+                    >
+                      {{
+                        t(
+                          `lensAdmin.datasourceDetail.uploadStatus.${file.status}`
+                        )
+                      }}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section
+              v-if="
+                !isUploadDatasource &&
+                (datasourceResourceDetails.length ||
+                  organizationRepositories.length)
+              "
+              class="datasource-resource-block knowledge-detail-section"
+            >
+              <h3 class="text-sm font-semibold text-ink-900">
+                {{ t('lensAdmin.datasourceDetail.resourceAndTarget') }}
+              </h3>
+              <dl class="knowledge-detail-kv mt-3">
+                <div
+                  v-for="item in datasourceResourceDetails"
+                  :key="item.label"
+                  class="min-w-0 bg-surface-sunken px-3 py-2.5"
+                  :class="item.wide ? 'col-span-2' : ''"
+                >
+                  <dt class="text-[11px] font-medium text-ink-500">
+                    {{ item.label }}
+                  </dt>
+                  <dd
+                    class="mt-1 break-words text-sm font-medium text-ink-900"
+                    :class="item.mono ? 'font-mono text-xs' : ''"
+                  >
+                    <a
+                      v-if="item.href"
+                      class="line-clamp-2 break-all text-brand-600 hover:text-brand-700"
+                      :href="item.href"
+                      :title="item.value"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {{ item.value }}
+                    </a>
+                    <template v-else>{{ item.value }}</template>
+                  </dd>
+                </div>
+              </dl>
+              <div
+                v-if="organizationRepositories.length"
+                class="mt-3 space-y-2"
+              >
+                <div
+                  v-for="repo in organizationRepositories"
+                  :key="repo.repo_url || repo.name || repo.path"
+                  class="rounded-lg border border-line bg-surface-sunken px-3 py-2"
+                >
+                  <div class="flex min-w-0 items-center gap-2">
+                    <PluginIcon
+                      :plugin-key="datasource.plugin_key"
+                      :src="pluginIconUrls[datasource.plugin_key]"
+                      :label="datasource.plugin_key || datasource.source_type"
+                    />
+                    <span
+                      class="min-w-0 flex-1 truncate text-xs font-medium text-ink-800"
+                      :title="repo.name || repo.path || repo.repo_url"
+                    >
+                      {{ repo.name || repo.path || repo.repo_url }}
+                    </span>
+                    <span
+                      v-if="repo.branch"
+                      class="max-w-40 shrink-0 truncate rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[11px] text-ink-500"
+                      :title="repo.branch"
+                    >
+                      {{ repo.branch }}
+                    </span>
+                  </div>
+                  <a
+                    v-if="repo.repo_url"
+                    class="mt-1 block truncate font-mono text-xs text-brand-600 hover:text-brand-700"
+                    :href="repo.repo_url"
+                    :title="repo.repo_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {{ repo.repo_url }}
+                  </a>
+                </div>
+              </div>
+            </section>
+
+            <DrawerSection
+              v-if="isSyncableDatasource"
+              :title="t('lensAdmin.datasourceDetail.sync')"
+              class="datasource-sync-block knowledge-detail-section"
+            >
+              <dl class="knowledge-detail-kv mt-3">
+                <div
+                  v-for="item in datasourceSyncDetails"
+                  :key="item.label"
+                  class="min-w-0 rounded-lg bg-surface-sunken px-3 py-2.5"
+                  :class="item.wide ? 'col-span-2 sm:col-span-3' : ''"
+                >
+                  <dt class="text-[11px] font-medium text-ink-500">
+                    {{ item.label }}
+                  </dt>
+                  <dd
+                    class="mt-1 truncate text-sm font-medium text-ink-900"
+                    :class="item.mono ? 'font-mono text-xs' : ''"
+                    :title="item.value"
+                  >
+                    {{ item.value }}
+                  </dd>
+                </div>
+              </dl>
+              <div
+                v-if="datasourceSyncError"
+                class="mt-3 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5"
+              >
+                <p class="text-[11px] font-medium text-danger-600">
+                  {{ t('lensAdmin.datasourceDetail.lastError') }}
+                </p>
+                <p class="mt-1 break-words font-mono text-xs text-danger-700">
+                  {{ datasourceSyncError }}
+                </p>
+              </div>
+            </DrawerSection>
+
+            <DrawerSection
+              v-if="isSyncableDatasource"
+              :title="t('lensAdmin.datasourceDetail.retrieval')"
+              class="datasource-retrieval-block knowledge-detail-section"
+            >
+              <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <article
+                  v-for="group in datasourceRetrievalGroups"
+                  :key="group.key"
+                  class="rounded-lg bg-surface-sunken p-3"
+                  :class="group.wide ? 'sm:col-span-2' : ''"
+                >
+                  <h4 class="text-xs font-semibold text-ink-800">
+                    {{ group.title }}
+                  </h4>
+                  <dl
+                    class="mt-3 grid grid-cols-2 gap-x-4 gap-y-3"
+                    :class="group.wide ? 'sm:grid-cols-4' : ''"
+                  >
+                    <div
+                      v-for="item in group.items"
+                      :key="item.label"
+                      class="min-w-0"
+                      :class="item.wide ? 'col-span-2' : ''"
+                    >
+                      <dt class="text-[11px] leading-4 text-ink-500">
+                        {{ item.label }}
                       </dt>
-                      <dd class="mt-0.5 truncate text-xs text-ink-800">
-                        {{ formatDateTime(task.started_at) }}
-                      </dd>
-                    </div>
-                    <div class="min-w-0">
-                      <dt class="text-[11px] text-ink-500">
-                        {{ t('lensAdmin.datasourceDetail.details.colTrigger') }}
-                      </dt>
-                      <dd class="mt-0.5 truncate text-xs text-ink-800">
-                        {{ formatTrigger(task) }}
-                      </dd>
-                    </div>
-                    <div class="min-w-0">
-                      <dt class="text-[11px] text-ink-500">
-                        {{
-                          t('lensAdmin.datasourceDetail.details.colDuration')
-                        }}
-                      </dt>
-                      <dd class="mt-0.5 truncate text-xs text-ink-800">
-                        {{ formatDuration(task.duration) }}
+                      <dd
+                        class="mt-1 break-words text-xs font-medium text-ink-800"
+                        :class="[
+                          item.mono ? 'font-mono' : '',
+                          item.enabled === true ? 'text-success-700' : '',
+                          item.enabled === false ? 'text-ink-500' : ''
+                        ]"
+                      >
+                        {{ item.value }}
                       </dd>
                     </div>
                   </dl>
-                </div>
-                <div
-                  class="hidden grid-cols-[110px_minmax(0,1.4fr)_150px_110px_110px_90px_24px] items-center gap-3 px-4 py-2 text-sm sm:grid"
-                  :class="
-                    tasksLoading
-                      ? 'cursor-not-allowed opacity-60'
-                      : 'cursor-pointer'
-                  "
-                  @click="toggleTaskExpand(task)"
+                </article>
+              </div>
+            </DrawerSection>
+          </div>
+        </details>
+      </div>
+      <div
+        v-show="activeTab === 'details'"
+        class="knowledge-task-history"
+        :aria-busy="tasksLoading"
+      >
+        <p v-if="tasksError" role="alert" class="knowledge-settings-error">
+          {{ tasksError }}
+        </p>
+        <p
+          v-if="tasksLoading && !tasks.length"
+          role="status"
+          class="knowledge-history-empty"
+        >
+          {{ t('common.loading') }}
+        </p>
+        <p
+          v-else-if="!tasks.length && !tasksError"
+          class="knowledge-history-empty"
+        >
+          {{ t('common.noData') }}
+        </p>
+        <ol v-else class="knowledge-timeline">
+          <li
+            v-for="task in tasks"
+            :key="task.id"
+            class="knowledge-timeline-item"
+          >
+            <span
+              class="knowledge-timeline-dot"
+              :data-outcome="dataSourceTaskOutcome(task)"
+              aria-hidden="true"
+            >
+              <CheckIcon
+                v-if="dataSourceTaskOutcome(task) === 'completed'"
+                :size="12"
+              />
+              <XIcon
+                v-else-if="
+                  ['failed', 'cancelled'].includes(dataSourceTaskOutcome(task))
+                "
+                :size="12"
+              />
+              <TriangleAlertIcon
+                v-else-if="dataSourceTaskOutcome(task) === 'partial'"
+                :size="12"
+              />
+              <ClockIcon v-else :size="12" />
+            </span>
+            <div class="knowledge-timeline-content">
+              <button
+                type="button"
+                class="knowledge-timeline-open"
+                :disabled="tasksLoading"
+                :aria-expanded="expandedTaskId === task.id"
+                :aria-controls="`datasource-task-${task.id}`"
+                @click="toggleTaskExpand(task)"
+              >
+                <b
+                  >{{ taskTypeLabel(task) }} ·
+                  {{
+                    t(
+                      `lensAdmin.datasourceDetail.timeline.${dataSourceTaskOutcome(task)}`
+                    )
+                  }}</b
                 >
-                  <span class="truncate text-left text-ink-700">
-                    {{ taskTypeLabel(task) }}
-                  </span>
-                  <span
-                    class="truncate text-left text-ink-700"
-                    :title="task.metadata?.filename || ''"
-                  >
-                    {{ task.metadata?.filename || emptyValue }}
-                  </span>
-                  <span
-                    class="whitespace-nowrap text-center text-sm font-medium text-ink-900"
-                  >
-                    {{ formatDate(task.started_at) }}
-                  </span>
-                  <div class="flex justify-center">
-                    <StatusBadge :status="mapTaskStatus(task.status)" />
-                  </div>
-                  <span
-                    class="whitespace-nowrap text-center text-sm text-ink-500"
-                  >
-                    {{ formatTrigger(task) }}
-                  </span>
-                  <span
-                    class="whitespace-nowrap text-center text-sm text-ink-500"
-                  >
-                    {{ formatDuration(task.duration) }}
-                  </span>
-                  <span
-                    class="text-center text-ink-400 transition-transform duration-150"
-                    :class="expandedTaskId === task.id ? 'rotate-90' : ''"
-                    >▸</span
-                  >
-                </div>
-                <div
-                  v-if="expandedTaskId === task.id"
-                  class="border-t border-line bg-surface-sunken px-4 py-3"
+                <ChevronRightIcon
+                  :size="13"
+                  :class="{
+                    'knowledge-timeline-expanded': expandedTaskId === task.id
+                  }"
+                  aria-hidden="true"
+                />
+              </button>
+              <p
+                v-if="task.metadata?.filename"
+                class="knowledge-timeline-summary"
+              >
+                {{ task.metadata.filename }}
+              </p>
+              <p
+                v-if="dataSourceTaskSummary(task, t)"
+                class="knowledge-timeline-summary"
+              >
+                {{ dataSourceTaskSummary(task, t) }}
+              </p>
+              <p class="knowledge-timeline-meta">
+                <time :datetime="task.started_at || task.created_at">{{
+                  formatHistoryDate(task.started_at || task.created_at)
+                }}</time>
+                <span>{{ formatTrigger(task) }}</span>
+                <span v-if="task.duration != null"
+                  >{{ t('lensAdmin.datasourceDetail.details.colDuration') }}
+                  {{ formatDuration(task.duration) }}</span
                 >
-                  <div
-                    v-if="expandedTaskDetailLoading"
-                    class="py-2 text-center text-xs text-ink-500"
-                  >
-                    {{ t('common.loading') }}
-                  </div>
-                  <TaskSummaryCard v-else :task="expandedTask" />
-                </div>
-              </li>
-            </template>
-          </ul>
-        </div>
+              </p>
+              <div
+                v-if="expandedTaskId === task.id"
+                :id="`datasource-task-${task.id}`"
+                class="knowledge-timeline-detail"
+              >
+                <p v-if="expandedTaskDetailLoading" role="status">
+                  {{ t('common.loading') }}
+                </p>
+                <p
+                  v-else-if="expandedTaskError"
+                  role="alert"
+                  class="knowledge-settings-error"
+                >
+                  {{ expandedTaskError }}
+                </p>
+                <template v-else>
+                  <dl class="knowledge-detail-kv">
+                    <div>
+                      <dt>{{ t('taskManagement.list.taskId') }}</dt>
+                      <dd class="font-mono">
+                        {{ expandedTask?.task_id || emptyValue }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ t('taskManagement.list.finishedAt') }}</dt>
+                      <dd>
+                        {{ formatHistoryDate(expandedTask?.finished_at) }}
+                      </dd>
+                    </div>
+                  </dl>
+                  <TaskSummaryCard
+                    v-if="
+                      expandedTask?.metadata?.progress_message ||
+                      expandedTask?.metadata?.error ||
+                      expandedTask?.metadata?.progress_percent != null
+                    "
+                    :task="expandedTask"
+                    :show-status="false"
+                    :show-stats="false"
+                  />
+                </template>
+              </div>
+            </div>
+          </li>
+        </ol>
 
         <div
           v-if="totalCount > 0"
@@ -674,41 +678,64 @@
       {{ t('lensAdmin.datasourceDetail.selectHint') }}
     </div>
     <template v-if="datasource" #footer>
-      <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="knowledge-detail-footer">
+        <BaseButton
+          v-if="isSyncableDatasource && isDataSourceSyncing(datasource)"
+          variant="danger"
+          :disabled="settingsBusy || readonly"
+          @click="$emit('cancel-sync', datasource)"
+          >{{ t('lensAdmin.actions.cancelSync') }}</BaseButton
+        >
+        <BaseButton
+          v-else-if="isSyncableDatasource"
+          variant="primary"
+          :disabled="settingsBusy || readonly || datasource.status !== 'active'"
+          @click="$emit('sync', datasource)"
+          >{{ t('lensAdmin.knowledgeBulk.actions.sync') }}</BaseButton
+        >
+        <BaseButton
+          v-if="activeTab === 'basic'"
+          @click="settingsForm?.saveSettings()"
+          variant="outline"
+          :loading="settingsBusy"
+          :disabled="readonly || !settingsDirty"
+          >{{ t('lensAdmin.datasourceDetail.settings.save') }}</BaseButton
+        >
         <BaseButton
           variant="outline"
-          @click="$emit('toggle-enabled', datasource)"
+          :disabled="settingsBusy"
+          @click="$emit('close')"
+          >{{ t('common.close') }}</BaseButton
         >
-          {{
-            datasource.status === 'active'
-              ? t('lensAdmin.actions.disableDatasource')
-              : t('lensAdmin.actions.enableDatasource')
-          }}
-        </BaseButton>
-        <div class="ml-auto flex flex-wrap gap-2">
-          <BaseButton
-            v-if="isSyncableDatasource && isDataSourceSyncing(datasource)"
-            variant="danger"
-            @click="$emit('cancel-sync', datasource)"
-            >{{ t('lensAdmin.actions.cancelSync') }}</BaseButton
-          >
-          <BaseButton
-            v-else-if="isSyncableDatasource"
-            variant="outline"
-            :disabled="datasource.status !== 'active'"
-            @click="$emit('sync', datasource)"
-            >{{ t('lensAdmin.actions.sync') }}</BaseButton
-          >
-          <BaseButton
-            variant="outline"
-            :disabled="datasource.status !== 'active'"
-            @click="$emit('reprocess', datasource)"
-            >{{ t('lensAdmin.actions.reprocess') }}</BaseButton
-          >
-          <BaseButton variant="primary" @click="$emit('edit', datasource)">
-            {{ t('common.edit') }}
-          </BaseButton>
-        </div>
+        <details class="knowledge-detail-more">
+          <summary>{{ t('lensAdmin.datasourceDetail.settings.more') }}</summary>
+          <div>
+            <BaseButton
+              variant="outline"
+              :disabled="settingsBusy || readonly"
+              @click="$emit('edit', datasource)"
+              >{{ t('common.edit') }}</BaseButton
+            >
+            <BaseButton
+              variant="outline"
+              :disabled="settingsBusy || readonly"
+              @click="$emit('toggle-enabled', datasource)"
+              >{{
+                datasource.status === 'active'
+                  ? t('lensAdmin.actions.disableDatasource')
+                  : t('lensAdmin.actions.enableDatasource')
+              }}</BaseButton
+            >
+            <BaseButton
+              variant="outline"
+              :disabled="
+                settingsBusy || readonly || datasource.status !== 'active'
+              "
+              @click="$emit('reprocess', datasource)"
+              >{{ t('lensAdmin.actions.reprocess') }}</BaseButton
+            >
+          </div>
+        </details>
       </div>
     </template>
   </BaseDrawer>
@@ -717,12 +744,18 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { format } from 'date-fns'
+import {
+  CheckIcon,
+  XIcon,
+  TriangleAlertIcon,
+  ClockIcon,
+  ChevronRightIcon
+} from '@lucide/vue'
+import { useUserStore } from '@/store/user'
 
 import api from '@/api'
 import { listDataSourceSyncTasks } from '@/api/lens'
 import { llmAdminApi } from '@/admin/api/llmAdmin'
-import { taskManagementApi } from '@/admin/api/taskManagement'
 import { extractErrorMessage, extractResponseData } from '@/utils/api'
 import { lensNodeErrorMessage } from '@/utils/lensNodeErrors'
 import { formatDuration } from '@/utils/formatting'
@@ -742,12 +775,18 @@ import {
 } from './adminHelpers'
 import {
   dataSourceBranch,
+  dataSourcePolicyLabel,
   dataSourceRepositories,
   dataSourceRepositoryUrl,
   isOrganizationDataSource,
   isDataSourceSyncing,
   latestUploadTasksByFilename
 } from './datasourceHelpers'
+import DataSourceDetailSettings from './DataSourceDetailSettings.vue'
+import {
+  dataSourceTaskOutcome,
+  dataSourceTaskSummary
+} from './datasourceTimeline.js'
 import DataSourceFileTree from './components/DataSourceFileTree.vue'
 import { buildDataSourceFileTree } from './dataSourceFileTree'
 import { useShortDateTime } from './useShortDateTime'
@@ -765,13 +804,19 @@ defineEmits([
   'edit',
   'reprocess',
   'sync',
+  'settings-saved',
   'toggle-enabled',
   'upload'
 ])
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const formatDateTime = useShortDateTime()
 const activeTab = ref('basic')
+const settingsForm = ref(null)
+const settingsBusy = ref(false)
+const settingsDirty = ref(false)
+const userStore = useUserStore()
+const readonly = computed(() => userStore.delegation?.mode === 'readonly')
 const isSyncableDatasource = computed(
   () => !['managed_workspace', 'upload'].includes(props.datasource?.source_type)
 )
@@ -825,6 +870,9 @@ function formatBytes(value) {
 
 const tasks = ref([])
 const tasksLoading = ref(false)
+const tasksError = ref('')
+const expandedTaskError = ref('')
+let expandedTaskSequence = 0
 const currentPage = ref(1)
 const totalCount = ref(0)
 const totalPages = ref(1)
@@ -860,7 +908,12 @@ const expandedTaskDetailLoading = ref(false)
 const llmConfigOptions = ref([])
 const llmConfigLoaded = ref(false)
 
-const PROCESSING_STATUSES = new Set(['PENDING', 'STARTED', 'RETRY'])
+const PROCESSING_STATUSES = new Set([
+  'PENDING',
+  'STARTED',
+  'RETRY',
+  'CANCELLING'
+])
 const TASK_METADATA_FIELDS = [
   'datasource_uuid',
   'trigger',
@@ -873,6 +926,7 @@ const TASK_METADATA_FIELDS = [
   'progress_step',
   'progress_message',
   'sync_summary',
+  'conversion_summary',
   'source_type',
   'target_path',
   'filename',
@@ -889,32 +943,28 @@ const paginationShowing = computed(() => ({
   total: totalCount.value
 }))
 
-function mapTaskStatus(status) {
-  const m = {
-    PENDING: 'pending',
-    STARTED: 'processing',
-    SUCCESS: 'success',
-    FAILURE: 'failed',
-    RETRY: 'processing',
-    REVOKED: 'cancelled'
-  }
-  return m[status] || (status && status.toLowerCase()) || 'pending'
-}
-
 function isProcessingStatus(status) {
   return PROCESSING_STATUSES.has(String(status || '').toUpperCase())
 }
 
-function formatDate(val) {
-  if (!val) return '-'
-  try {
-    return format(new Date(val), 'yyyy-MM-dd HH:mm')
-  } catch {
-    return val
-  }
+function formatHistoryDate(value) {
+  if (!value) return emptyValue
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return emptyValue
+  return new Intl.DateTimeFormat(locale.value, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date)
 }
 
 function resetTaskList() {
+  expandedTaskSequence++
+  expandedTaskDetailLoading.value = false
+  expandedTaskError.value = ''
+  tasksError.value = ''
   tasks.value = []
   totalCount.value = 0
   totalPages.value = 1
@@ -1160,6 +1210,7 @@ async function loadTasks(options = {}) {
     return false
   }
   tasksLoadInFlight.value = true
+  tasksError.value = ''
   if (!options.silent) {
     tasksLoading.value = true
   }
@@ -1194,8 +1245,7 @@ async function loadTasks(options = {}) {
     if (!options.silent) {
       resetTaskList()
     }
-    // eslint-disable-next-line no-console
-    console.error(extractErrorMessage(e, t('common.error')))
+    tasksError.value = extractErrorMessage(e, t('common.error'))
     return false
   } finally {
     if (requestSeq === taskRequestSeq.value) {
@@ -1215,14 +1265,19 @@ async function refreshProcessingTasks() {
     return
   }
   processingRefreshInFlight.value = true
+  const requestSeq = taskRequestSeq.value
   try {
     const results = await Promise.allSettled(
       processingTasks.map((task) =>
-        taskManagementApi.getExecution(task.id, {
-          metadata_fields: TASK_METADATA_FIELDS
-        })
+        api.get(
+          `/lens/admin/datasources/${props.datasource.uuid}/sync-tasks/${task.id}/`,
+          {
+            params: { metadata_fields: TASK_METADATA_FIELDS }
+          }
+        )
       )
     )
+    if (requestSeq !== taskRequestSeq.value) return
     const refreshedById = new Map()
     results.forEach((result) => {
       if (result.status !== 'fulfilled') return
@@ -1277,6 +1332,8 @@ function goNextPage() {
 
 async function toggleTaskExpand(task) {
   if (tasksLoading.value) return
+  expandedTaskSequence++
+  expandedTaskError.value = ''
   if (expandedTaskId.value === task.id) {
     expandedTaskId.value = null
     expandedTask.value = null
@@ -1288,20 +1345,31 @@ async function toggleTaskExpand(task) {
 }
 
 async function loadExpandedTask(id) {
+  const requestSeq = ++expandedTaskSequence
+  const uuid = props.datasource?.uuid
+  expandedTaskError.value = ''
   expandedTaskDetailLoading.value = true
   try {
-    const res = await taskManagementApi.getExecution(id, {
-      metadata_fields: TASK_METADATA_FIELDS
-    })
+    const res = await api.get(
+      `/lens/admin/datasources/${uuid}/sync-tasks/${id}/`,
+      {
+        params: { metadata_fields: TASK_METADATA_FIELDS }
+      }
+    )
     const data = extractResponseData(res)
-    if (expandedTaskId.value === id) {
+    if (
+      requestSeq === expandedTaskSequence &&
+      uuid === props.datasource?.uuid &&
+      expandedTaskId.value === id
+    ) {
       expandedTask.value = data
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(extractErrorMessage(e, t('common.error')))
+    if (requestSeq === expandedTaskSequence)
+      expandedTaskError.value = extractErrorMessage(e, t('common.error'))
   } finally {
-    expandedTaskDetailLoading.value = false
+    if (requestSeq === expandedTaskSequence)
+      expandedTaskDetailLoading.value = false
   }
 }
 
@@ -1374,6 +1442,7 @@ watch(
       return
     }
     taskListContextKey.value = contextKey
+    tasksLoadInFlight.value = false
     stopProcessingRefresh()
     taskRequestSeq.value += 1
     currentPage.value = 1
@@ -1418,6 +1487,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  expandedTaskSequence++
+  taskRequestSeq.value++
   stopProcessingRefresh()
 })
 
@@ -1430,6 +1501,8 @@ function formatSourceType(rowOrType) {
   ) {
     return t('lensAdmin.datasourceWizard.fileUploadTitle')
   }
+  if (rowOrType?.plugin_key === 'github') return 'GitHub'
+  if (rowOrType?.plugin_key === 'gitlab') return 'GitLab'
   if (sourceType === 'git') {
     return 'Git'
   }
@@ -1469,18 +1542,6 @@ function feishuScopeLabel() {
   return t('lensAdmin.datasourceWizard.feishuScopeDriveFolder')
 }
 
-function formatSyncPolicy(syncPolicy) {
-  if (syncPolicy?.mode === 'crontab') {
-    const cron = syncPolicy.cron || emptyValue
-    const timezone = syncPolicy.timezone || 'UTC'
-    return `${cron} · ${timezone}`
-  }
-  const interval = syncPolicy?.interval_seconds
-  return interval
-    ? t('lensAdmin.table.intervalSeconds', { seconds: interval })
-    : emptyValue
-}
-
 function detailItem(label, value, mono = false, options = {}) {
   const normalized = Array.isArray(value) ? value.join(', ') : value
   return {
@@ -1513,6 +1574,41 @@ function modelLabel(modelRef) {
 const isManagedWorkspaceDatasource = computed(
   () => props.datasource?.source_type === 'managed_workspace'
 )
+
+const detailSubtitle = computed(() => {
+  const row = props.datasource
+  if (!row) return ''
+  const resource = dataSourceRepositoryUrl(row)
+  return [
+    formatSourceType(row),
+    resource && resource !== emptyValue ? resource : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+})
+
+const datasourceConfigurationDetails = computed(() => {
+  const row = props.datasource
+  if (!row) return []
+  const items = [detailItem(t('lensAdmin.fields.type'), formatSourceType(row))]
+  const resource = dataSourceRepositoryUrl(row)
+  if (resource && resource !== emptyValue)
+    items.push(detailItem(t('lensAdmin.fields.repoUrl'), resource, true))
+  if (
+    row.source_type === 'git' ||
+    ['github', 'gitlab'].includes(row.plugin_key)
+  )
+    items.push(
+      detailItem(t('lensAdmin.fields.branch'), dataSourceBranch(row), true)
+    )
+  items.push(
+    detailItem(t('lensAdmin.fields.syncPolicy'), dataSourcePolicyLabel(row, t))
+  )
+  items.push(
+    detailItem(t('lensAdmin.fields.targetPath'), row.target_path, true)
+  )
+  return items
+})
 
 const datasourceOverviewDetails = computed(() => {
   const row = props.datasource
@@ -1637,10 +1733,7 @@ const datasourceSyncDetails = computed(() => {
   const row = props.datasource
   if (!row) return []
   return [
-    detailItem(
-      t('lensAdmin.fields.syncInterval'),
-      formatSyncPolicy(row.sync_policy)
-    ),
+    detailItem(t('lensAdmin.fields.syncPolicy'), dataSourcePolicyLabel(row, t)),
     detailItem(
       t('lensAdmin.datasourceDetail.lastSyncedAt'),
       formatDateTime(row.last_synced_at)

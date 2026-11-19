@@ -4,12 +4,12 @@ from agentcore_metering.adapters.django.models import LLMConfig
 from agentcore_metering.adapters.django.services.decisions import decision_error_detail
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
-from rest_framework.permissions import IsAdminUser
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from lens.decisions import decision_catalog
+from lens.model_scope import HasModelAccess
 from lens.models import Run, RunExecution
 from lens.plugins.decisions import MAX_STATE_CHARS
 from lens.runtime_decisions import call_runtime_decision
@@ -21,7 +21,7 @@ from .gateway import LensNodeAIGatewayView
 class DecisionCatalogView(APIView):
     """Expose host-owned decision settings without a Plugin connection."""
 
-    permission_classes = [IsAdminUser]
+    permission_classes = [HasModelAccess]
 
     def get(self, request):
         """Return supported control gates and ranking rubrics."""
@@ -53,7 +53,9 @@ class LensNodeDecisionGatewayView(LensNodeAuthMixin, APIView):
         model_ref = str(request.data.get("model_ref") or "")
         if not model_ref or model_ref != frozen.get("model_ref"):
             return Response({"detail": "Decision model is not authorized for this Run."}, status=403)
-        model = get_object_or_404(LLMConfig, uuid=model_ref, model_type="decision", scope="global", is_active=True)
+        from lens.model_scope import model_queryset
+
+        model = get_object_or_404(model_queryset(run.tenant), uuid=model_ref, model_type="decision", is_active=True)
         text = request.data.get("input")
         questions = request.data.get("questions")
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_STATE_CHARS:

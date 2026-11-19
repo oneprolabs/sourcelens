@@ -21,13 +21,18 @@ URLS = {
     "dingtalk": "https://oapi.dingtalk.com/robot/send?access_token=test-key",
 }
 
+from accounts.models import Tenant, TenantMembership
+from lens.models import NotificationChannelScope
+
 
 class NotificationTargetTests(TestCase):
     """Verify real API persistence and records with only HTTP transport mocked."""
 
     def setUp(self):
+        self.tenant, _ = Tenant.objects.get_or_create(slug="default", defaults={"name": "Default"})
         self.client = APIClient()
         self.admin = get_user_model().objects.create_user(username="target-admin", is_staff=True)
+        TenantMembership.objects.create(user=self.admin, tenant=self.tenant, role="tenant_admin")
         self.client.force_authenticate(self.admin)
         self.root = "/api/v1/admin/notifications/channels/"
 

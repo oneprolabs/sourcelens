@@ -2,6 +2,8 @@
 
 from rest_framework import serializers
 
+from accounts.access import get_user_tenant
+
 from ..models import AssistantDataSourceBinding, DataSource, DataSourceItem
 from ..plugins.registry import installed_plugin
 
@@ -22,6 +24,20 @@ class BindingInput(serializers.Serializer):
     )
     required = serializers.BooleanField(default=True)
 
+    def __init__(self, *args, **kwargs):
+        """Limit datasource choices to the caller's tenant."""
+
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            self.fields["datasource_uuid"].queryset = (
+                DataSource.objects.filter(
+                    status="active",
+                    tenant=tenant,
+                )
+            )
+
     def validate(self, attrs):
         """Reject resources belonging to another datasource."""
         item = attrs.get("item")
@@ -39,7 +55,11 @@ class DatasourceBindingsField(serializers.Field):
 
     def to_internal_value(self, data):
         """Validate the full selection before any database mutation."""
-        serializer = BindingInput(data=data, many=True)
+        serializer = BindingInput(
+            data=data,
+            many=True,
+            context=getattr(self.parent, "context", {}),
+        )
         serializer.is_valid(raise_exception=True)
         rows = serializer.validated_data
         mounts = [row["mount_name"] for row in rows]

@@ -16,14 +16,13 @@ from .models import (
     DataSource,
     LensNode,
 )
+from .notification_scope import channel_queryset, notification_tenant
 
 
-def validate_channel(value, email_only=False):
+def validate_channel(value, email_only=False, tenant=None):
     """Resolve an enabled supported channel without exposing its configuration."""
 
-    from agentcore_notifier.adapters.django.models import NotificationChannel
-
-    channel = NotificationChannel.objects.filter(uuid=value, is_active=True).first()
+    channel = channel_queryset(tenant).filter(uuid=value, is_active=True).first()
     supported = {"email"} if email_only else {"email", "webhook", "feishu", "wecom", "dingtalk"}
     if not channel or channel.channel_type not in supported:
         raise serializers.ValidationError("Select an active supported notification channel.")
@@ -47,7 +46,18 @@ class AlertSubscriptionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """Require a destination and recipients for email transports."""
 
-        channel = validate_channel(attrs.get("channel_uuid"))
+        tenant = notification_tenant(self.context["request"])
+        channel = validate_channel(attrs.get("channel_uuid"), tenant=tenant)
+        for user in attrs.get("users", []):
+            if (
+                not get_user_model()
+                .objects.filter(pk=user.pk, membership__tenant=tenant, membership__status="active")
+                .exists()
+            ):
+                raise serializers.ValidationError({"users": "Select users in this tenant."})
+        for group in attrs.get("groups", []):
+            if not hasattr(group, "tenant_group") or group.tenant_group.tenant_id != (tenant.pk if tenant else None):
+                raise serializers.ValidationError({"groups": "Select groups in this tenant."})
         if channel.channel_type == "email" and not any(
             attrs.get(key) for key in ("email_recipients", "users", "groups")
         ):
@@ -119,6 +129,14 @@ class AlertRuleSerializer(serializers.ModelSerializer):
         def value(key, default=None):
             return attrs.get(key, getattr(self.instance, key, default) if self.instance else default)
 
+        tenant = notification_tenant(self.context["request"])
+        tenant_id = tenant.pk if tenant else None
+        for relation in ("assistants", "datasources"):
+            targets = attrs.get(relation)
+            if targets is None and self.instance:
+                targets = getattr(self.instance, relation).all()
+            if any(item.tenant_id != tenant_id for item in (targets or [])):
+                raise serializers.ValidationError({relation: "Select resources in the current tenant."})
         name = str(value("name", "")).strip()
         if not name:
             raise serializers.ValidationError({"name": "Name is required."})
@@ -153,7 +171,7 @@ class AlertRuleSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"personal_subscription_enabled": "Datasource subscriptions require admin access."}
                 )
-            validate_channel(value("personal_channel_uuid"), email_only=True)
+            validate_channel(value("personal_channel_uuid"), email_only=True, tenant=tenant)
         mode = value("diagnosis_mode", "direct")
         if mode != "direct":
             if subject == "message" or value("evaluation_mode", "terminal") == "running":
@@ -171,7 +189,7 @@ class AlertRuleSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({field: f"Choose a value between {minimum} and {maximum}."})
         channel_uuid = value("channel_uuid")
         if channel_uuid:
-            channel = validate_channel(channel_uuid)
+            channel = validate_channel(channel_uuid, tenant=tenant)
             if channel.channel_type == "email" and not value("email_recipients", []):
                 raise serializers.ValidationError({"email_recipients": "Email recipients are required."})
         subscriptions = attrs.get("subscriptions", [])

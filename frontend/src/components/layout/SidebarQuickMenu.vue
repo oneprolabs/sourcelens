@@ -71,11 +71,17 @@
             class="quick-menu-admin-separator mb-2 border-b border-line pb-2"
           >
             <router-link
-              to="/management/users"
+              :to="getManagementEntry(userStore.userInfo)"
               class="quick-menu-link"
               @click="openAdminConsole"
             >
-              <span class="truncate">{{ t('platforms.adminConsole') }}</span>
+              <span class="truncate">{{
+                t(
+                  isPlatformAdmin(userStore.userInfo)
+                    ? 'management.platformConsole'
+                    : 'management.tenantManagement'
+                )
+              }}</span>
             </router-link>
           </div>
           <button type="button" class="quick-menu-link" @click="openSettings">
@@ -109,6 +115,8 @@ import {
   getAvailablePlatforms,
   getCurrentPlatformKey,
   getPlatformByKey,
+  isPlatformAdmin,
+  getManagementEntry,
   saveAdminReturnPath
 } from '@/utils/platformAccess'
 

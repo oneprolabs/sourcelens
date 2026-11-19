@@ -51,6 +51,11 @@ export const notificationsAdminApi = {
       .post('/v1/admin/notifications/channels/', body)
       .then(extractResponseData)
   },
+  testChannel(id) {
+    return apiClient
+      .post(`/v1/admin/notifications/channels/${id}/test/`)
+      .then(extractResponseData)
+  },
   getChannel(id) {
     return apiClient
       .get(`/v1/admin/notifications/channels/${id}/`)

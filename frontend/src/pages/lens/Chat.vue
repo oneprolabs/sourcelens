@@ -110,6 +110,7 @@
           class="new-chat-btn"
           :class="sidebarCollapsedActive ? 'new-chat-btn-collapsed' : ''"
           type="button"
+          :disabled="selectedAssistant?.is_enabled === false"
           @click="createNewSession"
         >
           <Plus :size="18" :stroke-width="2.25" aria-hidden="true" />
@@ -143,6 +144,7 @@
               class="sessions-collapsed-action"
               :aria-label="t('lens.chat.newSession')"
               :title="t('lens.chat.newSession')"
+              :disabled="selectedAssistant?.is_enabled === false"
               @click="createNewSession"
             >
               <Pencil :size="16" :stroke-width="2" aria-hidden="true" />
@@ -377,6 +379,7 @@
           type="button"
           class="sidebar-collapse-btn"
           :aria-label="t('lens.chat.newSession')"
+          :disabled="selectedAssistant?.is_enabled === false"
           @click="createNewSession"
         >
           <Plus :size="20" :stroke-width="2.1" aria-hidden="true" />
@@ -1656,6 +1659,14 @@
           </button>
         </div>
 
+        <p
+          v-else-if="selectedAssistant?.is_enabled === false"
+          class="archived-session-notice"
+          role="status"
+        >
+          {{ t('lensAdmin.enablement.pausedHint') }}
+        </p>
+
         <div
           v-else-if="canCompose"
           class="composer-wrap"
@@ -2061,11 +2072,15 @@ import {
   prepareRunSubmission,
   updateSessionSubmissionSet
 } from '@/pages/lens/chatSubmission'
-import { promptSuggestionKeys } from '@/pages/lens/chatPromptSuggestions'
+import {
+  assistantCapability,
+  promptSuggestionKeys
+} from '@/pages/lens/chatPromptSuggestions'
 import { buildFollowUpSuggestions } from '@/pages/lens/chatFollowUps'
 import { resolveChatViewport } from '@/pages/lens/chatViewport'
 import { createStreamTextBuffer } from '@/pages/lens/streamBuffer'
 import { recoverRunStream } from '@/pages/lens/chatRunStream'
+import { isRunAccessDenied, runStreamHeaders } from '@/utils/runAccess'
 import { compactFilename } from '@/pages/lens/filenameDisplay'
 import {
   DOCUMENT_EXTENSIONS,
@@ -2321,6 +2336,7 @@ const routingCandidates = computed(() => {
   const candidates = assistants.value.filter(
     (assistant) =>
       assistant.status === 'active' &&
+      assistant.is_enabled !== false &&
       (assistant.mode || assistant.routing_mode || 'direct') === 'direct'
   )
 
@@ -2474,11 +2490,13 @@ const canCompose = computed(
   () =>
     booted.value &&
     !messageLoading.value &&
+    !messageError.value &&
     (!selectedSessionUuid.value ||
       runStatusResolvingSessionUuid.value !== selectedSessionUuid.value) &&
     !isAnonymous.value &&
     !assistantError.value &&
     hasAssistant.value &&
+    selectedAssistant.value?.is_enabled !== false &&
     (selectedSession.value?.status === 'active' ||
       (!selectedSessionUuid.value && !showArchivedSessions.value))
 )
@@ -2508,13 +2526,15 @@ const assistantDescription = computed(
 )
 
 const promptSuggestions = computed(() => {
-  const task = (selectedAssistant.value || publicAssistant.value)?.selected_task
+  const task = assistantCapability(
+    selectedAssistant.value || publicAssistant.value
+  )
   return promptSuggestionKeys(task).map((key) => t(key))
 })
 
 const isGeneralChatAssistant = computed(
   () =>
-    (selectedAssistant.value || publicAssistant.value)?.selected_task ===
+    assistantCapability(selectedAssistant.value || publicAssistant.value) ===
     'general_chat'
 )
 
@@ -2525,7 +2545,9 @@ const isGeneralChatAssistant = computed(
 const switchable = computed(
   () =>
     !isAnonymous.value &&
-    assistants.value.filter((item) => item.status === 'active').length > 0
+    assistants.value.filter(
+      (item) => item.status === 'active' && item.is_enabled !== false
+    ).length > 0
 )
 
 // Slug of the assistant in view — drives the public Q&A list entry in the
@@ -3216,7 +3238,7 @@ const followUpSuggestions = computed(() => {
   return buildFollowUpSuggestions({
     content: message.content,
     citations: message.citations,
-    task: (selectedAssistant.value || publicAssistant.value)?.selected_task,
+    task: assistantCapability(selectedAssistant.value || publicAssistant.value),
     askedQuestions: decoratedMessages.value
       .filter((item) => item.role === 'user')
       .map((item) => item.content || ''),
@@ -3320,11 +3342,6 @@ watch(isRunActive, (active) => {
 
 const { isMobile } = useIsMobile()
 
-function authHeaders() {
-  const token = localStorage.getItem('access_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
 function resetStreamState() {
   streamController.value?.abort()
   streamController.value = null
@@ -3336,6 +3353,14 @@ function resetStreamState() {
   runtimeState.value = createRuntimeState()
   elapsedSeconds.value = 0
   seenStepEventCounts.clear()
+}
+
+function markRunUnavailable() {
+  resetStreamState()
+  currentRun.value = null
+  messages.value = []
+  runStatusResolvingSessionUuid.value = ''
+  messageError.value = true
 }
 
 function sleep(ms) {
@@ -3489,8 +3514,12 @@ async function finishSubmittedRun(
       run = result[0]
       loadedMessages = result[1]
       break
-    } catch {
+    } catch (error) {
       if (!isCurrentView()) return
+      if (isRunAccessDenied(error)) {
+        markRunUnavailable()
+        throw error
+      }
       await sleep(RUN_POLL_INTERVAL_MS)
     }
   }
@@ -3605,7 +3634,7 @@ async function bootstrap() {
   }
 
   try {
-    assistants.value = await listAssistants()
+    assistants.value = await listAssistants({ include_disabled: true })
     // Share the loaded list with the store so the header AssistantSwitcher
     // renders immediately (no flash) and skips its own redundant fetch.
     lensStore.assistants = assistants.value
@@ -3776,6 +3805,7 @@ function sessionCreateErrorMessage(error) {
 }
 
 async function createNewSession(notify = true, allowedAssistantUuids = []) {
+  if (selectedAssistant.value?.is_enabled === false) return null
   if (!selectedAssistant.value && !isSmartCollaborationConversation.value) {
     return null
   }
@@ -4323,6 +4353,10 @@ async function maybeResumeActiveRun(sessionUuid, isCurrentLoad) {
   }
   let resolution = await resolveRunStatus(getRun, withRun.run)
   while (!resolution.resolved && isCurrentLoad()) {
+    if (resolution.accessDenied) {
+      markRunUnavailable()
+      return
+    }
     await sleep(RUN_POLL_INTERVAL_MS)
     if (!isCurrentLoad()) return
     resolution = await resolveRunStatus(getRun, withRun.run)
@@ -4351,7 +4385,8 @@ async function maybeResumeActiveRun(sessionUuid, isCurrentLoad) {
     await readSse(run.uuid, isCurrentLoad)
     if (!isCurrentLoad()) return
     await finishSubmittedRun(run.uuid, sessionUuid, isCurrentLoad, false)
-  } catch {
+  } catch (error) {
+    if (isRunAccessDenied(error) && isCurrentLoad()) markRunUnavailable()
     // A superseded subscription must leave the current view untouched.
   }
 }
@@ -4362,21 +4397,28 @@ async function readSse(runUuid, isCurrentView) {
   streamController.value = controller
   const isCurrent = () =>
     isCurrentView() && streamController.value === controller
-  const run = await recoverRunStream({
-    runUuid,
-    signal: controller.signal,
-    isCurrent,
-    openStream: (signal) =>
-      fetch(`${apiConfig.apiBaseUrl}/lens/runs/${runUuid}/stream/`, {
-        headers: { Accept: 'text/event-stream', ...authHeaders() },
-        signal
-      }),
-    getRun,
-    onEvent: handleEvent,
-    onRun: (restoredRun) => {
-      currentRun.value = restoredRun
-    }
-  })
+  let run
+  try {
+    run = await recoverRunStream({
+      runUuid,
+      signal: controller.signal,
+      isCurrent,
+      openStream: (signal) =>
+        fetch(`${apiConfig.apiBaseUrl}/lens/runs/${runUuid}/stream/`, {
+          headers: runStreamHeaders(),
+          credentials: 'include',
+          signal
+        }),
+      getRun,
+      onEvent: handleEvent,
+      onRun: (restoredRun) => {
+        currentRun.value = restoredRun
+      }
+    })
+  } catch (error) {
+    if (isRunAccessDenied(error) && isCurrent()) markRunUnavailable()
+    throw error
+  }
   if (!isCurrent()) {
     throw new DOMException('Stream superseded', 'AbortError')
   }
@@ -4735,7 +4777,7 @@ async function submit() {
       return
     }
     const runUuid = submittedRunUuid
-    if (runUuid) {
+    if (runUuid && !isRunAccessDenied(err)) {
       try {
         const run = await waitForRunTerminal(runUuid)
         if (!isCurrentView()) return

@@ -10,6 +10,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from accounts.models import Tenant, TenantMembership
 from lens.alerts import capture_task_alert, evaluate_run_alerts, process_alert_outbox, send_alert_delivery
 from lens.models import (
     AlertDelivery,
@@ -19,6 +20,7 @@ from lens.models import (
     AlertSubscription,
     Assistant,
     LensNode,
+    NotificationChannelScope,
     Run,
     Session,
 )
@@ -28,14 +30,26 @@ from lens.services import create_execution_run
 class UnifiedAlertTests(TestCase):
     """Exercise real persisted matches and deliveries with external sends stubbed."""
 
+    def create_channel(self, **kwargs):
+        """Create a transport with explicit fixture ownership."""
+        channel = NotificationChannel.objects.create(**kwargs)
+        NotificationChannelScope.objects.create(channel=channel, tenant=self.tenant)
+        return channel
+
     def setUp(self):
+        self.tenant, _ = Tenant.objects.get_or_create(slug="default", defaults={"name": "Default"})
         self.user = get_user_model().objects.create_user(username="subscriber", email="subscriber@example.com")
         self.admin = get_user_model().objects.create_user(username="operator", is_staff=True)
         self.node = LensNode.objects.create(name="node")
-        self.assistant = Assistant.objects.create(name="Assistant", slug="test", lensnode=self.node)
-        self.session = Session.objects.create(assistant=self.assistant, user=self.user)
-        self.channel = NotificationChannel.objects.create(name="Email", channel_type="email", config={})
-        self.rule = AlertRule.objects.create(name="Timeout", events=["run_failed", "run_timeout"])
+        self.assistant = Assistant.objects.create(tenant=self.tenant, name="Assistant", slug="test", lensnode=self.node)
+        TenantMembership.objects.create(user=self.user, tenant=self.tenant, role="member")
+        TenantMembership.objects.create(user=self.admin, tenant=self.tenant, role="tenant_admin")
+        self.session = Session.objects.create(tenant=self.tenant, assistant=self.assistant, user=self.user)
+        self.channel = self.create_channel(name="Email", channel_type="email", config={})
+        from lens.models import DataSource
+
+        self.datasource = DataSource.objects.create(tenant=self.tenant, name="Fixture source", source_type="git")
+        self.rule = AlertRule.objects.create(tenant=self.tenant, name="Timeout", events=["run_failed", "run_timeout"])
         self.subscription = AlertSubscription.objects.create(
             rule=self.rule, channel_uuid=self.channel.uuid, email_recipients=["ops@example.com"]
         )
@@ -122,7 +136,7 @@ class UnifiedAlertTests(TestCase):
         self.subscription.personal = True
         self.subscription.save()
         other = get_user_model().objects.create_user(username="other")
-        session = Session.objects.create(assistant=self.assistant, user=other)
+        session = Session.objects.create(tenant=self.tenant, assistant=self.assistant, user=other)
         evaluate_run_alerts(self.run_event(session=session).uuid)
         self.assertFalse(AlertDelivery.objects.exists())
 
@@ -134,6 +148,7 @@ class UnifiedAlertTests(TestCase):
         self.rule.save()
         task = TaskExecution.objects.create(
             task_id="processing-one",
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
             task_name="processing",
             module="lens_datasource_conversion",
             status="SUCCESS",
@@ -275,7 +290,7 @@ class UnifiedAlertTests(TestCase):
             status=status,
             finished_at=timezone.now(),
             error=metadata.pop("error", "LENS_SOURCE_SYNC_FAILED"),
-            metadata=metadata,
+            metadata={"datasource_uuid": str(self.datasource.uuid), **metadata},
         )
 
     def test_task_callback_enqueues_and_retries_do_not_alert_early(self):
@@ -399,7 +414,9 @@ class UnifiedAlertTests(TestCase):
         self.rule.save()
         from lens.models import DataSource
 
-        source = DataSource.objects.create(name="Scheduled source", source_type="git", lensnode=self.node)
+        source = DataSource.objects.create(
+            tenant=self.tenant, name="Scheduled source", source_type="git", lensnode=self.node
+        )
         self.task_event("scheduled-first", trigger="scheduled", datasource_uuid=str(source.uuid))
         process_alert_outbox()
         self.task_event("scheduled-second", trigger="scheduled", datasource_uuid=str(source.uuid))
@@ -413,7 +430,9 @@ class UnifiedAlertTests(TestCase):
 
         self.rule.subject, self.rule.events = "sync", ["sync_failed"]
         self.rule.save()
-        source = DataSource.objects.create(name="Private source", source_type="git", lensnode=self.node)
+        source = DataSource.objects.create(
+            tenant=self.tenant, name="Private source", source_type="git", lensnode=self.node
+        )
         self.rule.datasources.add(source)
         self.task_event("unrelated-source")
         process_alert_outbox()
@@ -429,6 +448,7 @@ class UnifiedAlertTests(TestCase):
 
         task = TaskExecution.objects.create(
             task_id="late-summary",
+            metadata={"datasource_uuid": str(self.datasource.uuid)},
             task_name="Processing",
             module="lens_datasource_conversion",
             status="SUCCESS",
@@ -436,7 +456,7 @@ class UnifiedAlertTests(TestCase):
         )
         process_alert_outbox()
         self.assertFalse(AlertEvent.objects.exists())
-        task.metadata = {"conversion_summary": {"failed": 1}}
+        task.metadata = {**task.metadata, "conversion_summary": {"failed": 1}}
         task.save()
         process_alert_outbox()
         self.assertEqual(AlertEvent.objects.get().event_type, "processing_partial")
@@ -472,7 +492,7 @@ class UnifiedAlertTests(TestCase):
 
         self.rule.subject, self.rule.events = "sync", ["sync_partial"]
         self.rule.save()
-        source = DataSource.objects.create(name="Docs", source_type="git", lensnode=self.node)
+        source = DataSource.objects.create(tenant=self.tenant, name="Docs", source_type="git", lensnode=self.node)
         task = self.task_event("actual-sync", status="STARTED", datasource_uuid=str(source.uuid))
         complete_datasource_sync_task(
             task.task_id, {"status": "success", "synced": 1, "partial_success": True, "failed": 1}
@@ -515,14 +535,14 @@ class UnifiedAlertTests(TestCase):
         process_alert_outbox()
         self.assertEqual(AlertEvent.objects.get().detail["total_tokens"], 20)
 
-    def test_missing_resource_does_not_group_unrelated_scheduled_attempts(self):
+    def test_missing_resource_cannot_match_a_tenant_rule(self):
         self.rule.subject, self.rule.events, self.rule.cooldown_seconds = "sync", ["sync_failed"], 300
         self.rule.save()
-        self.task_event("missing-first", trigger="scheduled")
+        self.task_event("missing-first", trigger="scheduled", datasource_uuid="")
         process_alert_outbox()
-        self.task_event("missing-second", trigger="scheduled")
+        self.task_event("missing-second", trigger="scheduled", datasource_uuid="")
         process_alert_outbox()
-        self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 2)
+        self.assertEqual(AlertDelivery.objects.filter(status="pending").count(), 0)
 
     def test_legacy_api_can_clear_migrated_destination(self):
         self.rule.channel_uuid = self.channel.uuid
@@ -554,7 +574,7 @@ class UnifiedAlertTests(TestCase):
         self.assertEqual(delivery.status, "sent")
 
     def test_notifier_adapter_uses_webhook_payload_and_preserves_rejections(self):
-        webhook = NotificationChannel.objects.create(
+        webhook = self.create_channel(
             name="Webhook",
             channel_type="webhook",
             config={
@@ -588,7 +608,7 @@ class UnifiedAlertTests(TestCase):
             ("wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"),
             ("dingtalk", "https://oapi.dingtalk.com/robot/send?access_token=test"),
         ):
-            channel = NotificationChannel.objects.create(name=provider, channel_type=provider, config={"url": url})
+            channel = self.create_channel(name=provider, channel_type=provider, config={"url": url})
             self.subscription.channel_uuid = channel.uuid
             self.subscription.language = "zh-CN"
             self.subscription.save()
@@ -633,7 +653,9 @@ class UnifiedAlertTests(TestCase):
         self.assertEqual(client.post("/api/lens/admin/alert-messages/", {}, format="json").status_code, 403)
 
     def test_same_destination_across_rules_has_only_one_sendable_delivery(self):
-        other = AlertRule.objects.create(name="Duplicate rule", events=["run_failed", "run_timeout"])
+        other = AlertRule.objects.create(
+            tenant=self.tenant, name="Duplicate rule", events=["run_failed", "run_timeout"]
+        )
         AlertSubscription.objects.create(
             rule=other, channel_uuid=self.channel.uuid, email_recipients=["ops@example.com"]
         )
@@ -644,7 +666,7 @@ class UnifiedAlertTests(TestCase):
     def test_revoked_duplicate_owner_preserves_an_enabled_subscription(self):
         for action in ("disable_subscription", "delete_subscription", "disable_rule", "delete_rule"):
             with self.subTest(action=action), transaction.atomic():
-                other = AlertRule.objects.create(name="Duplicate rule", events=["run_failed"])
+                other = AlertRule.objects.create(tenant=self.tenant, name="Duplicate rule", events=["run_failed"])
                 AlertSubscription.objects.create(
                     rule=other, channel_uuid=self.channel.uuid, email_recipients=["ops@example.com"]
                 )
@@ -680,7 +702,9 @@ class UnifiedAlertTests(TestCase):
         self.rule.cooldown_seconds = 3600
         self.rule.diagnosis_mode = "diagnose_first"
         self.rule.save()
-        source = DataSource.objects.create(name="Scheduled source", source_type="git", lensnode=self.node)
+        source = DataSource.objects.create(
+            tenant=self.tenant, name="Scheduled source", source_type="git", lensnode=self.node
+        )
         self.task_event("diagnosing-first", trigger="scheduled", datasource_uuid=str(source.uuid))
         process_alert_outbox()
         self.task_event("diagnosing-second", trigger="scheduled", datasource_uuid=str(source.uuid))
@@ -689,20 +713,23 @@ class UnifiedAlertTests(TestCase):
         self.assertEqual(AlertDelivery.objects.filter(status="suppressed").count(), 1)
         self.assertEqual(AlertDiagnosis.objects.count(), 1)
 
-    def test_role_operator_can_select_paginated_channels_without_secrets(self):
+    def test_tenant_admin_can_select_paginated_channels_without_secrets(self):
         from django.contrib.auth.models import Group
 
         from accounts.models import Role
 
+        TenantMembership.objects.filter(user=self.user).update(role="tenant_admin")
+        self.user.refresh_from_db()
+        self.user.__dict__.pop("_membership_cache", None)
         group = Group.objects.create(name="Alert operators")
         role = Role.objects.create(name="Alert operator", visible_features=["admin_console"])
         role.groups.add(group)
         self.user.groups.add(group)
-        native = NotificationChannel.objects.create(
+        native = self.create_channel(
             name="Native", channel_type="feishu", config={"url": "private-url", "sign_secret": "private-secret"}
         )
-        NotificationChannel.objects.create(name="Disabled", channel_type="email", is_active=False, config={})
-        NotificationChannel.objects.create(name="Unsupported", channel_type="sms", config={})
+        self.create_channel(name="Disabled", channel_type="email", is_active=False, config={})
+        self.create_channel(name="Unsupported", channel_type="sms", config={})
         client = APIClient()
         client.force_authenticate(self.user)
         response = client.get("/api/lens/admin/alert-rules/channels/", {"page_size": 1})
@@ -714,7 +741,7 @@ class UnifiedAlertTests(TestCase):
         self.assertEqual({row["uuid"] for row in channels}, {str(self.channel.uuid), str(native.uuid)})
         for channel in channels:
             self.assertEqual(set(channel), {"uuid", "name", "channel_type", "is_active"})
-        self.assertEqual(client.get("/api/v1/admin/notifications/channels/").status_code, 403)
+        self.assertEqual(client.get("/api/v1/admin/notifications/channels/").status_code, 200)
         client.force_authenticate(get_user_model().objects.create_user(username="no-alert-role"))
         self.assertEqual(client.get("/api/lens/admin/alert-rules/channels/").status_code, 403)
 
@@ -722,6 +749,7 @@ class UnifiedAlertTests(TestCase):
         from lens.messages import publish_message
 
         payload = dict(
+            tenant=self.tenant,
             topic="release.ready",
             idempotency_key="release-123",
             title="Ready",
@@ -732,7 +760,12 @@ class UnifiedAlertTests(TestCase):
 
     def message_rule(self, **overrides):
         rule = AlertRule.objects.create(
-            name="Release news", subject="message", topic="release.ready", events=["message_published"], **overrides
+            tenant=self.tenant,
+            name="Release news",
+            subject="message",
+            topic="release.ready",
+            events=["message_published"],
+            **overrides,
         )
         return AlertSubscription.objects.create(
             rule=rule, channel_uuid=self.channel.uuid, email_recipients=["release@example.com"]
@@ -741,7 +774,11 @@ class UnifiedAlertTests(TestCase):
     def test_publication_matches_only_subscribed_topic_and_is_not_replayed(self):
         subscription = self.message_rule()
         other = AlertRule.objects.create(
-            name="Other topic", subject="message", topic="release.failed", events=["message_published"]
+            tenant=self.tenant,
+            name="Other topic",
+            subject="message",
+            topic="release.failed",
+            events=["message_published"],
         )
         AlertSubscription.objects.create(
             rule=other, channel_uuid=self.channel.uuid, email_recipients=["other@example.com"]

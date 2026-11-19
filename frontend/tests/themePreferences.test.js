@@ -848,10 +848,10 @@ test('chat composer gradient uses semantic surface opacity tokens', () => {
   assert.doesNotMatch(composerWrap[1], /rgba\(255,\s*255,\s*255/)
 })
 
-test('administration keeps its existing explicit logo treatment', () => {
-  assert.match(adminSidebarSource, /tone="dark"/)
-  assert.match(adminSidebarSource, /\[&_img\]:!w-48/)
-  assert.match(adminSidebarSource, /mix-blend-screen/)
+test('administration uses the prototype text brand', () => {
+  assert.match(adminSidebarSource, /<strong>SourceLens<\/strong>/)
+  assert.match(adminSidebarSource, /admin-nav-brand/)
+  assert.doesNotMatch(adminSidebarSource, /mix-blend-screen/)
 })
 
 test('user menus preserve light interactions and override only dark colors', () => {

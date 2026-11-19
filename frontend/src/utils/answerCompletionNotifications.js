@@ -1,3 +1,5 @@
+import { isRunAccessDenied } from './runAccess.js'
+
 const UNREAD_STORAGE_KEY = 'sourcelens.answerCompletion.unreadSessions'
 const IN_APP_NOTIFIED_RUNS_KEY = 'sourcelens.answerCompletion.inAppNotifiedRuns'
 const NATIVE_NOTIFIED_RUNS_KEY =
@@ -277,7 +279,8 @@ export async function pollRunUntilTerminal({
     if (isStopped()) return null
     try {
       run = await getRun(runUuid)
-    } catch {
+    } catch (error) {
+      if (isRunAccessDenied(error)) return null
       continue
     }
   }

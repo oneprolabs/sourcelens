@@ -25,11 +25,21 @@ from lens.services import create_execution_run, finish_lensnode_run
 
 User = get_user_model()
 
+from accounts.models import Tenant, TenantMembership
+from lens.models import NotificationChannelScope
+
 
 class AlertEvaluationTests(TestCase):
     """Exercise alert evaluation against terminal Runs."""
 
+    def create_channel(self, **kwargs):
+        """Create a transport with explicit fixture ownership."""
+        channel = NotificationChannel.objects.create(**kwargs)
+        NotificationChannelScope.objects.create(channel=channel, tenant=self.tenant)
+        return channel
+
     def setUp(self):
+        self.tenant, _ = Tenant.objects.get_or_create(slug="default", defaults={"name": "Default"})
         self.user = User.objects.create_user(
             username="alert-user",
             email="alert-user@example.com",
@@ -42,22 +52,26 @@ class AlertEvaluationTests(TestCase):
             workspace_path="/workspace",
         )
         self.assistant = Assistant.objects.create(
+            tenant=self.tenant,
             name="Code Advisor",
             slug="code-advisor",
             lensnode=self.lensnode,
             selected_task="knowledge_qa",
         )
         self.other_assistant = Assistant.objects.create(
+            tenant=self.tenant,
             name="Other Advisor",
             slug="other-advisor",
             lensnode=self.lensnode,
             selected_task="knowledge_qa",
         )
+        TenantMembership.objects.create(user=self.user, tenant=self.tenant, role="member")
         self.session = Session.objects.create(
+            tenant=self.tenant,
             assistant=self.assistant,
             user=self.user,
         )
-        self.channel = NotificationChannel.objects.create(
+        self.channel = self.create_channel(
             channel_type=NotificationChannel.TYPE_WEBHOOK,
             name="Ops Feishu",
             config={
@@ -100,6 +114,7 @@ class AlertEvaluationTests(TestCase):
 
     def _rule(self, **overrides):
         defaults = {
+            "tenant": self.tenant,
             "name": "Failure watch",
             "events": [AlertRule.Event.RUN_FAILED],
             "channel_uuid": self.channel.uuid,
@@ -222,7 +237,7 @@ class AlertEvaluationTests(TestCase):
         delay.assert_not_called()
 
     def test_email_channel_without_recipients_is_skipped(self):
-        email_channel = NotificationChannel.objects.create(
+        email_channel = self.create_channel(
             channel_type=NotificationChannel.TYPE_EMAIL,
             name="Ops Email",
             config={"smtp_host": "smtp.example.com", "from_email": "a@b.com"},
@@ -238,7 +253,7 @@ class AlertEvaluationTests(TestCase):
         delay.assert_not_called()
 
     def test_unsupported_channel_type_is_skipped(self):
-        app_channel = NotificationChannel.objects.create(
+        app_channel = self.create_channel(
             channel_type=NotificationChannel.TYPE_SMS,
             name="Ops SMS",
             config={},

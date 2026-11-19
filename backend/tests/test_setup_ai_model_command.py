@@ -4,15 +4,17 @@ import sys
 from io import StringIO
 
 import pytest
+from agentcore_metering.adapters.django.models import LLMConfig
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from agentcore_metering.adapters.django.models import LLMConfig
+from accounts.models import Tenant
 from core.management.commands.setup_ai_model import (
     BackToProvider,
     Command,
     SetupAborted,
 )
+from lens.models import LLMConfigScope
 
 
 class FakeTerminalInput:
@@ -34,8 +36,15 @@ class FakeTerminalInput:
         return next(self._characters)
 
 
+@pytest.fixture
+def default_tenant(db):
+    """Do not depend on data migrations surviving a reused test database."""
+
+    return Tenant.objects.get_or_create(slug="default", defaults={"name": "Default"})[0]
+
+
 @pytest.mark.django_db
-def test_check_fails_without_active_global_model():
+def test_check_fails_without_active_global_model(default_tenant):
     """The installer can detect when model setup is still required."""
 
     with pytest.raises(CommandError):
@@ -43,10 +52,10 @@ def test_check_fails_without_active_global_model():
 
 
 @pytest.mark.django_db
-def test_existing_active_global_model_skips_prompts(monkeypatch):
+def test_existing_active_global_model_skips_prompts(monkeypatch, default_tenant):
     """Rerunning the installer does not replace an existing model."""
 
-    LLMConfig.objects.create(
+    config = LLMConfig.objects.create(
         scope=LLMConfig.Scope.GLOBAL,
         model_type=LLMConfig.MODEL_TYPE_LLM,
         provider="openai",
@@ -54,6 +63,7 @@ def test_existing_active_global_model_skips_prompts(monkeypatch):
         is_active=True,
         is_default=True,
     )
+    LLMConfigScope.objects.create(config=config, tenant=default_tenant)
     monkeypatch.setattr(
         Command,
         "_input",
@@ -68,7 +78,7 @@ def test_existing_active_global_model_skips_prompts(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
+def test_interactive_setup_tests_and_saves_default_model(monkeypatch, default_tenant):
     """A successful connection creates one active system default model."""
 
     answers = iter([""])
@@ -123,6 +133,7 @@ def test_interactive_setup_tests_and_saves_default_model(monkeypatch):
     assert config.model_type == LLMConfig.MODEL_TYPE_LLM
     assert config.is_active is True
     assert config.is_default is True
+    assert config.ownership.tenant.slug == "default"
     assert config.config["api_key"] == secret
     assert captured["provider"] == config.provider
     assert captured["config"] == config.config

@@ -17,6 +17,7 @@ function readViewedReleaseNotesVersion(isAdmin) {
 
 export const useUiStore = defineStore('ui', () => {
   const adminSidebarScrollTop = ref(0)
+  const platformSidebarCollapsedGroups = ref(new Set())
   const settingsOpen = ref(false)
   const settingsTab = ref('profile')
   const userStore = useUserStore()
@@ -61,6 +62,7 @@ export const useUiStore = defineStore('ui', () => {
 
   return {
     adminSidebarScrollTop,
+    platformSidebarCollapsedGroups,
     hasUnreadReleaseNotes,
     markReleaseNotesViewed,
     settingsOpen,

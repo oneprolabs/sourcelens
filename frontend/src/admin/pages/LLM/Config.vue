@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout>
+  <component :is="embedded ? 'div' : AdminLayout" :class="{ hidden: embedded }">
     <div class="w-full max-w-full p-0 md:p-6">
       <div class="mb-4">
         <h1 class="text-lg font-semibold text-gray-900">
@@ -210,6 +210,14 @@
                     </summary>
 
                     <dl class="space-y-3 px-2 pb-2 pt-1 text-sm">
+                      <div v-if="row.model_type === 'llm'">
+                        <dt class="text-xs text-gray-500">
+                          {{ t('llm.config.fallbackModels') }}
+                        </dt>
+                        <dd class="mt-1 break-words text-gray-700">
+                          {{ fallbackLabel(row) }}
+                        </dd>
+                      </div>
                       <div>
                         <dt class="text-xs font-medium text-gray-500">
                           {{ t('llm.config.modelParameters') }}
@@ -330,6 +338,11 @@
                       <th
                         class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
                       >
+                        {{ t('llm.config.fallbackModels') }}
+                      </th>
+                      <th
+                        class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider border-b border-gray-200"
+                      >
                         {{ t('llm.config.default') }}
                       </th>
                       <th
@@ -435,6 +448,17 @@
                           </span>
                         </span>
                         <span v-else class="text-gray-400">–</span>
+                      </td>
+                      <td class="max-w-48 px-4 py-4 text-sm text-gray-700">
+                        <button
+                          v-if="row.model_type === 'llm'"
+                          type="button"
+                          class="text-left text-primary-600 hover:underline"
+                          @click="editConfig(row)"
+                        >
+                          {{ fallbackLabel(row) }}
+                        </button>
+                        <span v-else>–</span>
                       </td>
                       <td class="px-4 py-4 whitespace-nowrap text-sm">
                         <span
@@ -763,12 +787,17 @@
         </div>
       </BaseModal>
 
-      <BaseModal
+      <component
+        :is="embedded ? BaseDrawer : BaseModal"
         :show="showConfigModal"
         :title="editingId ? t('common.edit') : t('llm.config.addConfig')"
-        @close="closeConfigModal"
+        @close="!formSaving && closeConfigModal()"
       >
-        <form @submit.prevent="submitConfigForm" class="space-y-4">
+        <form
+          ref="configFormElement"
+          @submit.prevent="submitConfigForm()"
+          class="space-y-4"
+        >
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">{{
               t('llm.config.modelType')
@@ -1101,6 +1130,39 @@
           </div>
 
           <div
+            v-if="form.model_type === 'llm'"
+            class="rounded-xl border border-gray-200 p-4"
+          >
+            <h3 class="text-sm font-semibold text-gray-700">
+              {{ t('llm.config.fallbackModels') }}
+            </h3>
+            <p class="mt-1 text-xs text-gray-500">
+              {{ t('llm.config.fallbackModelsHint') }}
+            </p>
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <BaseSelect
+                v-for="(_, index) in fallbackRefs"
+                :key="index"
+                v-model="fallbackRefs[index]"
+                :label="
+                  t('llm.config.fallbackModelOrder', { order: index + 1 })
+                "
+              >
+                <option value="">{{ t('llm.config.noFallback') }}</option>
+                <option
+                  v-for="candidate in fallbackCandidates(index)"
+                  :key="candidate.uuid"
+                  :value="candidate.uuid"
+                >
+                  {{ candidate.config?.model || candidate.uuid }} ({{
+                    candidate.provider
+                  }})
+                </option>
+              </BaseSelect>
+            </div>
+          </div>
+
+          <div
             v-if="formMessage"
             :class="
               formMessageSuccess
@@ -1122,23 +1184,32 @@
             <BaseButton
               type="button"
               variant="outline"
+              :disabled="formSaving"
               @click="closeConfigModal"
             >
               {{ t('common.cancel') }}
             </BaseButton>
             <BaseButton
               type="submit"
-              variant="primary"
+              :variant="continueLabel ? 'outline' : 'primary'"
               :loading="formSaving"
               :disabled="submitDisabled"
             >
               {{ editingId ? t('common.save') : t('llm.config.addConfig') }}
             </BaseButton>
+            <BaseButton
+              v-if="continueLabel"
+              type="button"
+              :loading="formSaving"
+              :disabled="submitDisabled"
+              @click="submitConfigForm(true)"
+              >{{ continueLabel }}</BaseButton
+            >
           </div>
         </form>
-      </BaseModal>
+      </component>
     </div>
-  </AdminLayout>
+  </component>
 </template>
 
 <script setup>
@@ -1164,6 +1235,7 @@ import {
 } from '@/components/llm/providerModels.js'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
+import BaseDrawer from '@/components/ui/BaseDrawer.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer.vue'
@@ -1172,6 +1244,13 @@ import RowActionMenu from '@/components/ui/RowActionMenu.vue'
 import TableBulkActions from '@/components/ui/TableBulkActions.vue'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useToast } from '@/composables/useToast'
+
+const props = defineProps({
+  embedded: Boolean,
+  continueLabel: { type: String, default: '' }
+})
+const emit = defineEmits(['saved', 'close'])
+const configFormElement = ref(null)
 
 const PROVIDER_LABELS = {
   agione: 'AGIOne',
@@ -1285,6 +1364,34 @@ const formMessageSuccess = ref(false)
 const connectionTestedSuccess = ref(false)
 const modelDropdownOpen = ref(false)
 const modelDropdownRef = ref(null)
+const fallbackRefs = ref(['', '', ''])
+
+function fallbackLabel(row) {
+  const stored =
+    row.config?.fallback_model_uuids ?? row.config?.fallback_model_uuid ?? []
+  const refs = Array.isArray(stored) ? stored : [stored]
+  return refs.length
+    ? refs
+        .map(
+          (ref) =>
+            configList.value.find((config) => config.uuid === ref)?.config
+              ?.model || ref
+        )
+        .join(' → ')
+    : t('llm.config.noFallback')
+}
+
+function fallbackCandidates(index) {
+  return configList.value.filter(
+    (candidate) =>
+      candidate.is_active &&
+      candidate.model_type === 'llm' &&
+      candidate.uuid !== editingId.value &&
+      !fallbackRefs.value.some(
+        (ref, slot) => slot !== index && ref === candidate.uuid
+      )
+  )
+}
 
 const form = reactive({
   provider: 'openai',
@@ -1726,6 +1833,7 @@ function updateParameterValue(parameter, value) {
 }
 
 function onModelTypeChange() {
+  fallbackRefs.value = ['', '', '']
   form.provider = form.model_type === 'decision' ? 'typesafe' : 'openai'
   form.config = { api_key: '', api_base: '', model: '' }
   onProviderChange()
@@ -1745,6 +1853,7 @@ function onProviderChange() {
 }
 
 function resetForm() {
+  fallbackRefs.value = ['', '', '']
   editingApiKey.value = ''
   form.provider = 'openai'
   form.model_type = 'llm'
@@ -1818,6 +1927,15 @@ async function editConfig(row) {
     form.model_type = data?.model_type || 'llm'
     form.provider = (data?.provider || 'openai').toLowerCase()
     const c = data?.config || {}
+    const storedFallbacks =
+      c.fallback_model_uuids ?? c.fallback_model_uuid ?? []
+    const refs = Array.isArray(storedFallbacks)
+      ? storedFallbacks
+      : [storedFallbacks]
+    fallbackRefs.value = Array.from(
+      { length: 3 },
+      (_, index) => refs[index] || ''
+    )
     editingApiKey.value = c.api_key || ''
     form.config = {
       ...c,
@@ -1992,6 +2110,9 @@ function stopTestCallStream() {
 
 function buildFormConfigPayload(includeEmpty = false) {
   const payload = {}
+  if (form.model_type === 'llm') {
+    payload.fallback_model_uuids = fallbackRefs.value.filter(Boolean)
+  }
   for (const parameter of getProviderEditableParams(form.provider)) {
     const value = form.config[parameter]
     if (value !== null && value !== undefined && value !== '') {
@@ -2052,7 +2173,13 @@ async function testConnection() {
   }
 }
 
-async function submitConfigForm() {
+async function submitConfigForm(advance = false) {
+  if (
+    formSaving.value ||
+    submitDisabled.value ||
+    !configFormElement.value?.reportValidity()
+  )
+    return
   formSaving.value = true
   formMessage.value = ''
   try {
@@ -2070,6 +2197,7 @@ async function submitConfigForm() {
     }
     formMessage.value = t('llm.config.saveSuccess')
     formMessageSuccess.value = true
+    emit('saved', { advance })
     closeConfigModal()
     await loadAll()
   } catch (e) {
@@ -2093,13 +2221,7 @@ async function setActive(row, value) {
 
 async function updateActive(row, value) {
   const id = row.uuid || row.id
-  const data = await llmAdminApi.getLLMConfigDetail(id)
-  const body = {
-    provider: (data?.provider || row.provider || 'openai').toLowerCase(),
-    config: { ...(data?.config || {}) },
-    is_active: value
-  }
-  return llmAdminApi.putLLMConfigDetail(id, body)
+  return llmAdminApi.putLLMConfigDetail(id, { is_active: value })
 }
 
 function rowActions(row) {
@@ -2109,9 +2231,7 @@ function rowActions(row) {
       label: t('llm.config.testCall'),
       icon: CirclePlay
     },
-    ...(row.model_type !== 'decision' &&
-    row.scope === 'global' &&
-    !row.is_default
+    ...(row.is_active && row.scope === 'global' && !row.is_default
       ? [
           {
             key: 'default',
@@ -2152,18 +2272,12 @@ function handleRowAction(action, row) {
 async function setAsDefault(row) {
   if (!(row?.uuid || row?.id) || row.scope !== 'global') return
   try {
-    const data = await llmAdminApi.getLLMConfigDetail(row.uuid || row.id)
-    const c = data?.config || {}
-    const body = {
-      provider: (data?.provider || row.provider || 'openai').toLowerCase(),
-      config: { ...c },
-      is_active: data?.is_active !== false,
+    await llmAdminApi.putLLMConfigDetail(row.uuid || row.id, {
       is_default: true
-    }
-    await llmAdminApi.putLLMConfigDetail(row.uuid || row.id, body)
+    })
     await loadAll()
   } catch (e) {
-    console.error(e)
+    showError(e?.response?.data?.detail || e?.message || t('common.error'))
   }
 }
 
@@ -2219,7 +2333,17 @@ async function loadPage() {
   if (!metadataReady.value) showError(t('llm.config.metadataLoadError'))
 }
 
-onMounted(loadPage)
+watch(showConfigModal, (visible, previous) => {
+  if (props.embedded && previous && !visible) emit('close')
+})
+
+onMounted(async () => {
+  await loadPage()
+  if (props.embedded) {
+    if (metadataReady.value) openAddModal()
+    else emit('close')
+  }
+})
 </script>
 
 <style scoped>

@@ -14,6 +14,7 @@
     </div>
 
     <header
+      v-if="!embedded"
       class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"
     >
       <div class="flex min-w-0 items-start gap-3">
@@ -30,7 +31,15 @@
             >
               {{ assistant.name || emptyValue }}
             </h1>
-            <StatusBadge :status="assistant.status" />
+            <StatusBadge
+              :status="
+                assistant.status === 'archived'
+                  ? 'archived'
+                  : assistant.is_enabled === false
+                    ? 'disabled'
+                    : 'enabled'
+              "
+            />
           </div>
           <p class="mt-1 text-sm text-ink-500">
             <span class="font-mono">{{ assistant.slug || emptyValue }}</span>
@@ -70,6 +79,7 @@
     </header>
 
     <nav
+      v-if="!embedded"
       class="detail-tabs flex gap-6 border-b border-line"
       :aria-label="t('lensAdmin.assistantDetail.title')"
     >
@@ -86,22 +96,141 @@
       </button>
     </nav>
 
-    <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_272px]">
+    <div class="assistant-detail-content">
       <main class="space-y-5">
         <template v-if="activeTab === 'overview'">
           <section class="detail-panel detail-overview-panel">
             <div class="detail-panel-heading">
-              <h2>{{ t('lensAdmin.assistantDetail.overview') }}</h2>
+              <h2>{{ t('lensAdmin.assistantDetail.basicInformation') }}</h2>
             </div>
             <dl class="detail-definition-grid detail-overview-grid">
               <div>
-                <dt>{{ t('lensAdmin.assistantDetail.identifier') }}</dt>
+                <dt>{{ t('lensAdmin.fields.name') }}</dt>
+                <dd>{{ assistant.name || emptyValue }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.fields.slug') }}</dt>
                 <dd class="font-mono">{{ assistant.slug || emptyValue }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.fields.visibility') }}</dt>
+                <dd>{{ visibilityLabel }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.columns.status') }}</dt>
+                <dd>
+                  <span
+                    class="assistant-state"
+                    :data-tone="
+                      assistant.status === 'archived' ||
+                      assistant.is_enabled === false
+                        ? 'muted'
+                        : 'success'
+                    "
+                    >{{
+                      assistant.status === 'archived'
+                        ? t('lensAdmin.pages.assistants.archived')
+                        : assistant.is_enabled === false
+                          ? t('lensAdmin.enablement.disabled')
+                          : t('lensAdmin.enablement.enabled')
+                    }}</span
+                  >
+                </dd>
               </div>
               <div>
                 <dt>{{ t('lensAdmin.fields.type') }}</dt>
                 <dd>{{ assistantType }}</dd>
               </div>
+              <div>
+                <dt>{{ t('lensAdmin.columns.updatedAt') }}</dt>
+                <dd>
+                  {{
+                    formatDateTime(assistant.updated_at || assistant.updated)
+                  }}
+                </dd>
+              </div>
+              <div class="detail-definition-wide">
+                <dt>{{ t('lensAdmin.fields.description') }}</dt>
+                <dd class="whitespace-pre-wrap">
+                  {{
+                    assistant.description ||
+                    t('lensAdmin.wizard.noAssistantDescription')
+                  }}
+                </dd>
+              </div>
+            </dl>
+          </section>
+          <section class="detail-panel">
+            <div class="detail-panel-heading">
+              <h2>
+                {{
+                  isSmart
+                    ? t('lensAdmin.assistantDetail.collaborationContext')
+                    : t('lensAdmin.assistantDetail.workspaceContext')
+                }}
+              </h2>
+            </div>
+            <p class="detail-copy">
+              {{
+                assistant.workspace_guide?.content ||
+                assistant.settings?.pre_prompt ||
+                t('lensAdmin.assistantDetail.notConfigured')
+              }}
+            </p>
+          </section>
+          <details class="detail-panel detail-summary-card">
+            <summary class="assistant-detail-summary-toggle">
+              {{ t('lensAdmin.assistantDetail.summary') }}
+            </summary>
+            <dl>
+              <div>
+                <dt>{{ t('lensAdmin.fields.routingMode') }}</dt>
+                <dd>
+                  {{
+                    isSmart
+                      ? t('lensAdmin.routingModes.smart')
+                      : t('lensAdmin.routingModes.direct')
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>
+                  {{
+                    isSmart
+                      ? t('lensAdmin.assistantDetail.collaborationMembers')
+                      : t('lensAdmin.datasourceSelection.title')
+                  }}
+                </dt>
+                <dd>
+                  {{
+                    isSmart
+                      ? assistant.collaboration_members?.length || 0
+                      : datasourceCount
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.assistantDetail.skills') }}</dt>
+                <dd>{{ detail.skills.length }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.assistantDetail.mcpServers') }}</dt>
+                <dd>{{ detail.mcps.length }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('lensAdmin.assistantDetail.access') }}</dt>
+                <dd>{{ visibilityLabel }}</dd>
+              </div>
+            </dl>
+          </details>
+        </template>
+
+        <template v-else-if="activeTab === 'runtime'">
+          <section class="detail-panel">
+            <div class="detail-panel-heading">
+              <h2>{{ t('lensAdmin.assistantDetail.modelsAndBudget') }}</h2>
+            </div>
+            <dl class="detail-definition-grid">
               <div>
                 <dt>{{ t('lensAdmin.fields.agentModel') }}</dt>
                 <dd>
@@ -149,41 +278,24 @@
                 </dd>
               </div>
               <div>
-                <dt>{{ t('lensAdmin.columns.updatedAt') }}</dt>
+                <dt>{{ t('lensAdmin.fields.executionMaxTokens') }}</dt>
                 <dd>
                   {{
-                    formatDateTime(assistant.updated_at || assistant.updated)
+                    assistant.settings?.execution_budget?.max_tokens ??
+                    emptyValue
                   }}
                 </dd>
               </div>
-              <div class="detail-definition-wide">
-                <dt>{{ t('lensAdmin.fields.description') }}</dt>
-                <dd class="whitespace-pre-wrap">
+              <div>
+                <dt>{{ t('lensAdmin.fields.executionMaxTurns') }}</dt>
+                <dd>
                   {{
-                    assistant.description ||
-                    t('lensAdmin.wizard.noAssistantDescription')
+                    assistant.settings?.execution_budget?.max_agent_turns ??
+                    emptyValue
                   }}
                 </dd>
               </div>
             </dl>
-          </section>
-          <section class="detail-panel">
-            <div class="detail-panel-heading">
-              <h2>
-                {{
-                  isSmart
-                    ? t('lensAdmin.assistantDetail.collaborationContext')
-                    : t('lensAdmin.assistantDetail.workspaceContext')
-                }}
-              </h2>
-            </div>
-            <p class="detail-copy">
-              {{
-                assistant.workspace_guide?.content ||
-                assistant.settings?.pre_prompt ||
-                t('lensAdmin.assistantDetail.notConfigured')
-              }}
-            </p>
           </section>
         </template>
 
@@ -262,6 +374,9 @@
                     t('lensAdmin.assistantDetail.unnamedAssistant')
                   }}</strong>
                   <small>{{ memberCapabilityLabel(member.capability) }}</small>
+                  <small v-if="member.is_enabled === false">{{
+                    t('lensAdmin.enablement.disabled')
+                  }}</small>
                 </div>
               </li>
             </ul>
@@ -312,21 +427,27 @@
             </div>
             <div class="access-summary">
               <component
-                :is="assistant.visibility === 'private' ? Lock : Globe"
+                :is="
+                  assistant.visibility === 'private'
+                    ? Lock
+                    : assistant.visibility === 'tenant'
+                      ? UsersRound
+                      : Globe
+                "
                 :size="18"
                 aria-hidden="true"
               />
               <p>
                 {{
-                  assistant.visibility === 'private'
-                    ? t('lensAdmin.visibility.privateDesc')
-                    : t('lensAdmin.visibility.publicDesc')
+                  t(
+                    `lensAdmin.visibility.${assistant.visibility || 'private'}Desc`
+                  )
                 }}
               </p>
             </div>
           </section>
           <div
-            v-if="assistant.visibility === 'private'"
+            v-if="assistant.visibility === 'private' && canViewMemberGrants"
             class="grid gap-5 md:grid-cols-2"
           >
             <section class="detail-panel">
@@ -370,66 +491,12 @@
           </div>
         </template>
       </main>
-
-      <aside
-        class="detail-summary-card h-fit rounded-xl border border-line bg-surface p-4"
-      >
-        <h2>{{ t('lensAdmin.assistantDetail.summary') }}</h2>
-        <dl>
-          <div>
-            <dt>{{ t('lensAdmin.fields.routingMode') }}</dt>
-            <dd>
-              {{
-                isSmart
-                  ? t('lensAdmin.routingModes.smart')
-                  : t('lensAdmin.routingModes.direct')
-              }}
-            </dd>
-          </div>
-          <div>
-            <dt>
-              {{
-                isSmart
-                  ? t('lensAdmin.assistantDetail.collaborationMembers')
-                  : t('lensAdmin.datasourceSelection.title')
-              }}
-            </dt>
-            <dd>
-              {{
-                isSmart
-                  ? assistant.collaboration_members?.length || 0
-                  : datasourceCount
-              }}
-            </dd>
-          </div>
-          <div>
-            <dt>{{ t('lensAdmin.assistantDetail.skills') }}</dt>
-            <dd>{{ detail.skills.length }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('lensAdmin.assistantDetail.mcpServers') }}</dt>
-            <dd>{{ detail.mcps.length }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('lensAdmin.assistantDetail.access') }}</dt>
-            <dd>{{ visibilityLabel }}</dd>
-          </div>
-        </dl>
-        <BaseButton
-          class="mt-4 w-full"
-          variant="outline"
-          :disabled="assistant.status !== 'active'"
-          @click="$emit('copy-share', assistant)"
-        >
-          <Copy :size="16" aria-hidden="true" />{{ t('lens.share.copyLink') }}
-        </BaseButton>
-      </aside>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
@@ -437,7 +504,6 @@ import {
   Code2,
   MessageCircle,
   Bot,
-  Copy,
   Database,
   Globe,
   Lock,
@@ -454,13 +520,15 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { EMPTY_VALUE, formatAssistantType } from './adminHelpers'
 import { buildAssistantDetail } from './assistantDetails'
 import { useShortDateTime } from './useShortDateTime'
+import { useUserStore } from '@/store/user'
 
 const props = defineProps({
   assistant: { type: Object, required: true },
   lensnodeName: { type: String, default: '' },
   assistantType: { type: String, default: '' },
   restoring: { type: Boolean, default: false },
-  embedded: { type: Boolean, default: false }
+  embedded: { type: Boolean, default: false },
+  modelNames: { type: Object, default: () => ({}) }
 })
 
 defineEmits(['back', 'copy-share', 'edit', 'restore'])
@@ -494,6 +562,8 @@ const assistantIcon = computed(() => {
 })
 
 const emptyValue = EMPTY_VALUE
+const userStore = useUserStore()
+const canViewMemberGrants = computed(() => !userStore.delegation)
 const formatDateTime = useShortDateTime()
 const activeTab = ref('overview')
 const detail = computed(() => buildAssistantDetail(props.assistant))
@@ -510,9 +580,7 @@ const toolCount = computed(
     detail.value.plugins.length
 )
 const visibilityLabel = computed(() =>
-  t(
-    `lensAdmin.visibility.${props.assistant.visibility === 'private' ? 'private' : 'public'}`
-  )
+  t(`lensAdmin.visibility.${props.assistant.visibility || 'private'}`)
 )
 const dataModeLabel = computed(() =>
   t('lensAdmin.datasourceSelection.selected')
@@ -541,13 +609,26 @@ const capabilityGroups = computed(() =>
 )
 const tabs = computed(() => [
   { id: 'overview', label: t('lensAdmin.assistantDetail.overview') },
-  { id: 'data', label: t('lensAdmin.assistantDetail.dataAccess') },
+  {
+    id: 'data',
+    label: t('lensAdmin.assistantDetail.dataAccess'),
+    count: datasourceCount.value
+  },
+  { id: 'runtime', label: t('lensAdmin.assistantDetail.runtime') },
   { id: 'capabilities', label: t('lensAdmin.assistantDetail.capabilities') },
   { id: 'access', label: t('lensAdmin.assistantDetail.access') }
 ])
 
+watch(
+  () => props.assistant.uuid,
+  () => {
+    activeTab.value = 'overview'
+  }
+)
+defineExpose({ activeTab, tabs })
+
 function modelLabel(name, ref) {
-  if (name) return name
+  if (name || props.modelNames?.[ref]) return name || props.modelNames[ref]
   return ref
     ? t('lensAdmin.assistantDetail.modelConfigured')
     : t('lensAdmin.assistantDetail.notConfigured')

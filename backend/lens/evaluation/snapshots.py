@@ -3,6 +3,8 @@
 from django.conf import settings
 
 from lens.evaluation.evaluators.trace import load_trace_events
+from lens.evaluation.evidence import preserve_evaluation_evidence, run_evidence_scope
+from lens.evaluation.scope import validate_evaluation_scope
 from lens.evaluation.scoring import EVALUATION_SCORING_VERSION
 from lens.models import EvaluationResult
 
@@ -104,8 +106,15 @@ def freeze_run_result(
 ):
     """Persist a complete evaluation result that survives source Run deletion."""
 
+    validate_evaluation_scope(evaluation_run, case, run)
+    existing = EvaluationResult.objects.filter(evaluation_run=evaluation_run, case=case).first()
+    if existing is not None and existing.tenant_id != evaluation_run.tenant_id:
+        raise ValueError("EVALUATION_TENANT_MISMATCH")
     output = run.output_message.content if run.output_message_id else ""
     summary = trace_summary if isinstance(trace_summary, dict) else _trace_summary(run)
+    restricted = bool(existing and existing.evidence_restricted) or run_evidence_scope(
+        [run.pk], evaluation_run.tenant_id
+    ).get(run.pk, True)
     metrics = {
         "trace_events": summary.get("event_count", 0),
         "last_sequence": summary.get("last_sequence"),
@@ -119,6 +128,7 @@ def freeze_run_result(
             "output_snapshot": output or "",
             "citations_snapshot": run.citations or [],
             "trace_summary": summary,
+            "evidence_restricted": restricted,
             "execution_metrics": {
                 "status": run.status,
                 "outcome_reference": run.outcome or "",
@@ -137,13 +147,22 @@ def freeze_evaluation_results_for_runs(run_ids):
 
     if not run_ids:
         return 0
+    preserve_evaluation_evidence(run_ids)
     results = EvaluationResult.objects.filter(
         source_run_id__in=run_ids,
-    ).select_related("source_run", "source_run__output_message")
+    ).select_related("source_run__session", "source_run__output_message", "case", "evaluation_run__dataset__assistant")
     frozen = 0
     for result in results:
         run = result.source_run
         if run is None:
+            continue
+        try:
+            validate_evaluation_scope(result.evaluation_run, result.case, run)
+            if result.tenant_id != result.evaluation_run.tenant_id:
+                raise ValueError("EVALUATION_TENANT_MISMATCH")
+        except ValueError:
+            result.error = "EVALUATION_TENANT_MISMATCH"
+            result.save(update_fields=["error", "updated_at"])
             continue
         result.output_snapshot = result.output_snapshot or (run.output_message.content if run.output_message_id else "")
         result.citations_snapshot = result.citations_snapshot or run.citations or []

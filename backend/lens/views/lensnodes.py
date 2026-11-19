@@ -2,14 +2,20 @@
 
 from pathlib import PurePosixPath
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import connection
 from django.db.models import BigIntegerField, BooleanField, Case, Count, Max, Prefetch, Q, Sum, Value, When
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Greatest, Now
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 
+from accounts.access import get_user_tenant
+from accounts.audit import record_audit
+from accounts.delegation import get_active_delegation, is_delegated_request
+from accounts.permissions import HasPlatformSuperAdmin, HasTenantAdminAccess
 from lens.datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
@@ -18,7 +24,7 @@ from lens.datasource.services import (
     test_datasource_connection,
 )
 from lens.lensnode_auth import issue_lensnode_token
-from lens.models import DataSource, DataSourceItem, LensNode, Run, RunTraceEvent
+from lens.models import DataSource, DataSourceCredential, DataSourceItem, LensNode, Run, RunTraceEvent
 from lens.serializers import LensNodeSerializer
 from .base import BaseAdminViewSet
 
@@ -67,6 +73,27 @@ class LensNodeViewSet(BaseAdminViewSet):
         last_run_at=Max("runs__created_at"),
     ).order_by("name")
     serializer_class = LensNodeSerializer
+    permission_classes = [HasPlatformSuperAdmin]
+
+    @action(detail=False, methods=["get"], permission_classes=[HasTenantAdminAccess | HasPlatformSuperAdmin])
+    def available(self, request):
+        """Expose shared-node choices without platform workload or credentials."""
+        nodes = LensNode.objects.filter(enrollment_status=LensNode.EnrollmentStatus.APPROVED).order_by("name")
+        return Response(list(nodes.values("uuid", "name", "status", "workspace_path", "pool")))
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        """Audit successful node mutations without recording request secrets."""
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and 200 <= response.status_code < 300:
+            node_uuid = kwargs.get("uuid") or (response.data or {}).get("uuid", "")
+            record_audit(
+                action=f"node.{self.action}",
+                request=request,
+                actor=request.user,
+                resource_type="lensnode",
+                resource_id=str(node_uuid),
+            )
+        return response
 
     def get_queryset(self):
         """Fetch active storage summaries in two bounded related queries."""
@@ -369,11 +396,33 @@ class LensNodeViewSet(BaseAdminViewSet):
         detail=True,
         methods=["post"],
         url_path="test-datasource-connection",
+        permission_classes=[HasTenantAdminAccess | HasPlatformSuperAdmin],
     )
     def test_datasource_connection(self, request, uuid=None):
         """Ask a connected LensNode to test datasource connection settings."""
 
+        if is_delegated_request() and not HasTenantAdminAccess().has_permission(request, self):
+            raise PermissionDenied("An operational tenant delegation is required.")
         lensnode = self.get_object()
+        tenant = get_user_tenant(request.user)
+        platform_admin = HasPlatformSuperAdmin().has_permission(request, self)
+        if tenant is None and not platform_admin:
+            raise PermissionDenied("A tenant membership is required.")
+        if tenant is not None and lensnode.enrollment_status != LensNode.EnrollmentStatus.APPROVED:
+            raise NotFound()
+        for field, model in [("datasource_uuid", DataSource), ("credential_uuid", DataSourceCredential)]:
+            resource_uuid = request.data.get(field)
+            if not resource_uuid:
+                continue
+            if platform_admin and get_active_delegation(request.user) is None:
+                raise NotFound()
+            resources = model.objects.filter(tenant=tenant)
+            try:
+                exists = resources.filter(uuid=resource_uuid).exists()
+            except (DjangoValidationError, TypeError, ValueError):
+                exists = False
+            if not exists:
+                raise NotFound()
         try:
             result = test_datasource_connection(
                 lensnode,

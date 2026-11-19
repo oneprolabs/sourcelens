@@ -12,7 +12,14 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
-from accounts.authentication import AGENT_SCOPE_CLAIM, AGENT_TOKEN_SCOPE
+from accounts.access import get_group_display_name, get_user_tenant
+from accounts.authentication import (
+    AGENT_SCOPE_CLAIM,
+    AGENT_TOKEN_SCOPE,
+    tenant_api_key_allows_assistant,
+    tenant_api_key_selected_assistants,
+)
+from accounts.delegation import is_delegated_request
 
 from .alert_serializers import AlertEventSerializer as AlertEventSerializer
 from .alert_serializers import AlertRuleSerializer as AlertRuleSerializer
@@ -29,6 +36,7 @@ from .datasource.bindings import (
 )
 from .attachments import ATTACHMENT_MAX_PER_MESSAGE, AttachmentError
 from .citations import public_run_citations, sanitize_planned_evidence, strip_source_markers
+from .catalog import usable_catalog_resources
 from .datasource.services import (
     DataSourceDispatchError,
     DataSourcePathError,
@@ -106,6 +114,7 @@ from .routing_descriptions import (
 )
 from .runtime_events import (
     public_step_detail,
+    public_run_error,
     sanitize_loaded_mcps,
     sanitize_loaded_skills,
     sanitize_termination_detail,
@@ -342,15 +351,30 @@ class SkillBindingsField(serializers.Field):
                 raise serializers.ValidationError("Each binding must be an object.")
             if "skill_uuid" not in item:
                 raise serializers.ValidationError("Missing skill_uuid in binding.")
-            skill = Skill.objects.filter(uuid=item["skill_uuid"]).first()
+            request = getattr(self.parent, "context", {}).get("request")
+            skill = (
+                usable_catalog_resources(Skill.objects.all(), get_user_tenant(getattr(request, "user", None)))
+                .filter(uuid=item["skill_uuid"])
+                .first()
+            )
             if skill is None:
                 raise serializers.ValidationError("Skill does not exist.")
             variable_set_uuid = item.get("environment_variable_set_uuid")
             variable_set = None
             if variable_set_uuid:
-                variable_set = EnvironmentVariableSet.objects.filter(
-                    uuid=variable_set_uuid,
+                variable_set_queryset = EnvironmentVariableSet.objects.filter(
                     enabled=True,
+                )
+                request = getattr(self.parent, "context", {}).get(
+                    "request"
+                )
+                tenant = get_user_tenant(getattr(request, "user", None))
+                if tenant is not None:
+                    variable_set_queryset = variable_set_queryset.filter(
+                        tenant=tenant
+                    )
+                variable_set = variable_set_queryset.filter(
+                    uuid=variable_set_uuid,
                 ).first()
                 if variable_set is None:
                     raise serializers.ValidationError(
@@ -441,15 +465,30 @@ class McpBindingsField(serializers.Field):
                 raise serializers.ValidationError("Each binding must be an object.")
             if "mcp_uuid" not in item:
                 raise serializers.ValidationError("Missing mcp_uuid in binding.")
-            mcp = MCPServer.objects.filter(uuid=item["mcp_uuid"]).first()
+            request = getattr(self.parent, "context", {}).get("request")
+            mcp = (
+                usable_catalog_resources(MCPServer.objects.all(), get_user_tenant(getattr(request, "user", None)))
+                .filter(uuid=item["mcp_uuid"])
+                .first()
+            )
             if mcp is None:
                 raise serializers.ValidationError("MCP server does not exist.")
             variable_set_uuid = item.get("environment_variable_set_uuid")
             variable_set = None
             if variable_set_uuid:
-                variable_set = EnvironmentVariableSet.objects.filter(
-                    uuid=variable_set_uuid,
+                variable_set_queryset = EnvironmentVariableSet.objects.filter(
                     enabled=True,
+                )
+                request = getattr(self.parent, "context", {}).get(
+                    "request"
+                )
+                tenant = get_user_tenant(getattr(request, "user", None))
+                if tenant is not None:
+                    variable_set_queryset = variable_set_queryset.filter(
+                        tenant=tenant
+                    )
+                variable_set = variable_set_queryset.filter(
+                    uuid=variable_set_uuid,
                 ).first()
                 if variable_set is None:
                     raise serializers.ValidationError(
@@ -561,9 +600,18 @@ class PluginBindingsField(serializers.Field):
                     "Each binding must be an object."
                 )
             connection_uuid = item.get("connection_uuid")
-            connection = Connection.objects.select_related(
+            connection_queryset = Connection.objects.select_related(
                 "secret_version__material"
-            ).filter(uuid=connection_uuid).first()
+            )
+            request = self.parent.context.get("request")
+            tenant = get_user_tenant(getattr(request, "user", None))
+            if tenant is not None:
+                connection_queryset = connection_queryset.filter(
+                    tenant=tenant
+                )
+            connection = connection_queryset.filter(
+                uuid=connection_uuid
+            ).first()
             if connection is None:
                 raise serializers.ValidationError(
                     "Plugin Connection does not exist."
@@ -662,8 +710,19 @@ class PluginBindingsField(serializers.Field):
 class AccessGrantsField(serializers.Field):
     """Read/write field for assistant access grants (group or user)."""
 
+    def get_attribute(self, instance):
+        """Omit tenant membership information from delegated configuration responses."""
+
+        if is_delegated_request():
+            raise serializers.SkipField()
+        return super().get_attribute(instance)
+
     def to_representation(self, grants):
-        grants = grants.select_related("group", "user").all()
+        grants = grants.select_related(
+            "group",
+            "group__tenant_group",
+            "user",
+        ).all()
         result = []
         for grant in grants:
             if grant.group_id:
@@ -671,7 +730,7 @@ class AccessGrantsField(serializers.Field):
                     {
                         "type": "group",
                         "id": grant.group_id,
-                        "name": grant.group.name,
+                        "name": get_group_display_name(grant.group),
                     }
                 )
             elif grant.user_id:
@@ -732,6 +791,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
     vision_model_capability = serializers.SerializerMethodField()
     can_process_images = serializers.SerializerMethodField()
     show_citations = serializers.SerializerMethodField()
+    management_checks = serializers.SerializerMethodField()
 
     class Meta:
         model = Assistant
@@ -758,6 +818,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "routing_mode",
             "collaboration_members",
             "status",
+            "is_enabled",
             "visibility",
             "skill_summary",
             "mcp_summary",
@@ -766,7 +827,14 @@ class AssistantListSerializer(serializers.ModelSerializer):
             "vision_model_capability",
             "can_process_images",
             "show_citations",
+            "updated_at",
+            "management_checks",
         ]
+
+    def get_management_checks(self, assistant):
+        """Expose diagnostics only when the view has authorized management access."""
+
+        return self.context.get("management_checks", {}).get(str(assistant.uuid))
 
     def get_routing_description(self, assistant):
         """Expose the localized routing synopsis used for assistant choice."""
@@ -794,6 +862,7 @@ class AssistantListSerializer(serializers.ModelSerializer):
                 "name": member.name,
                 "capability": member.capability,
                 "status": member.status,
+                "is_enabled": member.is_enabled,
             }
             for member in sorted(
                 assistant.collaboration_members.all(),
@@ -866,9 +935,52 @@ class AssistantListSerializer(serializers.ModelSerializer):
         capability = self._vision_capability(assistant)
         return bool(
             assistant.status == Assistant.Status.ACTIVE
+            and assistant.is_enabled
             and capability.get("enabled")
             and capability.get("supports_vision")
         )
+
+
+class AssistantUsageSerializer(AssistantListSerializer):
+    """Allowlist the metadata needed to choose and use an assistant."""
+
+    class Meta:
+        model = Assistant
+        fields = [
+            "uuid",
+            "name",
+            "description",
+            "slug",
+            "capability",
+            "mode",
+            "routing_mode",
+            "status",
+            "is_enabled",
+            "visibility",
+            "collaboration_members",
+            "supports_document_attachments",
+            "can_process_images",
+            "show_citations",
+        ]
+
+    def get_collaboration_members(self, assistant):
+        """Do not disclose members outside the viewer's current usage access."""
+
+        if not assistant.mode_handler.supports_members:
+            return []
+        visible = self.context.get("visible_assistant_uuids")
+        if visible is None:
+            request = self.context["request"]
+            selected = tenant_api_key_selected_assistants(request)
+            members = self.context.get("collaboration_member_uuids")
+            if members is None:
+                members = {str(member.uuid) for member in assistant.collaboration_members.all()}
+            candidates = Assistant.objects.visible_to(request.user).filter(uuid__in=members, is_system=False)
+            if selected is not None:
+                candidates = candidates.filter(uuid__in=selected)
+            visible = {str(value) for value in candidates.values_list("uuid", flat=True)}
+            self.context["visible_assistant_uuids"] = visible
+        return [item for item in super().get_collaboration_members(assistant) if item["uuid"] in visible]
 
 
 class AssistantSerializer(serializers.ModelSerializer):
@@ -933,6 +1045,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             "max_concurrency",
             "settings",
             "status",
+            "is_enabled",
             "visibility",
             "skill_bindings",
             "mcp_bindings",
@@ -961,6 +1074,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             "supports_document_attachments",
             "token_budget_profile",
             "status",
+            "is_enabled",
             "created_at",
             "updated_at",
         ]
@@ -990,6 +1104,7 @@ class AssistantSerializer(serializers.ModelSerializer):
                 "name": member.name,
                 "capability": member.capability,
                 "status": member.status,
+                "is_enabled": member.is_enabled,
             }
             for member in sorted(
                 assistant.collaboration_members.all(),
@@ -1023,6 +1138,7 @@ class AssistantSerializer(serializers.ModelSerializer):
         capability = resolve_model_capability(assistant.multimodal_model_ref)
         return bool(
             assistant.status == Assistant.Status.ACTIVE
+            and assistant.is_enabled
             and capability.get("enabled")
             and capability.get("supports_vision")
         )
@@ -1048,6 +1164,8 @@ class AssistantSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         """Accept legacy type inputs without exposing duplicate fields."""
 
+        if is_delegated_request() and "access_grants" in data:
+            raise PermissionDenied("Assistant member grants are managed by the tenant.")
         normalized = data.copy()
         legacy_task_input = (
             not normalized.get("capability")
@@ -1083,6 +1201,19 @@ class AssistantSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """Validate capability, node, directory, and delegation settings."""
 
+        from accounts.access import get_user_tenant
+        from .model_scope import authorized_model_ref
+
+        request = self.context.get("request")
+        tenant = self.instance.tenant if self.instance else get_user_tenant(request.user) if request else None
+        for field in (
+            "agent_model_ref", "multimodal_model_ref", "decision_model_ref", "preprocess_model_ref", "postprocess_model_ref"
+        ):
+            if attrs.get(field):
+                try:
+                    authorized_model_ref(attrs[field], tenant, "decision" if field == "decision_model_ref" else "llm")
+                except ValueError as exc:
+                    raise serializers.ValidationError({field: str(exc)}) from exc
         attrs.pop("kind", None)
         attrs.pop("selected_task", None)
         if "deep_thinking" not in attrs and "agent_rounds" in attrs:
@@ -1592,6 +1723,7 @@ class AssistantSerializer(serializers.ModelSerializer):
             if (
                 member.is_system
                 or member.status != Assistant.Status.ACTIVE
+                or not member.is_enabled
                 or member.routing_mode != Assistant.RoutingMode.DIRECT
                 or str(member.uuid) == instance_uuid
             )
@@ -1736,41 +1868,51 @@ class AssistantSerializer(serializers.ModelSerializer):
             suffix += 1
 
     def _sync_access_grants(self, assistant, grants):
+        """Validate all subjects before replacing grants inside the owning tenant."""
+
         if grants is None:
             return
         request = self.context.get("request")
         granted_by = getattr(request, "user", None)
         if granted_by is not None and not granted_by.is_authenticated:
             granted_by = None
-        assistant.access_grants.all().delete()
+        resolved = []
         for grant in grants:
             if grant["type"] == "group":
-                group = Group.objects.filter(pk=grant["id"]).first()
+                group_queryset = Group.objects.all()
+                if assistant.tenant_id:
+                    group_queryset = group_queryset.filter(
+                        tenant_group__tenant_id=assistant.tenant_id
+                    )
+                group = group_queryset.filter(pk=grant["id"]).first()
                 if group is None:
                     raise serializers.ValidationError(
                         {"access_grants": f"Group {grant['id']} not found."}
                     )
-                AssistantAccess.objects.create(
-                    assistant=assistant,
-                    group=group,
-                    granted_by=granted_by,
-                )
+                resolved.append({"group": group})
             else:
-                user = get_user_model().objects.filter(pk=grant["id"]).first()
+                users = get_user_model().objects.filter(pk=grant["id"], is_active=True)
+                if assistant.tenant_id:
+                    users = users.filter(
+                        membership__tenant_id=assistant.tenant_id,
+                        membership__status="active",
+                    )
+                user = users.first()
                 if user is None:
                     raise serializers.ValidationError(
                         {"access_grants": f"User {grant['id']} not found."}
                     )
-                AssistantAccess.objects.create(
-                    assistant=assistant,
-                    user=user,
-                    granted_by=granted_by,
-                )
+                resolved.append({"user": user})
+        assistant.access_grants.all().delete()
+        for subject in resolved:
+            AssistantAccess.objects.create(assistant=assistant, granted_by=granted_by, **subject)
 
     def _set_collaboration_members(self, assistant, member_uuids):
         """Persist collaboration members resolved by their public UUIDs."""
 
         members = Assistant.objects.filter(uuid__in=member_uuids)
+        if assistant.tenant_id:
+            members = members.filter(tenant_id=assistant.tenant_id)
         assistant.collaboration_members.set(members)
 
     @transaction.atomic
@@ -1786,6 +1928,17 @@ class AssistantSerializer(serializers.ModelSerializer):
         access_grants = validated_data.pop("access_grants", None)
         workspace_guide = validated_data.pop("workspace_guide", None)
         datasource_bindings = validated_data.pop("datasource_bindings", None)
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            validated_data.setdefault("tenant", tenant)
+        if request and tenant is not None and not is_delegated_request():
+            from accounts.models import Tenant
+            from accounts.services.member_management import require_member_authority
+
+            Tenant.objects.select_for_update().get(pk=tenant.pk)
+            require_member_authority(request, tenant)
+            validated_data["owner_user"] = request.user
         assistant = Assistant.objects.create(**validated_data)
         replace_datasource_bindings(assistant, datasource_bindings)
         self._sync_bindings(
@@ -2058,6 +2211,10 @@ class ConnectionSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a connection and optionally its first encrypted version."""
 
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            validated_data.setdefault("tenant", tenant)
         secret_value = validated_data.pop("secret_value", "")
         with transaction.atomic():
             connection = Connection.objects.create(**validated_data)
@@ -2192,6 +2349,100 @@ def _datasource_task_payload(task):
     }
 
 
+class DataSourceScheduleSerializer(serializers.Serializer):
+    """Accept schedule-only edits without accepting content or ownership changes."""
+
+    mode = serializers.ChoiceField(choices=("interval", "crontab", "manual"))
+    interval_seconds = serializers.IntegerField(min_value=600, required=False)
+    cron = serializers.CharField(required=False)
+    timezone = serializers.CharField(required=False, default="UTC")
+
+    def to_internal_value(self, data):
+        """Reject unsupported keys for both direct and nested schedule requests."""
+
+        if isinstance(data, dict) and set(data) - set(self.fields):
+            raise serializers.ValidationError({"non_field_errors": ["Only schedule fields are accepted."]})
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        """Normalize the selected schedule and validate actual cron and timezone values."""
+
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        from celery.schedules import crontab
+
+        if attrs["mode"] == "manual":
+            return {"mode": "manual"}
+        if attrs["mode"] == "interval":
+            return {"mode": "interval", "interval_seconds": attrs.get("interval_seconds", 86400)}
+        _validate_cron_expression(attrs.get("cron"))
+        minute, hour, day_of_month, month_of_year, day_of_week = attrs["cron"].split()
+        try:
+            ZoneInfo(attrs["timezone"])
+            crontab(
+                minute=minute,
+                hour=hour,
+                day_of_month=day_of_month,
+                month_of_year=month_of_year,
+                day_of_week=day_of_week,
+            )
+        except (ValueError, KeyError, ZoneInfoNotFoundError) as exc:
+            raise serializers.ValidationError("Invalid cron or timezone.") from exc
+        return {"mode": "crontab", "cron": attrs["cron"], "timezone": attrs["timezone"]}
+
+    def update(self, instance, validated_data):
+        """Keep processing settings from the locked datasource, not a client snapshot."""
+
+        policy = dict(instance.sync_policy or {})
+        for key in ("mode", "interval_seconds", "cron", "timezone"):
+            policy.pop(key, None)
+        instance.sync_policy = {**policy, **validated_data}
+        instance.save(update_fields=["sync_policy", "updated_at"])
+        return instance
+
+
+
+class DataSourceDetailSettingsSerializer(serializers.Serializer):
+    """Accept only settings with a supported datasource runtime contract."""
+
+    schedule = DataSourceScheduleSerializer(required=False)
+    max_file_size_mb = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+
+    def validate_max_file_size_mb(self, value):
+        """Reject booleans accepted as integers by Python coercion."""
+
+        if isinstance(self.initial_data.get("max_file_size_mb"), bool):
+            raise serializers.ValidationError("File size must be a positive integer.")
+        return value
+
+    def validate(self, attrs):
+        """Reject unknown or empty writes rather than claiming unsupported settings were saved."""
+
+        if set(self.initial_data) - set(self.fields) or not attrs:
+            raise serializers.ValidationError("Only schedule and max_file_size_mb settings are accepted.")
+        return attrs
+
+    def update(self, instance, validated_data):
+        """Merge requested fields into the locked row and preserve other conversion settings."""
+
+        policy = dict(instance.sync_policy or {})
+        if "schedule" in validated_data:
+            for key in MANAGED_SYNC_POLICY_KEYS:
+                policy.pop(key, None)
+            policy.update(validated_data["schedule"])
+        if "max_file_size_mb" in validated_data:
+            conversion = dict(policy.get("conversion") or {})
+            value = validated_data["max_file_size_mb"]
+            if value is None:
+                conversion.pop("max_file_size_mb", None)
+            else:
+                conversion["max_file_size_mb"] = value
+            policy["conversion"] = conversion
+        instance.sync_policy = policy
+        instance.save(update_fields=["sync_policy", "updated_at"])
+        return instance
+
+
 class DataSourceSerializer(serializers.ModelSerializer):
     """Datasource serializer."""
 
@@ -2276,12 +2527,16 @@ class DataSourceSerializer(serializers.ModelSerializer):
             "lensnode",
             getattr(self.instance, "lensnode", None),
         )
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        credential_queryset = DataSourceCredential.objects.filter(tenant=tenant)
+        connection_queryset = Connection.objects.filter(tenant=tenant)
         credential_uuid = attrs.pop("credential_uuid", None)
         if "credential_uuid" in self.initial_data and credential_uuid is None:
             attrs["credential"] = None
         elif credential_uuid is not None:
             try:
-                attrs["credential"] = DataSourceCredential.objects.get(
+                attrs["credential"] = credential_queryset.get(
                     uuid=credential_uuid
                 )
             except DataSourceCredential.DoesNotExist:
@@ -2293,7 +2548,9 @@ class DataSourceSerializer(serializers.ModelSerializer):
             attrs["connection"] = None
         elif connection_uuid is not None:
             try:
-                attrs["connection"] = Connection.objects.get(uuid=connection_uuid)
+                attrs["connection"] = connection_queryset.get(
+                    uuid=connection_uuid
+                )
             except Connection.DoesNotExist:
                 raise serializers.ValidationError(
                     {"connection_uuid": "Connection does not exist"}
@@ -2308,6 +2565,9 @@ class DataSourceSerializer(serializers.ModelSerializer):
 
         _validate_datasource_config_secret_fields(config)
         _validate_sync_policy(sync_policy)
+        _validate_conversion_model_scope(
+            sync_policy.get("conversion"), getattr(self.instance, "tenant", tenant), "sync_policy"
+        )
         if source_type in (
             DataSource.SourceType.MANAGED_WORKSPACE,
             DataSource.SourceType.UPLOAD,
@@ -2660,7 +2920,8 @@ class DataSourceSerializer(serializers.ModelSerializer):
             ).first()
         if record is None:
             return {
-                "enabled": datasource.status != DataSource.Status.DISABLED,
+                "enabled": datasource.status != DataSource.Status.DISABLED
+                and (datasource.sync_policy or {}).get("mode") != "manual",
                 "last_status": "",
                 "last_error": datasource.last_error,
                 "last_run_at": None,
@@ -2710,6 +2971,10 @@ class DataSourceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a datasource and pin its unified storage directory."""
 
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            validated_data.setdefault("tenant", tenant)
         self._persist_public_connection(validated_data)
         datasource = DataSource.objects.create(**validated_data)
         self._apply_default_target_path(datasource)
@@ -2849,6 +3114,9 @@ class DataSourceConversionRequestSerializer(serializers.Serializer):
         if conversion is None:
             conversion = {"document": True}
         _validate_conversion_policy(conversion, field_name="conversion")
+        _validate_conversion_model_scope(
+            {**self.context.get("stored_conversion", {}), **conversion}, self.context.get("tenant"), "conversion"
+        )
         if not any(
             conversion.get(key) for key in ["document", "image", "embedded_image"]
         ):
@@ -3117,6 +3385,10 @@ class DataSourceCredentialSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a credential and encrypt the supplied secret."""
 
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            validated_data.setdefault("tenant", tenant)
         secret = _credential_secret_from_validated_data(validated_data)
         credential = DataSourceCredential(**validated_data)
         if secret:
@@ -3213,10 +3485,12 @@ def _validate_sync_policy(sync_policy):
 
     _validate_conversion_policy(sync_policy.get("conversion") or {})
     mode = sync_policy.get("mode") or "interval"
-    if mode not in {"interval", "crontab"}:
+    if mode not in {"interval", "crontab", "manual"}:
         raise serializers.ValidationError(
-            {"sync_policy": "mode must be interval or crontab"}
+            {"sync_policy": "mode must be interval, crontab or manual"}
         )
+    if mode == "manual":
+        return
     if mode == "crontab":
         _validate_cron_expression(sync_policy.get("cron"))
         timezone = sync_policy.get("timezone")
@@ -3230,6 +3504,17 @@ def _validate_sync_policy(sync_policy):
         raise serializers.ValidationError(
             {"sync_policy": "interval_seconds must be an integer of at least 600"}
         )
+
+
+def _validate_conversion_model_scope(conversion, tenant, field_name):
+    """Reject model overrides outside the datasource's trusted tenant."""
+
+    from .datasource.model_access import validate_conversion_models
+
+    try:
+        validate_conversion_models(conversion, tenant)
+    except ValueError as exc:
+        raise serializers.ValidationError({field_name: str(exc)}) from exc
 
 
 def _validate_conversion_policy(conversion, field_name="sync_policy"):
@@ -3481,7 +3766,24 @@ def _validate_feishu_config(config, instance=None, credential=None):
         raise serializers.ValidationError({"config": "feishu doc_ids must be a list"})
 
 
-class SkillSerializer(serializers.ModelSerializer):
+class CatalogMetadataSerializer(serializers.ModelSerializer):
+    """Expose public ownership and tenant adoption metadata."""
+
+    is_official = serializers.SerializerMethodField()
+    tenant_enabled = serializers.SerializerMethodField()
+    bound_count = serializers.IntegerField(read_only=True, default=0)
+    enabled_tenant_count = serializers.IntegerField(read_only=True, default=0)
+
+    def get_is_official(self, obj):
+        """Identify platform-owned templates without exposing tenant identifiers."""
+        return obj.tenant_id is None
+
+    def get_tenant_enabled(self, obj):
+        """Private resources use their own status; official resources need tenant opt-in."""
+        return obj.enabled and (obj.tenant_id is not None or getattr(obj, "tenant_opted_in", False))
+
+
+class SkillSerializer(CatalogMetadataSerializer):
     """Skill serializer."""
 
     update_available = serializers.SerializerMethodField()
@@ -3490,6 +3792,10 @@ class SkillSerializer(serializers.ModelSerializer):
         model = Skill
         fields = [
             "uuid",
+            "is_official",
+            "tenant_enabled",
+            "bound_count",
+            "enabled_tenant_count",
             "name",
             "package_name",
             "kind",
@@ -3625,6 +3931,10 @@ class EnvironmentVariableSetSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a set and encrypt its values."""
 
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if tenant is not None:
+            validated_data.setdefault("tenant", tenant)
         values = validated_data.pop("values", {})
         variable_set = EnvironmentVariableSet(**validated_data)
         variable_set.set_values(values)
@@ -3664,7 +3974,7 @@ class CompactSkillSerializer(SkillSerializer):
         return {"file_count": obj.summary_file_count or 0}
 
 
-class MCPServerSerializer(serializers.ModelSerializer):
+class MCPServerSerializer(CatalogMetadataSerializer):
     """MCP server serializer."""
 
     connection_uuid = serializers.SlugRelatedField(
@@ -3692,6 +4002,10 @@ class MCPServerSerializer(serializers.ModelSerializer):
         model = MCPServer
         fields = [
             "uuid",
+            "is_official",
+            "tenant_enabled",
+            "bound_count",
+            "enabled_tenant_count",
             "name",
             "transport",
             "endpoint",
@@ -3767,7 +4081,9 @@ class MCPServerSerializer(serializers.ModelSerializer):
             for item in getattr(self.instance, "environment", []) or []
             if isinstance(item, dict) and item.get("name")
         }
-        legacy_references = existing_references - existing_declared
+        legacy_references = (
+            set() if self.context.get("catalog_official") else existing_references - existing_declared
+        )
         undeclared = sorted(references - declared - legacy_references)
         if undeclared:
             raise serializers.ValidationError(
@@ -3790,6 +4106,29 @@ class MCPServerSerializer(serializers.ModelSerializer):
             "tools",
             getattr(self.instance, "tools", []),
         )
+        request = self.context.get("request")
+        tenant = get_user_tenant(getattr(request, "user", None))
+        if connection is not None and connection.tenant_id != getattr(tenant, "pk", None):
+            raise serializers.ValidationError({"connection_uuid": "The selected connection is unavailable."})
+        if self.context.get("catalog_official") and connection is not None:
+            raise serializers.ValidationError({"connection_uuid": "Official templates cannot reference tenant connections."})
+        if self.context.get("catalog_official"):
+            if transport == MCPServer.Transport.PLUGIN:
+                raise serializers.ValidationError({"transport": "Official MCP templates cannot use tenant Plugin connections."})
+            try:
+                parsed = parse.urlsplit(endpoint)
+            except ValueError as exc:
+                raise serializers.ValidationError({"endpoint": "A valid endpoint is required."}) from exc
+            endpoint_values = [{key: value} for key, value in parse.parse_qsl(parsed.query)]
+            if (
+                parsed.username
+                or parsed.password
+                or self._has_literal_secret(config)
+                or self._has_literal_secret(endpoint_values)
+            ):
+                raise serializers.ValidationError(
+                    {"config": "Official MCP secrets must use declared environment references."}
+                )
         if transport == MCPServer.Transport.PLUGIN:
             self._validate_plugin_adapter(
                 attrs,
@@ -3811,6 +4150,26 @@ class MCPServerSerializer(serializers.ModelSerializer):
                 }
             )
         return attrs
+
+    @classmethod
+    def _has_literal_secret(cls, value):
+        """Permit declared placeholders while rejecting shared credential values."""
+        if isinstance(value, dict):
+            return any(
+                (
+                    cls._is_sensitive_key(key)
+                    and item not in (None, "")
+                    and (
+                        not isinstance(item, str)
+                        or re.fullmatch(r"(?:(?:Bearer|Basic|Token) )?\$\{[A-Z_][A-Z0-9_]*\}", item) is None
+                    )
+                )
+                or cls._has_literal_secret(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(cls._has_literal_secret(item) for item in value)
+        return False
 
     def _validate_plugin_adapter(
         self,
@@ -4112,12 +4471,25 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
             "lens.datasource_conversion.vision_model_ref": ("vision_model_ref"),
             "lens.datasource_conversion.document_model_ref": ("document_model_ref"),
             "evaluation.judge_model_ref": "judge_model_ref",
+            "evaluation.judge_secondary_model_ref": "judge_secondary_model_ref",
+            "diagnostics.model_ref": "diagnostics_model_ref",
         }
         if key in model_ref_keys:
             if value not in [None, ""] and not isinstance(value, str):
                 raise serializers.ValidationError(
                     {"value": f"{model_ref_keys[key]} must be a string or empty"}
                 )
+            if value:
+                from .model_scope import authorized_model_ref
+
+                try:
+                    authorized_model_ref(value, None)
+                except ValueError as exc:
+                    raise serializers.ValidationError({"value": str(exc)}) from exc
+                if key == "lens.datasource_conversion.vision_model_ref":
+                    reason = validate_vision_model_ref(value)
+                    if reason:
+                        raise serializers.ValidationError({"value": reason})
 
         if key == "evaluation.execution_pool" and value not in ("default", "evaluation"):
             raise serializers.ValidationError({"value": "must be default or evaluation"})
@@ -4340,6 +4712,8 @@ class MessageSerializer(serializers.ModelSerializer):
         for step in run.steps.all():
             steps.extend(public_step_detail(step.detail)["events"])
         for child in run.delegated_runs.all():
+            if child.tenant_id != run.tenant_id or child.session.tenant_id != run.tenant_id:
+                continue
             assistant_name = child.session.assistant.name[:160]
             delegated_task = str(child.input_message.content or "").strip()[:2000]
             for step in child.steps.all():
@@ -4461,7 +4835,7 @@ class RunSerializer(serializers.ModelSerializer):
     """Run serializer with nested execution details."""
 
     steps = RunStepSerializer(many=True, read_only=True)
-    execution = RunExecutionSerializer(read_only=True)
+    execution = serializers.SerializerMethodField()
     lensnode = serializers.UUIDField(source="lensnode.uuid", read_only=True)
     retry_of_run_uuid = serializers.UUIDField(
         source="retry_of_run.uuid",
@@ -4472,6 +4846,57 @@ class RunSerializer(serializers.ModelSerializer):
     planned_evidence = serializers.SerializerMethodField()
     answer = serializers.SerializerMethodField()
     output_files = serializers.SerializerMethodField()
+
+    @extend_schema_field(RunExecutionSerializer(allow_null=True))
+    def get_execution(self, obj):
+        """Keep operational snapshots out of ordinary assistant usage responses."""
+        from .run_access import can_inspect_run_configuration
+
+        execution = getattr(obj, "execution", None)
+        if execution is None:
+            return None
+        if can_inspect_run_configuration(self.context.get("request"), obj):
+            return RunExecutionSerializer(execution, context=self.context).data
+        return {
+            "uuid": str(execution.uuid),
+            "status": execution.status,
+            "started_at": execution.started_at.isoformat() if execution.started_at else None,
+            "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
+        }
+
+    def to_representation(self, instance):
+        """Use a deliberate usage surface for members, machine credentials and unknown contexts."""
+        from .run_access import can_inspect_run_configuration
+
+        data = super().to_representation(instance)
+        if not can_inspect_run_configuration(self.context.get("request"), instance):
+            fields = {
+                "uuid",
+                "status",
+                "source",
+                "input_message",
+                "output_message",
+                "retry_of_run_uuid",
+                "error",
+                "outcome",
+                "termination_detail",
+                "citations",
+                "planned_evidence",
+                "answer",
+                "output_files",
+                "feedback",
+                "feedback_updated_at",
+                "started_at",
+                "finished_at",
+                "resume_by",
+                "created_at",
+                "idempotency_key",
+                "steps",
+                "execution",
+            }
+            data = {key: value for key, value in data.items() if key in fields}
+            data["error"] = public_run_error(instance.error)
+        return data
 
     def _is_agent_request(self):
         """Identify agent-kit clients by their authenticated credential scope."""
@@ -4645,6 +5070,8 @@ class SessionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "uuid",
+            "assistant",
+            "routing_mode",
             "user",
             "title_manually_edited",
             "title_generation_status",
@@ -4662,15 +5089,22 @@ class SessionSerializer(serializers.ModelSerializer):
         if obj.routing_mode != Session.RoutingMode.SMART:
             return []
         selected = {str(value) for value in (obj.allowed_assistant_uuids or [])}
+        request = self.context.get("request")
+        if request is None:
+            return []
+        queryset = Assistant.objects.visible_to(request.user).filter(uuid__in=selected)
+        key_assistants = tenant_api_key_selected_assistants(request)
+        if key_assistants is not None:
+            queryset = queryset.filter(uuid__in=key_assistants)
+        if obj.tenant_id:
+            queryset = queryset.filter(tenant_id=obj.tenant_id)
         return [
             {
                 "uuid": str(item.uuid),
                 "name": item.name,
                 "capability": item.capability,
             }
-            for item in Assistant.objects.filter(uuid__in=selected)
-            .exclude(is_system=True)
-            .order_by("name")
+            for item in queryset.exclude(is_system=True).order_by("name")
         ]
 
     def validate_title(self, value):
@@ -4749,6 +5183,17 @@ class SessionCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         request = self.context["request"]
+        if validated_data["routing_mode"] == Session.RoutingMode.SMART:
+            if getattr(request, "auth", None) and (
+                request.auth.get("principal_type") == "tenant_api_key"
+            ):
+                raise PermissionDenied("API_KEY_SMART_UNSUPPORTED")
+        assistant_uuid = validated_data.get("assistant_uuid")
+        if assistant_uuid is not None and not tenant_api_key_allows_assistant(
+            request,
+            assistant_uuid,
+        ):
+            raise PermissionDenied("API_KEY_ASSISTANT_FORBIDDEN")
         try:
             if validated_data["routing_mode"] == Session.RoutingMode.SMART:
                 return create_smart_collaboration_session(

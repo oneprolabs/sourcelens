@@ -23,7 +23,10 @@ export const useLensStore = defineStore('lens', () => {
   const error = ref('')
 
   const activeAssistants = computed(() =>
-    assistants.value.filter((assistant) => assistant.status === 'active')
+    assistants.value.filter(
+      (assistant) =>
+        assistant.status === 'active' && assistant.is_enabled !== false
+    )
   )
 
   async function loadAssistants() {

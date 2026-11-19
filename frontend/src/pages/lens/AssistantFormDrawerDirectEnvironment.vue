@@ -4,9 +4,163 @@
     :title="drawerTitle"
     :subtitle="drawerSubtitle"
     width="6xl"
-    @close="$emit('close')"
+    panel-class="assistant-drawer assistant-form-drawer"
+    @close="!saving && $emit('close')"
   >
-    <div class="assistant-wizard-layout">
+    <div v-if="!typePickerOpen && quickCreate" class="assistant-type-summary">
+      <span class="assistant-current-type">{{
+        t('lensAdmin.creation.currentType')
+      }}</span>
+      <span class="text-sm font-medium text-ink-800">{{
+        selectedTypeLabel
+      }}</span>
+      <BaseButton
+        variant="outline"
+        :disabled="saving || (mode === 'edit' && form.status !== 'active')"
+        @click="typePickerOpen = true"
+        >{{ t('lensAdmin.creation.changeType') }}</BaseButton
+      >
+    </div>
+    <div
+      v-if="typePickerOpen"
+      class="space-y-4"
+      data-testid="assistant-type-picker"
+    >
+      <div class="assistant-type-lead">
+        <h3>{{ t('lensAdmin.creation.chooseTypeTitle') }}</h3>
+        <p>{{ t('lensAdmin.creation.chooseTypeDescription') }}</p>
+      </div>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div
+          v-for="type in pickerTypeOptions"
+          :key="type.value"
+          class="space-y-3 rounded-xl border border-line p-4"
+        >
+          <h3 class="assistant-type-title">
+            <component :is="type.icon" :size="14" aria-hidden="true" />{{
+              type.label
+            }}
+          </h3>
+          <p class="text-sm text-ink-600">
+            {{ t(`lensAdmin.creation.${type.value}Hint`) }}
+          </p>
+          <p class="assistant-type-meta">{{ type.requirement }}</p>
+          <p class="assistant-type-meta">{{ type.steps.join(' → ') }}</p>
+          <div class="flex flex-wrap gap-2">
+            <BaseButton
+              :disabled="saving"
+              @click="selectAssistantType(type.value)"
+              >{{ t('lensAdmin.creation.stepByStep') }}</BaseButton
+            >
+            <BaseButton
+              v-if="mode === 'create'"
+              variant="outline"
+              :disabled="saving"
+              @click="selectAssistantType(type.value, true)"
+              >{{ t('lensAdmin.creation.quickCreate') }}</BaseButton
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+    <fieldset
+      v-else-if="quickCreate"
+      :disabled="saving"
+      class="min-w-0 space-y-5"
+      data-testid="assistant-quick-create"
+    >
+      <p class="text-sm text-ink-600">
+        {{ t('lensAdmin.creation.quickHint') }}
+      </p>
+      <FormRow :label="t('lensAdmin.fields.name') + ' *'">
+        <input
+          v-model="form.name"
+          class="form-input"
+          required
+          maxlength="160"
+        />
+      </FormRow>
+      <FormRow
+        v-if="requiresWorkspace"
+        :label="t('lensAdmin.datasourceSelection.title') + ' *'"
+      >
+        <div class="space-y-2">
+          <label
+            v-for="source in filteredDatasourceOptions"
+            :key="source.uuid"
+            class="flex items-center gap-2 rounded-lg border border-line p-3 text-sm"
+          >
+            <input
+              type="checkbox"
+              :checked="hasAnySourceBinding(source)"
+              @change="toggleQuickDatasource(source, $event.target.checked)"
+            />
+            <span>{{ source.name }}</span>
+          </label>
+          <p
+            v-if="!filteredDatasourceOptions.length"
+            class="text-sm text-amber-700"
+          >
+            {{ t('lensAdmin.creation.needsKnowledge') }}
+          </p>
+        </div>
+      </FormRow>
+      <FormRow
+        v-else-if="isSmartMode"
+        :label="t('lensAdmin.wizard.collaborationMembers') + ' *'"
+      >
+        <div class="space-y-2">
+          <label
+            v-for="assistant in collaborationMemberOptions"
+            :key="assistant.uuid"
+            class="flex items-center gap-2 rounded-lg border border-line p-3 text-sm"
+          >
+            <input
+              v-model="form.collaboration_member_uuids"
+              type="checkbox"
+              :value="assistant.uuid"
+            />
+            <span>{{ assistant.name }}</span>
+          </label>
+          <p
+            v-if="!collaborationMemberOptions.length"
+            class="text-sm text-amber-700"
+          >
+            {{ t('lensAdmin.wizard.noCollaborationMembers') }}
+          </p>
+        </div>
+      </FormRow>
+      <FormRow v-else :label="t('lensAdmin.wizard.skillsSection') + ' *'">
+        <div class="space-y-2">
+          <label
+            v-for="skill in quickSkillOptions"
+            :key="skill.uuid"
+            class="flex items-center gap-2 rounded-lg border border-line p-3 text-sm"
+          >
+            <input
+              v-model="form.skill_uuids"
+              type="checkbox"
+              :value="skill.uuid"
+            />
+            <span>{{ skill.name }}</span>
+          </label>
+          <p class="text-xs text-ink-500">
+            {{ t('lensAdmin.creation.quickSkillsHint') }}
+          </p>
+        </div>
+      </FormRow>
+      <div
+        class="space-y-2 rounded-lg border border-line bg-surface-sunken p-4 text-sm text-ink-600"
+      >
+        <p>
+          {{ t('lensAdmin.creation.defaultModel') }}:
+          <strong>{{ quickModelLabel }}</strong>
+        </p>
+        <p>{{ t('lensAdmin.creation.quickDefaults') }}</p>
+      </div>
+      <p v-if="formError" class="text-sm text-danger-700">{{ formError }}</p>
+    </fieldset>
+    <fieldset v-else :disabled="saving" class="assistant-wizard-layout min-w-0">
       <aside class="assistant-wizard-sidebar">
         <nav
           class="assistant-wizard-steps"
@@ -21,6 +175,7 @@
                 'assistant-wizard-step-complete': i + 1 < wizardStep
               }"
               :aria-current="i + 1 === wizardStep ? 'step' : undefined"
+              :disabled="saving"
               @click="wizardStep = i + 1"
             >
               <span class="assistant-wizard-number">
@@ -38,7 +193,7 @@
                     d="M5 13l4 4L19 7"
                   />
                 </svg>
-                <span v-else>{{ String(i + 1).padStart(2, '0') }}</span>
+                <span v-else>{{ i + 1 }}</span>
               </span>
               <span class="assistant-wizard-step-copy">
                 <strong>{{ step.title }}</strong>
@@ -55,6 +210,20 @@
           }}
         </p>
       </aside>
+      <div class="assistant-type-summary">
+        <span class="assistant-current-type">{{
+          t('lensAdmin.creation.currentType')
+        }}</span>
+        <span class="text-sm font-medium text-ink-800">{{
+          selectedTypeLabel
+        }}</span>
+        <BaseButton
+          variant="outline"
+          :disabled="saving || (mode === 'edit' && form.status !== 'active')"
+          @click="typePickerOpen = true"
+          >{{ t('lensAdmin.creation.changeType') }}</BaseButton
+        >
+      </div>
 
       <section class="assistant-wizard-panel">
         <header class="assistant-wizard-heading">
@@ -62,45 +231,28 @@
             <h3>{{ wizardStepsMeta[wizardStep - 1]?.title }}</h3>
             <p>{{ wizardStepsMeta[wizardStep - 1]?.description }}</p>
           </div>
-          <span>{{ String(wizardStep).padStart(2, '0') }} / 04</span>
+          <span
+            >{{ String(wizardStep).padStart(2, '0') }} /
+            {{ String(wizardStepCount).padStart(2, '0') }}</span
+          >
         </header>
 
         <!-- Wizard Step 1 — Basics & Models -->
         <div
-          v-if="wizardStep === 1"
-          class="min-w-0 space-y-5 overflow-x-hidden"
+          v-if="activeStepKey === 'basic'"
+          class="assistant-basic-fields min-w-0"
         >
           <FormRow :label="t('lensAdmin.fields.name')">
             <input v-model="form.name" class="form-input" required />
           </FormRow>
           <FormRow :label="t('lensAdmin.fields.description')">
-            <textarea
+            <input
               v-model="form.description"
-              class="form-input min-h-24"
+              class="form-input"
               :placeholder="t('lensAdmin.placeholders.assistantDescription')"
             />
             <p class="mt-1 text-xs text-ink-500">
               {{ t('lensAdmin.wizard.assistantDescriptionHint') }}
-            </p>
-          </FormRow>
-          <FormRow :label="t('lensAdmin.fields.routingMode')">
-            <BaseSelect
-              v-model="form.mode"
-              :disabled="mode === 'edit' && form.status !== 'active'"
-            >
-              <option value="direct">
-                {{ t('lensAdmin.routingModes.direct') }}
-              </option>
-              <option value="smart">
-                {{ t('lensAdmin.routingModes.smart') }}
-              </option>
-            </BaseSelect>
-            <p class="mt-1 text-xs text-ink-500">
-              {{
-                t(
-                  `lensAdmin.routingModes.${isSmartMode ? 'smartHint' : 'directHint'}`
-                )
-              }}
             </p>
           </FormRow>
           <FormRow :label="t('lensAdmin.fields.slug')">
@@ -150,6 +302,41 @@
                   `lensAdmin.wizard.${isSmartMode ? 'smartAgentModelHint' : 'agentModelHint'}`
                 )
               }}
+            </p>
+          </FormRow>
+          <FormRow
+            v-if="!isSmartMode"
+            :label="t('lensAdmin.fields.multimodalModel')"
+          >
+            <BaseSelect v-model="form.multimodal_model_ref">
+              <option value="">
+                {{ t('lensAdmin.placeholders.noModel') }}
+              </option>
+              <option
+                v-for="c in visionModelOptions"
+                :key="c.uuid"
+                :value="c.uuid"
+                :disabled="!isVisionModelEligible(c)"
+              >
+                {{ formatLLMConfigLabel(c) }}
+                {{ isVisionModelEligible(c) ? ' · Vision' : ' · Unavailable' }}
+              </option>
+            </BaseSelect>
+            <p
+              v-if="!visionModelOptions.some(isVisionModelEligible)"
+              class="mt-1 text-xs text-amber-700"
+            >
+              {{ t('lensAdmin.wizard.noVisionModel') }}
+              <router-link
+                v-if="isAdmin"
+                to="/management/llm/config"
+                class="ml-1 font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800"
+              >
+                {{ t('lensAdmin.wizard.configureVisionModel') }}
+              </router-link>
+            </p>
+            <p class="mt-1 text-xs text-ink-500">
+              {{ t('lensAdmin.wizard.multimodalModelHint') }}
             </p>
           </FormRow>
           <FormRow :label="t('lensAdmin.fields.decisionModel')">
@@ -308,41 +495,6 @@
             </div>
           </FormRow>
           <FormRow
-            v-if="!isSmartMode"
-            :label="t('lensAdmin.fields.multimodalModel')"
-          >
-            <BaseSelect v-model="form.multimodal_model_ref">
-              <option value="">
-                {{ t('lensAdmin.placeholders.noModel') }}
-              </option>
-              <option
-                v-for="c in visionModelOptions"
-                :key="c.uuid"
-                :value="c.uuid"
-                :disabled="!isVisionModelEligible(c)"
-              >
-                {{ formatLLMConfigLabel(c) }}
-                {{ isVisionModelEligible(c) ? ' · Vision' : ' · Unavailable' }}
-              </option>
-            </BaseSelect>
-            <p
-              v-if="!visionModelOptions.some(isVisionModelEligible)"
-              class="mt-1 text-xs text-amber-700"
-            >
-              {{ t('lensAdmin.wizard.noVisionModel') }}
-              <router-link
-                v-if="isAdmin"
-                to="/management/llm/config"
-                class="ml-1 font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800"
-              >
-                {{ t('lensAdmin.wizard.configureVisionModel') }}
-              </router-link>
-            </p>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ t('lensAdmin.wizard.multimodalModelHint') }}
-            </p>
-          </FormRow>
-          <FormRow
             v-if="mode === 'edit'"
             :label="t('lensAdmin.fields.maxConcurrency')"
           >
@@ -357,7 +509,13 @@
               {{ t('lensAdmin.wizard.maxConcurrencyHint') }}
             </p>
           </FormRow>
-          <FormRow :label="t('lensAdmin.fields.executionMaxTokens')">
+          <h4 class="assistant-budget-heading">
+            {{ t('lensAdmin.assistantDetail.executionBudget') }}
+          </h4>
+          <FormRow
+            class="assistant-budget-field"
+            :label="t('lensAdmin.fields.executionMaxTokens')"
+          >
             <input
               v-model.number="form.execution_max_tokens"
               type="number"
@@ -367,7 +525,10 @@
               class="form-input w-40"
             />
           </FormRow>
-          <FormRow :label="t('lensAdmin.fields.executionMaxTurns')">
+          <FormRow
+            class="assistant-budget-field"
+            :label="t('lensAdmin.fields.executionMaxTurns')"
+          >
             <input
               v-model.number="form.execution_max_agent_turns"
               type="number"
@@ -380,44 +541,31 @@
               {{ t('lensAdmin.executionBudgetHint') }}
             </p>
           </FormRow>
+          <div v-if="isSmartMode" class="space-y-2">
+            <span class="text-sm font-medium text-ink-700">{{
+              t('lensAdmin.wizard.contextLabel')
+            }}</span>
+            <p class="mb-2 text-xs text-ink-500">
+              {{
+                t(
+                  `lensAdmin.wizard.${
+                    isSmartMode ? 'smartContextHint' : 'contextHint'
+                  }`
+                )
+              }}
+            </p>
+            <textarea
+              v-model="form.workspace_guide_overview"
+              class="form-input min-h-60"
+              :placeholder="t('lensAdmin.wizard.contextPlaceholder')"
+            />
+          </div>
         </div>
 
         <!-- Wizard Step 2 — Execution -->
-        <div v-else-if="wizardStep === 2" class="space-y-4">
-          <div v-if="form.mode === 'direct'" class="space-y-4">
-            <FormRow :label="t('lensAdmin.fields.type')">
-              <div class="grid gap-2 sm:grid-cols-3" role="radiogroup">
-                <label
-                  v-for="type in assistantTypeOptions"
-                  :key="type.value"
-                  class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors"
-                  :class="
-                    form.capability === type.value
-                      ? 'border-brand-600 bg-brand-50 text-brand-700'
-                      : 'border-line bg-surface text-ink-600 hover:border-brand-300'
-                  "
-                >
-                  <input
-                    v-model="form.capability"
-                    type="radio"
-                    :value="type.value"
-                    class="sr-only"
-                  />
-                  <span
-                    class="h-3 w-3 rounded-full border-2"
-                    :class="
-                      form.capability === type.value
-                        ? 'border-brand-600 bg-brand-600'
-                        : 'border-line'
-                    "
-                  />
-                  <span>{{ type.label }}</span>
-                </label>
-              </div>
-            </FormRow>
-          </div>
+        <div v-else-if="activeStepKey === 'execution'" class="space-y-4">
           <div
-            v-else
+            v-if="isSmartMode"
             class="space-y-2 rounded-md border border-primary-200 bg-primary-50/50 p-3"
             data-testid="fixed-collaboration-members"
           >
@@ -676,13 +824,10 @@
         </div>
 
         <!-- Wizard Step 3 — Workspace, Skills, Environment & MCP -->
-        <div v-else-if="wizardStep === 3" class="flex flex-col space-y-5">
-          <div
-            v-if="isSmartMode"
-            class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700"
-          >
-            {{ t('lensAdmin.wizard.smartResourcesHint') }}
-          </div>
+        <div
+          v-else-if="activeStepKey === 'tools'"
+          class="flex flex-col space-y-5"
+        >
           <div class="order-1">
             <span class="text-sm font-medium text-ink-700">{{
               t('lensAdmin.wizard.contextLabel')
@@ -1401,18 +1546,18 @@
         </div>
 
         <!-- Wizard Step 4 — Authorization -->
-        <div v-else-if="wizardStep === 4" class="space-y-5">
+        <div v-else-if="activeStepKey === 'access'" class="space-y-5">
           <FormRow :label="t('lensAdmin.fields.visibility')">
-            <div class="grid grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
               <label
-                v-for="opt in ['public', 'private']"
+                v-for="opt in ['public', 'tenant', 'private']"
                 :key="opt"
                 class="flex cursor-pointer items-start gap-3 rounded-lg border-2 p-3 transition-colors"
                 :class="
                   form.visibility === opt
-                    ? opt === 'private'
-                      ? 'border-amber-400 bg-amber-50'
-                      : 'border-emerald-400 bg-emerald-50'
+                    ? opt === 'public'
+                      ? 'border-warning-500 bg-warning-50'
+                      : 'border-primary-500 bg-primary-50'
                     : 'border-line bg-surface hover:border-brand-300'
                 "
               >
@@ -1420,16 +1565,23 @@
                   type="radio"
                   :value="opt"
                   v-model="form.visibility"
-                  class="sr-only"
+                  name="assistant-visibility"
+                  class="mt-1 h-4 w-4 shrink-0 accent-primary-600"
                 />
                 <component
-                  :is="opt === 'private' ? LockIcon : GlobeIcon"
+                  :is="
+                    opt === 'private'
+                      ? LockIcon
+                      : opt === 'tenant'
+                        ? UsersIcon
+                        : GlobeIcon
+                  "
                   class="mt-0.5 h-5 w-5 flex-shrink-0"
                   :class="
                     form.visibility === opt
-                      ? opt === 'private'
-                        ? 'text-amber-600'
-                        : 'text-emerald-600'
+                      ? opt === 'public'
+                        ? 'text-warning-700'
+                        : 'text-primary-600'
                       : 'text-ink-400'
                   "
                 />
@@ -1453,6 +1605,13 @@
             </p>
           </FormRow>
 
+          <p
+            v-if="form.visibility === 'public'"
+            role="status"
+            class="rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-700"
+          >
+            {{ t('lensAdmin.visibility.publicWarning') }}
+          </p>
           <FormRow
             v-if="form.visibility === 'public'"
             :label="t('lensAdmin.wizard.publicSharePolicyLabel')"
@@ -1473,7 +1632,16 @@
             </p>
           </FormRow>
 
-          <div v-if="form.visibility === 'private'" class="space-y-4">
+          <p
+            v-if="form.visibility === 'private' && !canManageAccessGrants"
+            class="text-sm text-ink-500"
+          >
+            {{ t('lensAdmin.access.delegatedHint') }}
+          </p>
+          <div
+            v-if="form.visibility === 'private' && canManageAccessGrants"
+            class="space-y-4"
+          >
             <div
               class="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
             >
@@ -1681,44 +1849,85 @@
           </div>
         </div>
 
+        <p
+          v-if="
+            activeStepKey === 'access' &&
+            !canSaveAssistant &&
+            !saving &&
+            !formResourcesLoading
+          "
+          class="mt-4 text-sm text-amber-700"
+        >
+          {{ t('lensAdmin.creation.validationHint') }}
+        </p>
         <p v-if="formError" class="mt-4 text-sm text-danger-700">
           {{ formError }}
         </p>
       </section>
-    </div>
+    </fieldset>
 
     <template #footer>
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <BaseButton
           variant="outline"
-          @click="wizardStep > 1 ? prevWizardStep() : $emit('close')"
+          :disabled="saving"
+          @click="
+            !typePickerOpen && !quickCreate && wizardStep > 1
+              ? prevWizardStep()
+              : $emit('close')
+          "
         >
-          {{ wizardStep > 1 ? t('lensAdmin.wizard.back') : t('common.cancel') }}
+          {{
+            !typePickerOpen && !quickCreate && wizardStep > 1
+              ? t('lensAdmin.wizard.back')
+              : t('common.cancel')
+          }}
         </BaseButton>
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-ink-400"
-            >{{ wizardStep }} / {{ WIZARD_STEP_COUNT }}</span
+        <div class="flex flex-wrap items-center gap-3">
+          <span v-if="typePickerOpen" class="text-xs text-ink-500">{{
+            t('lensAdmin.creation.chooseTypeFooter')
+          }}</span>
+          <BaseButton
+            v-else-if="quickCreate"
+            variant="outline"
+            :disabled="saving"
+            @click="useStepByStep"
+            >{{ t('lensAdmin.creation.stepByStep') }}</BaseButton
+          >
+          <span v-else class="text-xs text-ink-400"
+            >{{ wizardStep }} / {{ wizardStepCount }}</span
           >
           <BaseButton
-            v-if="wizardStep < WIZARD_STEP_COUNT"
+            v-if="
+              !typePickerOpen && !quickCreate && wizardStep < wizardStepCount
+            "
             variant="primary"
-            :disabled="!canProceedWizard"
+            :disabled="saving || !canProceedWizard"
             @click="nextWizardStep"
           >
             {{ t('lensAdmin.wizard.next') }}
           </BaseButton>
-          <BaseButton
-            v-else
-            variant="primary"
-            :loading="saving"
-            @click="$emit('save')"
-          >
-            {{
-              mode === 'create'
-                ? t('lensAdmin.wizard.finish')
-                : t('common.save')
-            }}
-          </BaseButton>
+          <template v-else-if="!typePickerOpen">
+            <BaseButton
+              :variant="continueLabel ? 'outline' : 'primary'"
+              :loading="saving"
+              :disabled="!canSaveAssistant"
+              @click="submitAssistant()"
+            >
+              {{
+                mode === 'create'
+                  ? t('lensAdmin.wizard.finish')
+                  : t('common.save')
+              }}
+            </BaseButton>
+            <BaseButton
+              v-if="continueLabel"
+              :loading="saving"
+              :disabled="!canSaveAssistant"
+              @click="submitAssistant(true)"
+              >{{ continueLabel }}</BaseButton
+            >
+          </template>
         </div>
       </div>
     </template>
@@ -1727,6 +1936,9 @@
 
 <script setup>
 import {
+  Cpu,
+  Database,
+  MessageSquare,
   Eye as EyeIcon,
   EyeOff as EyeOffIcon,
   Globe as GlobeIcon,
@@ -1738,7 +1950,7 @@ import {
 import { computed, defineComponent, h, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { managementApi } from '@/admin/api/management'
+import { listAssistantAccessSubjects } from '@/api/lens'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import PluginIcon from '@/components/ui/PluginIcon.vue'
 import BaseDrawer from '@/components/ui/BaseDrawer.vue'
@@ -1746,6 +1958,7 @@ import BaseSelect from '@/components/ui/BaseSelect.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { useUserStore } from '@/store/user'
 import { pluginDisplayName as translatedPluginDisplayName } from '@/utils/pluginI18n'
+import { generateUUID } from '@/utils/uuid'
 
 import EnvironmentSetValues from './components/EnvironmentSetValues.vue'
 
@@ -1785,19 +1998,22 @@ const props = defineProps({
   datasourceOptions: { type: Array, default: () => [] },
   formResourcesLoading: Boolean,
   saving: Boolean,
+  continueLabel: { type: String, default: '' },
   formError: { type: String, default: '' }
 })
 
-defineEmits(['close', 'save'])
+const emit = defineEmits(['close', 'save'])
 
 const { t, te } = useI18n()
 const userStore = useUserStore()
+const canManageAccessGrants = computed(() => !userStore.delegation)
 const isAdmin = computed(() => userStore.userHasFeature('admin_console'))
 const isSmartMode = computed(() => props.form.mode === 'smart')
 const collaborationMemberOptions = computed(() =>
   props.assistants.filter(
     (assistant) =>
       assistant.status === 'active' &&
+      assistant.is_enabled !== false &&
       (assistant.mode || assistant.routing_mode || 'direct') === 'direct' &&
       assistant.uuid !== props.form.uuid
   )
@@ -1840,7 +2056,8 @@ const missingSkillPluginRequirements = computed(() => {
 })
 
 const emptyValue = EMPTY_VALUE
-const WIZARD_STEP_COUNT = 4
+const typePickerOpen = ref(false)
+const quickCreate = ref(false)
 const ACCESS_PAGE_SIZE = 20
 const SEARCH_DELAY_MS = 250
 const LOAD_MORE_THRESHOLD_PX = 96
@@ -1900,6 +2117,9 @@ watch(
   (show) => {
     if (show) {
       wizardStep.value = 1
+      typePickerOpen.value = props.mode === 'create' && !props.form.capability
+      quickCreate.value = false
+      datasourceSearch.value = ''
       skillSearch.value = ''
       initialSkillSelection.value =
         props.mode === 'edit' ? [...(props.form.skill_uuids || [])] : []
@@ -1915,7 +2135,8 @@ watch(
 watch(
   groupSearch,
   () => {
-    if (!props.show || resettingAccessSelectors) return
+    if (!props.show || resettingAccessSelectors || !canManageAccessGrants.value)
+      return
     if (groupSearchTimer) clearTimeout(groupSearchTimer)
     groupAbortController?.abort()
     groupRequest.invalidate()
@@ -1933,10 +2154,15 @@ watch(
   { flush: 'sync' }
 )
 
+watch(canManageAccessGrants, () => {
+  if (props.show) initializeAccessSelectors()
+})
+
 watch(
   userSearch,
   () => {
-    if (!props.show || resettingAccessSelectors) return
+    if (!props.show || resettingAccessSelectors || !canManageAccessGrants.value)
+      return
     if (userSearchTimer) clearTimeout(userSearchTimer)
     userAbortController?.abort()
     userRequest.invalidate()
@@ -1983,7 +2209,7 @@ const FormRow = defineComponent({
   },
   setup(rowProps, { slots }) {
     return () =>
-      h('div', [
+      h('div', { class: 'assistant-form-row' }, [
         h(
           'label',
           { class: 'mb-1 block text-sm font-medium text-ink-700' },
@@ -2001,7 +2227,11 @@ const drawerTitle = computed(() =>
 )
 
 const drawerSubtitle = computed(() =>
-  props.mode === 'edit' ? props.form.name || '' : ''
+  typePickerOpen.value
+    ? t('lensAdmin.creation.chooseTypeHint')
+    : quickCreate.value
+      ? `${selectedTypeLabel.value} · ${t('lensAdmin.creation.quickCreate')}`
+      : `${selectedTypeLabel.value} · ${wizardStep.value} / ${wizardStepCount.value}`
 )
 
 const slugMaxLength = 180
@@ -2021,80 +2251,264 @@ const slugLengthClass = computed(() => {
   return 'text-ink-400'
 })
 
-const wizardStepsMeta = computed(() => [
-  {
-    key: 'basic',
-    title: t('lensAdmin.wizard.step1Title'),
-    description: t('lensAdmin.wizard.step1Desc')
-  },
-  {
-    key: 'execution',
-    title: t('lensAdmin.wizard.step2Title'),
-    description: t(
-      `lensAdmin.wizard.${isSmartMode.value ? 'step2SmartDesc' : 'step2Desc'}`
-    )
-  },
-  {
-    key: 'tools',
-    title: t('lensAdmin.wizard.step3Title'),
-    description: t(
-      `lensAdmin.wizard.${isSmartMode.value ? 'step3SmartDesc' : 'step3Desc'}`
-    )
-  },
-  {
-    key: 'access',
-    title: t('lensAdmin.wizard.step4Title'),
-    description: t('lensAdmin.wizard.step4Desc')
-  }
-])
-
-const canProceedWizard = computed(() => {
-  if (wizardStep.value === 1) {
-    return (
-      !!props.form.name?.trim() &&
-      slugPattern.test(canonicalSlug.value) &&
-      canonicalSlug.value.length <= slugMaxLength &&
-      !!props.form.agent_model_ref
-    )
-  }
-  if (wizardStep.value === 2) {
-    if (isSmartMode.value) {
-      return (props.form.collaboration_member_uuids || []).length > 0
-    }
-    if (!props.form.capability) return false
-    if (isGeneralChatTask.value) return true
-    return (props.form.datasource_bindings || []).length > 0
-  }
-  if (wizardStep.value === 3) {
-    if (isSmartMode.value) return true
-    const hasGeneralChatExecutionTool =
-      !isGeneralChatTask.value ||
-      (props.form.skill_uuids || []).length > 0 ||
-      selectedPluginBindings.value.some((binding) => binding.enabled !== false)
-    return (
-      hasGeneralChatExecutionTool &&
-      selectedSkillEnvironmentsConfigured() &&
-      selectedMcpEnvironmentsConfigured() &&
-      missingSkillPluginRequirements.value.length === 0
-    )
-  }
-  return true
-})
-
+const selectedType = computed(() =>
+  isSmartMode.value ? 'smart' : props.form.capability
+)
 const assistantTypeOptions = computed(() => [
   {
-    value: 'general_chat',
-    label: t('lensAdmin.assistantTypes.generalChat')
+    value: 'knowledge_qa',
+    label: t('lensAdmin.assistantTypes.knowledgeQa'),
+    icon: Database
   },
   {
     value: 'code_analysis',
-    label: t('lensAdmin.assistantTypes.codeAnalysis')
+    label: t('lensAdmin.assistantTypes.codeAnalysis'),
+    icon: Cpu
   },
   {
-    value: 'knowledge_qa',
-    label: t('lensAdmin.assistantTypes.knowledgeQa')
-  }
+    value: 'general_chat',
+    label: t('lensAdmin.assistantTypes.generalChat'),
+    icon: MessageSquare
+  },
+  { value: 'smart', label: t('lensAdmin.routingModes.smart'), icon: UsersIcon }
 ])
+const pickerTypeOptions = computed(() =>
+  assistantTypeOptions.value.map((type) => ({
+    ...type,
+    requirement: t(
+      `lensAdmin.creation.${type.value === 'general_chat' ? 'requiresTools' : type.value === 'smart' ? 'requiresMembers' : 'requiresKnowledge'}`
+    ),
+    steps: [
+      t('lensAdmin.wizard.step1Title'),
+      ...(type.value === 'smart'
+        ? [t('lensAdmin.wizard.collaborationMembers')]
+        : type.value === 'general_chat'
+          ? []
+          : [t('lensAdmin.creation.knowledgeStep')]),
+      ...(type.value === 'smart' ? [] : [t('lensAdmin.wizard.step3Title')]),
+      t('lensAdmin.wizard.step4Title')
+    ]
+  }))
+)
+const selectedTypeLabel = computed(
+  () =>
+    assistantTypeOptions.value.find((type) => type.value === selectedType.value)
+      ?.label || ''
+)
+const wizardStepsMeta = computed(() => {
+  const steps = [
+    {
+      key: 'basic',
+      title: t('lensAdmin.wizard.step1Title'),
+      description: t('lensAdmin.wizard.step1Desc')
+    }
+  ]
+  if (isSmartMode.value || requiresWorkspace.value) {
+    steps.push({
+      key: 'execution',
+      title: t(
+        isSmartMode.value
+          ? 'lensAdmin.wizard.collaborationMembers'
+          : 'lensAdmin.creation.knowledgeStep'
+      ),
+      description: t(
+        isSmartMode.value
+          ? 'lensAdmin.wizard.step2SmartDesc'
+          : 'lensAdmin.creation.knowledgeStepHint'
+      )
+    })
+  }
+  if (!isSmartMode.value) {
+    steps.push({
+      key: 'tools',
+      title: t('lensAdmin.wizard.step3Title'),
+      description: t('lensAdmin.wizard.step3Desc')
+    })
+  }
+  steps.push({
+    key: 'access',
+    title: t('lensAdmin.wizard.step4Title'),
+    description: t('lensAdmin.wizard.step4Desc')
+  })
+  return steps
+})
+const wizardStepCount = computed(() => wizardStepsMeta.value.length)
+const activeStepKey = computed(
+  () => wizardStepsMeta.value[wizardStep.value - 1]?.key
+)
+const basicConfigurationComplete = computed(
+  () =>
+    !!props.form.name?.trim() &&
+    props.form.name.trim().length <= 160 &&
+    slugPattern.test(canonicalSlug.value) &&
+    canonicalSlug.value.length <= slugMaxLength &&
+    chatModelOptions.value.some(
+      (model) => model.uuid === props.form.agent_model_ref
+    )
+)
+const executionConfigurationComplete = computed(() => {
+  if (isSmartMode.value) {
+    const members = props.form.collaboration_member_uuids || []
+    return (
+      members.length > 0 &&
+      (!quickCreate.value ||
+        members.every((uuid) =>
+          collaborationMemberOptions.value.some(
+            (member) => member.uuid === uuid
+          )
+        ))
+    )
+  }
+  if (!requiresWorkspace.value) return !!props.form.capability
+  const bindings = props.form.datasource_bindings || []
+  return (
+    bindings.length > 0 &&
+    (!quickCreate.value ||
+      bindings.every((binding) =>
+        props.datasourceOptions.some(
+          (source) =>
+            source.uuid === binding.datasource_uuid &&
+            source.status === 'active'
+        )
+      ))
+  )
+})
+const toolsConfigurationComplete = computed(() => {
+  if (isSmartMode.value) return true
+  const selected = props.form.skill_uuids || []
+  const hasGeneralChatExecutionTool =
+    !isGeneralChatTask.value ||
+    selected.length > 0 ||
+    selectedPluginBindings.value.some((binding) => binding.enabled !== false)
+  return (
+    hasGeneralChatExecutionTool &&
+    selectedSkillEnvironmentsConfigured() &&
+    selectedMcpEnvironmentsConfigured() &&
+    missingSkillPluginRequirements.value.length === 0
+  )
+})
+const canProceedWizard = computed(() => {
+  if (props.saving || props.formResourcesLoading) return false
+  if (activeStepKey.value === 'basic') return basicConfigurationComplete.value
+  if (activeStepKey.value === 'execution')
+    return executionConfigurationComplete.value
+  if (activeStepKey.value === 'tools') return toolsConfigurationComplete.value
+  return true
+})
+const quickSkillOptions = computed(() =>
+  filterSelectableSkills(props.skills, '').filter(
+    (skill) =>
+      skill.enabled !== false &&
+      !skillEnvironment(skill).length &&
+      !(skill.definition?.required_plugins || []).length
+  )
+)
+const quickModelLabel = computed(() => {
+  const model = chatModelOptions.value.find(
+    (item) => item.uuid === props.form.agent_model_ref
+  )
+  return model
+    ? formatLLMConfigLabel(model)
+    : t('lensAdmin.creation.needsModel')
+})
+const canSaveAssistant = computed(
+  () =>
+    !props.saving &&
+    !props.formResourcesLoading &&
+    !typePickerOpen.value &&
+    basicConfigurationComplete.value &&
+    executionConfigurationComplete.value &&
+    toolsConfigurationComplete.value &&
+    (!quickCreate.value ||
+      !isGeneralChatTask.value ||
+      isSmartMode.value ||
+      ((props.form.skill_uuids || []).length > 0 &&
+        props.form.skill_uuids.every((uuid) =>
+          quickSkillOptions.value.some((skill) => skill.uuid === uuid)
+        )))
+)
+
+function selectAssistantType(type, quick = false) {
+  if (props.saving) return
+  const previousType = selectedType.value
+  props.form.mode = type === 'smart' ? 'smart' : 'direct'
+  props.form.capability = type === 'smart' ? 'general_chat' : type
+  if (previousType !== type) {
+    wizardStep.value = 1
+    props.form.collaboration_member_uuids = []
+    if (type === 'general_chat' || type === 'smart') {
+      props.form.datasource_bindings = []
+      props.form.lensnode_uuid = ''
+    }
+  }
+  quickCreate.value = quick && props.mode === 'create'
+  typePickerOpen.value = false
+  if (quickCreate.value) {
+    props.form.slug ||= `assistant-${generateUUID()}`
+    props.form.agent_model_ref = chatModelOptions.value.some(
+      (model) => model.uuid === props.form.agent_model_ref
+    )
+      ? props.form.agent_model_ref
+      : chatModelOptions.value[0]?.uuid || ''
+    props.form.visibility = 'private'
+    props.form.access_group_ids = []
+    props.form.access_user_ids = []
+    props.form.public_share_policy = 'inherit'
+    props.form.lensnode_uuid = ''
+    props.form.pre_prompt = ''
+    props.form.post_prompt = ''
+    props.form.workspace_guide_overview = ''
+    props.form.skill_environment_set_uuids = {}
+    props.form.skill_environment_drafts = {}
+    props.form.mcp_environment_set_uuids = {}
+    props.form.mcp_environment_drafts = {}
+    props.form.execution_max_tokens = 0
+    props.form.execution_max_agent_turns = 0
+    props.form.exclude_extensions_text = ''
+    props.form.exclude_dirs_text = ''
+    props.form.mcp_uuids = []
+    props.form.plugin_bindings = []
+    props.form.skill_uuids =
+      isGeneralChatTask.value && !isSmartMode.value
+        ? (props.form.skill_uuids || []).filter((uuid) =>
+            quickSkillOptions.value.some((skill) => skill.uuid === uuid)
+          )
+        : []
+    props.form.multimodal_model_ref = ''
+    props.form.decision_model_ref = ''
+    props.form.decision_auto = true
+    props.form.decision_gates = {}
+    props.form.decision_analyses = {}
+  }
+}
+
+function useStepByStep() {
+  if (props.saving) return
+  quickCreate.value = false
+  wizardStep.value = 1
+}
+
+function toggleQuickDatasource(source, checked) {
+  props.form.datasource_bindings = toggleBinding(
+    props.form.datasource_bindings || [],
+    source,
+    null,
+    checked
+  )
+}
+
+function submitAssistant(advance = false) {
+  if (canSaveAssistant.value) emit('save', advance)
+}
+
+watch(
+  () => props.llmConfigOptions,
+  () => {
+    if (quickCreate.value && !props.form.agent_model_ref && !props.saving) {
+      props.form.agent_model_ref = chatModelOptions.value[0]?.uuid || ''
+    }
+  }
+)
 
 const datasourceMenuOpen = ref(false)
 const datasourceSelectRef = ref(null)
@@ -2195,7 +2609,9 @@ watch(
 
 const chatModelOptions = computed(() =>
   props.llmConfigOptions.filter(
-    (config) => !config.model_type || config.model_type === 'llm'
+    (config) =>
+      config.is_active !== false &&
+      (!config.model_type || config.model_type === 'llm')
   )
 )
 const decisionModelOptions = computed(() =>
@@ -2521,15 +2937,22 @@ watch(
 )
 
 function nextWizardStep() {
-  if (wizardStep.value < WIZARD_STEP_COUNT) wizardStep.value++
+  if (canProceedWizard.value && wizardStep.value < wizardStepCount.value)
+    wizardStep.value++
 }
 
 function prevWizardStep() {
-  if (wizardStep.value > 1) wizardStep.value--
+  if (!props.saving && wizardStep.value > 1) wizardStep.value--
 }
 
 function userLabel(user) {
-  return user.display_name || user.username || user.email || `#${user.id}`
+  return (
+    user.display_name ||
+    user.name ||
+    user.username ||
+    user.email ||
+    `#${user.id}`
+  )
 }
 
 function userInitial(user) {
@@ -2611,12 +3034,18 @@ function initializeAccessSelectors() {
   userFailed.value = false
   userSearch.value = ''
   resettingAccessSelectors = false
+  if (!canManageAccessGrants.value) {
+    groupOptions.value = new Map()
+    userOptions.value = new Map()
+    return
+  }
   seedAssignedOptions()
   loadGroups(1)
   loadUsers(1)
 }
 
 async function loadGroups(page = groupPage.value) {
+  if (!canManageAccessGrants.value) return
   groupPage.value = page
   groupLoading.value = true
   groupFailed.value = false
@@ -2626,34 +3055,33 @@ async function loadGroups(page = groupPage.value) {
   const controller = new AbortController()
   groupAbortController = controller
   const result = await groupRequest.run(() =>
-    managementApi.getGroups(
+    listAssistantAccessSubjects(
       {
         page,
         page_size: ACCESS_PAGE_SIZE,
-        compact: true,
         ...(search ? { search } : {})
       },
       { signal: controller.signal }
     )
   )
-  if (!result.current) return
+  if (!result.current || !canManageAccessGrants.value) return
   if (groupAbortController === controller) groupAbortController = null
   groupLoading.value = false
   if (result.error) {
     groupFailed.value = true
     return
   }
-  const rows = Array.isArray(result.value)
-    ? result.value
-    : (result.value?.results ?? [])
-  groupPage.value = Number(result.value?.page) || page
-  groupTotal.value = Number(result.value?.count) || rows.length
+  const payload = result.value?.groups
+  const rows = payload?.results ?? []
+  groupPage.value = page
+  groupTotal.value = Number(payload?.count) || rows.length
   groupResults.value =
     page === 1 ? rows : appendUniqueOptions(groupResults.value, rows)
   cacheOptions(groupOptions, rows)
 }
 
 async function loadUsers(page = userPage.value) {
+  if (!canManageAccessGrants.value) return
   userPage.value = page
   userLoading.value = true
   userFailed.value = false
@@ -2663,28 +3091,26 @@ async function loadUsers(page = userPage.value) {
   const controller = new AbortController()
   userAbortController = controller
   const result = await userRequest.run(() =>
-    managementApi.getUsers(
+    listAssistantAccessSubjects(
       {
         page,
         page_size: ACCESS_PAGE_SIZE,
-        compact: true,
         ...(search ? { search } : {})
       },
       { signal: controller.signal }
     )
   )
-  if (!result.current) return
+  if (!result.current || !canManageAccessGrants.value) return
   if (userAbortController === controller) userAbortController = null
   userLoading.value = false
   if (result.error) {
     userFailed.value = true
     return
   }
-  const rows = Array.isArray(result.value)
-    ? result.value
-    : (result.value?.results ?? [])
-  userPage.value = Number(result.value?.page) || page
-  userTotal.value = Number(result.value?.count) || rows.length
+  const payload = result.value?.users
+  const rows = payload?.results ?? []
+  userPage.value = page
+  userTotal.value = Number(payload?.count) || rows.length
   userResults.value =
     page === 1 ? rows : appendUniqueOptions(userResults.value, rows)
   cacheOptions(userOptions, rows)

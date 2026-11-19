@@ -371,3 +371,166 @@ test('a previous run request cannot replace the selected run or end its loading 
     assert.deepEqual(errors, [])
   }
 })
+
+test('readonly delegation blocks both new and already confirmed run actions', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await source()
+  const extract = (name) => {
+    const start = contents.indexOf(name)
+    return contents.slice(start, contents.indexOf('\n}', start) + 2)
+  }
+  const context = vm.createContext({
+    canOperateRuns: { value: false },
+    pendingAction: { value: null },
+    actionLoading: { value: false },
+    cancelAdminRun: () => assert.fail('readonly cancellation reached the API')
+  })
+  vm.runInContext(extract('function requestRunAction('), context)
+  vm.runInContext(extract('async function confirmRunAction('), context)
+  context.requestRunAction('cancel', { uuid: 'running-run' })
+  assert.equal(context.pendingAction.value, null)
+  context.pendingAction.value = { type: 'cancel', run: { uuid: 'running-run' } }
+  await context.confirmRunAction()
+  assert.equal(context.actionLoading.value, false)
+})
+
+test('consumer export preserves readable content without requesting provider trajectory', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await source()
+  const start = contents.indexOf('async function exportRun(')
+  const script = contents.slice(start, contents.indexOf('\n}', start) + 2)
+  for (const allowed of [false, true]) {
+    let trajectoryRequests = 0
+    let exported
+    const context = vm.createContext({
+      selectedUuid: { value: 'consumer-run' },
+      detail: { value: { answer: 'Consumer answer' } },
+      canInspectConfiguration: { value: allowed },
+      getAdminRunTrajectoryExport: async () => {
+        trajectoryRequests++
+        return { events: ['provider trace'] }
+      },
+      Blob: class { constructor(parts) { exported = JSON.parse(parts[0]) } },
+      URL: { createObjectURL: () => 'blob:export', revokeObjectURL: () => {} },
+      document: {
+        createElement: () => ({ click() {} }),
+        body: { appendChild() {}, removeChild() {} }
+      },
+      t: (key) => key,
+      showSuccess() {},
+      showError: (error) => assert.fail(error),
+      extractErrorMessage: (error) => error.message
+    })
+    vm.runInContext(script, context)
+    await context.exportRun()
+    assert.equal(trajectoryRequests, allowed ? 1 : 0)
+    assert.equal(exported.run.answer, 'Consumer answer')
+    assert.equal(Boolean(exported.trajectory), allowed)
+  }
+})
+
+test('provider execution panels are not mounted without configuration authority', async () => {
+  const { parse, compileScript } = await import('@vue/compiler-sfc')
+  const { parse: parseTemplate } = await import('@vue/compiler-dom')
+  const { renderToString } = await import('@vue/server-renderer')
+  const vue = await import('vue')
+  const { default: vm } = await import('node:vm')
+  const { descriptor } = parse(await source())
+  const ast = parseTemplate(descriptor.template.content)
+  const ids = new Set(['run-execution-tab', 'run-execution-content', 'run-overview-resources'])
+  const snippets = []
+  const visit = (node) => {
+    if (node.props?.some((prop) => prop.name === 'data-testid' && ids.has(prop.value?.content))) {
+      snippets.push(node.loc.source)
+      return
+    }
+    for (const child of node.children || []) visit(child)
+  }
+  visit(ast)
+  assert.equal(snippets.length, ids.size)
+  const { descriptor: component } = parse(`<template>${snippets.join('')}</template><script setup>
+    defineProps(['canInspectConfiguration', 'detail', 'canDiagnoseRun'])
+    const t = (key) => key
+    const activeDetailTab = 'execution'
+    const activeExecutionView = 'trace'
+    const selectedUuid = 'consumer-run'
+    const canOperateRuns = false
+    const canGenerateDiagnosis = false
+    const applyTrajectoryRunUpdate = () => {}
+    const navigateFromEvidence = () => {}
+  </script>`)
+  const helpers = {}
+  const script = compileScript(component, { id: 'run-evidence-test', inlineTemplate: true }).content
+    .replace(/import \{([^}]+)\} from "vue"/g, (_, names) => {
+      for (const item of names.split(',')) {
+        const [name, alias] = item.trim().split(/\s+as\s+/)
+        helpers[alias || name] = vue[name]
+      }
+      return ''
+    }).replace('export default', 'globalThis.component =')
+  const context = vm.createContext(helpers)
+  vm.runInContext(script, context)
+  for (const allowed of [false, true]) {
+    let mounted = 0
+    const app = vue.createSSRApp(context.component, {
+      canInspectConfiguration: allowed,
+      canDiagnoseRun: allowed,
+      detail: { execution: { resource_usage: {} } }
+    })
+    for (const name of ['RunTrajectoryPanel', 'RunDiagnosisPanel']) {
+      app.component(name, { setup() { mounted++; return () => vue.h('div', name) } })
+    }
+    const html = await renderToString(app)
+    assert.equal(mounted, allowed ? 2 : 0)
+    assert.equal(html.includes('run-execution-tab'), allowed)
+    assert.equal(html.includes('run-overview-resources'), allowed)
+  }
+})
+
+test('delegated run requests exclude directory filters from bookmarked URLs', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await source()
+  const start = contents.indexOf('async function fetchRuns(')
+  const script = contents.slice(start, contents.indexOf('\n}', start) + 2)
+  const requests = []
+  const ref = (value) => ({ value })
+  const context = vm.createContext({
+    listRequestVersion: 0,
+    loading: ref(false),
+    loadError: ref(''),
+    hasLoaded: ref(false),
+    page: ref(1),
+    pageSize: ref(20),
+    runs: ref([]),
+    total: ref(0),
+    statusSummary: ref(null),
+    resultSummary: ref(null),
+    isDelegated: ref(true),
+    filters: ref({
+      username: 'private-member',
+      user_id: '17',
+      group_id: '21',
+      assistant: 'visible'
+    }),
+    getAdminRuns: async (params) => {
+      requests.push(JSON.parse(JSON.stringify(params)))
+      return { results: [{ uuid: 'run' }], total: 1 }
+    },
+    resolveRunSummary: () => ({}),
+    showError: (error) => assert.fail(error),
+    extractErrorMessage: (error) => error.message,
+    t: (key) => key
+  })
+  vm.runInContext(script, context)
+  await context.fetchRuns()
+  assert.deepEqual(requests[0], {
+    page: 1,
+    page_size: 20,
+    assistant: 'visible'
+  })
+  context.isDelegated.value = false
+  await context.fetchRuns()
+  assert.equal(requests[1].username, 'private-member')
+  assert.equal(requests[1].user_id, '17')
+  assert.equal(context.runs.value[0].uuid, 'run')
+})

@@ -11,26 +11,56 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from accounts.models import Tenant, TenantMembership
 from lens.alerts import evaluate_run_alerts, send_alert_delivery
-from lens.models import AlertDelivery, AlertRule, AlertSubscription, Assistant, LensNode, Run, Session
+from lens.models import (
+    AlertDelivery,
+    AlertRule,
+    AlertSubscription,
+    Assistant,
+    LensNode,
+    NotificationChannelScope,
+    Run,
+    Session,
+)
 from lens.services import create_execution_run
 
 
 class AlertDiagnosisTests(TestCase):
     """Exercise persisted policies with model calls and external transports stubbed."""
 
+    def create_channel(self, **kwargs):
+        """Create a transport with explicit fixture ownership."""
+        channel = NotificationChannel.objects.create(**kwargs)
+        NotificationChannelScope.objects.create(channel=channel, tenant=self.tenant)
+        return channel
+
     def setUp(self):
+        self.tenant, _ = Tenant.objects.get_or_create(slug="default", defaults={"name": "Default"})
         self.admin = get_user_model().objects.create_user(username="diagnosis-operator", is_staff=True)
         self.user = get_user_model().objects.create_user(username="diagnosis-user", email="person@example.test")
+        from agentcore_metering.adapters.django.models import LLMConfig
+        from lens.models import LLMConfigScope
+
+        diagnostic_model = LLMConfig.objects.create(
+            uuid="11111111-1111-1111-1111-111111111111", provider="openai", config={"model": "test"}
+        )
+        LLMConfigScope.objects.create(config=diagnostic_model, tenant=None)
         self.node = LensNode.objects.create(name="diagnosis-node")
-        self.assistant = Assistant.objects.create(name="Private assistant", slug="diagnosis", lensnode=self.node)
-        self.session = Session.objects.create(assistant=self.assistant, user=self.user)
-        self.channel = NotificationChannel.objects.create(name="Local email", channel_type="email", config={})
+        self.assistant = Assistant.objects.create(
+            tenant=self.tenant, name="Private assistant", slug="diagnosis", lensnode=self.node
+        )
+        TenantMembership.objects.create(user=self.user, tenant=self.tenant, role="member")
+        TenantMembership.objects.create(user=self.admin, tenant=self.tenant, role="tenant_admin")
+        self.session = Session.objects.create(tenant=self.tenant, assistant=self.assistant, user=self.user)
+        self.channel = self.create_channel(name="Local email", channel_type="email", config={})
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
 
     def rule(self, mode="direct", language="en-US"):
-        rule = AlertRule.objects.create(name="Failure policy", events=["run_failed"], diagnosis_mode=mode)
+        rule = AlertRule.objects.create(
+            tenant=self.tenant, name="Failure policy", events=["run_failed"], diagnosis_mode=mode
+        )
         AlertSubscription.objects.create(
             rule=rule, channel_uuid=self.channel.uuid, email_recipients=["person@example.test"], language=language
         )
@@ -381,6 +411,7 @@ class AlertDiagnosisTests(TestCase):
         from lens.models import AlertDiagnosis, GlobalSetting
 
         AlertRule.objects.create(
+            tenant=self.tenant,
             name="Processing diagnosis",
             subject="processing",
             events=["processing_failed"],
@@ -389,13 +420,16 @@ class AlertDiagnosisTests(TestCase):
         rule = AlertRule.objects.get()
         AlertSubscription.objects.create(rule=rule, channel_uuid=self.channel.uuid, email_recipients=["a@example.test"])
         GlobalSetting.objects.create(key="diagnostics.model_ref", value="11111111-1111-1111-1111-111111111111")
+        from lens.models import DataSource
+
+        source = DataSource.objects.create(tenant=self.tenant, name="Processing source", source_type="git")
         task = TaskExecution.objects.create(
             task_id="diagnose-processing",
             task_name="process",
             module="lens_datasource_conversion",
             status="FAILURE",
             finished_at=timezone.now(),
-            metadata={"private": "secret"},
+            metadata={"private": "secret", "datasource_uuid": str(source.uuid)},
         )
         capture_task_alert(task)
         process_alert_outbox()
@@ -407,7 +441,7 @@ class AlertDiagnosisTests(TestCase):
         from lens.alerts import process_alert_outbox
 
         rule = AlertRule.objects.create(
-            name="Release", subject="message", topic="release.ready", events=["message_published"]
+            tenant=self.tenant, name="Release", subject="message", topic="release.ready", events=["message_published"]
         )
         AlertSubscription.objects.create(
             rule=rule, channel_uuid=self.channel.uuid, email_recipients=["ops@example.test"], language="es"

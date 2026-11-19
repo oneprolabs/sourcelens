@@ -29,7 +29,7 @@ test('complete assistant resource reads collect every API page', async () => {
   )
 
   assert.match(assistants, /collectPaginatedResults/)
-  assert.match(lensnodes, /collectPaginatedResults/)
+  assert.match(lensnodes, /\/lens\/admin\/lensnodes\/available\//)
   assert.match(skills, /collectPaginatedResults/)
   assert.match(environmentSets, /collectPaginatedResults/)
   assert.match(mcps, /collectPaginatedResults/)

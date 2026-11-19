@@ -163,3 +163,77 @@ test('the newest successful upload wins per filename', () => {
   assert.equal(files.get('report.pdf').metadata.byte_size, 20)
   assert.equal(files.get('notes.txt').metadata.byte_size, 5)
 })
+
+test('knowledge policy labels use actual schedules and manual source capabilities', async () => {
+  const { dataSourcePolicyLabel } = await import(
+    '../src/pages/lens/datasourceHelpers.js'
+  )
+  const t = (key, args) => (args ? `${args.seconds}s` : key)
+  assert.equal(
+    dataSourcePolicyLabel(
+      {
+        sync_policy: {
+          mode: 'crontab',
+          cron: '0 2 * * *',
+          timezone: 'Asia/Shanghai'
+        }
+      },
+      t
+    ),
+    '0 2 * * * · Asia/Shanghai'
+  )
+  assert.equal(
+    dataSourcePolicyLabel({ sync_policy: { interval_seconds: 21600 } }, t),
+    '21600s'
+  )
+  assert.equal(dataSourcePolicyLabel({}, t), '86400s')
+  assert.equal(
+    dataSourcePolicyLabel({ sync_policy: { mode: 'manual' } }, t),
+    'lensAdmin.knowledgeList.manual'
+  )
+  assert.equal(
+    dataSourcePolicyLabel(
+      {
+        source_type: 'managed_workspace',
+        sync_policy: { interval_seconds: 600 }
+      },
+      t
+    ),
+    'lensAdmin.knowledgeList.manual'
+  )
+  assert.equal(
+    dataSourcePolicyLabel({ sync_policy: { interval_seconds: 'invalid' } }, t),
+    '—'
+  )
+})
+
+test('unmeasured and partial storage never appear as measured zero', async () => {
+  const { dataSourceStorageLabel } = await import(
+    '../src/pages/lens/datasourceHelpers.js'
+  )
+  const t = (key) => key
+  const unknown = 'lensAdmin.datasourceDetail.storage.notMeasured'
+  for (const usage of [
+    undefined,
+    {},
+    { status: 'partial', total_bytes: 4096 },
+    { status: 'complete', total_bytes: null },
+    { status: 'complete', total_bytes: -1 }
+  ]) {
+    assert.equal(dataSourceStorageLabel({ storage_usage: usage }, t), unknown)
+  }
+  assert.equal(
+    dataSourceStorageLabel(
+      { storage_usage: { status: 'complete', total_bytes: 0 } },
+      t
+    ),
+    '0 B'
+  )
+  assert.equal(
+    dataSourceStorageLabel(
+      { storage_usage: { status: 'complete', total_bytes: 1536 } },
+      t
+    ),
+    '1.5 KB'
+  )
+})

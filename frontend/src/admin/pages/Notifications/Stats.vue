@@ -456,7 +456,7 @@ import {
   Tooltip,
   Legend
 } from 'chart.js'
-import { notificationsAdminApi, llmAdminApi } from '@/admin/api'
+import { notificationsAdminApi } from '@/admin/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import {
   notificationChannelStats,
@@ -696,7 +696,7 @@ function formatDate(date) {
 async function fetchUserOptions() {
   try {
     const list = await notificationsAdminApi.getUsers()
-    if (Array.isArray(list) && list.length > 0) {
+    if (Array.isArray(list)) {
       userOptions.value = list.map((u) => ({
         user_id: u.user_id ?? u.id,
         display: (
@@ -705,27 +705,7 @@ async function fetchUserOptions() {
           (u.user_id != null ? `#${u.user_id}` : u.id != null ? `#${u.id}` : '')
         ).toString()
       }))
-      return
     }
-  } catch {
-    /* fallback to admin users list */
-  }
-  try {
-    const data = await llmAdminApi.getUsers({ page_size: 200 })
-    const raw = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.results)
-        ? data.results
-        : []
-    userOptions.value = raw.map((u) => ({
-      user_id: u.id ?? u.user_id,
-      display: (
-        u.username ??
-        u.display ??
-        u.email ??
-        (u.id != null ? `#${u.id}` : '')
-      ).toString()
-    }))
   } catch {
     userOptions.value = []
   }
@@ -809,11 +789,11 @@ async function fetchStats() {
 }
 
 function goToRecords() {
-  router.push({ name: 'AdminNotificationsRecords' })
+  router.push({ name: 'PlatformNotificationsRecords' })
 }
 
 function goToChannels() {
-  router.push({ name: 'AdminNotificationsChannels' })
+  router.push({ name: 'PlatformNotificationsChannels' })
 }
 
 onMounted(() => {

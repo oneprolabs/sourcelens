@@ -42,3 +42,22 @@ test('lens API includes diagnosis list, generate, and follow-up calls', async ()
   assert.match(contents, /\/diagnostics\//)
   assert.match(contents, /\/turns\//)
 })
+
+test('readonly diagnosis inspection cannot submit a model-backed follow-up', async () => {
+  const { default: vm } = await import('node:vm')
+  const contents = await componentSource()
+  const start = contents.indexOf('async function submitFollowUp(')
+  const script = contents.slice(start, contents.indexOf('\n}', start) + 2)
+  const context = vm.createContext({
+    props: { readonly: true, canGenerate: true, runUuid: 'run' },
+    question: { value: 'Why did this fail?' },
+    latest: { value: { uuid: 'diagnosis', status: 'completed' } },
+    submitting: { value: false },
+    createAdminRunDiagnosticTurn: () =>
+      assert.fail('readonly follow-up reached the API')
+  })
+  vm.runInContext(script, context)
+  await context.submitFollowUp()
+  assert.equal(context.submitting.value, false)
+  assert.equal(context.question.value, 'Why did this fail?')
+})

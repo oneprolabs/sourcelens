@@ -1,6 +1,6 @@
 /**
  * LLM admin API (agentcore-metering: token-stats, llm-usage, llm-config).
- * Global config: list (GET), add (POST), get/put/delete by id (GET/PUT/DELETE llm-config/<pk>/).
+ * Models and usage belong to the current platform or tenant scope.
  * Providers schema: GET llm-config/providers/. Test: POST llm-config/test/.
  */
 import apiClient from '@/api/index'
@@ -39,17 +39,17 @@ export const llmAdminApi = {
     return apiClient.get('/v1/admin/llm-usage/', { params }).then(extractData)
   },
 
-  /** GET global LLM config list (array). */
+  /** GET configurations in the current scope (array). */
   getLLMConfig() {
     return apiClient.get('/v1/admin/llm-config/').then(extractData)
   },
-  /** GET all LLM configs (global + user). Params: scope=all|global|user, user_id (optional). */
+  /** GET configurations in the current scope. Optional model_type filter. */
   getLLMConfigAll(params = {}) {
     return apiClient
       .get('/v1/admin/llm-config/all/', { params })
       .then(extractData)
   },
-  /** POST add config. Body: { provider, config?, is_active?, order?, scope?, user_id? }. */
+  /** POST add config. Ownership is selected by the server. */
   postLLMConfig(body) {
     return apiClient.post('/v1/admin/llm-config/', body).then(extractData)
   },
@@ -127,6 +127,18 @@ export const llmAdminApi = {
         : null
     const csrf = getCookie('csrftoken')
     const headers = { 'Content-Type': 'application/json' }
+    if (window.location.pathname.startsWith('/management/platform/llm/')) {
+      headers['X-Model-Scope'] = 'platform'
+    }
+    try {
+      const delegation = JSON.parse(
+        sessionStorage.getItem('tenant_delegation') || 'null'
+      )
+      if (delegation?.delegation_id)
+        headers['X-Delegation-ID'] = delegation.delegation_id
+    } catch {
+      sessionStorage.removeItem('tenant_delegation')
+    }
     if (token) headers.Authorization = `Bearer ${token}`
     if (csrf) headers['X-CSRFToken'] = csrf
     const fetchOpts = {

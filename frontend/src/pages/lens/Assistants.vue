@@ -1,90 +1,145 @@
 <template>
-  <AdminLayout>
-    <div class="assistants-page flex max-w-full flex-col gap-4 py-4">
-      <section class="assistant-list-panel admin-data-panel">
-        <header
-          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
+  <component :is="embedded ? 'div' : AdminLayout" :class="{ hidden: embedded }">
+    <div class="assistants-page">
+      <header class="admin-page-heading">
+        <div class="admin-heading-copy">
+          <h1>
+            {{ t('lensAdmin.pages.assistants.title')
+            }}<span class="admin-heading-count">{{ activeCount }}</span>
+          </h1>
+          <p>{{ t('lensAdmin.pages.assistants.description') }}</p>
+        </div>
+        <BaseButton
+          v-if="!showArchived"
+          :disabled="readonly"
+          @click="startCreate"
         >
-          <div>
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="admin-page-title">
-                {{ t('lensAdmin.pages.assistants.managementTitle') }}
-              </h1>
-            </div>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :loading="loading"
-              @click="load"
-            >
-              <RefreshCw :size="16" aria-hidden="true" />
-              {{ t('common.refresh') }}
-            </BaseButton>
-            <BaseButton
-              v-if="!showArchived"
-              variant="outline"
-              size="sm"
-              :disabled="loading || !assistants.length"
-              @click="showModelReplacement = true"
-            >
-              {{ t('lensAdmin.modelReplacement.title') }}
-              <span v-if="selectedAssistantUuids.length"
-                >({{ selectedAssistantUuids.length }})</span
-              >
-            </BaseButton>
-            <BaseButton
-              v-if="!showArchived"
-              variant="primary"
-              size="sm"
-              @click="startCreate"
-            >
-              <Plus :size="16" aria-hidden="true" />
-              {{ t('lensAdmin.pages.assistants.action') }}
-            </BaseButton>
-          </div>
-        </header>
-
-        <div class="flex items-center gap-6 border-b border-line px-5">
-          <button
-            type="button"
-            class="segment-tab"
-            :class="{ 'segment-tab-active': !showArchived }"
-            :aria-pressed="!showArchived"
-            @click="switchArchiveView(false)"
+          <Plus :size="14" aria-hidden="true" />{{
+            t('lensAdmin.pages.assistants.action')
+          }}
+        </BaseButton>
+      </header>
+      <section class="assistant-list-panel">
+        <div
+          v-if="attentionCount && !showArchived"
+          class="assistant-risk-banner"
+        >
+          <span>{{
+            t('lensAdmin.managementChecks.affected', { count: attentionCount })
+          }}</span>
+          <BaseButton
+            v-for="field in affectedModelFields"
+            :key="field"
+            variant="outline"
+            size="sm"
+            :disabled="loading || readonly"
+            @click="replaceAffectedModels(field)"
+            >{{
+              t('lensAdmin.managementChecks.replaceSlot', {
+                slot: t(`lensAdmin.managementChecks.${field}`)
+              })
+            }}</BaseButton
           >
-            {{ t('lensAdmin.pages.assistants.active') }}
-            <small>{{ activeCount }}</small>
-          </button>
-          <button
-            type="button"
-            class="segment-tab"
-            :class="{ 'segment-tab-active': showArchived }"
-            :aria-pressed="showArchived"
-            @click="switchArchiveView(true)"
-          >
-            {{ t('lensAdmin.pages.assistants.archived') }}
-            <small>{{ archivedCount }}</small>
-          </button>
         </div>
 
-        <div
-          class="assistant-toolbar flex flex-wrap items-end gap-3 border-b border-line px-5 py-4"
-        >
-          <label class="filter-control filter-search">
-            <span>{{ t('lensAdmin.pages.assistants.searchLabel') }}</span>
-            <span class="filter-input-wrap">
-              <Search :size="16" aria-hidden="true" />
-              <input
-                v-model="searchQuery"
-                type="search"
-                :placeholder="t('lensAdmin.pages.assistants.searchPlaceholder')"
-                autocomplete="off"
-                @input="resetPage"
-              />
-            </span>
+        <div class="assistant-view-toolbar">
+          <div
+            class="assistant-status-tabs"
+            :aria-label="t('lensAdmin.pages.assistants.viewSelector')"
+          >
+            <button
+              type="button"
+              :aria-pressed="
+                !showArchived && !attentionOnly && !enablementFilter
+              "
+              @click="switchArchiveView(false)"
+            >
+              {{ t('lensAdmin.enablement.all') }}
+              <small>{{ activeCount }}</small>
+            </button>
+            <button
+              v-for="value in ['enabled', 'disabled']"
+              :key="value"
+              type="button"
+              :aria-pressed="enablementFilter === value"
+              @click="showEnablementView(value)"
+            >
+              {{ t(`lensAdmin.enablement.${value}`) }}
+              <small>{{
+                value === 'enabled' ? enabledCount : disabledCount
+              }}</small>
+            </button>
+            <button
+              type="button"
+              :aria-pressed="attentionOnly"
+              @click="showAttention"
+            >
+              {{ t('lensAdmin.managementChecks.attention') }}
+              <small>{{ attentionCount }}</small>
+            </button>
+            <button
+              type="button"
+              :aria-pressed="showArchived"
+              @click="switchArchiveView(true)"
+            >
+              {{ t('lensAdmin.pages.assistants.archived') }}
+              <small>{{ archivedCount }}</small>
+            </button>
+          </div>
+          <label class="admin-toolbar-search assistant-list-search">
+            <Search :size="14" aria-hidden="true" />
+            <input
+              v-model="searchQuery"
+              type="search"
+              :aria-label="t('lensAdmin.pages.assistants.searchLabel')"
+              :placeholder="t('lensAdmin.pages.assistants.searchPlaceholder')"
+              autocomplete="off"
+              @input="resetPage"
+            />
           </label>
+          <BaseButton variant="outline" size="sm" @click="showBatchTable">{{
+            t('lensAdmin.assistantList.batchTable')
+          }}</BaseButton>
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :aria-expanded="showFilters"
+            @click="showFilters = !showFilters"
+            ><SlidersHorizontal :size="14" aria-hidden="true" />{{
+              t('lensAdmin.assistantList.filters')
+            }}</BaseButton
+          >
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :aria-label="t('common.refresh')"
+            :loading="loading"
+            @click="load"
+            ><RefreshCw :size="14" aria-hidden="true"
+          /></BaseButton>
+          <div class="assistant-view-toggle">
+            <button
+              type="button"
+              :aria-label="t('lensAdmin.assistantList.cardView')"
+              :aria-pressed="listView === 'cards'"
+              @click="listView = 'cards'"
+            >
+              <Layers :size="15" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              :aria-label="t('lensAdmin.assistantList.tableView')"
+              :aria-pressed="listView === 'table'"
+              @click="listView = 'table'"
+            >
+              <List :size="15" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="showFilters"
+          class="assistant-toolbar assistant-extra-filters"
+        >
           <div class="filter-control">
             <span>{{ t('lensAdmin.pages.assistants.typeLabel') }}</span>
             <BaseSelect
@@ -124,8 +179,52 @@
               <option value="private">
                 {{ t('lensAdmin.visibility.private') }}
               </option>
+              <option value="tenant">
+                {{ t('lensAdmin.visibility.tenant') }}
+              </option>
               <option value="public">
                 {{ t('lensAdmin.visibility.public') }}
+              </option>
+            </BaseSelect>
+          </div>
+          <div class="filter-control">
+            <span>{{ t('lensAdmin.managementChecks.modelFilter') }}</span>
+            <BaseSelect
+              v-model="modelFilter"
+              :aria-label="t('lensAdmin.managementChecks.modelFilter')"
+              @change="resetPage"
+            >
+              <option value="">
+                {{ t('lensAdmin.managementChecks.allModels') }}
+              </option>
+              <option
+                v-for="model in listModels"
+                :key="model.uuid"
+                :value="model.uuid"
+              >
+                {{ model.name }}
+              </option>
+            </BaseSelect>
+          </div>
+          <div class="filter-control">
+            <span>{{ t('lensAdmin.managementChecks.nodeFilter') }}</span>
+            <BaseSelect
+              v-model="nodeFilter"
+              :aria-label="t('lensAdmin.managementChecks.nodeFilter')"
+              @change="resetPage"
+            >
+              <option value="">
+                {{ t('lensAdmin.managementChecks.allNodes') }}
+              </option>
+              <option value="automatic">
+                {{ t('lensAdmin.assistantPresentation.automaticNode') }}
+              </option>
+              <option
+                v-for="node in listNodes"
+                :key="node.uuid"
+                :value="node.uuid"
+              >
+                {{ node.name }}
               </option>
             </BaseSelect>
           </div>
@@ -139,21 +238,87 @@
           </BaseButton>
         </div>
 
-        <div class="px-5 py-4">
-          <BaseLoading v-if="loading && assistants.length === 0" />
+        <div
+          v-if="selectedAssistantUuids.length"
+          class="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3"
+        >
+          <span class="text-sm">{{
+            t('lensAdmin.bulkVisibility.selection', {
+              count: selectedAssistantUuids.length
+            })
+          }}</span>
+          <BaseButton
+            v-for="enabled in showArchived ? [] : [true, false]"
+            :key="String(enabled)"
+            variant="outline"
+            size="sm"
+            :disabled="loading || readonly"
+            @click="openEnablement(enabled)"
+            >{{
+              t(`lensAdmin.enablement.${enabled ? 'enable' : 'disable'}`)
+            }}</BaseButton
+          >
+          <BaseButton
+            variant="outline"
+            size="sm"
+            :disabled="loading || readonly"
+            v-if="!showArchived"
+            @click="openVisibilityBatch"
+            >{{ t('lensAdmin.bulkVisibility.title') }}</BaseButton
+          >
+          <BaseButton
+            v-if="!showArchived"
+            variant="outline"
+            size="sm"
+            :disabled="loading || readonly"
+            @click="openModelReplacement"
+            >{{ t('lensAdmin.modelReplacement.title') }}</BaseButton
+          >
+          <BaseButton
+            variant="danger-outline"
+            size="sm"
+            :disabled="loading || readonly"
+            @click="openDeletion()"
+          >
+            {{ t('lensAdmin.deletion.title') }}
+          </BaseButton>
+        </div>
+        <p v-if="listError" role="alert" class="px-5 pt-4 text-sm text-red-700">
+          {{ listError }}
+        </p>
 
-          <div v-else-if="assistants.length === 0" class="empty-state">
+        <div class="assistant-list-body">
+          <BaseLoading v-if="loading && assistants.length === 0" />
+          <div
+            v-else-if="listError && assistants.length === 0"
+            class="empty-state"
+          >
+            <BaseButton variant="outline" @click="load">{{
+              t('lensAdmin.access.retry')
+            }}</BaseButton>
+          </div>
+
+          <div
+            v-else-if="!listError && viewRows.length === 0"
+            class="empty-state"
+          >
             <Bot :size="28" aria-hidden="true" />
             <h2>
               {{
                 t(
-                  showArchived
-                    ? 'lensAdmin.pages.assistants.emptyArchived'
-                    : 'lensAdmin.pages.assistants.emptyActive'
+                  attentionOnly
+                    ? 'lensAdmin.managementChecks.noIssues'
+                    : showArchived
+                      ? 'lensAdmin.pages.assistants.emptyArchived'
+                      : enablementFilter
+                        ? `lensAdmin.enablement.empty${enablementFilter === 'enabled' ? 'Enabled' : 'Disabled'}`
+                        : 'lensAdmin.pages.assistants.emptyActive'
                 )
               }}
             </h2>
-            <p>{{ t('lensAdmin.pages.assistants.emptyHint') }}</p>
+            <p v-if="!attentionOnly">
+              {{ t('lensAdmin.pages.assistants.emptyHint') }}
+            </p>
           </div>
 
           <div v-else-if="filteredAssistants.length === 0" class="empty-state">
@@ -165,25 +330,40 @@
             }}</BaseButton>
           </div>
 
-          <div
-            v-else
-            class="assistants-table-wrap overflow-x-auto rounded-lg border border-line bg-surface"
-          >
+          <div v-else-if="listView === 'cards'" class="assistant-summary-grid">
+            <AssistantSummaryCard
+              v-for="row in pagedAssistants"
+              :key="row.uuid"
+              :assistant="row"
+              :state="assistantState(row)"
+              :model-name="assistantModelName(row)"
+              :node-name="lensNodeName(row)"
+              :issue-label="
+                row.management_checks?.issues?.[0]
+                  ? checkIssueLabel(row.management_checks.issues[0])
+                  : ''
+              "
+              @open="openDetails"
+            />
+          </div>
+          <div v-else class="assistants-table-wrap admin-list-panel">
             <table
               class="assistants-table w-full table-fixed divide-y divide-line"
             >
               <colgroup>
-                <col v-if="!showArchived" style="width: 44px" />
-                <col style="width: 24%" />
-                <col style="width: 13%" />
-                <col style="width: 23%" />
-                <col style="width: 12%" />
-                <col style="width: 10%" />
-                <col style="width: 18%" />
+                <col style="width: 44px" />
+                <col />
+                <col style="width: 130px" />
+                <col style="width: 115px" />
+                <col style="width: 140px" />
+                <col style="width: 130px" />
+                <col style="width: 110px" />
+                <col style="width: 100px" />
+                <col style="width: 44px" />
               </colgroup>
-              <thead class="bg-surface-sunken">
+              <thead>
                 <tr>
-                  <th v-if="!showArchived" scope="col" class="table-head">
+                  <th scope="col" class="table-head">
                     <input
                       type="checkbox"
                       :checked="allPageSelected"
@@ -200,6 +380,9 @@
                   >
                     {{ column }}
                   </th>
+                  <th scope="col" class="table-head">
+                    <span class="sr-only">{{ t('common.actions') }}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-line bg-surface">
@@ -208,7 +391,7 @@
                   :key="row.uuid"
                   class="transition-colors hover:bg-line-soft"
                 >
-                  <td v-if="!showArchived" class="table-cell">
+                  <td class="table-cell">
                     <input
                       v-model="selectedAssistantUuids"
                       type="checkbox"
@@ -253,16 +436,45 @@
                     </div>
                   </td>
                   <td
-                    class="table-cell text-ink-600"
-                    :data-label="t('lensAdmin.columns.type')"
+                    class="table-cell"
+                    :data-label="t('lensAdmin.columns.status')"
                   >
-                    <div class="font-medium text-ink-800">
-                      {{
-                        (row.mode || row.routing_mode) === 'smart'
-                          ? t('lensAdmin.routingModes.smart')
-                          : assistantTypeLabel(row.capability)
-                      }}
-                    </div>
+                    <span
+                      class="assistant-state"
+                      :data-tone="assistantState(row).tone"
+                      >{{ assistantState(row).label }}</span
+                    >
+                    <p
+                      v-for="issue in row.management_checks?.issues || []"
+                      :key="`${issue.code}-${issue.field}`"
+                      class="assistant-table-issue"
+                    >
+                      {{ checkIssueLabel(issue) }}
+                    </p>
+                  </td>
+                  <td
+                    class="table-cell"
+                    :data-label="t('lensAdmin.columns.visibility')"
+                  >
+                    <span
+                      class="assistant-visibility"
+                      :data-visibility="row.visibility || 'private'"
+                      >{{
+                        t(
+                          `lensAdmin.assistantList.visibility.${row.visibility || 'private'}`
+                        )
+                      }}</span
+                    >
+                  </td>
+                  <td
+                    class="table-cell"
+                    :data-label="t('lensAdmin.assistantList.model')"
+                  >
+                    <span
+                      class="assistant-table-model"
+                      :title="assistantModelName(row)"
+                      >{{ assistantModelName(row) }}</span
+                    >
                   </td>
                   <td
                     class="table-cell text-ink-600"
@@ -270,7 +482,7 @@
                   >
                     <div
                       data-testid="assistant-tool-counts"
-                      class="flex flex-wrap items-center gap-2"
+                      class="flex items-center gap-2"
                     >
                       <span
                         class="data-tool-count"
@@ -297,85 +509,33 @@
                         <Server :size="16" aria-hidden="true" />
                         <span>{{ row.mcp_summary?.enabled || 0 }}</span>
                       </span>
-                      <span
-                        class="data-tool-count"
-                        :title="`${t('lensAdmin.assistantPresentation.plugins')} ${row.plugin_summary?.enabled || 0}`"
-                      >
-                        <Plug :size="16" aria-hidden="true" />
-                        <span>{{ row.plugin_summary?.enabled || 0 }}</span>
-                      </span>
                     </div>
                   </td>
                   <td
-                    class="table-cell"
-                    :data-label="t('lensAdmin.columns.visibility')"
+                    class="table-cell assistant-table-number"
+                    :data-label="t('lensAdmin.assistantList.questions')"
                   >
-                    <span
-                      class="visibility-chip"
-                      :class="
-                        row.visibility === 'private'
-                          ? 'border-amber-300 bg-amber-100 text-amber-800'
-                          : 'border-emerald-300 bg-emerald-100 text-emerald-800'
-                      "
-                      :title="
-                        t(
-                          `lensAdmin.visibility.${row.visibility === 'private' ? 'private' : 'public'}Desc`
-                        )
-                      "
-                    >
-                      <component
-                        :is="
-                          row.visibility === 'private' ? LockIcon : GlobeIcon
-                        "
-                        class="h-3.5 w-3.5"
-                      />
-                      {{
-                        t(
-                          `lensAdmin.visibility.${row.visibility === 'private' ? 'private' : 'public'}`
-                        )
-                      }}
-                    </span>
+                    {{ formatNumber(row.management_checks?.questions_30d) }}
                   </td>
                   <td
-                    class="table-cell"
-                    :data-label="t('lensAdmin.columns.status')"
+                    class="table-cell assistant-table-updated"
+                    :data-label="t('lensAdmin.columns.updatedAt')"
                   >
-                    <StatusBadge :status="row.status" />
+                    {{ formatDate(row.updated_at) }}
                   </td>
                   <td class="table-cell assistant-actions-cell">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <BaseButton
-                        v-if="row.status === 'active'"
-                        size="sm"
-                        variant="outline"
-                        @click="startEdit(row)"
-                      >
-                        {{ t('common.edit') }}
-                      </BaseButton>
-                      <BaseButton
-                        v-if="row.status === 'active'"
-                        size="sm"
-                        variant="danger-outline"
-                        @click="requestArchive(row)"
-                      >
-                        {{ t('lensAdmin.pages.assistants.archive') }}
-                      </BaseButton>
-                      <BaseButton
-                        v-else
-                        size="sm"
-                        variant="outline"
-                        :loading="actionUuid === row.uuid"
-                        @click="restore(row)"
-                      >
-                        {{ t('lensAdmin.pages.assistants.restore') }}
-                      </BaseButton>
-                    </div>
+                    <RowActionMenu
+                      :label="`${t('common.moreActions')} · ${row.name}`"
+                      :actions="assistantActions(row)"
+                      @select="handleAssistantAction($event, row)"
+                    />
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <PaginationBar
+            prototype
             v-if="!loading"
             v-model:page-size="pageSize"
             :current-page="currentPage"
@@ -389,9 +549,15 @@
     </div>
 
     <AssistantDetailDrawer
+      :key="assistantIdentity()"
       :show="Boolean(detailAssistant)"
       :assistant="detailAssistant"
+      :busy="Boolean(actionUuid)"
       :lensnode-name="lensNodeName(detailAssistant)"
+      :model-names="
+        assistants.find((row) => row.uuid === detailAssistant?.uuid)
+          ?.management_checks?.models || {}
+      "
       :assistant-type="
         (detailAssistant?.mode || detailAssistant?.routing_mode) === 'smart'
           ? t('lensAdmin.routingModes.smart')
@@ -403,11 +569,34 @@
       @restore="restore"
     />
 
+    <AssistantDeletionModal
+      v-if="deletionBatch.length"
+      :assistants="deletionBatch"
+      @close="deletionBatch = []"
+      @updated="deletionFinished"
+    />
+
+    <AssistantEnablementModal
+      v-if="enablementBatch.length"
+      :assistants="enablementBatch"
+      :enabled="enablementTarget"
+      @close="enablementBatch = []"
+      @updated="enablementFinished"
+    />
+
+    <AssistantVisibilityModal
+      v-if="visibilityBatch.length"
+      :assistants="visibilityBatch"
+      @close="visibilityBatch = []"
+      @updated="visibilityBatchFinished"
+    />
+
     <!-- Assistant Drawer (create wizard + edit) -->
     <AssistantModelReplacementModal
       v-if="showModelReplacement"
       :assistants="assistants"
       :selected-uuids="selectedAssistantUuids"
+      :initial-field="replacementInitialField"
       @close="showModelReplacement = false"
       @updated="modelReplacementFinished"
       @refresh="load"
@@ -416,7 +605,7 @@
       :show="showDrawer"
       :mode="mode"
       :form="form"
-      :assistants="assistants"
+      :assistants="collaborationAssistants"
       :skills="skills"
       :environment-variable-sets="environmentVariableSets"
       :mcps="mcps"
@@ -428,8 +617,9 @@
       :datasource-options="datasourceOptions"
       :form-resources-loading="formResourcesLoading"
       :saving="saving"
+      :continue-label="continueLabel"
       :form-error="formError"
-      @close="closeDrawer"
+      @close="!saving && closeDrawer()"
       @save="save"
     />
 
@@ -475,7 +665,7 @@
         </BaseButton>
       </template>
     </BaseModal>
-  </AdminLayout>
+  </component>
 </template>
 
 <script setup>
@@ -485,16 +675,16 @@ import {
   Code2,
   MessageCircle,
   Database,
-  Plug,
-  Globe as GlobeIcon,
-  Lock as LockIcon,
   Plus,
   RefreshCw,
+  Layers,
+  List,
+  SlidersHorizontal,
   Search,
   Server,
   UsersRound
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import apiClient from '@/api/index'
@@ -513,7 +703,7 @@ import {
   listDataSources,
   listDataSourceItems,
   listConnections,
-  listGlobalSettings,
+  listPublicConfig,
   listLensNodes,
   listMcpServers,
   listEnvironmentVariableSets,
@@ -529,8 +719,14 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import ConfirmDeleteModal from '@/components/ui/ConfirmDeleteModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
-import StatusBadge from '@/components/ui/StatusBadge.vue'
+import RowActionMenu from '@/components/ui/RowActionMenu.vue'
+import AssistantSummaryCard from './AssistantSummaryCard.vue'
 
+import { useUserStore } from '@/store/user'
+import { createLatestRequestRunner } from './assistantAccessSelectors'
+import AssistantVisibilityModal from './AssistantVisibilityModal.vue'
+import AssistantEnablementModal from './AssistantEnablementModal.vue'
+import AssistantDeletionModal from './AssistantDeletionModal.vue'
 import AssistantDetailDrawer from './AssistantDetailDrawer.vue'
 import AssistantModelReplacementModal from './AssistantModelReplacementModal.vue'
 import AssistantFormDrawer from './AssistantFormDrawerDirectEnvironment.vue'
@@ -546,9 +742,27 @@ import {
   splitList
 } from './adminHelpers'
 
-const { t } = useI18n()
+const props = defineProps({
+  embedded: Boolean,
+  continueLabel: { type: String, default: '' }
+})
+const emit = defineEmits(['saved', 'close'])
+
+const { t, locale } = useI18n()
 const { showSuccess, showError } = useToast()
 
+const userStore = useUserStore()
+const readonly = computed(() => userStore.delegation?.mode === 'readonly')
+const attentionOnly = ref(false)
+const enablementFilter = ref('')
+const enablementBatch = ref([])
+const enablementTarget = ref(false)
+const visibilityBatch = ref([])
+const modelFilter = ref('')
+const nodeFilter = ref('')
+const listError = ref('')
+const listRequests = createLatestRequestRunner()
+const detailRequests = createLatestRequestRunner()
 const loading = ref(false)
 const saving = ref(false)
 const showDrawer = ref(false)
@@ -564,10 +778,14 @@ const detailAssistant = ref(null)
 
 const assistants = ref([])
 const selectedAssistantUuids = ref([])
+const deletionBatch = ref([])
 const showModelReplacement = ref(false)
+const replacementInitialField = ref('agent_model_ref')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const searchQuery = ref('')
+const listView = ref('cards')
+const showFilters = ref(false)
 const typeFilter = ref('')
 const visibilityFilter = ref('')
 const lensnodes = ref([])
@@ -581,37 +799,205 @@ const globalSettings = ref([])
 const llmConfigOptions = ref([])
 const decisionCatalog = ref({ decisions: [] })
 const datasourceOptions = ref([])
+const collaborationAssistants = ref([])
 const formResourcesLoading = ref(false)
 let formResourcesPromise = null
 let globalSettingsPromise = null
 
-const activeColumns = computed(() =>
-  ['assistant', 'type', 'dataAndTools', 'visibility', 'status', 'actions'].map(
-    (column) =>
-      column === 'dataAndTools'
-        ? t('lensAdmin.columns.dataAndTools')
-        : t(`lensAdmin.columns.${column}`)
+const activeColumns = computed(() => [
+  t('lensAdmin.pages.assistants.title'),
+  t('lensAdmin.columns.status'),
+  t('lensAdmin.columns.visibility'),
+  t('lensAdmin.assistantList.model'),
+  t('lensAdmin.columns.dataAndTools'),
+  t('lensAdmin.assistantList.questions'),
+  t('lensAdmin.columns.updatedAt')
+])
+
+function showBatchTable() {
+  listView.value = 'table'
+}
+
+function assistantState(row) {
+  if (row.status === 'archived')
+    return { label: t('lensAdmin.pages.assistants.archived'), tone: 'muted' }
+  if (row.is_enabled === false)
+    return { label: t('lensAdmin.enablement.disabled'), tone: 'muted' }
+  const issues = row.management_checks?.issues || []
+  if (issues.some((issue) => issue.code === 'model_unavailable'))
+    return {
+      label: t('lensAdmin.assistantList.modelUnavailable'),
+      tone: 'danger'
+    }
+  if (issues.length)
+    return { label: t('lensAdmin.assistantList.incomplete'), tone: 'warning' }
+  return { label: t('lensAdmin.enablement.enabled'), tone: 'success' }
+}
+
+function assistantModelName(row) {
+  return (
+    row.management_checks?.models?.[row.agent_model_ref] ||
+    (row.agent_model_ref
+      ? t('lensAdmin.managementChecks.unavailableModel', {
+          ref: row.agent_model_ref.slice(0, 8)
+        })
+      : '—')
   )
-)
+}
+
+function formatNumber(value) {
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat(locale.value).format(value)
+    : '—'
+}
+
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString(locale.value)
+}
+
+function assistantActions(row) {
+  const blocked = loading.value || readonly.value
+  return [
+    ...(row.status === 'active'
+      ? [
+          { key: 'edit', label: t('common.edit'), disabled: blocked },
+          {
+            key: 'replace',
+            label: t('lensAdmin.modelReplacement.title'),
+            disabled: blocked
+          },
+          {
+            key: 'enablement',
+            label: t(
+              `lensAdmin.enablement.${row.is_enabled === false ? 'enable' : 'disable'}`
+            ),
+            disabled: blocked
+          },
+          {
+            key: 'archive',
+            label: t('lensAdmin.pages.assistants.archive'),
+            disabled: blocked
+          }
+        ]
+      : [
+          {
+            key: 'restore',
+            label: t('lensAdmin.pages.assistants.restore'),
+            disabled: blocked || actionUuid.value === row.uuid
+          }
+        ]),
+    {
+      key: 'delete',
+      label: t('lensAdmin.deletion.title'),
+      variant: 'danger',
+      disabled: blocked
+    }
+  ]
+}
+
+function handleAssistantAction(action, row) {
+  if (loading.value || readonly.value) return
+  if (action === 'edit') startEdit(row)
+  else if (action === 'replace') {
+    selectedAssistantUuids.value = [row.uuid]
+    openModelReplacement()
+  } else if (action === 'enablement')
+    openEnablement(row.is_enabled === false, row)
+  else if (action === 'archive') requestArchive(row)
+  else if (action === 'restore') restore(row)
+  else if (action === 'delete') openDeletion(row)
+}
 
 const activeRows = computed(() =>
-  assistants.value.filter(
-    (row) => row.status === 'active' || (!row.status && !showArchived.value)
-  )
+  assistants.value.filter((row) => !row.status || row.status === 'active')
 )
 const archivedRows = computed(() =>
-  assistants.value.filter(
-    (row) => row.status !== 'active' && (row.status || showArchived.value)
-  )
+  assistants.value.filter((row) => row.status === 'archived')
 )
 const activeCount = computed(() => activeRows.value.length)
+const enabledCount = computed(
+  () => activeRows.value.filter((row) => row.is_enabled !== false).length
+)
+const disabledCount = computed(() => activeCount.value - enabledCount.value)
 const archivedCount = computed(() => archivedRows.value.length)
+const attentionRows = computed(() =>
+  activeRows.value.filter((row) => row.management_checks?.issues?.length)
+)
+const attentionCount = computed(() => attentionRows.value.length)
+const modelAttentionRows = computed(() =>
+  attentionRows.value.filter((row) =>
+    row.management_checks.issues.some((issue) => issue.field !== 'lensnode')
+  )
+)
+const viewRows = computed(() =>
+  showArchived.value
+    ? archivedRows.value
+    : attentionOnly.value
+      ? attentionRows.value
+      : activeRows.value.filter(
+          (row) =>
+            !enablementFilter.value ||
+            (row.is_enabled === false ? 'disabled' : 'enabled') ===
+              enablementFilter.value
+        )
+)
+const modelFields = [
+  'agent_model_ref',
+  'decision_model_ref',
+  'multimodal_model_ref'
+]
+const affectedModelFields = computed(() =>
+  modelFields.filter((field) =>
+    modelAttentionRows.value.some((row) =>
+      row.management_checks.issues.some((issue) => issue.field === field)
+    )
+  )
+)
+const listModels = computed(() => [
+  ...new Map(
+    assistants.value.flatMap((row) =>
+      modelFields
+        .filter((field) => row[field])
+        .map((field) => [
+          row[field],
+          {
+            uuid: row[field],
+            name:
+              row.management_checks?.models?.[row[field]] ||
+              t('lensAdmin.managementChecks.unavailableModel', {
+                ref: row[field].slice(0, 8)
+              })
+          }
+        ])
+    )
+  ).values()
+])
+const listNodes = computed(() => [
+  ...new Map(
+    assistants.value
+      .filter((row) => row.lensnode)
+      .map((row) => [
+        row.lensnode,
+        { uuid: row.lensnode, name: row.lensnode_name || row.lensnode }
+      ])
+  ).values()
+])
 const hasFilters = computed(() =>
-  Boolean(searchQuery.value || typeFilter.value || visibilityFilter.value)
+  Boolean(
+    searchQuery.value ||
+      typeFilter.value ||
+      visibilityFilter.value ||
+      modelFilter.value ||
+      nodeFilter.value
+  )
 )
 const filteredAssistants = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  return assistants.value.filter((row) => {
+  return viewRows.value.filter((row) => {
     const modeValue = row.mode || row.routing_mode || 'direct'
     const matchesQuery =
       !query ||
@@ -627,7 +1013,18 @@ const filteredAssistants = computed(() => {
         : modeValue !== 'smart' && row.capability === typeFilter.value)
     const matchesVisibility =
       !visibilityFilter.value || row.visibility === visibilityFilter.value
-    return matchesQuery && matchesType && matchesVisibility
+    const matchesModel =
+      !modelFilter.value ||
+      modelFields.some((field) => row[field] === modelFilter.value)
+    const matchesNode =
+      !nodeFilter.value || (row.lensnode || 'automatic') === nodeFilter.value
+    return (
+      matchesQuery &&
+      matchesType &&
+      matchesVisibility &&
+      matchesModel &&
+      matchesNode
+    )
   })
 })
 const totalPages = computed(() =>
@@ -672,6 +1069,8 @@ function clearFilters() {
   searchQuery.value = ''
   typeFilter.value = ''
   visibilityFilter.value = ''
+  modelFilter.value = ''
+  nodeFilter.value = ''
   resetPage()
 }
 
@@ -743,23 +1142,112 @@ async function copyShareUrl(row) {
 
 async function load() {
   loading.value = true
-  formError.value = ''
-  try {
-    const assistantRows = await listAssistants(
-      showArchived.value ? { archived: true } : {}
+  listError.value = ''
+  const result = await listRequests.run(() =>
+    listAssistants({ managed: true, archived: 'all' })
+  )
+  if (!result.current) return
+  loading.value = false
+  if (result.error) {
+    listError.value = extractErrorMessage(
+      result.error,
+      t('lensAdmin.messages.loadFailed')
     )
-    assistants.value = normalizeList(assistantRows)
-  } catch (error) {
-    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
-  } finally {
-    loading.value = false
+    showError(listError.value)
+    return
   }
+  assistants.value = normalizeList(result.value)
+  collaborationAssistants.value = activeRows.value.filter(
+    (row) => row.is_enabled !== false
+  )
+  selectedAssistantUuids.value = []
+}
+
+function checkIssueLabel(issue) {
+  const slot = t(`lensAdmin.managementChecks.${issue.field}`)
+  return t(`lensAdmin.managementChecks.${issue.code}`, { slot })
+}
+
+function showAttention() {
+  enablementFilter.value = ''
+  showArchived.value = false
+  attentionOnly.value = true
+  clearFilters()
+}
+
+function replaceAffectedModels(field) {
+  if (readonly.value) return
+  replacementInitialField.value = field
+  selectedAssistantUuids.value = modelAttentionRows.value
+    .filter((row) =>
+      row.management_checks.issues.some((issue) => issue.field === field)
+    )
+    .map((row) => row.uuid)
+  showModelReplacement.value = true
+}
+
+function openModelReplacement() {
+  replacementInitialField.value = 'agent_model_ref'
+  showModelReplacement.value = true
+}
+
+function showEnablementView(value) {
+  switchArchiveView(false)
+  enablementFilter.value = value
+}
+
+function openDeletion(row = null) {
+  if (readonly.value || loading.value) return
+  deletionBatch.value = (
+    row
+      ? [row]
+      : assistants.value.filter((item) =>
+          selectedAssistantUuids.value.includes(item.uuid)
+        )
+  ).map((item) => ({ ...item }))
+}
+
+async function deletionFinished() {
+  detailAssistant.value = null
+  await load()
+}
+
+function openEnablement(enabled, row = null) {
+  if (readonly.value || loading.value) return
+  enablementTarget.value = enabled
+  enablementBatch.value = (
+    row
+      ? [row]
+      : activeRows.value.filter((item) =>
+          selectedAssistantUuids.value.includes(item.uuid)
+        )
+  ).map((item) => ({ ...item }))
+}
+
+async function enablementFinished() {
+  await load()
+  if (detailAssistant.value) {
+    await openDetails(detailAssistant.value)
+  }
+}
+
+function openVisibilityBatch() {
+  if (readonly.value || loading.value) return
+  visibilityBatch.value = activeRows.value
+    .filter((row) => selectedAssistantUuids.value.includes(row.uuid))
+    .map((row) => ({ ...row }))
+}
+
+async function visibilityBatchFinished() {
+  visibilityBatch.value = []
+  selectedAssistantUuids.value = []
+  await load()
 }
 
 async function loadGlobalSettings() {
   if (globalSettings.value.length) return
   if (!globalSettingsPromise) {
-    globalSettingsPromise = listGlobalSettings()
+    globalSettingsPromise = listPublicConfig()
       .then((rows) => {
         globalSettings.value = normalizeList(rows)
       })
@@ -787,10 +1275,11 @@ async function loadFormResources() {
   formResourcesLoading.value = true
   formResourcesPromise = Promise.all([
     listLensNodes(),
+    listAssistants({ managed: true }),
     listDataSources({ page_size: 1000 }),
-    listSkills({ compact: true }),
+    listSkills({ compact: true, usable: true }),
     listEnvironmentVariableSets(),
-    listMcpServers(),
+    listMcpServers({ usable: true }),
     listConnections({ status: 'active' }),
     listPlugins(),
     llmAdminApi
@@ -803,6 +1292,7 @@ async function loadFormResources() {
     .then(
       ([
         lensnodeRows,
+        collaborationRows,
         datasourceRows,
         skillRows,
         environmentVariableSetRows,
@@ -813,6 +1303,7 @@ async function loadFormResources() {
         decisionRows
       ]) => {
         lensnodes.value = normalizeList(lensnodeRows)
+        collaborationAssistants.value = normalizeList(collaborationRows)
         skills.value = normalizeList(skillRows)
         environmentVariableSets.value = normalizeList(
           environmentVariableSetRows
@@ -870,15 +1361,13 @@ function revokePluginIconUrls() {
   pluginIconUrls.value = {}
 }
 
-async function switchArchiveView(archived) {
-  if (showArchived.value === archived) return
+function switchArchiveView(archived) {
+  enablementFilter.value = ''
   showArchived.value = archived
+  attentionOnly.value = false
   archiveConfirmRow.value = null
   detailAssistant.value = null
-  currentPage.value = 1
   clearFilters()
-  assistants.value = []
-  await load()
 }
 
 async function startCreate() {
@@ -906,16 +1395,32 @@ async function startEdit(row) {
 }
 
 async function openDetails(row) {
-  try {
-    detailAssistant.value = await getAssistant(row.uuid)
-  } catch (error) {
-    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+  const result = await detailRequests.run(() => getAssistant(row.uuid))
+  if (!result.current) return
+  if (result.error) {
+    showError(
+      extractErrorMessage(result.error, t('lensAdmin.messages.loadFailed'))
+    )
+  } else {
+    detailAssistant.value = result.value
   }
 }
 
 function closeDetails() {
+  detailRequests.invalidate()
   detailAssistant.value = null
 }
+
+function assistantIdentity() {
+  return JSON.stringify([
+    userStore.userInfo?.id,
+    userStore.userInfo?.tenant?.uuid,
+    userStore.userInfo?.tenant_role,
+    userStore.delegation || null
+  ])
+}
+
+watch(assistantIdentity, closeDetails, { flush: 'sync' })
 
 function startEditFromDetail(row) {
   closeDetails()
@@ -1103,7 +1608,7 @@ function formFromRow(row) {
       decision_analyses: { ...(binding.decision_analyses || {}) },
       decision_auto: binding.decision_auto !== false
     })),
-    visibility: row.visibility || 'public',
+    visibility: row.visibility || 'private',
     access_group_ids: (row.access_grants || [])
       .filter((g) => g.type === 'group')
       .map((g) => g.id),
@@ -1118,7 +1623,8 @@ function formFromRow(row) {
   }
 }
 
-async function save() {
+async function save(advance = false) {
+  if (saving.value) return
   saving.value = true
   formError.value = ''
   try {
@@ -1131,6 +1637,7 @@ async function save() {
     const uuid = form.value.uuid
     await saveByMode(uuid, payload, createAssistant, updateAssistant)
     showSuccess(t('lensAdmin.messages.saveSuccess'))
+    emit('saved', { advance })
     closeDrawer()
     await load()
   } catch (error) {
@@ -1217,8 +1724,8 @@ function buildPayload() {
             decision_auto: binding.decision_auto !== false
           }))
         : [],
-    visibility: form.value.visibility || 'public',
-    access_grants: buildAccessGrants(),
+    visibility: form.value.visibility || 'private',
+    ...(!userStore.delegation ? { access_grants: buildAccessGrants() } : {}),
     status: form.value.status || 'active'
   }
 }
@@ -1242,16 +1749,10 @@ function buildAccessGrants() {
 function buildAssistantSettings() {
   const settings = { ...(form.value.settings || {}) }
   settings.datasource_routing = 'selected'
-  const retrievalPolicy = {}
-  const excludeExtensions = splitList(form.value.exclude_extensions_text)
-  const excludeDirs = splitList(form.value.exclude_dirs_text)
-  if (excludeExtensions.length) {
-    retrievalPolicy.exclude_extensions = excludeExtensions
+  settings.retrieval_policy = {
+    exclude_extensions: splitList(form.value.exclude_extensions_text),
+    exclude_dirs: splitList(form.value.exclude_dirs_text)
   }
-  if (excludeDirs.length) {
-    retrievalPolicy.exclude_dirs = excludeDirs
-  }
-  settings.retrieval_policy = retrievalPolicy
   if (form.value.pre_prompt?.trim()) {
     settings.pre_prompt = form.value.pre_prompt.trim()
   } else {
@@ -1317,39 +1818,26 @@ async function restore(row) {
   }
 }
 
-onMounted(load)
-onBeforeUnmount(revokePluginIconUrls)
+watch(showDrawer, (visible, previous) => {
+  if (props.embedded && previous && !visible) emit('close')
+})
+onMounted(async () => {
+  await load()
+  if (props.embedded) await startCreate()
+})
+onBeforeUnmount(() => {
+  listRequests.invalidate()
+  detailRequests.invalidate()
+  revokePluginIconUrls()
+})
 </script>
 
 <style scoped>
 .assistants-page {
   color: var(--sl-text-primary);
 }
-
-.segment-tab {
-  min-height: 3.5rem;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--sl-text-muted);
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.segment-tab small {
-  padding-left: 0.25rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-}
-
-.segment-tab:hover,
-.segment-tab-active {
-  color: var(--sl-brand-strong);
-}
-
-.segment-tab-active {
-  border-bottom-color: var(--sl-brand-strong);
-  font-weight: 650;
+.assistants-page > .admin-page-heading {
+  margin-bottom: 12px;
 }
 
 .filter-control {
@@ -1358,56 +1846,6 @@ onBeforeUnmount(revokePluginIconUrls)
   gap: 0.375rem;
   color: var(--sl-text-muted);
   font-size: 0.75rem;
-}
-
-.filter-search {
-  min-width: 15rem;
-  flex: 1 1 18rem;
-  max-width: 27rem;
-}
-
-.filter-control select,
-.filter-input-wrap {
-  min-height: 2.75rem;
-  border: 1px solid var(--sl-border-default);
-  border-radius: 0.5rem;
-  background: var(--sl-bg-surface);
-}
-
-.filter-control :deep(button[role='combobox']) {
-  min-height: 2.75rem;
-}
-
-.filter-control select {
-  width: 100%;
-  padding: 0.625rem 0.75rem;
-  color: var(--sl-text-secondary);
-  font-size: 0.875rem;
-}
-
-.filter-input-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.75rem;
-}
-
-.filter-input-wrap:focus-within {
-  border-color: var(--sl-accent);
-  box-shadow: 0 0 0 3px rgb(var(--sl-accent-rgb) / 0.15);
-}
-
-.filter-input-wrap svg {
-  flex: none;
-  color: var(--sl-text-subtle);
-}
-
-.filter-input-wrap input {
-  min-width: 0;
-  flex: 1;
-  border: 0 !important;
-  outline: 0 !important;
-  box-shadow: none !important;
 }
 
 .empty-state {
@@ -1447,28 +1885,16 @@ onBeforeUnmount(revokePluginIconUrls)
   height: 2.25rem;
   flex: none;
   place-items: center;
-  border: 1px solid var(--sl-border-default);
+  border: 1px solid transparent;
   border-radius: 0.5rem;
-  background: var(--sl-bg-surface);
-  color: var(--sl-text-secondary);
+  background: #eaf0ff;
+  color: #6384f4;
 }
 
 .assistant-glyph-smart {
   border-color: transparent;
   background: var(--sl-brand-soft);
   color: var(--sl-brand-strong);
-}
-
-.visibility-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  border: 1px solid;
-  border-radius: 9999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 .data-tool-count {
@@ -1513,10 +1939,6 @@ onBeforeUnmount(revokePluginIconUrls)
   white-space: nowrap;
 }
 
-.tool-count {
-  @apply inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-ink-600;
-}
-
 .assistant-name-action {
   @apply font-medium text-ink-900 transition-colors;
   @apply hover:text-primary-700 hover:underline;
@@ -1525,18 +1947,15 @@ onBeforeUnmount(revokePluginIconUrls)
   min-width: 64rem;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 820px) {
   .assistant-toolbar {
     align-items: stretch;
   }
-
-  .filter-control,
-  .filter-search {
+  .filter-control {
     min-width: 0;
     max-width: none;
     flex: 1 1 100%;
   }
-
   .assistants-table {
     display: block;
     min-width: 0;
@@ -1550,31 +1969,46 @@ onBeforeUnmount(revokePluginIconUrls)
   }
   .assistants-table tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    padding: 12px;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    padding: 14px;
+    gap: 10px 8px;
   }
-  .table-cell {
-    display: block;
-    padding: 0;
-    min-width: 0;
-  }
-  .table-cell::before {
-    content: attr(data-label);
-    display: block;
-    margin-bottom: 6px;
-    font-size: 12px;
-    color: var(--sl-text-muted);
-  }
-  .assistant-name-cell,
-  .assistant-actions-cell {
+  .assistants-table .table-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     grid-column: 1 / -1;
-    max-width: none;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    border: 0;
   }
-  .assistant-actions-cell {
-    border-top: 1px solid;
-    border-color: inherit;
-    padding-top: 12px;
+  .assistants-table .table-cell::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--sl-text-subtle);
+    font-size: 12px;
+  }
+  .assistants-table .table-cell:first-child {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+  }
+  .assistants-table .assistant-name-cell {
+    grid-column: 1;
+    grid-row: 1;
+    max-width: none;
+    justify-content: start;
+    padding-bottom: 6px;
+  }
+  .assistants-table .assistant-name-action {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .assistants-table .assistant-actions-cell {
+    grid-column: 2;
+    justify-self: end;
   }
 }
 </style>

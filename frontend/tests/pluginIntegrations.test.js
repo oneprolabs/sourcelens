@@ -418,7 +418,10 @@ test('connection resource trees stay hidden until scope values exist', async () 
 
   assert.match(renderer, /shouldRenderTree\(field\)/)
   assert.match(renderer, /optionsFor\(field\)\.length > 0/)
-  assert.match(renderer, /if \(isTreeField\(field\) && !field\.allow_custom\) return normalized/)
+  assert.match(
+    renderer,
+    /if \(isTreeField\(field\) && !field\.allow_custom\) return normalized/
+  )
   assert.match(renderer, /emptyResourceText/)
   assert.match(renderer, /treeSearchQuery/)
   assert.match(renderer, /filteredTreeGroups/)
@@ -452,15 +455,29 @@ test('datasource wizard exposes completed steps for quick navigation', async () 
     drawer,
     /aria-current="i \+ 1 === wizardStep \? 'step' : undefined"/
   )
-  assert.match(drawer, /:disabled="mode !== 'edit' && i \+ 1 > wizardStep"/)
+  const disabled = drawer.match(
+    /class="datasource-wizard-step"[\s\S]*?:disabled="([^"]+)"/
+  )[1]
+  const isDisabled = new Function(
+    'mode',
+    'i',
+    'wizardStep',
+    'saving',
+    `return ${disabled}`
+  )
+  assert.equal(isDisabled('create', 0, 2, false), false)
+  assert.equal(isDisabled('create', 2, 2, false), true)
+  assert.equal(isDisabled('edit', 2, 2, false), false)
+  assert.equal(isDisabled('edit', 0, 2, true), true)
   assert.match(drawer, /goToWizardStep\(i \+ 1\)/)
 })
 
-test('datasource wizard groups creation into three steps', async () => {
+test('datasource wizard separates source, connection, content and sync', async () => {
   const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
 
   assert.match(drawer, /key: 'basic'/)
   assert.match(drawer, /key: 'connection'/)
+  assert.match(drawer, /key: 'content'/)
   assert.match(drawer, /key: 'sync'/)
   assert.match(drawer, /processingTitle/)
   assert.match(drawer, /conversionOpen/)
@@ -474,7 +491,7 @@ test('managed workspace setup does not request a credential', async () => {
   assert.match(drawer, /managedWorkspaceDesc/)
   assert.match(
     drawer,
-    /if \(isManagedWorkspace\.value\) \{\s*if \(isFileUpload\.value\) \{[\s\S]*?return onlineLensNodes/
+    /if \(isManagedWorkspace\.value\) \{\s*return onlineLensNodes/
   )
   assert.match(drawer, /if \(isManagedWorkspace\.value\) \{\s*return false/)
 })
@@ -509,8 +526,10 @@ test('plugin datasource resource discovery does not require a LensNode', async (
 test('plugin datasource resources load on the connection step', async () => {
   const drawer = await source('pages/lens/DataSourceFormDrawer.vue')
 
-  assert.match(drawer, /activeStepKey\.value === 'connection'/)
-  assert.match(drawer, /activeStepKey\.value === 'sync'/)
+  assert.match(
+    drawer,
+    /\['connection', 'content', 'sync'\]\.includes\(activeStepKey\.value\)/
+  )
 })
 
 test('Connection management renders manifest connection fields instead of GitHub-only inputs', async () => {
@@ -573,7 +592,7 @@ test('Manifest datasource inputs use a local compact control style', async () =>
 test('MCP Plugin adapters select dynamic Connections and manifest tools', async () => {
   const page = await source('pages/lens/Mcp.vue')
 
-  assert.match(page, /<option value="plugin">/)
+  assert.match(page, /<option\b[^>]*value="plugin"[^>]*>/)
   assert.match(page, /listConnections/)
   assert.match(page, /listPlugins/)
   assert.match(page, /getPluginManifest/)
@@ -585,20 +604,17 @@ test('MCP Plugin adapters select dynamic Connections and manifest tools', async 
   assert.doesNotMatch(page, /plugin_key === 'github'/)
 })
 
-test('connection management uses compact cards with summarized scope', async () => {
+test('connection management retains detail actions and read-only summarized scope', async () => {
   const [page, renderer] = await Promise.all([
     source('pages/lens/Connections.vue'),
     source('components/lens/ManifestSchemaForm.vue')
   ])
 
   assert.match(page, /connections-toolbar/)
-  assert.match(page, /connection-card/)
   assert.match(page, /connectionUsageLabels/)
   assert.match(page, /datasourceLabel/)
   assert.match(page, /toolLabel/)
   assert.match(page, /pluginIconUrl/)
-  assert.match(page, /connection-usage-summary/)
-  assert.match(page, /class="connection-card group relative/)
   assert.match(
     page,
     /:aria-label="`\$\{t\('common\.viewDetails'\)\}: \$\{row\.name\}`"[\s\S]*@click="openConnectionDetail\(row\)"/
@@ -607,11 +623,8 @@ test('connection management uses compact cards with summarized scope', async () 
     page,
     /<BaseButton[^>]*@click="openConnectionDetail\(row\)"/
   )
-  assert.match(
-    page,
-    /variant="danger"[\s\S]*@click\.stop="requestRemoveRow\(row\)"/
-  )
-  assert.match(page, /@click\.stop="startEdit\(row\)"/)
+  assert.match(page, /@click="removeDetailConnection"/)
+  assert.match(page, /@click="editDetailConnection"/)
   assert.match(page, /connectionDetailOpen/)
   assert.match(page, /:schema="detailScopeSchema"/)
   assert.match(page, /:model-value="detailScopeModel"/)
@@ -639,11 +652,8 @@ test('datasource management groups source, target and run information', async ()
   assert.match(page, /columns\.targetPath/)
   assert.match(page, /dataSourceRepository\(row\)/)
   assert.doesNotMatch(page, /min-h-64/)
-  assert.match(page, /grid-cols-1/)
-  assert.match(page, /datasource-card flex min-w-0/)
   assert.match(rowActions, /showDownload/)
   assert.match(skills, /show-download/)
-  assert.doesNotMatch(page, /<table/)
 })
 
 test('datasource detail organizes metadata into focused data blocks', async () => {
@@ -679,13 +689,19 @@ test('Decision bindings carry gates and analyses through the form', async () => 
     source('pages/lens/AssistantFormDrawerDirectEnvironment.vue')
   ])
 
-  assert.match(page, /decision_gates: \{ \.\.\.\(binding\.decision_gates \|\| \{\}\) \}/)
+  assert.match(
+    page,
+    /decision_gates: \{ \.\.\.\(binding\.decision_gates \|\| \{\}\) \}/
+  )
   assert.match(
     page,
     /decision_analyses: \{ \.\.\.\(binding\.decision_analyses \|\| \{\}\) \}/
   )
   assert.match(drawer, /function decisionGatesFor\(connection\)/)
-  assert.match(drawer, /function toggleDecisionGate\(connection, gateKey, checked\)/)
+  assert.match(
+    drawer,
+    /function toggleDecisionGate\(connection, gateKey, checked\)/
+  )
   assert.match(drawer, /function analysisDecisionsFor\(connection\)/)
   assert.match(
     drawer,

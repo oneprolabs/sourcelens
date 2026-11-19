@@ -37,6 +37,6 @@ test('notification statistics links an empty period to channel setup', async () 
     contents,
     /hasStatisticsData\(statsData\.value\?\.summary\?\.total\)/
   )
-  assert.match(contents, /name: 'AdminNotificationsChannels'/)
+  assert.match(contents, /name: 'PlatformNotificationsChannels'/)
   assert.match(contents, /v-else-if="hasStatsData"/)
 })

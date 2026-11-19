@@ -3,16 +3,24 @@
 import uuid as uuid_module
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import HasRequiredFeature, HasRunEvaluationsAccess
+from accounts.access import get_user_tenant
+from accounts.delegation import is_delegated_request
+from accounts.permissions import HasRequiredFeature
+from lens.assistant_management import assistant_configuration_scope
 from lens.evaluation.comparison import compare_batches
 from lens.evaluation.datasets import import_cases, parse_import_payload
+from lens.evaluation.evidence import (
+    project_baseline_evidence,
+    public_scores,
+    result_evidence_restricted,
+)
 from lens.evaluation.engine.batch import (
     advance_evaluation_run,
     assistant_can_run_evaluation,
@@ -29,10 +37,16 @@ from lens.evaluation.models import (
     EvaluationCase,
     EvaluationDataset,
     EvaluationMetric,
-    EvaluationResult,
     EvaluationRun,
 )
 from lens.evaluation.revisions import baseline_metadata, record_dataset_revision
+from lens.evaluation.scope import (
+    HasEvaluationAccess,
+    HasEvaluationMetricAccess,
+    evaluation_queryset,
+    evaluation_results,
+    evaluation_run_queryset,
+)
 from lens.evaluation.scoring import DEFAULT_METRICS, ensure_default_metrics
 from lens.evaluation.serializers import (
     EvaluationCaseSerializer,
@@ -43,13 +57,14 @@ from lens.evaluation.serializers import (
     EvaluationRunDetailSerializer,
     EvaluationRunListSerializer,
 )
-from lens.models import Message, Run, user_sees_all_assistants
+from lens.models import Message, Run
+from lens.run_access import CanInspectTenantRuns, can_inspect_run_evidence, scope_run_queryset
 
 
 class EvaluationAccessView(APIView):
     """Expose the enabled evaluation surface only to authorized operators."""
 
-    permission_classes = [HasRunEvaluationsAccess]
+    permission_classes = [HasEvaluationAccess]
 
     def get(self, request):
         """Return the minimal capability payload used by the admin shell."""
@@ -57,10 +72,22 @@ class EvaluationAccessView(APIView):
         return Response({"enabled": True, "feature": "run_evaluations"})
 
 
-class EvaluationDatasetViewSet(viewsets.ModelViewSet):
+class EvaluationEvidenceProjectionMixin:
+    """Apply baseline authority checks once to every successful evaluation response."""
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        """Cover mutable cases, revisions, reports and nested calibration snapshots."""
+        if response.status_code < 400 and hasattr(response, "data"):
+            allowed, tenant_id = assistant_configuration_scope(request)
+            if allowed:
+                response.data = project_baseline_evidence(response.data, tenant_id)
+        return super().finalize_response(request, response, *args, **kwargs)
+
+
+class EvaluationDatasetViewSet(EvaluationEvidenceProjectionMixin, viewsets.ModelViewSet):
     """Dataset CRUD plus case management and batch launch."""
 
-    permission_classes = [HasRunEvaluationsAccess]
+    permission_classes = [HasEvaluationAccess]
     required_feature = "admin_console"
     lookup_field = "uuid"
     serializer_class = EvaluationDatasetSerializer
@@ -71,13 +98,27 @@ class EvaluationDatasetViewSet(viewsets.ModelViewSet):
     )
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        if not user_sees_all_assistants(self.request.user):
-            queryset = queryset.filter(created_by=self.request.user)
+        queryset = evaluation_queryset(super().get_queryset(), self.request)
         assistant_slug = self.request.query_params.get("assistant_slug")
         if assistant_slug:
             queryset = queryset.filter(assistant__slug=assistant_slug)
-        return queryset
+        if self.action == "list":
+            keyword = (self.request.query_params.get("q") or "").strip()
+            if keyword:
+                queryset = queryset.filter(Q(name__icontains=keyword) | Q(assistant__name__icontains=keyword))
+            dataset_status = self.request.query_params.get("status")
+            if dataset_status:
+                queryset = queryset.filter(status=dataset_status)
+        latest = (
+            EvaluationRun.objects.filter(dataset_id=OuterRef("pk"))
+            .filter(Q(tenant_id=OuterRef("tenant_id")) | Q(tenant__isnull=True, dataset__tenant__isnull=True))
+            .order_by("-created_at", "-uuid")
+        )
+        return queryset.annotate(
+            latest_run_uuid=Subquery(latest.values("uuid")[:1]),
+            latest_run_status=Subquery(latest.values("status")[:1]),
+            latest_run_score=Subquery(latest.values("aggregate_score")[:1]),
+        )
 
     def perform_create(self, serializer):
         """Attribute the dataset to the operator who created it."""
@@ -167,15 +208,22 @@ class EvaluationDatasetViewSet(viewsets.ModelViewSet):
         """Create a case from an authorized, standalone completed Run."""
 
         dataset = self.get_object()
-        if not HasRequiredFeature().has_permission(request, self):
+        if not (HasRequiredFeature().has_permission(request, self) and CanInspectTenantRuns().has_permission(request, self)):
             return Response({"detail": "Run access required."}, status=status.HTTP_403_FORBIDDEN)
         try:
             run_uuid = uuid_module.UUID(str(request.data.get("run_uuid") or ""))
         except (TypeError, ValueError):
             return Response({"detail": "Invalid Run UUID."}, status=status.HTTP_400_BAD_REQUEST)
+        tenant = get_user_tenant(request.user)
         run = get_object_or_404(
-            Run.objects.select_related("session", "input_message", "output_message"), uuid=run_uuid
+            scope_run_queryset(
+                Run.objects.select_related("session__assistant", "input_message", "output_message"),
+                tenant.pk if tenant is not None else None,
+            ),
+            uuid=run_uuid,
         )
+        if not can_inspect_run_evidence(request, run):
+            return Response({"detail": "Assistant configuration access is required."}, status=status.HTTP_403_FORBIDDEN)
         if run.session.assistant_id != dataset.assistant_id:
             return Response(
                 {"detail": "Run and dataset assistants must match."},
@@ -183,6 +231,8 @@ class EvaluationDatasetViewSet(viewsets.ModelViewSet):
             )
         if (
             run.parent_run_id
+            or run.input_message.session_id != run.session_id
+            or (run.output_message_id and run.output_message.session_id != run.session_id)
             or run.status != Run.Status.DONE
             or run.outcome != Run.Outcome.COMPLETED
             or not run.output_message_id
@@ -289,9 +339,7 @@ class EvaluationDatasetViewSet(viewsets.ModelViewSet):
                 EvaluationRunDetailSerializer(evaluation_run).data,
                 status=status.HTTP_201_CREATED,
             )
-        queryset = EvaluationRun.objects.filter(dataset=dataset)
-        if not user_sees_all_assistants(request.user):
-            queryset = queryset.filter(requested_by=request.user)
+        queryset = evaluation_run_queryset(EvaluationRun.objects.filter(dataset=dataset), request)
         queryset = queryset.select_related("dataset").order_by("-created_at")
         page = self.paginate_queryset(queryset)
         if page is None:
@@ -299,10 +347,10 @@ class EvaluationDatasetViewSet(viewsets.ModelViewSet):
         return self.get_paginated_response(EvaluationRunListSerializer(page, many=True).data)
 
 
-class EvaluationCaseViewSet(viewsets.ModelViewSet):
+class EvaluationCaseViewSet(EvaluationEvidenceProjectionMixin, viewsets.ModelViewSet):
     """Update and delete individual evaluation cases."""
 
-    permission_classes = [HasRunEvaluationsAccess]
+    permission_classes = [HasEvaluationAccess]
     lookup_field = "uuid"
     serializer_class = EvaluationCaseSerializer
     http_method_names = ["get", "patch", "put", "delete", "head", "options"]
@@ -314,9 +362,7 @@ class EvaluationCaseViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Allow filtering cases by dataset UUID."""
 
-        queryset = super().get_queryset()
-        if not user_sees_all_assistants(self.request.user):
-            queryset = queryset.filter(dataset__created_by=self.request.user)
+        queryset = evaluation_queryset(super().get_queryset(), self.request, "dataset__")
         dataset_uuid = self.request.query_params.get("dataset")
         if dataset_uuid:
             queryset = queryset.filter(dataset__uuid=dataset_uuid)
@@ -352,10 +398,10 @@ class EvaluationCaseViewSet(viewsets.ModelViewSet):
             record_dataset_revision(dataset)
 
 
-class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
+class EvaluationRunViewSet(EvaluationEvidenceProjectionMixin, viewsets.ReadOnlyModelViewSet):
     """Batch inspection, cancellation, retry, results and report."""
 
-    permission_classes = [HasRunEvaluationsAccess]
+    permission_classes = [HasEvaluationAccess]
     lookup_field = "uuid"
     queryset = EvaluationRun.objects.select_related("dataset").order_by("-created_at")
 
@@ -369,9 +415,7 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Filter batches by dataset or status from query parameters."""
 
-        queryset = super().get_queryset()
-        if not user_sees_all_assistants(self.request.user):
-            queryset = queryset.filter(requested_by=self.request.user)
+        queryset = evaluation_run_queryset(super().get_queryset(), self.request)
         dataset_uuid = self.request.query_params.get("dataset")
         if dataset_uuid:
             queryset = queryset.filter(dataset__uuid=dataset_uuid)
@@ -462,7 +506,7 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
         """Return paginated case results, optionally filtered by verdict."""
 
         evaluation_run = self.get_object()
-        queryset = EvaluationResult.objects.filter(evaluation_run=evaluation_run).select_related("case")
+        queryset = evaluation_results(evaluation_run).select_related("case", "evaluation_run")
         passed = request.query_params.get("passed")
         if passed in {"true", "false", "null"}:
             queryset = queryset.filter(passed=None if passed == "null" else passed == "true")
@@ -478,8 +522,8 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
 
         evaluation_run = self.get_object()
         result = (
-            EvaluationResult.objects.select_related("case")
-            .filter(evaluation_run=evaluation_run, uuid=result_uuid)
+            evaluation_results(evaluation_run).select_related("case", "evaluation_run")
+            .filter(uuid=result_uuid)
             .first()
         )
         if result is None:
@@ -494,7 +538,7 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
         """Append independent human verdicts without changing the model result."""
 
         batch = self.get_object()
-        result = get_object_or_404(EvaluationResult, evaluation_run=batch, uuid=result_uuid)
+        result = get_object_or_404(evaluation_results(batch), uuid=result_uuid)
         if request.method == "POST":
             if not result.scores:
                 return Response({"detail": "Result has not been scored."}, status=status.HTTP_409_CONFLICT)
@@ -525,19 +569,36 @@ class EvaluationRunViewSet(viewsets.ReadOnlyModelViewSet):
                 },
             )
         rows = result.calibrations.select_related("reviewer").all()
-        return Response([
+        data = [
             {"id": row.pk, "answer_verdict": row.answer_verdict, "evidence_verdict": row.evidence_verdict,
              "explanation": row.explanation, "reviewer": row.reviewer.username if row.reviewer else None,
              "judge_snapshot": row.judge_snapshot, "context_snapshot": row.context_snapshot,
              "created_at": row.created_at} for row in rows
-        ], status=status.HTTP_201_CREATED if request.method == "POST" else status.HTTP_200_OK)
+        ]
+        if is_delegated_request():
+            for item in data:
+                item.pop("reviewer", None)
+        restricted = result_evidence_restricted(result)
+        for item in data:
+            context = dict(item["context_snapshot"] or {})
+            if restricted or context.get("source_run_uuid") != str(result.source_run_uuid):
+                if "scores" in context:
+                    context["scores"] = public_scores(context["scores"])
+                item["context_snapshot"] = context
+        return Response(data, status=status.HTTP_201_CREATED if request.method == "POST" else status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="report")
     def report(self, request, uuid=None):
         """Return the aggregated report for one batch."""
 
         evaluation_run = self.get_object()
-        return Response(build_report(evaluation_run))
+        report = build_report(evaluation_run)
+        if is_delegated_request():
+            snapshot = report["evaluation_run"]["config_snapshot"]
+            report["evaluation_run"]["config_snapshot"] = {
+                key: value for key, value in snapshot.items() if key != "requested_by"
+            }
+        return Response(report)
 
 
 class EvaluationMetricViewSet(viewsets.ModelViewSet):
@@ -545,7 +606,7 @@ class EvaluationMetricViewSet(viewsets.ModelViewSet):
 
     DEFAULT_METRIC_NAMES = {item["name"] for item in DEFAULT_METRICS}
 
-    permission_classes = [HasRunEvaluationsAccess]
+    permission_classes = [HasEvaluationMetricAccess]
     lookup_field = "uuid"
     serializer_class = EvaluationMetricSerializer
     queryset = EvaluationMetric.objects.order_by("name")

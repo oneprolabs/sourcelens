@@ -234,32 +234,6 @@ test('assistant node selection defers to datasource bindings', async () => {
   )
 })
 
-test('assistant selects its type before conditional execution settings', async () => {
-  const [drawer, assistants, chinese] = await Promise.all([
-    source('pages/lens/AssistantFormDrawerDirectEnvironment.vue'),
-    source('pages/lens/Assistants.vue'),
-    source('admin/locales/zh-CN.json').then(JSON.parse)
-  ])
-  const firstStep = drawer.slice(
-    drawer.indexOf('<!-- Wizard Step 1'),
-    drawer.indexOf('<!-- Wizard Step 2')
-  )
-  const secondStep = drawer.slice(
-    drawer.indexOf('<!-- Wizard Step 2'),
-    drawer.indexOf('<!-- Wizard Step 3')
-  )
-
-  assert.doesNotMatch(firstStep, /v-model="form\.capability"/)
-  assert.ok(
-    secondStep.indexOf("t('lensAdmin.fields.type')") <
-      secondStep.indexOf("t('lensAdmin.datasourceSelection.title')")
-  )
-  assert.match(secondStep, /v-for="type in assistantTypeOptions"/)
-  assert.match(drawer, /if \(!props\.form\.capability\) return false/)
-  assert.match(assistants, /capability: '',/)
-  assert.match(chinese.lensAdmin.wizard.step2Desc, /先选择类型/)
-})
-
 test('assistant configuration leaves deep thinking to the end user', async () => {
   const [drawer, assistants, detail, chat] = await Promise.all([
     source('pages/lens/AssistantFormDrawerDirectEnvironment.vue'),
@@ -291,14 +265,13 @@ test('Smart assistant setup retains a workspace guide for its coordinator', asyn
     source('admin/locales/zh-CN.json').then(JSON.parse)
   ])
 
-  const thirdStep = drawer.slice(
-    drawer.indexOf('<!-- Wizard Step 3'),
-    drawer.indexOf('<!-- Wizard Step 4')
+  const basicStep = drawer.slice(
+    drawer.indexOf('<!-- Wizard Step 1'),
+    drawer.indexOf('<!-- Wizard Step 2')
   )
 
-  assert.match(thirdStep, /v-model="form\.workspace_guide_overview"/)
-  assert.match(thirdStep, /smartContextHint/)
-  assert.match(thirdStep, /smartResourcesHint/)
+  assert.match(basicStep, /v-model="form\.workspace_guide_overview"/)
+  assert.match(basicStep, /smartContextHint/)
   assert.equal(
     chinese.lensAdmin.wizard.smartContextHint,
     '用于补充智能协作的项目背景、分工原则和检索优先级。'

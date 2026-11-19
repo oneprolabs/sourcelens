@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .models import AlertDelivery, AlertEvent, AlertOutbox, AlertRule, Assistant, DataSource, Run, RunTraceEvent
+from .notification_scope import channel_queryset
 
 logger = logging.getLogger(__name__)
 TASK_SUBJECTS = {"lens_datasource": "sync", "lens_datasource_conversion": "processing"}
@@ -45,13 +46,13 @@ def _wake_dispatcher():
         logger.warning("Alert dispatcher unavailable; periodic recovery will retry", exc_info=True)
 
 
-def _enqueue_occurrence(subject, source_uuid, payload, phase="terminal"):
+def _enqueue_occurrence(subject, source_uuid, payload, phase="terminal", tenant_id=None):
     """Write the occurrence in the caller's transaction before publishing work."""
 
     source_key = f"{subject}:{source_uuid}:{phase}"
     outbox, created = AlertOutbox.objects.get_or_create(
         source_key=source_key,
-        defaults={"subject": subject, "source_uuid": str(source_uuid), "payload": payload},
+        defaults={"subject": subject, "source_uuid": str(source_uuid), "payload": payload, "tenant_id": tenant_id},
     )
     if not created and outbox.payload != payload:
         outbox.payload = payload
@@ -95,8 +96,9 @@ def _run_payload(run):
             else (str(assistant.lensnode.uuid) if assistant.lensnode_id else "")
         ),
         "user_id": run.session.user_id,
-        "username": user.username,
-        "user_display_name": user.get_full_name() or user.username,
+        "username": user.username if user else "",
+        "api_key_id": str(run.session.api_key_id) if run.session.api_key_id else None,
+        "user_display_name": (user.get_full_name() or user.username) if user else run.session.api_key.name,
         "question": question[:2000] + ("…" if len(question) > 2000 else ""),
         "status": run.status,
         "outcome": run.outcome,
@@ -125,7 +127,7 @@ def capture_run_alert(run):
     ):
         payload["total_tokens"] = _run_token_total(run)
         payload["rounds"] = RunTraceEvent.objects.filter(run=run).aggregate(value=Max("turn"))["value"] or 0
-    return _enqueue_occurrence("run", run.uuid, payload)
+    return _enqueue_occurrence("run", run.uuid, payload, tenant_id=run.tenant_id)
 
 
 def schedule_run_alert_evaluation(run_uuid):
@@ -183,7 +185,7 @@ def capture_task_alert(task):
         "partial_success": bool(sync.get("partial_success") or sync.get("failed") or summary.get("failed")),
         "trigger": str(metadata.get("trigger") or ""),
     }
-    return _enqueue_occurrence(subject, task.task_id, payload)
+    return _enqueue_occurrence(subject, task.task_id, payload, tenant_id=datasource.tenant_id if datasource else None)
 
 
 def _matched_events(rule, payload, run=None):
@@ -245,6 +247,16 @@ def personal_subscription_allowed(subscription, payload=None):
     """Recheck resource visibility and Run ownership at evaluation and delivery."""
 
     user, rule = subscription.user, subscription.rule
+    from accounts.access import get_user_membership
+
+    membership = get_user_membership(user)
+    if (
+        not membership
+        or membership.status != "active"
+        or membership.tenant.status != "active"
+        or membership.tenant.pk != rule.tenant_id
+    ):
+        return False
     if (
         not user
         or not user.is_active
@@ -265,16 +277,25 @@ def personal_subscription_allowed(subscription, payload=None):
 def subscription_destination(subscription):
     """Resolve email addresses from current users and group membership."""
 
-    from agentcore_notifier.adapters.django.models import NotificationChannel
-
     channel_uuid = subscription.rule.personal_channel_uuid if subscription.personal else subscription.channel_uuid
-    channel = NotificationChannel.objects.filter(uuid=channel_uuid).first() if channel_uuid else None
+    channel = channel_queryset(subscription.rule.tenant).filter(uuid=channel_uuid).first() if channel_uuid else None
     recipients = {subscription.user.email} if subscription.personal else set(subscription.email_recipients or [])
     if not subscription.personal:
-        recipients.update(subscription.users.filter(is_active=True).exclude(email="").values_list("email", flat=True))
+        recipients.update(
+            subscription.users.filter(
+                is_active=True, membership__tenant_id=subscription.rule.tenant_id, membership__status="active"
+            )
+            .exclude(email="")
+            .values_list("email", flat=True)
+        )
         recipients.update(
             get_user_model()
-            .objects.filter(is_active=True, groups__in=subscription.groups.all())
+            .objects.filter(
+                is_active=True,
+                membership__tenant_id=subscription.rule.tenant_id,
+                membership__status="active",
+                groups__in=subscription.groups.filter(tenant_group__tenant_id=subscription.rule.tenant_id),
+            )
             .exclude(email="")
             .values_list("email", flat=True)
         )
@@ -305,12 +326,17 @@ def _evaluate_occurrence(outbox, running=False):
     run = Run.objects.filter(uuid=outbox.source_uuid).first() if outbox.subject == "run" else None
     rules = AlertRule.objects.filter(
         enabled=True,
+        tenant_id=outbox.tenant_id,
         subject=outbox.subject,
         created_at__lte=(parse_datetime(payload.get("occurred_at", "")) or outbox.created_at),
     ).prefetch_related(
         "assistants", "datasources", "lensnodes", "subscriptions__users", "subscriptions__groups", "subscriptions__user"
     )
     for rule in rules:
+        if rule.tenant_id and rule.tenant.status != "active":
+            continue
+        if run and run.tenant_id != outbox.tenant_id:
+            continue
         if (rule.evaluation_mode == "running") != running or not _rule_matches_scope(rule, payload):
             continue
         matched = _matched_events(rule, payload, run)
@@ -324,6 +350,7 @@ def _evaluate_occurrence(outbox, running=False):
             source_key=source_key,
             defaults={
                 "subject": rule.subject,
+                "tenant_id": outbox.tenant_id,
                 "source_uuid": outbox.source_uuid,
                 "run": run,
                 "event_type": matched[0],
@@ -437,8 +464,6 @@ def _send_notification(**kwargs):
 def _delivery_result(delivery):
     """Validate the live subscription and send a bounded business summary."""
 
-    from agentcore_notifier.adapters.django.models import NotificationChannel
-
     subscription = delivery.subscription
     if not subscription or not subscription.enabled or not subscription.rule.enabled:
         return {"skipped": True, "reason": "Subscription disabled or removed"}
@@ -448,10 +473,26 @@ def _delivery_result(delivery):
         return {"skipped": True, "reason": "Subscribed topic changed"}
     if subscription.personal and not personal_subscription_allowed(subscription, delivery.event.detail):
         return {"skipped": True, "reason": "Subscription access revoked"}
+    if subscription.rule.tenant_id != delivery.event.tenant_id:
+        return {"skipped": True, "reason": "Subscription scope changed"}
+    tenant = subscription.rule.tenant
+    if tenant is not None and tenant.status != "active":
+        return {"skipped": True, "reason": "Tenant inactive"}
+    if delivery.event.run_id and delivery.event.run.tenant_id != delivery.event.tenant_id:
+        return {"skipped": True, "reason": "Source scope changed"}
+    if delivery.event.subject in {"sync", "processing"} and delivery.event.detail.get("datasource_uuid"):
+        if not DataSource.objects.filter(
+            uuid=delivery.event.detail["datasource_uuid"], tenant_id=delivery.event.tenant_id
+        ).exists():
+            return {"skipped": True, "reason": "Source scope changed"}
     destination = subscription_destination(subscription)
     if destination["channel_uuid"] != delivery.destination.get("channel_uuid"):
         return {"skipped": True, "reason": "Destination changed"}
-    channel = NotificationChannel.objects.filter(uuid=destination["channel_uuid"] or None, is_active=True).first()
+    channel = (
+        channel_queryset(subscription.rule.tenant)
+        .filter(uuid=destination["channel_uuid"] or None, is_active=True)
+        .first()
+    )
     if not channel or channel.channel_type not in {
         "email",
         "webhook",
@@ -689,7 +730,7 @@ def reconcile_alert_sources(limit=100):
             .order_by("checked_at", "pk")[:limit]
         )
         for run in runs:
-            outbox = _enqueue_occurrence("run", run.uuid, _run_payload(run), phase="running")
+            outbox = _enqueue_occurrence("run", run.uuid, _run_payload(run), phase="running", tenant_id=run.tenant_id)
             outbox.payload = _run_payload(run)
             outbox.save(update_fields=["payload", "updated_at"])
             _evaluate_occurrence(outbox, running=True)

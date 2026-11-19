@@ -74,3 +74,63 @@ test('password login retains the credential error for incorrect email or passwor
     'auth.loginError'
   )
 })
+
+test('password retry messages use server counts and local lock time with an email-code recovery', () => {
+  const translate = (key, values) => ({ key, ...values })
+  assert.deepEqual(
+    getVerificationErrorMessage(
+      {
+        response: {
+          data: {
+            error_code: 'PASSWORD_LOGIN_INVALID',
+            remaining_attempts: '2'
+          }
+        }
+      },
+      translate
+    ),
+    { key: 'auth.passwordLock.remaining', count: 2 }
+  )
+  const until = '2026-11-14T02:30:00Z'
+  assert.deepEqual(
+    getVerificationErrorMessage(
+      {
+        response: {
+          data: {
+            data: { error_code: 'PASSWORD_LOGIN_LOCKED', locked_until: until }
+          }
+        }
+      },
+      translate
+    ),
+    {
+      key: 'auth.passwordLock.lockedUntil',
+      time: new Date(until).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }
+  )
+  assert.deepEqual(
+    getVerificationErrorMessage(
+      { response: { data: { error_code: 'PASSWORD_LOGIN_LOCKED' } } },
+      translate
+    ),
+    { key: 'auth.passwordLock.locked' }
+  )
+  assert.deepEqual(
+    getVerificationErrorMessage(
+      {
+        response: {
+          data: {
+            error_code: 'PASSWORD_LOGIN_INVALID',
+            remaining_attempts: 'invalid'
+          }
+        }
+      },
+      translate,
+      'auth.loginError'
+    ),
+    { key: 'auth.loginError' }
+  )
+})

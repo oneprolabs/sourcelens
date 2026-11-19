@@ -129,15 +129,42 @@ class AssistantQuerySet(models.QuerySet):
     def visible_to(self, user):
         """Return assistants the user is allowed to see."""
 
-        if user_sees_all_assistants(user):
-            return self
+        from accounts.access import get_user_membership
+        from accounts.principals import ApiKeyPrincipal
+        from accounts.delegation import is_delegated_request
+
+        queryset = self.filter(Q(tenant__isnull=True) | Q(tenant__status="active"))
         public = Q(visibility=Assistant.Visibility.PUBLIC)
         if not (user and user.is_authenticated):
-            return self.filter(public)
-        granted = Q(access_grants__user=user) | Q(
-            access_grants__group__in=user.groups.all()
-        )
-        return self.filter(public | granted).distinct()
+            return queryset.filter(public)
+        if not user.is_active:
+            return queryset.none()
+        if isinstance(user, ApiKeyPrincipal):
+            queryset = queryset.filter(tenant=user.tenant)
+            if user.key.scope == "selected":
+                queryset = queryset.filter(uuid__in=user.key.assistant_uuids or [])
+            return queryset
+        membership = get_user_membership(user)
+        if membership is not None:
+            if membership.status != "active" or membership.tenant.status != "active":
+                return queryset.none()
+            owned = Q(tenant=membership.tenant)
+            if membership.role == "tenant_admin":
+                return queryset.filter(public | owned)
+        elif is_delegated_request():
+            return queryset.none()
+        else:
+            owned = Q(tenant__isnull=True)
+            if user_sees_all_assistants(user):
+                return queryset.filter(public | owned)
+        groups = user.groups.all()
+        if membership is not None:
+            groups = groups.filter(tenant_group__tenant=membership.tenant)
+        granted = Q(owner_user=user) | Q(access_grants__user=user) | Q(access_grants__group__in=groups)
+        allowed = granted
+        if membership is not None:
+            allowed |= Q(visibility=Assistant.Visibility.TENANT)
+        return queryset.filter(public | (owned & allowed)).distinct()
 
 
 class Assistant(TimestampedUUIDModel):
@@ -149,7 +176,8 @@ class Assistant(TimestampedUUIDModel):
 
     class Visibility(models.TextChoices):
         PUBLIC = "public", "Public"
-        PRIVATE = "private", "Private"
+        TENANT = "tenant", "Tenant members"
+        PRIVATE = "private", "Selected members or groups"
 
     class TokenBudgetProfile(models.TextChoices):
         STANDARD = "standard", "Standard"
@@ -171,6 +199,20 @@ class Assistant(TimestampedUUIDModel):
 
     objects = AssistantQuerySet.as_manager()
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="assistants",
+    )
+    owner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_assistants",
+    )
     name = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
     routing_description = models.TextField(blank=True, default="")
@@ -238,6 +280,7 @@ class Assistant(TimestampedUUIDModel):
     max_concurrency = models.PositiveSmallIntegerField(default=5)
     settings = models.JSONField(default=dict, blank=True)
     is_system = models.BooleanField(default=False)
+    is_enabled = models.BooleanField(default=True, db_default=True)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
@@ -249,6 +292,10 @@ class Assistant(TimestampedUUIDModel):
             models.Index(
                 fields=["lensnode"],
                 name="lens_assistant_lensnode_idx",
+            ),
+            models.Index(
+                fields=["tenant", "status"],
+                name="lens_asst_tenant_status_idx",
             ),
         ]
         ordering = ["name"]
@@ -319,21 +366,14 @@ class Assistant(TimestampedUUIDModel):
     def is_accessible_by(self, user):
         """Return True when the user may view/use this assistant."""
 
-        if self.visibility == Assistant.Visibility.PUBLIC:
-            return True
-        if not (user and user.is_authenticated):
-            return False
-        if user_sees_all_assistants(user):
-            return True
-        if self.access_grants.filter(user=user).exists():
-            return True
-        return self.access_grants.filter(group__in=user.groups.all()).exists()
+        return Assistant.objects.visible_to(user).filter(pk=self.pk).exists()
 
     def is_runnable_by(self, user):
         """Return True when the user may start work with this assistant."""
 
         return (
             self.status == Assistant.Status.ACTIVE
+            and self.is_enabled
             and self.is_accessible_by(user)
         )
 
@@ -468,7 +508,9 @@ class AssistantAccess(TimestampedUUIDModel):
 
 
 class Skill(TimestampedUUIDModel):
-    """Global skill resource."""
+    """Platform catalog or tenant-owned skill resource."""
+
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT, related_name="skills")
 
     name = models.CharField(max_length=160)
     package_name = models.CharField(max_length=180, blank=True, default="")
@@ -509,13 +551,32 @@ class Skill(TimestampedUUIDModel):
 class EnvironmentVariableSet(TimestampedUUIDModel):
     """Reusable encrypted environment values for Skill and MCP bindings."""
 
-    name = models.CharField(max_length=160, unique=True)
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="environment_variable_sets",
+    )
+    name = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
     encrypted_values = models.TextField(blank=True, default="")
     enabled = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "name"],
+                name="lens_envset_tenant_name_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "enabled"],
+                name="lens_envset_tenant_idx",
+            ),
+        ]
 
     def set_values(self, values):
         """Encrypt and store a mapping of environment-variable values."""
@@ -552,7 +613,9 @@ class EnvironmentVariableSet(TimestampedUUIDModel):
 
 
 class MCPServer(TimestampedUUIDModel):
-    """Global MCP server resource."""
+    """Platform catalog or tenant-owned MCP server resource."""
+
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT, related_name="mcp_servers")
 
     class Transport(models.TextChoices):
         URL = "url", "URL"
@@ -590,6 +653,28 @@ class MCPServer(TimestampedUUIDModel):
         return result
 
 
+class TenantSkill(models.Model):
+    """One tenant's opt-in to an official Skill."""
+
+    tenant = models.ForeignKey("accounts.Tenant", on_delete=models.CASCADE)
+    skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name="tenant_entries")
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["tenant", "skill"], name="lens_tenant_skill_uniq")]
+
+
+class TenantMCPServer(models.Model):
+    """One tenant's opt-in to an official MCP server."""
+
+    tenant = models.ForeignKey("accounts.Tenant", on_delete=models.CASCADE)
+    mcp = models.ForeignKey(MCPServer, on_delete=models.CASCADE, related_name="tenant_entries")
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["tenant", "mcp"], name="lens_tenant_mcp_uniq")]
+
+
 class DataSource(TimestampedUUIDModel):
     """Cataloged external data resource bound to a LensNode."""
 
@@ -610,6 +695,13 @@ class DataSource(TimestampedUUIDModel):
         UNAVAILABLE = "unavailable", "Unavailable"
         ERROR = "error", "Error"
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="datasources",
+    )
     name = models.CharField(max_length=160)
     source_type = models.CharField(max_length=32, choices=SourceType.choices)
     lensnode = models.ForeignKey(
@@ -666,6 +758,10 @@ class DataSource(TimestampedUUIDModel):
             models.Index(
                 fields=["lensnode"],
                 name="lens_datasource_lensnode_idx",
+            ),
+            models.Index(
+                fields=["tenant", "status"],
+                name="lens_ds_tenant_status_idx",
             ),
         ]
         ordering = ["name"]
@@ -775,6 +871,13 @@ class DataSourceCredential(TimestampedUUIDModel):
         HTTPS_TOKEN = "https_token", "HTTPS Token"
         FEISHU_APP = "feishu_app", "Feishu App"
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="datasource_credentials",
+    )
     name = models.CharField(max_length=160)
     provider = models.CharField(
         max_length=32,
@@ -797,6 +900,12 @@ class DataSourceCredential(TimestampedUUIDModel):
 
     class Meta:
         ordering = ["name"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "provider"],
+                name="lens_cred_tenant_idx",
+            ),
+        ]
 
     def set_secret(self, value):
         """Encrypt and store a plaintext credential secret."""
@@ -887,6 +996,13 @@ class Connection(TimestampedUUIDModel):
         ACTIVE = "active", "Active"
         DISABLED = "disabled", "Disabled"
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="connections",
+    )
     name = models.CharField(max_length=160)
     plugin_key = models.CharField(max_length=64)
     endpoint = models.URLField(max_length=500)
@@ -907,6 +1023,12 @@ class Connection(TimestampedUUIDModel):
 
     class Meta:
         ordering = ["name"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "status"],
+                name="lens_conn_tenant_idx",
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -1032,6 +1154,13 @@ class ExecutionSnapshot(TimestampedUUIDModel):
 class CredentialLease(TimestampedUUIDModel):
     """Short-lived authorization handle bound to one execution snapshot."""
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="credential_leases",
+    )
     snapshot = models.ForeignKey(
         ExecutionSnapshot,
         on_delete=models.PROTECT,
@@ -1047,6 +1176,12 @@ class CredentialLease(TimestampedUUIDModel):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "expires_at"],
+                name="lens_lease_tenant_idx",
+            ),
+        ]
 
 
 class PluginInvocation(TimestampedUUIDModel):
@@ -1267,7 +1402,7 @@ class AssistantPluginBinding(models.Model):
 
 
 class Session(TimestampedUUIDModel):
-    """Conversation session for a user and assistant."""
+    """Conversation session owned by one human or tenant API key."""
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -1288,6 +1423,13 @@ class Session(TimestampedUUIDModel):
         GENERATED = "generated", "Generated"
         FAILED = "failed", "Failed"
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sessions",
+    )
     assistant = models.ForeignKey(Assistant, on_delete=models.PROTECT)
     routing_mode = models.CharField(
         max_length=16,
@@ -1301,7 +1443,10 @@ class Session(TimestampedUUIDModel):
         db_default=[],
     )
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True
+    )
+    api_key = models.ForeignKey(
+        "accounts.TenantApiKey", on_delete=models.PROTECT, null=True, blank=True, related_name="sessions"
     )
     source = models.CharField(
         max_length=16,
@@ -1334,6 +1479,33 @@ class Session(TimestampedUUIDModel):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(user__isnull=False, api_key__isnull=True) | Q(user__isnull=True, api_key__isnull=False)),
+                name="lens_session_exactly_one_owner",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "status"],
+                name="lens_sess_tenant_status_idx",
+            ),
+        ]
+
+    @property
+    def preferred_language(self):
+        """Use the human preference or the owning tenant's default for machine work."""
+        profile = getattr(self.user, "profile", None)
+        if profile is not None:
+            return profile.language
+        return self.tenant.default_language if self.tenant_id else None
+
+    @property
+    def execution_principal(self):
+        """Restore the actual owner for background execution and delegated children."""
+        from accounts.principals import ApiKeyPrincipal
+
+        return ApiKeyPrincipal(self.api_key) if self.api_key_id else self.user
 
     def __str__(self):
         return self.title or str(self.uuid)
@@ -1510,6 +1682,13 @@ class Run(models.Model):
         NEGATIVE = "negative", "Negative"
 
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="runs",
+    )
     session = models.ForeignKey(Session, on_delete=models.CASCADE)
     source = models.CharField(
         max_length=16,
@@ -1550,6 +1729,7 @@ class Run(models.Model):
         on_delete=models.SET_NULL,
         related_name="delegated_runs",
     )
+    configuration_evidence_restricted = models.BooleanField(default=False, db_default=False, editable=False)
     lensnode = models.ForeignKey(
         LensNode,
         null=True,
@@ -1599,6 +1779,10 @@ class Run(models.Model):
             ),
             models.Index(fields=["lensnode"], name="lens_run_lensnode_idx"),
             models.Index(fields=["parent_run"], name="lens_run_parent_idx"),
+            models.Index(
+                fields=["tenant", "status"],
+                name="lens_run_tenant_status_idx",
+            ),
         ]
         ordering = ["-started_at", "-created_at"]
 
@@ -1649,6 +1833,13 @@ class RunTraceEvent(models.Model):
         default=uuid.uuid4,
         editable=False,
     )
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="run_trace_events",
+    )
     run = models.ForeignKey(
         Run,
         on_delete=models.CASCADE,
@@ -1695,6 +1886,10 @@ class RunTraceEvent(models.Model):
             models.Index(
                 fields=["run", "event_type"],
                 name="lens_trace_run_type_idx",
+            ),
+            models.Index(
+                fields=["tenant", "run"],
+                name="lens_trace_tenant_idx",
             ),
         ]
 
@@ -2114,6 +2309,13 @@ class RunOutputFile(TimestampedUUIDModel):
     frontend can offer the download under that answer.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.Tenant",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="run_output_files",
+    )
     run = models.ForeignKey(
         Run,
         on_delete=models.CASCADE,
@@ -2150,6 +2352,10 @@ class RunOutputFile(TimestampedUUIDModel):
         indexes = [
             models.Index(fields=["message"], name="lens_outfile_msg_idx"),
             models.Index(fields=["session"], name="lens_outfile_sess_idx"),
+            models.Index(
+                fields=["tenant", "session"],
+                name="lens_outfile_tenant_idx",
+            ),
         ]
 
     def __str__(self):
@@ -2229,6 +2435,7 @@ class AlertRule(TimestampedUUIDModel):
         SYNC = "sync", "Datasource sync"
         PROCESSING = "processing", "Document processing"
 
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     topic = models.CharField(max_length=120, blank=True, default="", db_default="")
     name = models.CharField(max_length=160)
     subject = models.CharField(max_length=16, choices=Subject.choices, default=Subject.RUN, db_default="run")
@@ -2318,6 +2525,7 @@ class AlertEvent(models.Model):
         SKIPPED = "skipped", "Skipped"
         FAILED = "failed", "Failed"
 
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     rule = models.ForeignKey(
         AlertRule,
@@ -2392,6 +2600,7 @@ class AlertSubscription(TimestampedUUIDModel):
 class AlertOutbox(TimestampedUUIDModel):
     """Durable occurrence persisted together with the business state change."""
 
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     source_key = models.CharField(max_length=320, unique=True)
     subject = models.CharField(max_length=16)
     source_uuid = models.CharField(max_length=255)
@@ -2446,3 +2655,37 @@ class AlertDelivery(TimestampedUUIDModel):
             models.UniqueConstraint(fields=["event", "subscription", "phase"], name="lens_alert_delivery_phase_uniq")
         ]
         ordering = ["created_at"]
+
+
+class LLMConfigScope(models.Model):
+    """Own vendor model configurations without modifying the dependency schema."""
+
+    config = models.OneToOneField(
+        "agentcore_metering.LLMConfig", on_delete=models.CASCADE, related_name="ownership"
+    )
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
+
+
+class LLMUsageScope(models.Model):
+    """Keep billing ownership stable when users or model configurations change."""
+
+    usage = models.OneToOneField("agentcore_metering.LLMUsage", on_delete=models.CASCADE, related_name="ownership")
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
+
+
+class NotificationChannelScope(models.Model):
+    """SourceLens ownership for channels stored by the notifier dependency."""
+
+    channel = models.OneToOneField(
+        "agentcore_notifier.NotificationChannel", on_delete=models.CASCADE, related_name="ownership"
+    )
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
+
+
+class NotificationRecordScope(models.Model):
+    """Immutable ownership that survives deletion of the sending channel."""
+
+    record = models.OneToOneField(
+        "agentcore_notifier.NotificationRecord", on_delete=models.CASCADE, related_name="ownership"
+    )
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)

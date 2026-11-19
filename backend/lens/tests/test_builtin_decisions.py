@@ -15,6 +15,7 @@ from lens.decisions import build_assistant_decision_model, validate_assistant_de
 from lens.lensnode_auth import hash_lensnode_token
 from lens.models import (
     Assistant,
+    LLMConfigScope,
     AssistantPluginBinding,
     Connection,
     LensNode,
@@ -38,6 +39,7 @@ class BuiltinDecisionTests(TestCase):
             provider="typesafe",
             config={"model": "jev-latest", "api_key": "test-only-secret"},
         )
+        LLMConfigScope.objects.create(config=self.model, tenant=None)
         self.assistant = Assistant.objects.create(
             name="Decision assistant",
             slug="decision-assistant",

@@ -7,17 +7,6 @@ from django.urls import path, include
 from django.utils import timezone
 
 from accounts.views import OAuthCallbackRedirectView
-from core.views.admin_bulk import (
-    LLMConfigBulkView,
-    NotificationChannelBulkDeleteView,
-)
-from core.views.notification_targets import (
-    TargetDetailView,
-    TargetListView,
-    TargetTestView,
-    TargetValidateView,
-)
-from core.views.tasks import TaskExecutionListViewSet
 from .swagger import schema_view, swagger_view, redoc_view
 
 
@@ -120,40 +109,13 @@ urlpatterns = [
     path('', include('accounts.urls')),
 
     # Task management routes (agentcore-task)
-    path(
-        'api/v1/tasks/executions/',
-        TaskExecutionListViewSet.as_view({'get': 'list'}),
-        name='task-execution-list',
-    ),
-    path('api/v1/tasks/', include('agentcore_task.adapters.django.urls')),
+    path('api/v1/tasks/', include('core.task_urls')),
 
     # Lens MVP API
     path('api/lens/', include('lens.urls')),
 
-    # SourceLens atomic adapters for agentcore admin resources
-    path(
-        'api/v1/admin/notifications/channels/bulk-delete/',
-        NotificationChannelBulkDeleteView.as_view(),
-        name='notification_channels_bulk_delete',
-    ),
-    path(
-        'api/v1/admin/llm-config/bulk/',
-        LLMConfigBulkView.as_view(),
-        name='llm_configs_bulk',
-    ),
-
-    path('api/v1/admin/notifications/channels/', TargetListView.as_view()),
-    path('api/v1/admin/notifications/channels/validate/', TargetValidateView.as_view()),
-    path('api/v1/admin/notifications/channels/<uuid:uuid>/', TargetDetailView.as_view()),
-    path('api/v1/admin/notifications/channels/<uuid:uuid>/test/', TargetTestView.as_view()),
-
-    # Notifier admin API (agentcore-notifier: must be before admin/ to match)
-    path(
-        'api/v1/admin/notifications/',
-        include('agentcore_notifier.adapters.django.urls')
-    ),
-    # LLM metering admin API (agentcore-metering package)
-    path('api/v1/admin/', include('agentcore_metering.adapters.django.urls')),
+    path('api/v1/admin/notifications/', include('core.notification_urls')),
+    path('api/v1/admin/', include('core.model_urls')),
 
     # Custom OAuth callback redirect with JWT tokens
     # This must come BEFORE allauth.urls to intercept the redirect

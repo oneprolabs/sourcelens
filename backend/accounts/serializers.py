@@ -1,7 +1,7 @@
 import logging
 import re
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -17,12 +17,14 @@ from dj_rest_auth.serializers import PasswordChangeSerializer
 from accounts.access import (
     get_access_profile,
     get_effective_roles,
+    get_user_tenant,
+    get_user_tenant_role,
     normalize_feature_keys,
     normalize_platform_key,
     serialize_feature_options,
     serialize_platform_options,
 )
-from accounts.models import Profile, normalize_answer_language
+from accounts.models import Profile, Tenant, normalize_answer_language
 
 
 def normalize_language_code(value):
@@ -196,7 +198,10 @@ class SendRegistrationEmailSerializer(serializers.Serializer):
         value = value.lower().strip()
 
         try:
-            user = User.objects.get(email=value)
+            user = User.objects.get(email__iexact=value)
+
+            if not user.is_active or hasattr(user, 'membership'):
+                raise serializers.ValidationError('ACCOUNT_REGISTRATION_UNAVAILABLE')
 
             try:
                 profile = user.profile
@@ -564,6 +569,18 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         read_only=True,
         help_text=_("Resolved platform visibility and landing route"),
     )
+    tenant = serializers.SerializerMethodField(
+        read_only=True,
+        help_text=_("Tenant the user belongs to, or null."),
+    )
+    tenant_role = serializers.SerializerMethodField(
+        read_only=True,
+        help_text=_("Built-in tenant role: member or tenant_admin."),
+    )
+    platform_role = serializers.SerializerMethodField(
+        read_only=True,
+        help_text=_("Platform role: none or super_admin."),
+    )
     roles = serializers.SerializerMethodField(
         read_only=True,
         help_text=_("Effective roles resolved from direct and group bindings."),
@@ -592,6 +609,9 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             'roles',
             'permissions',
             'access_profile',
+            'tenant',
+            'tenant_role',
+            'platform_role',
         ]
         read_only_fields = [
             'id',
@@ -606,6 +626,9 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             'roles',
             'permissions',
             'access_profile',
+            'tenant',
+            'tenant_role',
+            'platform_role',
         ]
 
     def get_display_name(self, obj):
@@ -738,6 +761,29 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         """Serialize resolved access information for the current user."""
         return get_access_profile(obj)
 
+    def get_tenant(self, obj):
+        """Serialize the user's single tenant, when one is assigned."""
+        tenant = get_user_tenant(obj)
+        if tenant is None:
+            return None
+        return {
+            'uuid': str(tenant.uuid),
+            'name': tenant.name,
+            'slug': tenant.slug,
+            'status': tenant.status,
+        }
+
+    def get_tenant_role(self, obj):
+        """Serialize the built-in tenant role."""
+        return get_user_tenant_role(obj)
+
+    def get_platform_role(self, obj):
+        """Serialize the platform role from the profile."""
+        platform_role = Profile.objects.filter(
+            user=obj
+        ).values_list('platform_role', flat=True).first()
+        return platform_role or Profile.PlatformRole.NONE
+
     def update(self, instance, validated_data):
         """
         Update user instance and profile language/timezone if provided.
@@ -843,3 +889,52 @@ class CustomPasswordChangeSerializer(PasswordChangeSerializer):
     def custom_validation(self, attrs):
         """Validate the new password before the form saves it."""
         validate_password_policy(attrs['new_password1'], user=self.user)
+
+
+class CurrentTenantSerializer(serializers.ModelSerializer):
+    """Tenant-admin editable tenant profile with read-only ownership fields."""
+
+    member_count = serializers.SerializerMethodField()
+    group_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Tenant
+        fields = [
+            'uuid',
+            'name',
+            'slug',
+            'description',
+            'logo_url',
+            'default_language',
+            'timezone',
+            'contact_email',
+            'status',
+            'created_at',
+            'member_count',
+            'group_count',
+        ]
+        read_only_fields = [
+            'uuid',
+            'slug',
+            'status',
+            'created_at',
+            'member_count',
+            'group_count',
+        ]
+
+    def get_member_count(self, tenant):
+        """Return the number of memberships in this tenant."""
+        return tenant.memberships.count()
+
+    def get_group_count(self, tenant):
+        """Return groups currently used by this tenant's members."""
+        return Group.objects.filter(
+            user__membership__tenant=tenant,
+        ).distinct().count()
+
+    def validate_name(self, value):
+        """Reject blank tenant names."""
+        name = ' '.join(str(value or '').split())
+        if not name:
+            raise serializers.ValidationError('TENANT_NAME_REQUIRED')
+        return name

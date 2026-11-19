@@ -17,7 +17,7 @@ def load_trace_events(run):
     """Return the persisted trace events for one run in sequence order."""
 
     return list(
-        RunTraceEvent.objects.filter(run=run)
+        RunTraceEvent.objects.filter(run=run, tenant_id=run.tenant_id)
         .order_by("sequence")
         .only("event_type", "payload", "call_id", "turn", "sequence", "step", "timestamp")
     )

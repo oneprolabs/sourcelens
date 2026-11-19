@@ -1,6 +1,42 @@
 <template>
+  <div v-if="prototype && total > 0" class="admin-prototype-pagination">
+    <span>{{ t('common.pagination.total', { total }) }}</span>
+    <div class="admin-pagination-controls">
+      <template v-if="normalizedTotalPages > 1">
+        <BaseButton
+          variant="ghost"
+          size="sm"
+          :disabled="currentPage <= 1"
+          :aria-label="t('common.pagination.previous')"
+          @click="$emit('prev')"
+          ><ChevronLeft :size="14" aria-hidden="true"
+        /></BaseButton>
+        <span>{{ currentPage }} / {{ normalizedTotalPages }}</span>
+        <BaseButton
+          variant="ghost"
+          size="sm"
+          :disabled="currentPage >= normalizedTotalPages"
+          :aria-label="t('common.pagination.next')"
+          @click="$emit('next')"
+          ><ChevronRight :size="14" aria-hidden="true"
+        /></BaseButton>
+      </template>
+      <BaseSelect
+        :model-value="pageSize"
+        :aria-label="t('common.pagination.itemsPerPage')"
+        :full-width="false"
+        mobile-touch
+        size="sm"
+        @update:model-value="updatePageSize"
+      >
+        <option v-for="size in pageSizeOptions" :key="size" :value="size">
+          {{ t('common.pagination.size', { size }) }}
+        </option>
+      </BaseSelect>
+    </div>
+  </div>
   <div
-    v-if="total > 0"
+    v-else-if="total > 0"
     class="mt-4 flex flex-shrink-0 flex-col items-start justify-between gap-4 border-t border-line pt-4 md:flex-row md:items-center"
   >
     <div class="text-sm font-medium text-theme-secondary">
@@ -90,12 +126,14 @@
 
 <script setup>
 import { computed } from 'vue'
+import { ChevronLeft, ChevronRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from './BaseButton.vue'
 import BaseSelect from './BaseSelect.vue'
 
 const props = defineProps({
+  prototype: { type: Boolean, default: false },
   currentPage: { type: Number, required: true },
   pageSize: { type: Number, required: true },
   total: { type: Number, required: true },

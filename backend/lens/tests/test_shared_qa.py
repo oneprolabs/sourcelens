@@ -101,6 +101,21 @@ class SharedQAApiTests(TestCase):
         )
         self.run = self._make_done_run()
 
+    def _set_moderation_tenant(self):
+        """Give moderation fixtures explicit tenant ownership and authority."""
+
+        from accounts.models import Tenant, TenantMembership
+
+        tenant = Tenant.objects.create(name="QA tenant", slug="qa-moderation")
+        TenantMembership.objects.create(user=self.admin, tenant=tenant, role="tenant_admin")
+        TenantMembership.objects.create(user=self.owner, tenant=tenant)
+        Session.objects.filter(pk=self.run.session_id).update(tenant=tenant)
+        Run.objects.filter(pk=self.run.pk).update(tenant=tenant)
+        self.assistant.tenant = tenant
+        self.assistant.save(update_fields=["tenant"])
+        self.assistant.settings = {"public_share": {"policy": "public"}}
+        self.assistant.save(update_fields=["settings"])
+
     def _use_test_deliverable_storage(self):
         """Point callable FileFields at the overridden test storage."""
 
@@ -436,7 +451,8 @@ class SharedQAApiTests(TestCase):
         storage = snapshots[0].file.storage
         self.assertTrue(all(storage.exists(name) for name in storage_names))
 
-        share.delete()
+        with self.captureOnCommitCallbacks(execute=True):
+            share.delete()
 
         self.assertTrue(
             all(not storage.exists(name) for name in storage_names)
@@ -602,6 +618,7 @@ class SharedQAApiTests(TestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_public_list_shows_only_listed(self):
+        self._set_moderation_tenant()
         token = self._share().data["token"]
         url = "/api/lens/public/assistants/data-helper/qa/"
         self.client.force_authenticate(user=None)
@@ -739,6 +756,7 @@ class SharedQAApiTests(TestCase):
         self.assertEqual(resp.status_code, 403)
 
     def test_admin_detail_returns_complete_content_for_all_states(self):
+        self._set_moderation_tenant()
         token = self._share().data["token"]
         share = SharedQA.objects.get(token=token)
         self.client.force_authenticate(self.admin)
@@ -773,6 +791,7 @@ class SharedQAApiTests(TestCase):
                 self.assertEqual(share.view_count, before_views)
 
     def test_admin_list_omits_complete_content(self):
+        self._set_moderation_tenant()
         self._share()
         self.client.force_authenticate(self.admin)
 

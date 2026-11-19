@@ -152,6 +152,42 @@ RECOVERY_MESSAGES = {
 }
 
 
+def public_run_error(value):
+    """Expose stable recovery codes without provider messages, host paths or credentials."""
+    if not value:
+        return ""
+    code = str(value).split(":", 1)[0].strip()
+    allowed = PUBLIC_RUNTIME_CODES | {
+        "LENS_RUN_FAILED",
+        "LENS_RUN_TIMEOUT",
+        "LENS_RUN_CANCELLED",
+        "LENSNODE_REQUIRED",
+        "LENSNODE_UNAVAILABLE",
+        "LENSNODE_OFFLINE",
+        "LENSNODE_NOT_APPROVED",
+        "LENSNODE_TOKEN_REVOKED",
+        "LENSNODE_DRAINING",
+        "LENSNODE_TASK_UNAVAILABLE",
+        "LENSNODE_DIR_UNAVAILABLE",
+        "LENSNODE_RESULT_TIMEOUT",
+        "LENSNODE_RESUME_EXPIRED",
+        "LENS_CHANNEL_LAYER_UNAVAILABLE",
+        "GENERAL_CHAT_SKILL_REQUIRED",
+        "SKILL_ENVIRONMENT_REQUIRED",
+        "MCP_ENVIRONMENT_REQUIRED",
+        "IMAGE_PREPROCESSING_FAILED",
+        "VISION_MODEL_CONFIGURATION_INVALID",
+        "MODEL_NOT_VISION_CAPABLE",
+        "VISION_MODEL_NOT_CONFIGURED",
+        "VISION_PROVIDER_QUOTA_EXCEEDED",
+        "VISION_PROVIDER_UNAVAILABLE",
+        "ASSISTANT_ARCHIVED",
+        "ASSISTANT_DISABLED",
+        "DATASOURCE_DISABLED",
+    }
+    return code if code in allowed else "LENS_RUN_FAILED"
+
+
 def sanitize_loaded_skills(items):
     """Return Skill identities without definitions or environment data."""
 

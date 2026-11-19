@@ -531,7 +531,7 @@ def test_gitlab_plugin_sync_builds_git_command_from_snapshot(monkeypatch):
     monkeypatch.setattr("lensnode.main.sync_datasource", fake_sync)
 
     result = client._execute_plugin_datasource_sync(
-        {"snapshot_uuid": "snapshot-1"}
+        {"snapshot_uuid": "snapshot-1", "conversion": {"image": True}, "conversion_token": "task-grant"}
     )
 
     assert result["status"] == "success"
@@ -548,6 +548,10 @@ def test_gitlab_plugin_sync_builds_git_command_from_snapshot(monkeypatch):
         }
     ]
     assert seen["config"]["access_token"] == "gitlab-secret"
+    assert seen["conversion"] == {"image": True}
+    assert seen["conversion_token"] == "task-grant"
+    assert seen["gateway_http_client"] is client.gateway_http_client
+    assert seen["lensnode_token"] == "node-token"
     assert material["value"] == ""
 
 

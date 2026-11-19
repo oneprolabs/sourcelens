@@ -108,7 +108,10 @@ test('assistant list delegates lower-frequency data to a drawer', async () => {
   assert.match(detailView, /activeTab === 'data'/)
   assert.match(detailView, /activeTab === 'capabilities'/)
   assert.match(detailView, /assistant.visibility === 'private'/)
-  assert.match(detailView, /:disabled="assistant.status !== 'active'"/)
+  assert.match(
+    drawer,
+    /assistant\?.status !== 'active' \|\|\s*assistant\?.is_enabled === false/
+  )
   assert.match(detailView, /\$emit\('edit', assistant\)/)
 })
 

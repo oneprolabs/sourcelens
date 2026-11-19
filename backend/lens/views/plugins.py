@@ -3,7 +3,7 @@
 import uuid
 from datetime import timedelta
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.deletion import ProtectedError
 from django.http import FileResponse
 from django.utils import timezone
@@ -51,12 +51,13 @@ from lens.serializers import (
 )
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
-from .base import BaseAdminViewSet, LensNodeAuthMixin
+from accounts.access import get_user_tenant
+from accounts.permissions import HasTenantOrLegacyAdminAccess
+from .base import BaseAuthenticatedViewSet, BaseAdminViewSet, LensNodeAuthMixin
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -75,7 +76,7 @@ SENSITIVE_KEYS = frozenset(
 class PluginRPCView(APIView):
     """Dispatch a declared Plugin-owned control RPC method."""
 
-    permission_classes = [IsAdminUser]
+    permission_classes = [HasTenantOrLegacyAdminAccess]
 
     def post(self, request, plugin_key):
         """Run one bounded control RPC for an administrator."""
@@ -259,6 +260,16 @@ class PluginRuntimeNoStoreMixin:
 class PluginRegistryViewSet(BaseAdminViewSet, ViewSet):
     """Expose installed Plugin identities without runtime internals."""
 
+    permission_classes = [HasTenantOrLegacyAdminAccess]
+
+    def get_permissions(self):
+        """Allow tenant admins to read connector templates while retaining existing RPC gates."""
+        if self.request.method in {"GET", "HEAD", "OPTIONS"}:
+            from accounts.permissions import HasPlatformSuperAdmin
+
+            return [(HasTenantOrLegacyAdminAccess | HasPlatformSuperAdmin)()]
+        return super().get_permissions()
+
     http_method_names = ["get", "post", "head", "options"]
     lookup_field = "key"
 
@@ -423,6 +434,7 @@ class PluginInvocationViewSet(BaseAdminViewSet):
     """Expose secret-free Plugin execution audit records to administrators."""
 
     http_method_names = ["get", "head", "options"]
+    permission_classes = [HasTenantOrLegacyAdminAccess]
     serializer_class = PluginInvocationSerializer
     queryset = PluginInvocation.objects.select_related(
         "snapshot",
@@ -436,7 +448,20 @@ class PluginInvocationViewSet(BaseAdminViewSet):
     def get_queryset(self):
         """Apply bounded exact-match audit filters."""
 
-        queryset = super().get_queryset()
+        tenant = get_user_tenant(self.request.user)
+        queryset = super().get_queryset().filter(
+            Q(
+                snapshot__run__tenant=tenant,
+                snapshot__run__session__tenant=tenant,
+                snapshot__run__session__assistant__tenant=tenant,
+                snapshot__run__isnull=False,
+            )
+            | Q(snapshot__datasource__tenant=tenant, snapshot__datasource__isnull=False),
+        ).filter(
+            Q(connection__isnull=True) | Q(connection__tenant=tenant),
+            Q(datasource__isnull=True) | Q(datasource__tenant=tenant),
+            Q(run__isnull=True) | Q(run__tenant=tenant, run__session__tenant=tenant),
+        )
         for field in ("plugin_key", "kind", "status", "tool_key"):
             value = self.request.query_params.get(field)
             if value:
@@ -447,9 +472,10 @@ class PluginInvocationViewSet(BaseAdminViewSet):
         return queryset
 
 
-class ConnectionViewSet(BaseAdminViewSet):
-    """Admin CRUD for reusable Plugin connections."""
+class ConnectionViewSet(BaseAuthenticatedViewSet):
+    """Tenant-admin CRUD for reusable Plugin connections."""
 
+    permission_classes = [HasTenantOrLegacyAdminAccess]
     queryset = (
         Connection.objects.exclude(ANONYMOUS_CONNECTION_FILTER)
         .exclude(plugin_key__in=RETIRED_PLUGIN_KEYS)
@@ -565,9 +591,9 @@ class ConnectionViewSet(BaseAdminViewSet):
         return response
 
     def get_queryset(self):
-        """Filter connections by Plugin or lifecycle status."""
+        """Filter connections by tenant, Plugin, or lifecycle status."""
 
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().filter(tenant=get_user_tenant(self.request.user))
         plugin_key = self.request.query_params.get("plugin_key")
         status_value = self.request.query_params.get("status")
         if plugin_key:
@@ -815,7 +841,15 @@ class PluginCredentialLeaseView(
         ):
             return Response({"detail": "SECRET_MATERIAL_DISABLED"}, status=409)
         now = timezone.now()
+        lease_tenant = None
+        if snapshot.run_id:
+            lease_tenant = snapshot.run.tenant
+        elif snapshot.connection_id:
+            lease_tenant = snapshot.connection.tenant
+        elif snapshot.datasource_id:
+            lease_tenant = snapshot.datasource.tenant
         lease = CredentialLease.objects.create(
+            tenant=lease_tenant,
             snapshot=snapshot,
             lensnode=node,
             expires_at=now + timedelta(minutes=5),

@@ -30,6 +30,7 @@ import os
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        'accounts.authentication.TenantApiKeyAuthentication',
         'accounts.authentication.AgentRestrictedJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
@@ -132,6 +133,16 @@ AGENT_TOKEN_ALLOWED_ROUTES = (
     ("GET", r"/api/lens/output-files/[0-9A-Fa-f-]{36}/?"),
     ("GET", r"/api/lens/assistants/?"),
     ("GET", r"/api/lens/assistants/[0-9A-Fa-f-]{36}/?"),
+)
+
+TENANT_API_KEY_ALLOWED_ROUTES = (
+    ("GET", r"/api/lens/assistants/?"),
+    ("GET", r"/api/lens/assistants/[0-9A-Fa-f-]{36}/?"),
+    ("POST", r"/api/lens/sessions/?"),
+    ("POST", r"/api/lens/sessions/[0-9A-Fa-f-]{36}/runs/?"),
+    ("GET", r"/api/lens/runs/[0-9A-Fa-f-]{36}/?"),
+    ("GET", r"/api/lens/runs/[0-9A-Fa-f-]{36}/output-files/?"),
+    ("GET", r"/api/lens/output-files/[0-9A-Fa-f-]{36}/?"),
 )
 
 # REST Authentication Settings:

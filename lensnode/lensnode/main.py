@@ -1479,6 +1479,15 @@ class LensNodeClient:
                 )
             if message.get("cancel_event") is not None:
                 command["cancel_event"] = message["cancel_event"]
+            command.update(
+                conversion=message.get("conversion") or {},
+                conversion_token=message.get("conversion_token") or "",
+                ai_gateway_url=self.config.ai_gateway_url,
+                lensnode_token=self.config.token,
+                gateway_http_client=self.gateway_http_client,
+                tls_skip_verify=getattr(self.config, "tls_skip_verify", False),
+                tls_ca_file=getattr(self.config, "tls_ca_file", None),
+            )
             command["max_workers"] = message.get("max_workers")
             command["git_max_bytes"] = self.config.git_max_bytes
             result = runtime.sync_datasource(

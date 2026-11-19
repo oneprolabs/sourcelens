@@ -42,6 +42,16 @@
           <BaseLoading v-if="loading && !rows.length" />
 
           <div
+            v-else-if="loadError"
+            role="alert"
+            class="rounded-md border border-danger-200 p-4 text-sm text-danger-700"
+          >
+            {{ t('lens.qa.detailFailed') }}
+            <BaseButton variant="outline" size="sm" @click="load">{{
+              t('common.retry')
+            }}</BaseButton>
+          </div>
+          <div
             v-else-if="!rows.length"
             class="rounded-lg border border-line bg-surface-sunken py-16 text-center"
           >
@@ -113,7 +123,7 @@
                         "
                         :title="
                           t(
-                            `lensAdmin.visibility.${row.assistant_visibility === 'private' ? 'private' : 'public'}Desc`
+                            `lensAdmin.visibility.${row.assistant_visibility || 'private'}Desc`
                           )
                         "
                       >
@@ -121,13 +131,15 @@
                           :is="
                             row.assistant_visibility === 'private'
                               ? LockIcon
-                              : GlobeIcon
+                              : row.assistant_visibility === 'tenant'
+                                ? UsersIcon
+                                : GlobeIcon
                           "
                           class="h-3.5 w-3.5"
                         />
                         {{
                           t(
-                            `lensAdmin.visibility.${row.assistant_visibility === 'private' ? 'private' : 'public'}`
+                            `lensAdmin.visibility.${row.assistant_visibility || 'private'}`
                           )
                         }}
                       </span>
@@ -173,6 +185,7 @@
                         {{ t('lens.qa.preview') }}
                       </a>
                       <BaseButton
+                        :disabled="readonly || actionLoading"
                         v-if="!row.is_listed && row.status === 'published'"
                         variant="primary"
                         size="sm"
@@ -181,6 +194,7 @@
                         {{ t('lens.qa.approve') }}
                       </BaseButton>
                       <BaseButton
+                        :disabled="readonly || actionLoading"
                         v-if="row.is_listed && row.status === 'published'"
                         variant="outline"
                         size="sm"
@@ -189,6 +203,7 @@
                         {{ t('lens.qa.unlist') }}
                       </BaseButton>
                       <BaseButton
+                        :disabled="readonly || actionLoading"
                         v-if="row.status === 'published'"
                         variant="danger"
                         size="sm"
@@ -197,6 +212,7 @@
                         {{ t('lens.qa.hide') }}
                       </BaseButton>
                       <BaseButton
+                        :disabled="readonly || actionLoading"
                         v-if="row.status === 'hidden'"
                         variant="outline"
                         size="sm"
@@ -230,6 +246,16 @@
         @close="closeDetail"
       >
         <BaseLoading v-if="detailLoading" />
+        <div
+          v-else-if="detailError"
+          role="alert"
+          class="space-y-3 py-6 text-sm text-danger-700"
+        >
+          <p>{{ t('lens.qa.detailFailed') }}</p>
+          <BaseButton variant="outline" size="sm" @click="loadDetail">{{
+            t('common.retry')
+          }}</BaseButton>
+        </div>
         <div v-else-if="detail" class="space-y-6 pt-1">
           <dl class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
             <div>
@@ -282,6 +308,7 @@
               variant="primary"
               size="sm"
               :loading="actionLoading"
+              :disabled="readonly"
               @click="apply(detail, { is_listed: true })"
             >
               {{ t('lens.qa.approve') }}
@@ -291,6 +318,7 @@
               variant="outline"
               size="sm"
               :loading="actionLoading"
+              :disabled="readonly"
               @click="apply(detail, { is_listed: false })"
             >
               {{ t('lens.qa.unlist') }}
@@ -300,6 +328,7 @@
               variant="danger"
               size="sm"
               :loading="actionLoading"
+              :disabled="readonly"
               @click="apply(detail, { status: 'hidden' })"
             >
               {{ t('lens.qa.hide') }}
@@ -309,6 +338,7 @@
               variant="outline"
               size="sm"
               :loading="actionLoading"
+              :disabled="readonly"
               @click="apply(detail, { status: 'published' })"
             >
               {{ t('lens.qa.restore') }}
@@ -324,7 +354,11 @@
 </template>
 
 <script setup>
-import { Globe as GlobeIcon, Lock as LockIcon } from '@lucide/vue'
+import {
+  Globe as GlobeIcon,
+  Lock as LockIcon,
+  Users as UsersIcon
+} from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -337,11 +371,13 @@ import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { getAdminShare, listAdminShares, updateAdminShare } from '@/api/lens'
 import { formatDate } from '@/utils/formatting'
 import { qaShareUrl } from '@/utils/lens'
+import { useUserStore } from '@/store/user'
 import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
 const { showSuccess, showError } = useToast()
 
+const readonly = computed(() => useUserStore().delegation?.mode === 'readonly')
 const rows = ref([])
 const totalCount = ref(0)
 const loading = ref(true)
@@ -352,7 +388,11 @@ const drawerOpen = ref(false)
 const selectedUuid = ref(null)
 const detail = ref(null)
 const detailLoading = ref(false)
+const detailError = ref(false)
 const actionLoading = ref(false)
+const loadError = ref(false)
+let listRequest = 0
+let detailRequest = 0
 
 const tabs = computed(() => [
   { key: 'pending', label: t('lens.qa.tabPending') },
@@ -395,22 +435,25 @@ function extractRows(data) {
 }
 
 async function load() {
+  const request = ++listRequest
   loading.value = true
+  loadError.value = false
   try {
     const data = await listAdminShares({
       ...TAB_PARAMS[activeTab.value],
       page: currentPage.value,
       page_size: pageSize.value
     })
+    if (request !== listRequest) return
     rows.value = extractRows(data)
     totalCount.value = Array.isArray(data)
       ? data.length
       : Number(data?.count ?? rows.value.length)
   } catch {
-    rows.value = []
-    totalCount.value = 0
+    if (request !== listRequest) return
+    loadError.value = true
   } finally {
-    loading.value = false
+    if (request === listRequest) loading.value = false
   }
 }
 
@@ -428,6 +471,7 @@ async function openDetail(row) {
 }
 
 function closeDetail() {
+  detailRequest++
   drawerOpen.value = false
   selectedUuid.value = null
   detail.value = null
@@ -435,18 +479,26 @@ function closeDetail() {
 
 async function loadDetail() {
   if (!selectedUuid.value) return
+  const request = ++detailRequest
+  const uuid = selectedUuid.value
   detailLoading.value = true
+  detailError.value = false
   try {
-    detail.value = await getAdminShare(selectedUuid.value)
+    const data = await getAdminShare(uuid)
+    if (request !== detailRequest || selectedUuid.value !== uuid) return
+    detail.value = data
   } catch {
+    if (request !== detailRequest) return
     detail.value = null
+    detailError.value = true
     showError(t('lens.qa.detailFailed'))
   } finally {
-    detailLoading.value = false
+    if (request === detailRequest) detailLoading.value = false
   }
 }
 
 async function apply(row, payload) {
+  if (readonly.value || actionLoading.value) return
   actionLoading.value = true
   try {
     await updateAdminShare(row.uuid, payload)

@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout>
+  <component :is="embedded ? 'div' : AdminLayout" :class="{ hidden: embedded }">
     <div class="flex max-w-full flex-col gap-4 py-4">
       <section
         class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
@@ -10,7 +10,11 @@
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h1 class="text-xl font-semibold text-ink-900">
-                {{ t('lensAdmin.pages.skills.title') }}
+                {{
+                  officialCatalog
+                    ? t('catalog.officialSkills')
+                    : t('catalog.privateSkills')
+                }}
               </h1>
             </div>
           </div>
@@ -78,10 +82,10 @@
                   {{ t('lensAdmin.skills.allStatuses') }}
                 </option>
                 <option value="enabled">
-                  {{ t('common.status.enabled') }}
+                  {{ t(officialCatalog ? 'catalog.published' : 'common.status.enabled') }}
                 </option>
                 <option value="disabled">
-                  {{ t('common.status.disabled') }}
+                  {{ t(officialCatalog ? 'catalog.unpublished' : 'common.status.disabled') }}
                 </option>
                 <option value="updates">
                   {{ t('lensAdmin.skills.updateAvailable') }}
@@ -113,6 +117,10 @@
                   </div>
                   <StatusBadge :status="row.enabled ? 'enabled' : 'disabled'" />
                 </div>
+                <p v-if="officialCatalog" class="mt-3 text-xs text-ink-500">
+                  {{ t('catalog.enabledTenants', { count: row.enabled_tenant_count || 0 }) }} ·
+                  {{ t('catalog.boundCount', { count: row.bound_count || 0 }) }}
+                </p>
                 <p
                   class="mt-4 line-clamp-2 h-10 overflow-hidden text-sm leading-5 text-ink-600"
                   :title="
@@ -215,223 +223,225 @@
         :subtitle="form.name || ''"
         @close="closeModal"
       >
-        <form id="skill-form" class="space-y-4" @submit.prevent="save">
-          <FormRow
-            :label="
-              mode === 'create'
-                ? t('lensAdmin.skills.createMethod')
-                : t('lensAdmin.skills.sourceType')
-            "
-            required
-          >
-            <BaseSelect v-if="mode === 'create'" v-model="createMethod">
-              <option
-                v-for="option in createMethodOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </BaseSelect>
-            <div
-              v-else
-              class="rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-700"
-            >
-              {{ activeMethodLabel }}
-            </div>
-            <p class="mt-1 text-xs leading-5 text-ink-500">
-              {{ activeMethodDescription }}
-            </p>
-          </FormRow>
-
-          <template v-if="activeMethod === 'manual'">
-            <FormRow :label="t('lensAdmin.fields.name')" required>
-              <input v-model="form.name" class="form-input" required />
-            </FormRow>
-            <FormRow :label="t('lensAdmin.fields.description')">
-              <input
-                v-model="form.description"
-                class="form-input"
-                :placeholder="t('lensAdmin.placeholders.skillDescription')"
-              />
-            </FormRow>
-            <FormRow :label="t('lensAdmin.skillDetail.descriptionZh')">
-              <input
-                v-model="form.descriptionZh"
-                class="form-input"
-                :placeholder="
-                  t('lensAdmin.skillDetail.descriptionZhPlaceholder')
-                "
-              />
-            </FormRow>
-            <SkillEnvironmentEditor
-              v-model="form.environment"
-              @change="markEnvironmentChanged"
-            />
-            <FormRow :label="t('lensAdmin.fields.content')">
-              <div class="mb-2 flex items-center justify-between gap-2">
-                <span class="text-xs text-ink-400">
-                  {{ t('lensAdmin.skills.beautifyHint') }}
-                </span>
-                <BaseButton
-                  size="sm"
-                  variant="outline"
-                  :loading="beautifying"
-                  :disabled="beautifying"
-                  @click="beautify"
-                >
-                  {{ t('lensAdmin.skills.beautify') }}
-                </BaseButton>
-              </div>
-              <textarea
-                v-model="form.content"
-                class="form-input min-h-96"
-                :placeholder="t('lensAdmin.placeholders.skillContent')"
-              />
-            </FormRow>
-            <BooleanRow v-model="form.enabled" />
-          </template>
-
-          <template v-else-if="activeMethod === 'upload'">
-            <div
-              class="overflow-hidden rounded-lg border border-line bg-surface"
-            >
-              <div
-                class="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div class="flex min-w-0 items-start gap-3">
-                  <span
-                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-700"
-                  >
-                    <BotIcon class="h-4 w-4" aria-hidden="true" />
-                  </span>
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium text-ink-800">
-                      {{ t('lensAdmin.skills.packageGuideTitle') }}
-                    </div>
-                    <p class="mt-0.5 text-xs leading-5 text-ink-500">
-                      {{ t('lensAdmin.skills.packageGuideSummary') }}
-                    </p>
-                  </div>
-                </div>
-                <BaseButton
-                  class="shrink-0"
-                  size="sm"
-                  variant="outline"
-                  @click="copyPackageGuidePrompt"
-                >
-                  <CopyIcon class="h-3.5 w-3.5" aria-hidden="true" />
-                  {{ t('lensAdmin.skills.packageGuideCopy') }}
-                </BaseButton>
-              </div>
-              <details class="group border-t border-line">
-                <summary
-                  class="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-ink-500 hover:bg-surface-sunken hover:text-ink-700 [&::-webkit-details-marker]:hidden"
-                >
-                  <span>
-                    {{ t('lensAdmin.skills.packageGuideDetails') }}
-                  </span>
-                  <ChevronDownIcon
-                    class="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-                    aria-hidden="true"
-                  />
-                </summary>
-                <div class="px-3 pb-3">
-                  <pre
-                    tabindex="0"
-                    :aria-label="t('lensAdmin.skills.packageGuideTitle')"
-                    class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-sunken p-3 font-mono text-xs leading-5 text-ink-700"
-                    >{{ packageGuidePrompt }}</pre
-                  >
-                </div>
-              </details>
-            </div>
+        <form id="skill-form" @submit.prevent="save">
+          <fieldset :disabled="saving" class="min-w-0 space-y-4">
             <FormRow
-              :label="t('lensAdmin.skills.packageFile')"
-              :required="mode === 'create'"
+              :label="
+                mode === 'create'
+                  ? t('lensAdmin.skills.createMethod')
+                  : t('lensAdmin.skills.sourceType')
+              "
+              required
             >
-              <input
-                ref="packageInput"
-                class="hidden"
-                type="file"
-                accept=".zip,application/zip"
-                @change="handlePackageFileChange"
-              />
-              <button
-                type="button"
-                class="upload-dropzone"
-                :class="{ 'upload-dropzone-active': packageDragging }"
-                @click="triggerPackagePick"
-                @dragover.prevent="packageDragging = true"
-                @dragleave.prevent="packageDragging = false"
-                @drop.prevent="handlePackageDrop"
-              >
-                <UploadCloudIcon class="h-8 w-8 text-brand-500" />
-                <span class="text-sm font-medium text-ink-800">
-                  {{
-                    packageFileName || t('lensAdmin.skills.packageDropTitle')
-                  }}
-                </span>
-                <span class="text-xs leading-5 text-ink-500">
-                  {{
-                    packageFileName
-                      ? packageFileSize
-                      : t('lensAdmin.skills.packageDropSubtitle')
-                  }}
-                </span>
-              </button>
+              <BaseSelect v-if="mode === 'create'" v-model="createMethod">
+                <option
+                  v-for="option in createMethodOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </BaseSelect>
               <div
-                v-if="packageFile"
-                class="mt-2 flex items-center justify-between gap-3 rounded-md border border-line bg-surface-sunken px-3 py-2"
+                v-else
+                class="rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-700"
               >
-                <div class="min-w-0">
-                  <div class="truncate text-sm font-medium text-ink-800">
-                    {{ packageFileName }}
-                  </div>
-                  <div class="text-xs text-ink-500">
-                    {{ packageFileSize }}
-                  </div>
+                {{ activeMethodLabel }}
+              </div>
+              <p class="mt-1 text-xs leading-5 text-ink-500">
+                {{ activeMethodDescription }}
+              </p>
+            </FormRow>
+
+            <template v-if="activeMethod === 'manual'">
+              <FormRow :label="t('lensAdmin.fields.name')" required>
+                <input v-model="form.name" class="form-input" required />
+              </FormRow>
+              <FormRow :label="t('lensAdmin.fields.description')">
+                <input
+                  v-model="form.description"
+                  class="form-input"
+                  :placeholder="t('lensAdmin.placeholders.skillDescription')"
+                />
+              </FormRow>
+              <FormRow :label="t('lensAdmin.skillDetail.descriptionZh')">
+                <input
+                  v-model="form.descriptionZh"
+                  class="form-input"
+                  :placeholder="
+                    t('lensAdmin.skillDetail.descriptionZhPlaceholder')
+                  "
+                />
+              </FormRow>
+              <SkillEnvironmentEditor
+                v-model="form.environment"
+                @change="markEnvironmentChanged"
+              />
+              <FormRow :label="t('lensAdmin.fields.content')">
+                <div class="mb-2 flex items-center justify-between gap-2">
+                  <span class="text-xs text-ink-400">
+                    {{ t('lensAdmin.skills.beautifyHint') }}
+                  </span>
+                  <BaseButton
+                    size="sm"
+                    variant="outline"
+                    :loading="beautifying"
+                    :disabled="beautifying"
+                    @click="beautify"
+                  >
+                    {{ t('lensAdmin.skills.beautify') }}
+                  </BaseButton>
                 </div>
+                <textarea
+                  v-model="form.content"
+                  class="form-input min-h-96"
+                  :placeholder="t('lensAdmin.placeholders.skillContent')"
+                />
+              </FormRow>
+              <BooleanRow v-model="form.enabled" />
+            </template>
+
+            <template v-else-if="activeMethod === 'upload'">
+              <div
+                class="overflow-hidden rounded-lg border border-line bg-surface"
+              >
+                <div
+                  class="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div class="flex min-w-0 items-start gap-3">
+                    <span
+                      class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-700"
+                    >
+                      <BotIcon class="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium text-ink-800">
+                        {{ t('lensAdmin.skills.packageGuideTitle') }}
+                      </div>
+                      <p class="mt-0.5 text-xs leading-5 text-ink-500">
+                        {{ t('lensAdmin.skills.packageGuideSummary') }}
+                      </p>
+                    </div>
+                  </div>
+                  <BaseButton
+                    class="shrink-0"
+                    size="sm"
+                    variant="outline"
+                    @click="copyPackageGuidePrompt"
+                  >
+                    <CopyIcon class="h-3.5 w-3.5" aria-hidden="true" />
+                    {{ t('lensAdmin.skills.packageGuideCopy') }}
+                  </BaseButton>
+                </div>
+                <details class="group border-t border-line">
+                  <summary
+                    class="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-ink-500 hover:bg-surface-sunken hover:text-ink-700 [&::-webkit-details-marker]:hidden"
+                  >
+                    <span>
+                      {{ t('lensAdmin.skills.packageGuideDetails') }}
+                    </span>
+                    <ChevronDownIcon
+                      class="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
+                      aria-hidden="true"
+                    />
+                  </summary>
+                  <div class="px-3 pb-3">
+                    <pre
+                      tabindex="0"
+                      :aria-label="t('lensAdmin.skills.packageGuideTitle')"
+                      class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-sunken p-3 font-mono text-xs leading-5 text-ink-700"
+                      >{{ packageGuidePrompt }}</pre
+                    >
+                  </div>
+                </details>
+              </div>
+              <FormRow
+                :label="t('lensAdmin.skills.packageFile')"
+                :required="mode === 'create'"
+              >
+                <input
+                  ref="packageInput"
+                  class="hidden"
+                  type="file"
+                  accept=".zip,application/zip"
+                  @change="handlePackageFileChange"
+                />
                 <button
                   type="button"
-                  class="rounded-md p-1 text-ink-400 hover:bg-line-soft hover:text-ink-700"
-                  :aria-label="t('common.delete')"
-                  @click="clearPackageFile"
+                  class="upload-dropzone"
+                  :class="{ 'upload-dropzone-active': packageDragging }"
+                  @click="triggerPackagePick"
+                  @dragover.prevent="packageDragging = true"
+                  @dragleave.prevent="packageDragging = false"
+                  @drop.prevent="handlePackageDrop"
                 >
-                  <XIcon class="h-4 w-4" />
+                  <UploadCloudIcon class="h-8 w-8 text-brand-500" />
+                  <span class="text-sm font-medium text-ink-800">
+                    {{
+                      packageFileName || t('lensAdmin.skills.packageDropTitle')
+                    }}
+                  </span>
+                  <span class="text-xs leading-5 text-ink-500">
+                    {{
+                      packageFileName
+                        ? packageFileSize
+                        : t('lensAdmin.skills.packageDropSubtitle')
+                    }}
+                  </span>
                 </button>
-              </div>
-              <p class="mt-1 text-xs leading-5 text-ink-500">
-                {{
-                  mode === 'create'
-                    ? t('lensAdmin.skills.packageFileHelp')
-                    : t('lensAdmin.skills.packageFileOptionalHelp')
-                }}
-              </p>
-            </FormRow>
-            <SkillEnvironmentEditor
-              v-model="form.environment"
-              @change="markEnvironmentChanged"
-            />
-          </template>
-
-          <template v-else-if="activeMethod === 'github'">
-            <FormRow :label="t('lensAdmin.skills.githubUrl')" required>
-              <input
-                v-model="githubUrl"
-                class="form-input"
-                required
-                placeholder="https://github.com/owner/repository"
+                <div
+                  v-if="packageFile"
+                  class="mt-2 flex items-center justify-between gap-3 rounded-md border border-line bg-surface-sunken px-3 py-2"
+                >
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-medium text-ink-800">
+                      {{ packageFileName }}
+                    </div>
+                    <div class="text-xs text-ink-500">
+                      {{ packageFileSize }}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="rounded-md p-1 text-ink-400 hover:bg-line-soft hover:text-ink-700"
+                    :aria-label="t('common.delete')"
+                    @click="clearPackageFile"
+                  >
+                    <XIcon class="h-4 w-4" />
+                  </button>
+                </div>
+                <p class="mt-1 text-xs leading-5 text-ink-500">
+                  {{
+                    mode === 'create'
+                      ? t('lensAdmin.skills.packageFileHelp')
+                      : t('lensAdmin.skills.packageFileOptionalHelp')
+                  }}
+                </p>
+              </FormRow>
+              <SkillEnvironmentEditor
+                v-model="form.environment"
+                @change="markEnvironmentChanged"
               />
-              <p class="mt-1 text-xs leading-5 text-ink-500">
-                {{ t('lensAdmin.skills.githubUrlHelp') }}
-              </p>
-            </FormRow>
-          </template>
+            </template>
 
-          <p v-if="formError" class="text-sm text-danger-700">
-            {{ formError }}
-          </p>
+            <template v-else-if="activeMethod === 'github'">
+              <FormRow :label="t('lensAdmin.skills.githubUrl')" required>
+                <input
+                  v-model="githubUrl"
+                  class="form-input"
+                  required
+                  placeholder="https://github.com/owner/repository"
+                />
+                <p class="mt-1 text-xs leading-5 text-ink-500">
+                  {{ t('lensAdmin.skills.githubUrlHelp') }}
+                </p>
+              </FormRow>
+            </template>
+
+            <p v-if="formError" class="text-sm text-danger-700">
+              {{ formError }}
+            </p>
+          </fieldset>
         </form>
         <template #footer>
           <div class="flex flex-row-reverse gap-2">
@@ -443,7 +453,11 @@
             >
               {{ saveButtonLabel }}
             </BaseButton>
-            <BaseButton variant="outline" @click="closeModal">
+            <BaseButton
+              variant="outline"
+              :disabled="saving"
+              @click="closeModal"
+            >
               {{ t('common.cancel') }}
             </BaseButton>
           </div>
@@ -790,12 +804,13 @@
         </template>
       </BaseModal>
     </div>
-  </AdminLayout>
+  </component>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import {
   Bot as BotIcon,
   ChevronDown as ChevronDownIcon,
@@ -848,7 +863,15 @@ import {
 } from './skillPackagingGuide'
 import { skillPackageValidationError } from './skillPackageValidation'
 
+const props = defineProps({
+  embedded: Boolean,
+  initialSkillUuid: { type: String, default: '' },
+  initialCreateMethod: { type: String, default: 'manual' }
+})
+const emit = defineEmits(['saved', 'close'])
 const { t, tm } = useI18n()
+const route = useRoute()
+const officialCatalog = computed(() => route.meta.catalogMode === 'official')
 const { showSuccess, showError } = useToast()
 
 const packageGuidePrompt = computed(() =>
@@ -1200,18 +1223,25 @@ function markEnvironmentChanged() {
   environmentChanged.value = true
 }
 
+let loadRequestId = 0
 async function load() {
+  const requestId = ++loadRequestId
+  const catalog = officialCatalog.value ? 'official' : 'private'
   loading.value = true
   formError.value = ''
   try {
-    skills.value = normalizeList(await listSkills({ compact: true }))
-    if (skills.value.some((skill) => skill.source_type === 'github')) {
-      skills.value = normalizeList(await checkSkillUpdates({ compact: true }))
+    let result = normalizeList(await listSkills({ compact: true, catalog }))
+    if (requestId !== loadRequestId) return
+    if (result.some((skill) => skill.source_type === 'github')) {
+      result = normalizeList(await checkSkillUpdates({ compact: true, catalog }))
     }
+    if (requestId === loadRequestId) skills.value = result
   } catch (error) {
-    showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
+    if (requestId === loadRequestId) {
+      showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
 
@@ -1229,6 +1259,7 @@ function handlePackageDrop(event) {
 }
 
 function setPackageFile(file) {
+  if (saving.value) return
   if (!file) {
     return
   }
@@ -1271,6 +1302,7 @@ async function startEdit(row) {
     if (currentRequest !== skillRequestId) return
   } catch (error) {
     showError(skillErrorMessage(error, t, t('lensAdmin.messages.loadFailed')))
+    if (props.embedded) emit('close')
     return
   }
   mode.value = 'edit'
@@ -1285,6 +1317,7 @@ async function startEdit(row) {
 }
 
 function closeModal() {
+  if (saving.value) return
   skillRequestId += 1
   showModal.value = false
   form.value = {}
@@ -1363,6 +1396,7 @@ async function saveByMode(uuid, payload) {
 }
 
 async function save() {
+  if (saving.value) return
   saving.value = true
   formError.value = ''
   try {
@@ -1399,8 +1433,10 @@ async function save() {
       await saveByMode(form.value.uuid, buildPayload())
       showSuccess(t('lensAdmin.messages.saveSuccess'))
     }
+    saving.value = false
     closeModal()
-    await load()
+    if (props.embedded) emit('saved')
+    else await load()
   } catch (error) {
     formError.value = skillErrorMessage(
       error,
@@ -1473,7 +1509,26 @@ async function download(row) {
   }
 }
 
-onMounted(load)
+watch(showModal, (visible, previous) => {
+  if (props.embedded && previous && !visible) emit('close')
+})
+watch(
+  officialCatalog,
+  () => {
+    skills.value = []
+    currentPage.value = 1
+    closeModal()
+    closeDetail()
+    if (props.embedded) {
+      if (props.initialSkillUuid) startEdit({ uuid: props.initialSkillUuid })
+      else {
+        startCreate()
+        createMethod.value = props.initialCreateMethod
+      }
+    } else load()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

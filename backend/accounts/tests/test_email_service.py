@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.core import mail
 from django.test import SimpleTestCase, override_settings
 
@@ -40,6 +42,14 @@ class EmailDeliveryOptionsTests(SimpleTestCase):
 class PasswordResetEmailServiceTests(SimpleTestCase):
     def setUp(self):
         mail.outbox.clear()
+
+    @patch('accounts.services.email.EmailMultiAlternatives.send', return_value=0)
+    def test_zero_accepted_messages_is_a_delivery_failure(self, send):
+        """Do not claim administrative recovery mail was accepted when the backend sent zero."""
+        sent = PasswordResetEmailService.send_password_reset_email(
+            email='person@example.com', uid='uid-value', token='token-value'
+        )
+        assert sent is False
 
     def test_renders_and_sends_english_password_reset_email(self):
         sent = PasswordResetEmailService.send_password_reset_email(

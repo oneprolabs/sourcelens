@@ -8,6 +8,7 @@ import { toDocumentLang } from './utils/documentLang'
 import { usePreferencesStore } from './store/preferences'
 import { isManagementPath } from './utils/theme'
 import './assets/css/main.css'
+import './assets/css/admin-prototype.css'
 
 // Google Analytics (gtag.js) — loaded only when a measurement ID is set,
 // so dev builds without VITE_GA_ID never send traffic.
