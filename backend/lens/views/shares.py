@@ -8,17 +8,25 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.http import content_disposition_header
 from rest_framework import permissions, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.access import get_user_membership
+from accounts.audit import record_audit
+from accounts.delegation import get_active_delegation, is_delegated_request
 from accounts.models import normalize_answer_language
+from accounts.permissions import HasPlatformSuperAdmin
 from lens.models import Assistant, SharedQA, SharedQAFile
 from lens.public_share import (
     INHERIT,
+    PUBLIC,
     allows_anonymous_access,
     configured_policy,
     policy_source,
     requires_publisher_choice,
+    resolve_policy,
+    scope_shares_for_moderation,
 )
 from lens.qa_pdf import build_qa_pdf_filename, render_qa_pdf
 from lens.serializers import (
@@ -53,7 +61,7 @@ def _shared_qa_default_title(question, limit=60):
 class SharedQAViewSet(BaseAuthenticatedViewSet):
     """List, rename, and revoke the current user's own shared Q&As."""
 
-    queryset = SharedQA.objects.all().select_related("published_by")
+    queryset = SharedQA.objects.all().select_related("published_by", "assistant")
     serializer_class = SharedQAMineSerializer
     http_method_names = ["get", "patch", "delete", "head", "options"]
 
@@ -113,26 +121,20 @@ class SharedQAPolicyView(APIView):
                     )
             else:
                 lookup = {"slug": assistant_slug}
-            assistant = (
-                Assistant.objects.filter(**lookup)
-                .filter(
-                    Q(visibility=Assistant.Visibility.PUBLIC)
-                    | Q(access_grants__user=request.user)
-                    | Q(access_grants__group__in=request.user.groups.all())
-                )
-                .distinct()
-                .first()
-            )
+            assistant = Assistant.objects.visible_to(request.user).filter(**lookup).first()
             if assistant is None:
                 return Response(
                     {"detail": "Assistant not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+        source = policy_source(assistant)
+        policy = resolve_policy(assistant) if source == "visibility" else configured_policy(assistant) or INHERIT
         return Response(
             {
-                "policy": configured_policy(assistant) or INHERIT,
-                "source": policy_source(assistant) or "",
+                "policy": policy,
+                "source": source or "",
                 "requires_choice": requires_publisher_choice(assistant),
+                "effective_policy": resolve_policy(assistant),
             }
         )
 
@@ -140,9 +142,36 @@ class SharedQAPolicyView(APIView):
 class AdminSharedQAViewSet(BaseAdminViewSet):
     """Admin moderation/curation of shared Q&As."""
 
-    queryset = SharedQA.objects.all().select_related("published_by")
+    queryset = SharedQA.objects.all().select_related("published_by", "assistant")
     serializer_class = SharedQAAdminSerializer
     http_method_names = ["get", "patch", "head", "options"]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def initial(self, request, *args, **kwargs):
+        """Require tenant authority before any moderation action."""
+        super().initial(request, *args, **kwargs)
+        if HasPlatformSuperAdmin().has_permission(request, self) and not is_delegated_request():
+            raise PermissionDenied("Tenant delegation is required.")
+        membership = get_user_membership(request.user)
+        if not (
+            membership and membership.role == "tenant_admin" and membership.status == "active"
+            and membership.tenant.status == "active"
+        ):
+            raise PermissionDenied("An active tenant administrator is required.")
+        self.tenant = membership.tenant
+        delegation = get_active_delegation(request.user)
+        if delegation and delegation.mode == "readonly" and request.method not in permissions.SAFE_METHODS:
+            raise PermissionDenied("This delegation is read only.")
+
+    def perform_update(self, serializer):
+        """Audit moderation without recording the shared question or answer."""
+        share = serializer.save()
+        record_audit(
+            action="share.review", request=self.request, actor=self.request.user,
+            tenant=self.tenant, delegation=get_active_delegation(self.request.user),
+            resource_type="shared_qa", resource_id=str(share.uuid),
+            metadata={"is_listed": share.is_listed, "status": share.status},
+        )
 
     def get_serializer_class(self):
         """Return complete Q&A content only for the detail endpoint."""
@@ -154,7 +183,7 @@ class AdminSharedQAViewSet(BaseAdminViewSet):
     def get_queryset(self):
         """Filter by listed/status for the moderation queue."""
 
-        queryset = super().get_queryset()
+        queryset = scope_shares_for_moderation(super().get_queryset(), self.tenant)
         params = self.request.query_params
         listed = params.get("listed")
         if listed in ("true", "false"):
@@ -296,6 +325,18 @@ def _shared_qa_access_error(assistant, user, share=None):
     """
 
     authenticated = bool(user and user.is_authenticated)
+    if assistant.tenant_id and assistant.tenant.status != "active":
+        return Response({"detail": "Shared Q&A not found."}, status=status.HTTP_404_NOT_FOUND)
+    if authenticated and not allows_anonymous_access(assistant, share=share) and assistant.tenant_id:
+        membership = get_user_membership(user)
+        if not (
+            membership and membership.status == "active" and membership.tenant.status == "active"
+            and membership.tenant.pk == assistant.tenant_id
+        ):
+            return Response(
+                {"code": "ASSISTANT_ACCESS_DENIED", "detail": "You do not have access to this assistant."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
     if not authenticated:
         if not allows_anonymous_access(assistant, share=share):
             return Response(
@@ -342,6 +383,12 @@ class PublicSharedQAListView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         access_error = _shared_qa_access_error(assistant, request.user)
+        if (
+            assistant.visibility == Assistant.Visibility.PUBLIC
+            and configured_policy(assistant) is None
+            and assistant.is_accessible_by(request.user)
+        ):
+            access_error = None
         if access_error is not None:
             return access_error
         params = request.query_params
@@ -356,10 +403,16 @@ class PublicSharedQAListView(APIView):
             is_listed=True,
             status=SharedQA.Status.PUBLISHED,
         ).order_by("-published_at", "-created_at")
-        if not (request.user and request.user.is_authenticated):
-            # A share the publisher marked as sign-in only must not surface
-            # its title or excerpt to an anonymous visitor.
-            queryset = queryset.exclude(require_login=True)
+        membership = get_user_membership(request.user) if request.user.is_authenticated else None
+        same_tenant = bool(
+            membership and membership.status == "active" and membership.tenant.status == "active"
+            and membership.tenant.pk == assistant.tenant_id
+        )
+        if configured_policy(assistant) != PUBLIC and not same_tenant:
+            if assistant.tenant_id:
+                queryset = queryset.filter(require_login=False)
+            elif not request.user.is_authenticated:
+                queryset = queryset.exclude(require_login=True)
         total = queryset.count()
         rows = SharedQAListSerializer(
             queryset[offset:offset + limit],

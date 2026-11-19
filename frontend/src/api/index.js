@@ -34,6 +34,17 @@ const processQueue = (error, token = null) => {
 
 api.interceptors.request.use(
   (config) => {
+    if (window.location.pathname.startsWith('/management/platform/catalog/')) {
+      config.headers['X-Catalog-Scope'] = 'official'
+    }
+    if (
+      window.location.pathname.startsWith('/management/platform/notifications/')
+    ) {
+      config.headers['X-Notification-Scope'] = 'platform'
+    }
+    if (window.location.pathname.startsWith('/management/platform/')) {
+      config.headers['X-Model-Scope'] = 'platform'
+    }
     // Don't add Authorization header for token refresh endpoint
     if (!config.url?.includes('/token/refresh')) {
       const token = localStorage.getItem('access_token')
@@ -49,6 +60,17 @@ api.interceptors.request.use(
 
     const uiLanguage = localStorage.getItem('userLanguage') || 'en'
     config.headers['Accept-Language'] = uiLanguage
+
+    try {
+      const delegation = JSON.parse(
+        sessionStorage.getItem('tenant_delegation') || 'null'
+      )
+      if (delegation?.delegation_id) {
+        config.headers['X-Delegation-ID'] = delegation.delegation_id
+      }
+    } catch {
+      sessionStorage.removeItem('tenant_delegation')
+    }
 
     return config
   },

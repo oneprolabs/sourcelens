@@ -15,10 +15,11 @@
           data-drawer-panel
           tabindex="-1"
           class="relative z-10 flex h-full w-full flex-col bg-surface shadow-xl"
-          :class="widthClass"
+          :class="[widthClass, panelClass]"
           @click.stop
         >
           <div
+            data-drawer-header
             class="flex flex-shrink-0 items-center justify-between border-b border-line px-6 py-4"
           >
             <div class="min-w-0 flex-1">
@@ -59,14 +60,22 @@
               </svg>
             </button>
           </div>
-          <div v-if="$slots.tabs" class="flex-shrink-0 bg-surface">
+          <div
+            v-if="$slots.tabs"
+            data-drawer-tabs
+            class="flex-shrink-0 bg-surface"
+          >
             <slot name="tabs" />
           </div>
-          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div
+            data-drawer-body
+            class="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+          >
             <slot />
           </div>
           <div
             v-if="$slots.footer"
+            data-drawer-footer
             class="flex-shrink-0 border-t border-line bg-surface-sunken px-6 py-4"
           >
             <slot name="footer" />
@@ -97,6 +106,7 @@ const props = defineProps({
   title: { type: String, default: '' },
   subtitle: { type: String, default: '' },
   width: { type: String, default: '2xl' },
+  panelClass: { type: String, default: '' },
   closeOnBackdrop: { type: Boolean, default: true }
 })
 

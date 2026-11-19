@@ -114,7 +114,8 @@ def _diagnostic_evidence(diagnosis):
 def execute_alert_diagnosis(diagnosis_uuid):
     """Claim once and validate evidence references before accepting model output."""
 
-    from agentcore_metering.adapters.django import LLMTracker
+    from .llm_resilience import call_and_track_with_fallback
+    from .model_scope import is_platform_model, model_call_scope
 
     from accounts.models import answer_language_name
 
@@ -129,24 +130,29 @@ def execute_alert_diagnosis(diagnosis_uuid):
     try:
         evidence, model_ref = _diagnostic_evidence(diagnosis)
         AlertDiagnosis.objects.filter(pk=diagnosis.pk, status="running").update(evidence=evidence)
-        content, usage = LLMTracker.call_and_track(
-            model_uuid=model_ref,
-            messages=[
-                {
-                    "role": "system",
-                    "content": _diagnostic_system_prompt(diagnosis.language)
-                    + " This is an operational alert, not an answer-quality review."
-                    f" Respond in {answer_language_name(diagnosis.language)}."
-                    " Use only the supplied evidence IDs. Never quote private user content or credentials.",
+        event = diagnosis.deliveries.select_related("event__tenant").first().event
+        with model_call_scope(event.tenant):
+            content, usage = call_and_track_with_fallback(
+                model_uuid=model_ref,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _diagnostic_system_prompt(diagnosis.language)
+                        + " This is an operational alert, not an answer-quality review."
+                        f" Respond in {answer_language_name(diagnosis.language)}."
+                        " Use only the supplied evidence IDs. Never quote private user content or credentials.",
+                    },
+                    {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)},
+                ],
+                max_tokens=diagnosis.max_tokens,
+                node_name="alert_diagnostics",
+                json_repair=False,
+                json_attempts=1,
+                state={
+                    "source_type": "lens", "_platform_model": is_platform_model(model_ref),
+                    "metadata": {"alert_diagnosis_uuid": str(diagnosis.uuid)},
                 },
-                {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)},
-            ],
-            max_tokens=diagnosis.max_tokens,
-            node_name="alert_diagnostics",
-            json_repair=False,
-            json_attempts=1,
-            state={"source_type": "lens", "metadata": {"alert_diagnosis_uuid": str(diagnosis.uuid)}},
-        )
+            )
         result = validate_diagnostic_result(_parse_json_object(content), SimpleNamespace(payload=evidence))
         changed = AlertDiagnosis.objects.filter(
             pk=diagnosis.pk, status="running", deadline_at__gt=timezone.now()

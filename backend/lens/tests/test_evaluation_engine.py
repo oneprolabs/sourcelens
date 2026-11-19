@@ -14,6 +14,7 @@ from lens.evaluation.engine.batch import (
     retry_failed_cases,
     start_evaluation_run,
 )
+from lens.evaluation.scoring import ensure_default_metrics
 from lens.models import (
     Assistant,
     EvaluationCase,
@@ -32,6 +33,7 @@ User = get_user_model()
 
 class EvaluationEngineTests(TestCase):
     def setUp(self):
+        ensure_default_metrics()
         GlobalSetting.objects.create(key="evaluation.execution_pool", value="evaluation")
         self.user = User.objects.create_user(username="evaluation-operator")
         self.node = LensNode.objects.create(

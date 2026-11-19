@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
-from accounts.models import Role
+from accounts.models import Profile, Role
 from agentcore_metering.adapters.django.models import LLMConfig, LLMUsage
 from agentcore_task.adapters.django.models import TaskExecution
 from asgiref.sync import async_to_sync
@@ -304,11 +304,32 @@ class LensApiTests(TestCase):
 
     def test_admin_run_thinking_mode_uses_snapshot(self):
         """Run observation reflects the chosen mode even after the default changes."""
+        self._use_legacy_run_admin()
         session = Session.objects.create(assistant=self.assistant, user=self.user)
         run = create_execution_run(session=session, question="Analyze", deep_thinking=True, enqueue=False)
         response = self.client.get(f"/api/lens/admin/runs/{run.uuid}/")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIs(response.data["deep_thinking"], True)
+
+    def own_model(self, model_ref, tenant=None):
+        """Create explicit model ownership for migration-era API fixtures."""
+
+        from lens.models import LLMConfigScope
+
+        config, _ = LLMConfig.objects.get_or_create(
+            uuid=model_ref, defaults={"provider": "openai", "config": {"model": "gpt-4o-mini"}}
+        )
+        LLMConfigScope.objects.get_or_create(config=config, defaults={"tenant": tenant})
+        return config
+
+    def model_run(self, model_ref="016d5cf7-2245-4015-b242-d6323e795b58"):
+        """Freeze a configured model in a Run before gateway protocol tests."""
+
+        config = self.own_model(model_ref)
+        self.assistant.agent_model_ref = config.uuid
+        self.assistant.save(update_fields=["agent_model_ref"])
+        session = Session.objects.create(assistant=self.assistant, user=self.user)
+        return create_execution_run(session=session, question="Gateway fixture", enqueue=False)
 
     def setUp(self):
         self.client = APIClient()
@@ -318,6 +339,7 @@ class LensApiTests(TestCase):
             password="pass12345",
             is_staff=True,
         )
+        Profile.objects.update_or_create(user=self.user, defaults={"platform_role": "super_admin"})
         self.client.force_authenticate(self.user)
         self.lensnode = LensNode.objects.create(
             name="Local LensNode",
@@ -367,7 +389,27 @@ class LensApiTests(TestCase):
             endpoint="https://mcp.example.com/github",
         )
 
+    def _use_legacy_run_admin(self):
+        """Exercise unowned history as a legacy operator, outside platform administration."""
+        Profile.objects.filter(user=self.user).update(platform_role="")
+
+    def _use_private_mcp(self):
+        """Exercise tenant-owned credential masking independently of official templates."""
+        from accounts.models import Tenant, TenantMembership
+
+        tenant = Tenant.objects.create(name="MCP tenant", slug="mcp-tenant")
+        TenantMembership.objects.create(user=self.user, tenant=tenant, role="tenant_admin")
+        self.user.profile.platform_role = ""
+        self.user.profile.save(update_fields=["platform_role"])
+        self.mcp.tenant = tenant
+        self.mcp.save(update_fields=["tenant"])
+        self.assistant.tenant = tenant
+        self.assistant.save(update_fields=["tenant"])
+        self.datasource.tenant = tenant
+        self.datasource.save(update_fields=["tenant"])
+
     def test_mcp_api_masks_sensitive_config_and_preserves_masked_updates(self):
+        self._use_private_mcp()
         self.mcp.config = {
             "api_key": "mcp-secret-key",
             "region": "us-east-1",
@@ -420,6 +462,7 @@ class LensApiTests(TestCase):
         self.assertNotIn("mcp-secret", str(response.data))
 
     def test_mcp_api_preserves_non_secret_token_settings(self):
+        self._use_private_mcp()
         self.mcp.config = {
             "github_token": "secret",
             "max_tokens": 100,
@@ -455,6 +498,7 @@ class LensApiTests(TestCase):
         )
 
     def test_mcp_api_allows_blank_sensitive_fields_in_lists(self):
+        self._use_private_mcp()
         config = {"profiles": [{"name": "local", "token": ""}]}
 
         response = self.client.patch(
@@ -469,6 +513,7 @@ class LensApiTests(TestCase):
         self.assertEqual(self.mcp.config, config)
 
     def test_mcp_api_protects_masked_list_item_identity(self):
+        self._use_private_mcp()
         self.mcp.config = {
             "region": "us-east-1",
             "profiles": [
@@ -552,6 +597,7 @@ class LensApiTests(TestCase):
         )
 
     def test_mcp_api_preserves_masked_secrets_in_nested_lists(self):
+        self._use_private_mcp()
         self.mcp.config = {"groups": [[{"name": "production", "token": "secret"}]]}
         self.mcp.save(update_fields=["config"])
 
@@ -570,6 +616,7 @@ class LensApiTests(TestCase):
         )
 
     def test_mcp_api_rejects_mask_for_renamed_sensitive_key(self):
+        self._use_private_mcp()
         self.mcp.config = {"api_key": "secret"}
         self.mcp.save(update_fields=["config"])
 
@@ -594,6 +641,7 @@ class LensApiTests(TestCase):
         self.assertEqual(self.mcp.config, {"api_key": "secret"})
 
     def test_mcp_api_accepts_environment_declarations(self):
+        self._use_private_mcp()
         environment = [
             {
                 "name": "GITHUB_TOKEN",
@@ -615,6 +663,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["environment"], environment)
 
     def test_mcp_api_rejects_undeclared_environment_references(self):
+        self._use_private_mcp()
         response = self.client.patch(
             f"/api/lens/admin/mcp-servers/{self.mcp.uuid}/",
             {
@@ -628,6 +677,7 @@ class LensApiTests(TestCase):
         self.assertIn("MCP_HOST", str(response.data))
 
     def test_mcp_api_preserves_legacy_literal_environment_references(self):
+        self._use_private_mcp()
         self.mcp.endpoint = "https://mcp.example.com/${API_VERSION}"
         self.mcp.config = {"template": "${LITERAL}"}
         self.mcp.save(update_fields=["endpoint", "config"])
@@ -666,6 +716,7 @@ class LensApiTests(TestCase):
         self.assertTrue(runtime[0]["environment_resolved"])
 
     def test_mcp_api_validates_references_after_restoring_secrets(self):
+        self._use_private_mcp()
         self.mcp.config = {"api_token": "${MCP_TOKEN}"}
         self.mcp.environment = [
             {
@@ -692,6 +743,7 @@ class LensApiTests(TestCase):
         self.assertEqual(len(self.mcp.environment), 1)
 
     def test_mcp_api_exposes_secret_safe_environment_references(self):
+        self._use_private_mcp()
         self.mcp.config = {"headers": {"Authorization": "Bearer ${MCP_TOKEN}"}}
         self.mcp.environment = [
             {
@@ -1309,6 +1361,7 @@ class LensApiTests(TestCase):
         )
 
     def test_global_setting_accepts_skill_generator_model_ref(self):
+        self.own_model("016d5cf7-2245-4015-b242-d6323e795b58")
         response = self.client.post(
             "/api/lens/admin/global-settings/",
             {
@@ -1470,10 +1523,7 @@ class LensApiTests(TestCase):
 
         self.assertEqual(impact_response.status_code, 200)
         self.assertEqual(impact_response.data["bound_count"], 1)
-        self.assertEqual(
-            impact_response.data["bound_assistants"][0]["name"],
-            self.assistant.name,
-        )
+        self.assertEqual(impact_response.data["bound_assistants"], [])
 
         with patch("lens.views.skills.invalidate_skill_cache") as invalidate:
             with self.captureOnCommitCallbacks(execute=True):
@@ -1509,7 +1559,7 @@ class LensApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["bound_count"], 1)
-        self.assertIsNone(response.data["bound_assistants"][0]["lensnode"])
+        self.assertEqual(response.data["bound_assistants"], [])
 
     def test_uploaded_skill_reads_environment_schema(self):
         environment = [
@@ -2330,6 +2380,7 @@ class LensApiTests(TestCase):
     def test_smart_mode_is_exposed_independently_from_capability(self):
         """Smart mode has its own API identity and coordinator capability."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         serializer = AssistantSerializer(
             data={
                 "name": "Support Team",
@@ -2359,6 +2410,7 @@ class LensApiTests(TestCase):
     def test_smart_mode_does_not_require_general_chat_skill(self):
         """Smart mode can coordinate members without direct Chat Skills."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         serializer = AssistantSerializer(
             data={
                 "name": "Skill Free Team",
@@ -2379,6 +2431,7 @@ class LensApiTests(TestCase):
     def test_switching_to_smart_clears_direct_execution_resources(self):
         """Smart mode must not retain bindings from direct execution."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         AssistantSkill.objects.create(
             assistant=self.assistant,
             skill=self.skill,
@@ -2441,6 +2494,7 @@ class LensApiTests(TestCase):
     def test_fixed_smart_assistant_persists_direct_members(self):
         """Admins can create a reusable Smart Collaboration Assistant."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         second = Assistant.objects.create(
             name="General Helper",
             slug="general-helper",
@@ -2521,6 +2575,7 @@ class LensApiTests(TestCase):
     def test_fixed_smart_assistant_rejects_nested_members(self):
         """A Smart team cannot contain another Smart Assistant."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         nested = Assistant.objects.create(
             name="Nested Team",
             slug="nested-team",
@@ -2615,6 +2670,7 @@ class LensApiTests(TestCase):
         self.assertIn("allowed_assistant_uuids", serializer.errors)
 
     def test_smart_collaboration_session_uses_global_model_and_allowed_range(self):
+        self.own_model("11111111-1111-1111-1111-111111111111")
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
             value="11111111-1111-1111-1111-111111111111",
@@ -2656,6 +2712,7 @@ class LensApiTests(TestCase):
     def test_smart_collaboration_session_defaults_to_empty_range(self):
         """An empty range is a valid state that freezes no delegate."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
             value="11111111-1111-1111-1111-111111111111",
@@ -2713,6 +2770,7 @@ class LensApiTests(TestCase):
             config={"model": "gpt-4o-mini"},
             is_active=True,
         )
+        self.own_model(config.uuid)
         self.assistant.visibility = Assistant.Visibility.PUBLIC
         self.assistant.save(update_fields=["visibility"])
         serializer = SessionCreateSerializer(
@@ -2751,6 +2809,7 @@ class LensApiTests(TestCase):
     def test_smart_session_run_allows_hidden_coordinator(self):
         """Smart sessions may run through their hidden system coordinator."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
             value="11111111-1111-1111-1111-111111111111",
@@ -2815,6 +2874,7 @@ class LensApiTests(TestCase):
     def test_smart_run_can_limit_one_run_without_updating_session_scope(self):
         """A routing assistant override belongs to the Run snapshot only."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
             value="11111111-1111-1111-1111-111111111111",
@@ -2879,6 +2939,7 @@ class LensApiTests(TestCase):
     def test_smart_run_can_explicitly_route_to_multiple_assistants(self):
         """A single message can explicitly request several assistants."""
 
+        self.own_model("11111111-1111-1111-1111-111111111111")
         GlobalSetting.objects.create(
             key="lens.smart_collaboration.model_ref",
             value="11111111-1111-1111-1111-111111111111",
@@ -3329,16 +3390,15 @@ class LensApiTests(TestCase):
             is_active=False,
         )
 
+        self.own_model(config.uuid)
         response = self.client.patch(
             f"/api/lens/assistants/{self.assistant.uuid}/",
             {"agent_model_ref": str(config.uuid)},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
-        check = response.data["settings"]["_model_check"]
-        self.assertEqual(check["agent_model_ref"]["status"], "error")
-        self.assertIn("inactive", check["agent_model_ref"]["error"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("agent_model_ref", response.data)
 
     def test_lensnode_issue_and_revoke_token(self):
         response = self.client.post(
@@ -3360,6 +3420,7 @@ class LensApiTests(TestCase):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        run = self.model_run()
         client = APIClient()
 
         with patch(
@@ -3370,6 +3431,7 @@ class LensApiTests(TestCase):
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": "016d5cf7-2245-4015-b242-d6323e795b58",
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "hello"}],
                 },
                 format="json",
@@ -3404,6 +3466,9 @@ class LensApiTests(TestCase):
             config={"model": "qwen-plus"},
             is_active=True,
         )
+        self.own_model(primary.uuid)
+        self.own_model(fallback.uuid)
+        run = self.model_run(primary.uuid)
         primary.config["fallback_model_uuid"] = str(fallback.uuid)
         primary.save(update_fields=["config"])
         client = APIClient()
@@ -3426,6 +3491,7 @@ class LensApiTests(TestCase):
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": str(primary.uuid),
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "hello"}],
                 },
                 format="json",
@@ -3440,6 +3506,7 @@ class LensApiTests(TestCase):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        run = self.model_run()
         client = APIClient()
         error = ValueError(
             "LLM returned empty response (finish_reason='length' "
@@ -3455,6 +3522,7 @@ class LensApiTests(TestCase):
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": "016d5cf7-2245-4015-b242-d6323e795b58",
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "hello"}],
                 },
                 format="json",
@@ -3475,6 +3543,7 @@ class LensApiTests(TestCase):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        run = self.model_run()
         client = APIClient()
 
         def tracked_stream():
@@ -3495,14 +3564,16 @@ class LensApiTests(TestCase):
                 "_finish_reason": "tool_calls",
             }
 
+        # Protocol-only thread coverage cannot see TestCase's uncommitted fixtures.
         with patch(
             "agentcore_metering.adapters.django.LLMTracker.call_and_track",
             return_value=tracked_stream(),
-        ):
+        ), patch("lens.model_scope.authorized_model_ref", side_effect=lambda ref, tenant: str(ref)):
             response = client.post(
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": "016d5cf7-2245-4015-b242-d6323e795b58",
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "plan"}],
                     "stream": True,
                 },
@@ -3601,6 +3672,7 @@ class LensApiTests(TestCase):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        run = self.model_run()
         client = APIClient()
         message = {
             "role": "assistant",
@@ -3634,6 +3706,7 @@ class LensApiTests(TestCase):
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": "016d5cf7-2245-4015-b242-d6323e795b58",
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "hello"}],
                     "tools": tools,
                     "tool_choice": "auto",
@@ -3664,6 +3737,8 @@ class LensApiTests(TestCase):
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
         client = APIClient()
+        self.assistant.agent_model_ref = self.own_model("016d5cf7-2245-4015-b242-d6323e795b58").uuid
+        self.assistant.save()
         chat_user = User.objects.create_user(
             username="chat-user",
             email="chat-user@example.com",
@@ -3748,6 +3823,7 @@ class LensApiTests(TestCase):
         token = "dev-lensnode-token"
         self.lensnode.auth_token_hash = hash_lensnode_token(token)
         self.lensnode.save(update_fields=["auth_token_hash", "updated_at"])
+        run = self.model_run()
         client = APIClient()
 
         with patch(
@@ -3757,6 +3833,7 @@ class LensApiTests(TestCase):
                 "/api/lens/lensnode/ai-gateway/",
                 {
                     "model_ref": "016d5cf7-2245-4015-b242-d6323e795b58",
+                    "run_uuid": str(run.uuid),
                     "messages": [{"role": "user", "content": "hello"}],
                     "trace_context": {
                         "parent_observation_id": "not-an-observation-id",
@@ -3799,6 +3876,10 @@ class LensApiTests(TestCase):
             config={"api_key": "test", "model": "gpt-4o-mini"},
             is_active=True,
         )
+        self.own_model(config.uuid)
+        execution = run.execution
+        execution.runtime_snapshot["model_refs"] = {"agent": str(config.uuid)}
+        execution.save(update_fields=["runtime_snapshot"])
         completion = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -4150,6 +4231,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_citation_source_is_available_to_staff_admin(self):
+        self._use_legacy_run_admin()
         owner = User.objects.create_user(
             username="citation-user",
             email="citation-user@example.com",
@@ -4260,6 +4342,7 @@ class LensApiTests(TestCase):
         output.file.delete(save=False)
 
     def test_output_file_download_returns_attachment_to_admin(self):
+        self._use_legacy_run_admin()
         owner = User.objects.create_user(
             username="file-owner",
             email="file-owner@example.com",
@@ -4287,6 +4370,7 @@ class LensApiTests(TestCase):
         output.file.delete(save=False)
 
     def test_admin_run_detail_includes_output_files(self):
+        self._use_legacy_run_admin()
         session, run, output = self._make_output_file()
 
         response = self.client.get(f"/api/lens/admin/runs/{run.uuid}/")
@@ -4303,6 +4387,7 @@ class LensApiTests(TestCase):
         output.file.delete(save=False)
 
     def test_admin_run_detail_has_empty_output_files(self):
+        self._use_legacy_run_admin()
         from lens.models import Session
         from lens.services import create_execution_run
 
@@ -4315,6 +4400,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["output_files"], [])
 
     def test_admin_run_detail_exposes_lensnode_admission_wait(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -4337,6 +4423,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["admitted_at"], admitted_at.isoformat())
 
     def test_admin_run_detail_uses_agent_rounds_snapshot(self):
+        self._use_legacy_run_admin()
         from lens.models import Session
         from lens.services import create_execution_run
 
@@ -4353,6 +4440,7 @@ class LensApiTests(TestCase):
         self.assertEqual(response.data["agent_rounds"], "max")
 
     def test_admin_run_detail_summarizes_configured_and_called_resources(self):
+        self._use_legacy_run_admin()
         from lens.models import RunTraceEvent
 
         session = Session.objects.create(assistant=self.assistant, user=self.user)
@@ -4452,6 +4540,7 @@ class LensApiTests(TestCase):
         )
 
     def test_admin_run_resource_usage_keeps_named_call_after_unnamed_event(self):
+        self._use_legacy_run_admin()
         from lens.models import RunTraceEvent
 
         session = Session.objects.create(assistant=self.assistant, user=self.user)
@@ -4490,6 +4579,7 @@ class LensApiTests(TestCase):
         )
 
     def test_admin_run_resource_usage_attributes_plugin_tools(self):
+        self._use_legacy_run_admin()
         from lens.models import RunTraceEvent
 
         session = Session.objects.create(assistant=self.assistant, user=self.user)
@@ -4573,6 +4663,7 @@ class LensApiTests(TestCase):
         self.assertEqual(usage["configured_count"], 1)
 
     def test_admin_run_resource_usage_uses_step_events_for_skill_identity(self):
+        self._use_legacy_run_admin()
         from lens.models import RunStep
 
         session = Session.objects.create(assistant=self.assistant, user=self.user)
@@ -4639,6 +4730,7 @@ class LensApiTests(TestCase):
         )
 
     def test_admin_run_list_exposes_operational_metrics_and_filters(self):
+        self._use_legacy_run_admin()
         from lens.models import RunTraceEvent
 
         model_ref = uuid.uuid4()
@@ -4837,6 +4929,7 @@ class LensApiTests(TestCase):
 
     @patch("lens.views.admin_runs.cancel_run_on_lensnode")
     def test_admin_can_cancel_another_users_active_run(self, cancel):
+        self._use_legacy_run_admin()
         owner = User.objects.create_user(
             username="run-owner",
             email="run-owner@example.com",
@@ -4864,6 +4957,7 @@ class LensApiTests(TestCase):
         cancel.assert_called_once_with(run)
 
     def test_admin_retry_is_idempotent_and_audits_the_actor(self):
+        self._use_legacy_run_admin()
         owner = User.objects.create_user(
             username="retry-owner",
             email="retry-owner@example.com",
@@ -4913,6 +5007,7 @@ class LensApiTests(TestCase):
         )
 
     def test_admin_retry_accepts_a_limit_partial_without_a_trigger(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -4944,6 +5039,7 @@ class LensApiTests(TestCase):
         self.assertEqual(retry.retry_of_run, run)
 
     def test_admin_retry_rejects_an_archived_session(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -4972,6 +5068,7 @@ class LensApiTests(TestCase):
 
     @patch("lens.views.admin_runs.resume_awaiting_run")
     def test_admin_resume_requires_an_awaiting_run(self, resume):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -5001,6 +5098,7 @@ class LensApiTests(TestCase):
         resume.assert_called_once_with(run.pk)
 
     def test_admin_run_detail_separates_executor_and_business_outcomes(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -5063,6 +5161,7 @@ class LensApiTests(TestCase):
         self.assertNotIn("arguments", failure)
 
     def test_admin_run_detail_ignores_malformed_failure_collection(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -5124,7 +5223,8 @@ class LensApiTests(TestCase):
         name = output.file.name
         self.assertTrue(storage.exists(name))
 
-        response = self.client.delete(f"/api/lens/sessions/{session.uuid}/")
+        with patch("lens.tasks.session_workspace_cleanup_task.delay"), self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f"/api/lens/sessions/{session.uuid}/")
 
         self.assertIn(response.status_code, (200, 204))
         self.assertFalse(storage.exists(name))
@@ -5702,6 +5802,7 @@ class LensApiTests(TestCase):
         )
 
     def test_completed_run_feedback_is_persisted_and_reported(self):
+        self._use_legacy_run_admin()
         session = Session.objects.create(
             assistant=self.assistant,
             user=self.user,
@@ -5945,7 +6046,8 @@ class LensApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertLessEqual(len(queries), 5)
+        # Tenant scoping adds one membership lookup to the fixed budget.
+        self.assertLessEqual(len(queries), 6)
         self.assertEqual(response.data["count"], 10)
         self.assertTrue(
             all(row["current_sync"] for row in response.data["results"])
@@ -6089,7 +6191,7 @@ class LensApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertLessEqual(len(queries), 4)
+        self.assertLessEqual(len(queries), 5, "Tenant membership adds one lookup to the bounded polling query.")
         self.assertEqual(
             response.data,
             [
@@ -7459,7 +7561,8 @@ class LensApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertLessEqual(len(queries), 3)
+        # Tenant scoping adds one membership lookup to the fixed budget.
+        self.assertLessEqual(len(queries), 4)
         self.assertEqual(len(response.data["results"]), 10)
         self.assertEqual(response.data["results"][0]["metadata"], {
             "trigger": "scheduled",
@@ -7984,24 +8087,19 @@ class AssistantAccessTests(TestCase):
         client.force_authenticate(user)
         return client
 
-    def test_public_view_previews_private_assistant_without_private_config(self):
-        """A direct link reveals only display metadata before login."""
+    def test_public_view_hides_private_assistant_metadata(self):
+        """A nonpublic link must not disclose display metadata before login."""
         resp = self.client.get(
             f"/api/lens/public/assistants/{self.assistant.slug}/"
         )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["name"], self.assistant.name)
-        self.assertEqual(resp.data["description"], self.assistant.description)
-        self.assertEqual(
-            set(resp.data),
-            {"name", "description", "slug"},
-        )
+        self.assertEqual(resp.status_code, 404)
 
     def test_public_view_hides_archived_system_and_missing_assistants(self):
         """Only active user-facing assistants have a link preview."""
         url = f"/api/lens/public/assistants/{self.assistant.slug}/"
         self.assistant.status = Assistant.Status.ARCHIVED
-        self.assistant.save(update_fields=["status"])
+        self.assistant.visibility = Assistant.Visibility.PUBLIC
+        self.assistant.save(update_fields=["status", "visibility"])
         self.assertEqual(self.client.get(url).status_code, 404)
         self.assistant.status = Assistant.Status.ACTIVE
         self.assistant.is_system = True
@@ -8029,6 +8127,7 @@ class AssistantAccessTests(TestCase):
         resp = self.client.get(f"/api/lens/public/assistants/{self.assistant.slug}/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["description"], self.assistant.description)
+        self.assertEqual(set(resp.data), {"name", "description", "slug"})
 
     def test_list_hides_private_from_unauthorized_then_group_grant(self):
         client = self._client(self.member)

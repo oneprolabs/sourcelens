@@ -153,3 +153,67 @@ test('parses split UTF-8 frames and cancels a terminal stream that stays open', 
   assert.equal(received[0].content, '发票')
   assert.equal(cancelled, true)
 })
+
+for (const status of [401, 403, 404]) {
+  test(`stops recovery when status reconciliation rejects access with ${status}`, async () => {
+    const denied = Object.assign(new Error('Run inaccessible'), {
+      response: { status }
+    })
+    await assert.rejects(
+      recoverRunStream({
+        runUuid: 'run-a',
+        signal: new AbortController().signal,
+        isCurrent: () => true,
+        openStream: async () => new Response(''),
+        getRun: async () => {
+          throw denied
+        },
+        onEvent: () => assert.fail('must not deliver content'),
+        onRun: () => assert.fail('must not apply an inaccessible run'),
+        wait: async () => assert.fail('must not schedule a retry')
+      }),
+      (error) => error === denied
+    )
+  })
+}
+
+for (const status of [403, 404]) {
+  test(`stops immediately when stream connection returns ${status}`, async () => {
+    await assert.rejects(
+      recoverRunStream({
+        runUuid: 'run-a',
+        signal: new AbortController().signal,
+        isCurrent: () => true,
+        openStream: async () => new Response('', { status }),
+        getRun: async () => assert.fail('must not poll after explicit denial'),
+        onEvent: () => {},
+        onRun: () => {},
+        wait: async () => assert.fail('must not schedule a retry')
+      }),
+      (error) => error.status === status
+    )
+  })
+}
+
+test('allows REST authentication refresh after an expired stream token', async () => {
+  let connections = 0
+  let polls = 0
+  const result = await recoverRunStream({
+    runUuid: 'run-a',
+    signal: new AbortController().signal,
+    isCurrent: () => true,
+    openStream: async () =>
+      ++connections === 1
+        ? new Response('', { status: 401 })
+        : new Response(frame({ type: 'done', status: 'done' })),
+    getRun: async () => ({
+      uuid: 'run-a',
+      status: ++polls === 1 ? 'streaming' : 'done'
+    }),
+    onEvent: () => {},
+    onRun: () => {},
+    wait: async () => {}
+  })
+  assert.equal(result.status, 'done')
+  assert.equal(connections, 2)
+})

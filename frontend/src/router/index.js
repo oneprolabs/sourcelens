@@ -3,6 +3,7 @@ import { useUserStore } from '@/store/user'
 import { adminRoutes } from '@/admin/routes'
 import {
   getLandingPath,
+  getConsoleRedirect,
   hasAnyPermission,
   hasFeature,
   hasPermission
@@ -26,6 +27,13 @@ const routes = [
     name: 'ResetPassword',
     component: () => import('@/pages/ResetPassword.vue'),
     meta: { requiresGuest: true }
+  },
+  {
+    path: '/accept-invitation',
+    name: 'AcceptInvitation',
+    component: () => import('@/pages/ResetPassword.vue'),
+    props: { invitation: true },
+    meta: { allowAnonymous: true }
   },
   {
     path: '/dashboard',
@@ -203,6 +211,13 @@ router.beforeEach(async (to, from, next) => {
         next({ path: '/login', query: { next: to.fullPath } })
         return
       }
+    }
+
+    if (getConsoleRedirect(userStore.userInfo, to.meta, userStore.delegation)) {
+      next(
+        getConsoleRedirect(userStore.userInfo, to.meta, userStore.delegation)
+      )
+      return
     }
 
     if (

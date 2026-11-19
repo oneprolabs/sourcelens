@@ -358,7 +358,8 @@ def _get_or_create_source_sync_record(datasource):
         target_id=datasource.uuid,
         defaults={
             "name": f"source_sync:{datasource.uuid}",
-            "enabled": True,
+            "enabled": datasource.status != DataSource.Status.DISABLED
+            and (datasource.sync_policy or {}).get("mode") != "manual",
         },
     )
     return record
@@ -989,6 +990,7 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
     # mark the run complete prematurely. With a standalone id Celery reports
     # PENDING (unknown id) and the LensNode completion callback owns the
     # final status.
+    new_scheduled_sync = trigger == "scheduled" and task_id is None
     task_id = task_id or uuid.uuid4().hex
     with transaction.atomic():
         datasource = DataSource.objects.select_for_update().filter(
@@ -1000,6 +1002,8 @@ def source_sync_task(self, datasource_uuid, trigger="scheduled", task_id=None):
             DataSource.SourceType.MANAGED_WORKSPACE,
             DataSource.SourceType.UPLOAD,
         ):
+            return 0
+        if new_scheduled_sync and (datasource.sync_policy or {}).get("mode") == "manual":
             return 0
         record = _get_or_create_source_sync_record(datasource)
         if datasource.status == DataSource.Status.DISABLED:

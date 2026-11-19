@@ -6,6 +6,8 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
+from accounts.access import get_user_tenant
+
 from .decisions import validate_assistant_decisions
 from .model_checks import MODEL_REF_FIELDS, build_model_check_settings
 from .models import Assistant
@@ -49,7 +51,8 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
 
     model_type = LLMConfig.MODEL_TYPE_DECISION if model_field == "decision_model_ref" else LLMConfig.MODEL_TYPE_LLM
     target = (
-        LLMConfig.objects.select_for_update()
+        LLMConfig.objects.select_for_update(of=("self",))
+        .select_related("ownership")
         .filter(
             uuid=target_model_ref,
             scope=LLMConfig.Scope.GLOBAL,
@@ -66,15 +69,18 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
             raise serializers.ValidationError({"target_model_ref": reason})
 
     expected = {item["uuid"]: item["model_ref"] for item in assistant_models}
+    tenant = get_user_tenant(user)
+    queryset = Assistant.objects.visible_to(user).filter(tenant=tenant)
     assistants = list(
-        Assistant.objects.visible_to(user)
-        .filter(uuid__in=expected, status=Assistant.Status.ACTIVE, is_system=False)
+        queryset.filter(uuid__in=expected, status=Assistant.Status.ACTIVE, is_system=False)
         .order_by("uuid")
-        .select_for_update()
+        .select_for_update(of=("self",))
     )
     if len(assistants) != len(expected):
         raise serializers.ValidationError({"assistant_models": "Some assistants are unavailable. Reload the list."})
     for assistant in assistants:
+        if not hasattr(target, "ownership") or target.ownership.tenant_id != assistant.tenant_id:
+            raise serializers.ValidationError({"target_model_ref": "Choose a model in the assistant's tenant."})
         if getattr(assistant, model_field) != expected[assistant.uuid]:
             raise ModelReplacementConflict()
         if model_field == "multimodal_model_ref" and assistant.routing_mode == Assistant.RoutingMode.SMART:
@@ -99,7 +105,7 @@ def replace_assistant_models(*, user, model_field, target_model_ref, assistant_m
         checks = {}
         for assistant in changed:
             setattr(assistant, model_field, target.uuid)
-            model_refs = tuple(getattr(assistant, field_name) for field_name in MODEL_REF_FIELDS)
+            model_refs = (assistant.tenant_id, *(getattr(assistant, field_name) for field_name in MODEL_REF_FIELDS))
             if model_refs not in checks:
                 checks[model_refs] = build_model_check_settings(assistant)
             assistant.settings = {**(assistant.settings or {}), "_model_check": checks[model_refs]}

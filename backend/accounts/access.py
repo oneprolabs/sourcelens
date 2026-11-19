@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Iterable
 
 from django.contrib.auth.models import Group
+from django.core.exceptions import ObjectDoesNotExist
+
+from accounts.principals import ApiKeyPrincipal
 
 FEATURE_DEFINITIONS = (
     {
@@ -141,6 +144,8 @@ def get_effective_roles(
     groups=None,
 ) -> list:
     """Return the union of direct user roles and inherited group roles."""
+    if isinstance(user, ApiKeyPrincipal):
+        return []
     resolved_direct_roles = direct_roles
     if resolved_direct_roles is None:
         resolved_direct_roles = user.platform_roles.filter(
@@ -171,16 +176,27 @@ def get_effective_feature_keys(
     effective_roles=None,
 ) -> list[str]:
     """Return visible feature keys for the given user."""
-    # Staff users automatically get all features
-    if getattr(user, 'is_staff', False):
+    if isinstance(user, ApiKeyPrincipal):
+        return ['workspace']
+    # Staff and platform super admins automatically get all features
+    if getattr(user, 'is_staff', False) or is_platform_super_admin(user):
         return list(FEATURE_KEYS)
+
+    feature_keys = []
+    membership = get_user_membership(user)
+    if membership is not None and membership.status == 'active':
+        from accounts.models import TenantMembership
+
+        if membership.role == TenantMembership.Role.TENANT_ADMIN:
+            feature_keys.extend(FEATURE_KEYS)
+        else:
+            feature_keys.append('workspace')
 
     resolved_roles = (
         effective_roles
         if effective_roles is not None
         else get_effective_roles(user)
     )
-    feature_keys = []
     for role in resolved_roles:
         feature_keys.extend(normalize_feature_keys(role.visible_features))
 
@@ -275,3 +291,75 @@ def get_access_profile(
         'preferred_platform': preferred_platform,
         'landing_path': landing_path,
     }
+
+
+def get_user_membership(user):
+    """Return the user's single tenant membership, or None."""
+
+    if not (user and user.is_authenticated):
+        return None
+    if isinstance(user, ApiKeyPrincipal):
+        return None
+    from accounts.delegation import (
+        DelegatedMembership,
+        get_active_delegation,
+        is_delegated_request,
+    )
+
+    if is_delegated_request():
+        delegation = get_active_delegation(user)
+        if delegation is None:
+            return None
+        return DelegatedMembership(delegation)
+    cached = getattr(user, '_membership_cache', None)
+    if cached is not None:
+        return cached or None
+    try:
+        membership = user.membership
+    except ObjectDoesNotExist:
+        membership = None
+    user._membership_cache = membership or False
+    return membership
+
+
+def get_user_tenant(user):
+    """Return the user's tenant, or None when they have no membership."""
+
+    if isinstance(user, ApiKeyPrincipal):
+        return user.tenant
+    membership = get_user_membership(user)
+    return membership.tenant if membership is not None else None
+
+
+def get_user_tenant_role(user):
+    """Return the built-in tenant role, or an empty string."""
+
+    membership = get_user_membership(user)
+    return membership.role if membership is not None else ''
+
+
+def is_platform_super_admin(user):
+    """Return whether the user holds the platform super_admin role."""
+
+    if not (user and user.is_authenticated):
+        return False
+    if isinstance(user, ApiKeyPrincipal):
+        return False
+    from accounts.models import Profile
+
+    profile = getattr(user, 'profile', None)
+    if profile is not None:
+        return profile.platform_role == Profile.PlatformRole.SUPER_ADMIN
+    return Profile.objects.filter(
+        user=user,
+        platform_role=Profile.PlatformRole.SUPER_ADMIN,
+    ).exists()
+
+
+def get_group_display_name(group):
+    """Return the tenant group display name, falling back to auth name."""
+
+    if group is None:
+        return ''
+    tenant_group = getattr(group, 'tenant_group', None)
+    return tenant_group.name if tenant_group is not None else group.name

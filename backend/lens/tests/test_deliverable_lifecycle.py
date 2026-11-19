@@ -1,6 +1,7 @@
 """Regression coverage for reviewed deliverables and atomic final publication."""
 
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -103,7 +104,8 @@ class DeliverableLifecycleTests(TestCase):
         name = output.file.name
         self.assertTrue(storage.exists(name))
 
-        response = self.client.delete(f"/api/lens/sessions/{self.session.uuid}/")
+        with patch("lens.tasks.session_workspace_cleanup_task.delay"), self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f"/api/lens/sessions/{self.session.uuid}/")
 
         self.assertEqual(response.status_code, 204, response.data)
         self.assertFalse(RunOutputFile.objects.filter(pk=output.pk).exists())

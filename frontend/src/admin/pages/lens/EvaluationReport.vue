@@ -61,7 +61,7 @@
               {{ t('evaluation.comparison.action') }}
             </BaseButton>
             <BaseButton
-              v-if="canPause"
+              v-if="canWriteEvaluations && canPause"
               variant="outline"
               size="sm"
               :loading="actionLoading"
@@ -70,7 +70,7 @@
               {{ t('evaluation.report.pause') }}
             </BaseButton>
             <BaseButton
-              v-if="isPaused"
+              v-if="canWriteEvaluations && isPaused"
               variant="outline"
               size="sm"
               :loading="actionLoading"
@@ -79,7 +79,7 @@
               {{ t('evaluation.report.resume') }}
             </BaseButton>
             <BaseButton
-              v-if="isActive"
+              v-if="canWriteEvaluations && isActive"
               variant="outline"
               size="sm"
               :loading="actionLoading"
@@ -88,7 +88,7 @@
               {{ t('evaluation.report.cancel') }}
             </BaseButton>
             <BaseButton
-              v-if="isTerminal"
+              v-if="canWriteEvaluations && isTerminal"
               size="sm"
               :loading="actionLoading"
               @click="retryRun"
@@ -620,7 +620,7 @@
         <section class="rounded-lg border border-line p-3">
           <h3 class="text-sm font-semibold">{{ t('evaluation.calibration.title') }}</h3>
           <p class="mt-1 text-xs text-ink-500">{{ t('evaluation.calibration.description') }}</p>
-          <div class="mt-3 grid gap-3 md:grid-cols-2">
+          <div v-if="canWriteEvaluations" class="mt-3 grid gap-3 md:grid-cols-2">
             <BaseSelect v-model="calibrationAnswer" :label="t('evaluation.calibration.answer')">
               <option value="">{{ t('evaluation.calibration.select') }}</option>
               <option value="pass">{{ t('evaluation.report.passed') }}</option>
@@ -634,12 +634,12 @@
               <option value="inconclusive">{{ t('evaluation.report.inconclusive') }}</option>
             </BaseSelect>
           </div>
-          <label class="mt-3 block text-sm">{{ t('evaluation.calibration.reason') }}
+          <label v-if="canWriteEvaluations" class="mt-3 block text-sm">{{ t('evaluation.calibration.reason') }}
             <textarea v-model="calibrationReason" maxlength="4000" class="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2" />
           </label>
-          <BaseButton class="mt-2" size="sm" :disabled="!calibrationAnswer || !calibrationEvidence || !calibrationReason.trim()" :loading="calibrationSaving" @click="saveCalibration">{{ t('evaluation.calibration.save') }}</BaseButton>
+          <BaseButton v-if="canWriteEvaluations" class="mt-2" size="sm" :disabled="!calibrationAnswer || !calibrationEvidence || !calibrationReason.trim()" :loading="calibrationSaving" @click="saveCalibration">{{ t('evaluation.calibration.save') }}</BaseButton>
           <div v-for="row in calibrations" :key="row.id" class="mt-3 border-t border-line pt-2 text-xs">
-            {{ row.reviewer || '—' }} · {{ formatDate(row.created_at) }} · {{ t('evaluation.calibration.answer') }}: {{ t(`evaluation.calibration.verdict.${row.answer_verdict}`) }} · {{ t('evaluation.calibration.evidence') }}: {{ t(`evaluation.calibration.verdict.${row.evidence_verdict}`) }}
+            <span v-if="!userStore.delegation">{{ row.reviewer || '—' }} · </span>{{ formatDate(row.created_at) }} · {{ t('evaluation.calibration.answer') }}: {{ t(`evaluation.calibration.verdict.${row.answer_verdict}`) }} · {{ t('evaluation.calibration.evidence') }}: {{ t(`evaluation.calibration.verdict.${row.evidence_verdict}`) }}
             <p class="mt-1 whitespace-pre-wrap">{{ row.explanation }}</p>
           </div>
         </section>
@@ -727,11 +727,14 @@ import {
   retryEvaluationRun
 } from '@/api/evaluation'
 import { useToast } from '@/composables/useToast'
+import { useUserStore } from '@/store/user'
 import { formatDate } from '@/utils/formatting'
 
 const route = useRoute()
 const { t } = useI18n()
 const { showSuccess, showError } = useToast()
+const userStore = useUserStore()
+const canWriteEvaluations = computed(() => userStore.delegation?.mode !== 'readonly')
 
 const runUuid = computed(() => route.params.uuid)
 const run = ref(null)
@@ -754,6 +757,7 @@ const calibrationReason = ref('')
 const calibrationSaving = ref(false)
 
 async function saveCalibration() {
+  if (!canWriteEvaluations.value) return
   calibrationSaving.value = true
   try {
     calibrations.value = await createEvaluationCalibration(runUuid.value, detail.value.uuid, {
@@ -1076,6 +1080,7 @@ async function openResult(row) {
 }
 
 async function cancelRun() {
+  if (!canWriteEvaluations.value) return
   actionLoading.value = true
   try {
     await cancelEvaluationRun(runUuid.value)
@@ -1089,6 +1094,7 @@ async function cancelRun() {
 }
 
 async function pauseRun() {
+  if (!canWriteEvaluations.value) return
   actionLoading.value = true
   try {
     await pauseEvaluationRun(runUuid.value)
@@ -1103,6 +1109,7 @@ async function pauseRun() {
 }
 
 async function resumeRun() {
+  if (!canWriteEvaluations.value) return
   actionLoading.value = true
   try {
     await resumeEvaluationRun(runUuid.value)
@@ -1118,6 +1125,7 @@ async function resumeRun() {
 }
 
 async function retryRun() {
+  if (!canWriteEvaluations.value) return
   actionLoading.value = true
   try {
     await retryEvaluationRun(runUuid.value)

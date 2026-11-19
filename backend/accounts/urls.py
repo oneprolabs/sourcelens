@@ -10,14 +10,48 @@ from dj_rest_auth.views import (
     PasswordChangeView,
 )
 
+from accounts.views.member_bulk import TenantMemberBulkView
+from accounts.views.member_deletion import TenantMemberDeletionView
+from accounts.views.tenant_groups import TenantGroupDeletionView
+from accounts.views.member_unlock import TenantMemberUnlockView
+from accounts.views.member_password_reset import TenantMemberPasswordResetView
+from accounts.views.bulk_invitations import BulkInvitationPreviewView, BulkInvitationView
 from accounts.services import turnstile
+from accounts.serializers_login import PasswordLoginSerializer
+from accounts.views.tenant_overview import TenantOverviewView
+from accounts.views.tenant_invitations import (
+    AcceptTenantInvitationView,
+    TenantInvitationResendView,
+    TenantInvitationView,
+)
 from accounts.views import (
     CheckVirtualEmailUsernameView,
     CompleteGoogleSetupView,
     CompleteRegistrationView,
     ConfirmPasswordResetView,
     CustomUserDetailsView,
+    CurrentTenantView,
     GetAvailableScenesView,
+    TenantLogoView,
+    TenantMemberDetailView,
+    TenantMemberListView,
+    TenantGroupDetailView,
+    TenantGroupListView,
+    TenantGroupMemberView,
+    TenantApiKeyDetailView,
+    TenantApiKeyListView,
+    TenantApiKeyBulkView,
+    PlatformDelegationEndView,
+    PlatformTenantDelegationView,
+    PlatformTenantListView,
+    PlatformOverviewView,
+    PlatformAuditListView,
+    PlatformTenantStatsView,
+    PlatformMemberListView,
+    PlatformApiKeyListView,
+    PlatformApiKeyActionView,
+    PlatformApiKeyBulkView,
+    PlatformApiKeyNoticeView,
     AgentTokenView,
     AgentTokenListView,
     AgentTokenRevokeView,
@@ -42,6 +76,7 @@ from accounts.views.management import (
 
 class CustomLoginView(LoginView):
     permission_classes = [AllowAny]
+    serializer_class = PasswordLoginSerializer
 
     def post(self, request, *args, **kwargs):
         """Verify Cloudflare Turnstile before password authentication."""
@@ -82,6 +117,142 @@ class TurnstileStatusView(APIView):
 
 
 urlpatterns = [
+    path("api/v1/tenant/members/delete", TenantMemberDeletionView.as_view(), name="tenant_member_deletion"),
+    path("api/v1/tenant/members/<int:user_id>/unlock", TenantMemberUnlockView.as_view(), name="tenant_member_unlock"),
+    path(
+        "api/v1/tenant/members/<int:user_id>/password-reset",
+        TenantMemberPasswordResetView.as_view(),
+        name="tenant_member_password_reset",
+    ),
+    path("api/v1/tenant/invitations/bulk/preview", BulkInvitationPreviewView.as_view(), name="tenant_invitations_preview"),
+    path("api/v1/tenant/invitations/bulk", BulkInvitationView.as_view(), name="tenant_invitations_bulk"),
+    path("api/v1/tenant/members/bulk", TenantMemberBulkView.as_view(), name="tenant_members_bulk"),
+    path('api/v1/tenant/invitations', TenantInvitationView.as_view(), name='tenant_invitations'),
+    path('api/v1/tenant/invitations/<int:user_id>/resend', TenantInvitationResendView.as_view(),
+         name='tenant_invitation_resend'),
+    path('api/v1/auth/invitations/accept', AcceptTenantInvitationView.as_view(), name='tenant_invitation_accept'),
+    path('api/v1/tenant/overview', TenantOverviewView.as_view(), name='current_tenant_overview'),
+    path(
+        'api/v1/tenant',
+        CurrentTenantView.as_view(),
+        name='current_tenant',
+    ),
+    path(
+        'api/v1/tenant/logo',
+        TenantLogoView.as_view(),
+        name='current_tenant_logo',
+    ),
+    path(
+        'api/v1/tenant/members',
+        TenantMemberListView.as_view(),
+        name='current_tenant_members',
+    ),
+    path(
+        'api/v1/tenant/members/<int:user_id>',
+        TenantMemberDetailView.as_view(),
+        name='current_tenant_member_detail',
+    ),
+    path(
+        'api/v1/tenant/groups',
+        TenantGroupListView.as_view(),
+        name='current_tenant_groups',
+    ),
+    path('api/v1/tenant/groups/delete', TenantGroupDeletionView.as_view(), name='tenant_group_deletion'),
+    path(
+        'api/v1/tenant/groups/<uuid:group_uuid>',
+        TenantGroupDetailView.as_view(),
+        name='current_tenant_group_detail',
+    ),
+    path(
+        'api/v1/tenant/groups/<uuid:group_uuid>/members',
+        TenantGroupMemberView.as_view(),
+        name='current_tenant_group_member',
+    ),
+    path(
+        'api/v1/tenant/groups/<uuid:group_uuid>/members/<int:user_id>',
+        TenantGroupMemberView.as_view(),
+        name='current_tenant_group_member_detail',
+    ),
+    path(
+        'api/v1/tenant/api-keys',
+        TenantApiKeyListView.as_view(),
+        name='current_tenant_api_keys',
+    ),
+    path(
+        'api/v1/tenant/api-keys/bulk',
+        TenantApiKeyBulkView.as_view(),
+        name='tenant-api-key-bulk',
+    ),
+    path(
+        'api/v1/tenant/api-keys/<uuid:key_uuid>',
+        TenantApiKeyDetailView.as_view(),
+        name='current_tenant_api_key_detail',
+    ),
+    path(
+        'api/v1/platform/tenants',
+        PlatformTenantListView.as_view(),
+        name='platform_tenants',
+    ),
+    path(
+        'api/v1/platform/tenants/<uuid:tenant_uuid>/delegate',
+        PlatformTenantDelegationView.as_view(),
+        name='platform_tenant_delegate',
+    ),
+    path(
+        'api/v1/platform/delegations/<uuid:delegation_uuid>/end',
+        PlatformDelegationEndView.as_view(),
+        name='platform_delegation_end',
+    ),
+    path(
+        'api/v1/platform/overview',
+        PlatformOverviewView.as_view(),
+        name='platform_overview',
+    ),
+    path(
+        'api/v1/platform/audit',
+        PlatformAuditListView.as_view(),
+        name='platform_audit',
+    ),
+    path(
+        'api/v1/platform/tenant-stats',
+        PlatformTenantStatsView.as_view(),
+        name='platform_tenant_stats',
+    ),
+    path(
+        'api/v1/platform/members',
+        PlatformMemberListView.as_view(),
+        name='platform_members',
+    ),
+    path(
+        'api/v1/platform/api-keys',
+        PlatformApiKeyListView.as_view(),
+        name='platform_api_keys',
+    ),
+    path(
+        'api/v1/platform/api-keys/bulk',
+        PlatformApiKeyBulkView.as_view(),
+        name='platform-api-key-bulk',
+    ),
+    path(
+        'api/v1/platform/api-key-notices',
+        PlatformApiKeyNoticeView.as_view(),
+        name='platform-api-key-notices',
+    ),
+    path(
+        'api/v1/platform/api-key-notices/<uuid:notice_uuid>',
+        PlatformApiKeyNoticeView.as_view(),
+        name='platform-api-key-notice',
+    ),
+    path(
+        'api/v1/platform/api-key-notices/<uuid:notice_uuid>/retry',
+        PlatformApiKeyNoticeView.as_view(),
+        name='platform-api-key-notice-retry',
+    ),
+    path(
+        'api/v1/platform/api-keys/<uuid:key_uuid>/<str:action>',
+        PlatformApiKeyActionView.as_view(),
+        name='platform_api_key_action',
+    ),
     path(
         'api/v1/auth/turnstile/status',
         TurnstileStatusView.as_view(),

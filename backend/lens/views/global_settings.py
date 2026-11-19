@@ -4,6 +4,8 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from accounts.audit import record_audit
+from accounts.permissions import HasPlatformSuperAdmin, HasTenantAdminAccess
 from lens.models import GlobalSetting, ScheduledTask
 from lens.periodic_tasks import (
     GLOBAL_PERIODIC_TASKS,
@@ -21,18 +23,54 @@ class GlobalSettingViewSet(BaseAdminViewSet):
     serializer_class = GlobalSettingSerializer
     lookup_field = "key"
     lookup_value_regex = "[^/]+"
+    permission_classes = [HasPlatformSuperAdmin]
+
+    def get_permissions(self):
+        """Allow tenant link configuration through the explicit public endpoint."""
+        if self.action == "public_config":
+            return [(HasTenantAdminAccess | HasPlatformSuperAdmin)()]
+        return super().get_permissions()
+
+    @action(detail=False, methods=["get"], url_path="public-config")
+    def public_config(self, request):
+        """Return only the public URL used to build assistant links."""
+        return Response(list(GlobalSetting.objects.filter(key="public_base_url").values("key", "value")))
+
+    def _record_change(self, setting):
+        """Audit the setting key while keeping all configuration values private."""
+        record_audit(
+            action="global_setting.update",
+            request=self.request,
+            actor=self.request.user,
+            resource_type="global_setting",
+            resource_id=setting.key,
+        )
 
     def perform_create(self, serializer):
         """Create a global setting and sync derived runtime config."""
 
         setting = serializer.save()
         self._sync_runtime_schedule(setting)
+        self._record_change(setting)
 
     def perform_update(self, serializer):
         """Update a global setting and sync derived runtime config."""
 
         setting = serializer.save()
         self._sync_runtime_schedule(setting)
+        self._record_change(setting)
+
+    def perform_destroy(self, instance):
+        """Audit deletion without retaining the setting value."""
+        key = instance.key
+        instance.delete()
+        record_audit(
+            action="global_setting.delete",
+            request=self.request,
+            actor=self.request.user,
+            resource_type="global_setting",
+            resource_id=key,
+        )
 
     def partial_update(self, request, *args, **kwargs):
         """Update or create a setting addressed by key."""
@@ -49,6 +87,7 @@ class GlobalSettingViewSet(BaseAdminViewSet):
         serializer.is_valid(raise_exception=True)
         setting = serializer.save()
         self._sync_runtime_schedule(setting)
+        self._record_change(setting)
         return Response(self.get_serializer(setting).data)
 
     def _sync_runtime_schedule(self, setting):
@@ -140,6 +179,14 @@ class GlobalSettingViewSet(BaseAdminViewSet):
 
             PeriodicTasks.update_changed()
 
+        record_audit(
+            action="global_setting.schedule_update",
+            request=request,
+            actor=request.user,
+            resource_type="global_setting",
+            resource_id=task_type,
+            metadata={"enabled": enabled},
+        )
         return Response(
             {
                 "name": task.name,

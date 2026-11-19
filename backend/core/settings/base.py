@@ -229,6 +229,8 @@ MIDDLEWARE = [
 
 MIDDLEWARE += [
     # Custom middleware
+    'accounts.middleware.DelegationContextMiddleware',
+    'accounts.middleware.ApiKeyCallMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'

@@ -548,6 +548,11 @@ function costDisplayText(record) {
   if (!presentation.showAmount) {
     return t('llm.stats.costUnknown')
   }
+  if (record?.cost_totals && Object.keys(record.cost_totals).length > 1) {
+    return Object.entries(record.cost_totals)
+      .map(([currency, value]) => formatCost(value, currency))
+      .join(' · ')
+  }
   return formatCost(
     record?.total_cost ?? record?.cost,
     record?.total_cost_currency
@@ -746,18 +751,28 @@ const seriesByModelTokensChartData = computed(() =>
   buildSeriesByModelChartData('total_tokens')
 )
 const seriesByModelCostChartData = computed(() =>
-  summaryCostPresentation.value.status === 'priced'
+  summaryCostPresentation.value.status === 'priced' &&
+  statsData.value?.summary?.total_cost_currency !== 'MIXED'
     ? buildSeriesByModelChartData('total_cost')
     : null
 )
 const seriesByModelE2eChartData = computed(() =>
-  buildSeriesByModelChartData('avg_e2e_latency_sec', { fill: false })
+  buildSeriesByModelChartData('avg_e2e_latency_sec', {
+    fill: false,
+    useNullForMissing: true
+  })
 )
 const seriesByModelTtftChartData = computed(() =>
-  buildSeriesByModelChartData('avg_ttft_sec', { fill: false })
+  buildSeriesByModelChartData('avg_ttft_sec', {
+    fill: false,
+    useNullForMissing: true
+  })
 )
 const seriesByModelOutputTpsChartData = computed(() =>
-  buildSeriesByModelChartData('avg_output_tps', { fill: false })
+  buildSeriesByModelChartData('avg_output_tps', {
+    fill: false,
+    useNullForMissing: true
+  })
 )
 
 const lineChartOptions = computed(() => ({

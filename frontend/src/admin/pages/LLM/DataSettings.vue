@@ -13,6 +13,12 @@
       <div class="bg-white rounded-lg border border-gray-200 shadow-sm">
         <div class="p-6">
           <BaseLoading v-if="loading" />
+          <p v-else-if="loadError" role="alert" class="text-sm text-danger-700">
+            {{ loadError }}
+            <button type="button" class="underline" @click="loadConfig">
+              {{ t('common.refresh') }}
+            </button>
+          </p>
           <template v-else>
             <h2 class="text-base font-semibold text-gray-900 mb-6">
               {{ t('llm.dataSettings.sectionTitle') }}
@@ -33,6 +39,7 @@
                 <div class="w-full md:w-64 flex items-center justify-end gap-2">
                   <input
                     v-model.number="form.retention_days"
+                    :aria-label="t('llm.dataSettings.retentionTitle')"
                     type="number"
                     min="1"
                     max="3650"
@@ -64,7 +71,9 @@
                       class="relative inline-flex items-center cursor-pointer"
                     >
                       <input
-                        v-model="cleanupEnabled"
+                        v-model="form.cleanup_enabled"
+                        :disabled="!cleanupAvailable"
+                        :aria-label="t('llm.dataSettings.cleanupTitle')"
                         type="checkbox"
                         class="sr-only peer"
                       />
@@ -90,11 +99,12 @@
                   <div class="w-full md:w-64">
                     <input
                       v-model="form.cleanup_crontab"
+                      :aria-label="t('llm.dataSettings.cleanupCrontab')"
                       type="text"
                       :placeholder="
                         t('llm.dataSettings.cleanupCrontabPlaceholder')
                       "
-                      :disabled="!cleanupEnabled"
+                      :disabled="!form.cleanup_enabled"
                       class="rounded-md border border-gray-300 px-3 py-2 text-sm w-full font-mono focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                     />
                   </div>
@@ -119,6 +129,7 @@
                   <div class="w-full md:w-64">
                     <input
                       v-model="form.aggregation_crontab"
+                      :aria-label="t('llm.dataSettings.aggregationCrontab')"
                       type="text"
                       :placeholder="
                         t('llm.dataSettings.aggregationCrontabPlaceholder')
@@ -136,7 +147,7 @@
               <BaseButton
                 variant="secondary"
                 size="sm"
-                :disabled="saving"
+                :disabled="saving || !dirty"
                 @click="resetForm"
               >
                 {{ t('llm.dataSettings.reset') }}
@@ -145,11 +156,22 @@
                 variant="primary"
                 size="sm"
                 :loading="saving"
+                :disabled="!dirty"
                 @click="saveConfig"
               >
                 {{ t('llm.dataSettings.saveChanges') }}
               </BaseButton>
             </div>
+            <p
+              v-if="saveError"
+              role="alert"
+              class="mt-2 text-sm text-danger-700"
+            >
+              {{ saveError }}
+            </p>
+            <p v-if="saveSuccess" class="mt-2 text-sm text-green-700">
+              {{ t('llm.dataSettings.saveSuccess') }}
+            </p>
           </template>
         </div>
       </div>
@@ -158,7 +180,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
@@ -172,98 +195,94 @@ const { showSuccess, showError } = useToast()
 
 const loading = ref(false)
 const saving = ref(false)
-const cleanupEnabled = ref(true)
+const cleanupAvailable = ref(true)
+const loadError = ref('')
+const saveError = ref('')
+const saveSuccess = ref(false)
 
 const form = reactive({
   retention_days: 365,
+  cleanup_enabled: true,
   cleanup_crontab: '0 2 * * *',
   aggregation_crontab: '5 * * * *'
 })
 
 const initialValues = reactive({
   retention_days: 365,
+  cleanup_enabled: true,
   cleanup_crontab: '0 2 * * *',
   aggregation_crontab: '5 * * * *'
 })
 
+const dirty = computed(() =>
+  Object.keys(form).some((key) => form[key] !== initialValues[key])
+)
+
 function resetForm() {
-  form.retention_days = initialValues.retention_days
-  form.cleanup_crontab = initialValues.cleanup_crontab
-  form.aggregation_crontab = initialValues.aggregation_crontab
+  Object.assign(form, initialValues)
+  saveError.value = ''
+  saveSuccess.value = false
+}
+
+function assignFromValue(raw) {
+  for (const key of Object.keys(form)) {
+    if (raw?.[key] !== undefined) form[key] = raw[key]
+  }
+  cleanupAvailable.value = raw?.cleanup_available !== false
+  Object.assign(initialValues, form)
 }
 
 async function loadConfig() {
   loading.value = true
+  loadError.value = ''
   try {
-    const raw = await llmAdminApi.getMeteringConfig()
-    if (raw && typeof raw === 'object') {
-      if (typeof raw.retention_days === 'number') {
-        form.retention_days = raw.retention_days
-        initialValues.retention_days = raw.retention_days
-      }
-      if (typeof raw.cleanup_crontab === 'string') {
-        form.cleanup_crontab = raw.cleanup_crontab
-        initialValues.cleanup_crontab = raw.cleanup_crontab
-      }
-      if (typeof raw.cleanup_enabled === 'boolean') {
-        cleanupEnabled.value = raw.cleanup_enabled
-      }
-      if (typeof raw.aggregation_crontab === 'string') {
-        form.aggregation_crontab = raw.aggregation_crontab
-        initialValues.aggregation_crontab = raw.aggregation_crontab
-      }
-    }
-  } catch (e) {
-    showError(extractErrorMessage(e, t('common.error')))
+    assignFromValue(await llmAdminApi.getMeteringConfig())
+  } catch (error) {
+    loadError.value = extractErrorMessage(error, t('common.error'))
   } finally {
     loading.value = false
   }
 }
 
 async function saveConfig() {
-  const payload = {}
-  const rd = Number(form.retention_days)
-  if (rd >= 1 && rd <= 3650) payload.retention_days = rd
-  payload.cleanup_enabled = cleanupEnabled.value
-  if (typeof form.cleanup_crontab === 'string' && form.cleanup_crontab.trim()) {
-    payload.cleanup_crontab = form.cleanup_crontab.trim()
-  }
-  if (
-    typeof form.aggregation_crontab === 'string' &&
-    form.aggregation_crontab.trim()
-  ) {
-    payload.aggregation_crontab = form.aggregation_crontab.trim()
-  }
-  if (Object.keys(payload).length === 0) {
-    showError(t('llm.dataSettings.saveFailed'))
-    return
-  }
+  saveError.value = ''
+  saveSuccess.value = false
+  const payload = Object.fromEntries(
+    Object.keys(form)
+      .filter((key) => form[key] !== initialValues[key])
+      .map((key) => [key, form[key]])
+  )
+  if (!Object.keys(payload).length) return
   saving.value = true
   try {
-    const raw = await llmAdminApi.updateMeteringConfig(payload)
-    if (raw && typeof raw === 'object') {
-      if (typeof raw.retention_days === 'number') {
-        form.retention_days = raw.retention_days
-        initialValues.retention_days = raw.retention_days
-      }
-      if (typeof raw.cleanup_crontab === 'string') {
-        form.cleanup_crontab = raw.cleanup_crontab
-        initialValues.cleanup_crontab = raw.cleanup_crontab
-      }
-      if (typeof raw.cleanup_enabled === 'boolean')
-        cleanupEnabled.value = raw.cleanup_enabled
-      if (typeof raw.aggregation_crontab === 'string') {
-        form.aggregation_crontab = raw.aggregation_crontab
-        initialValues.aggregation_crontab = raw.aggregation_crontab
-      }
-    }
+    assignFromValue(await llmAdminApi.updateMeteringConfig(payload))
+    saveSuccess.value = true
     showSuccess(t('llm.dataSettings.saveSuccess'))
-  } catch (e) {
-    showError(extractErrorMessage(e, t('llm.dataSettings.saveFailed')))
+  } catch (error) {
+    saveError.value = extractErrorMessage(
+      error,
+      t('llm.dataSettings.saveFailed')
+    )
+    showError(saveError.value)
   } finally {
     saving.value = false
   }
 }
+
+onBeforeRouteLeave(
+  () => !dirty.value || window.confirm(t('llm.dataSettings.confirmLeave'))
+)
+function beforeUnload(event) {
+  if (!dirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+if (typeof window !== 'undefined')
+  window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined')
+    window.removeEventListener('beforeunload', beforeUnload)
+})
 
 onMounted(() => {
   loadConfig()

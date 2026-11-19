@@ -2,6 +2,12 @@
 
 from rest_framework import serializers
 
+from accounts.delegation import is_delegated_request
+from lens.assistant_management import assistant_configuration_scope
+from lens.evaluation.evidence import (
+    prepare_evaluation_evidence,
+    project_result_evidence,
+)
 from lens.evaluation.models import (
     EvaluationCase,
     EvaluationDataset,
@@ -69,6 +75,7 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     case_count = serializers.SerializerMethodField()
+    latest_run = serializers.SerializerMethodField()
 
     class Meta:
         model = EvaluationDataset
@@ -80,6 +87,7 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
             "version",
             "status",
             "case_count",
+            "latest_run",
             "config_snapshot",
             "created_by",
             "created_by_email",
@@ -100,10 +108,20 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
     def get_fields(self):
         fields = super().get_fields()
         request = self.context.get("request")
+        allowed, tenant_id = assistant_configuration_scope(request) if request else (False, None)
         fields["assistant"].queryset = (
-            Assistant.objects.visible_to(request.user) if request else Assistant.objects.none()
+            Assistant.objects.filter(tenant_id=tenant_id) if allowed else Assistant.objects.none()
         )
+        if is_delegated_request():
+            fields.pop("created_by", None)
+            fields.pop("created_by_email", None)
         return fields
+
+    def validate_assistant(self, assistant):
+        """Prevent frozen cases and batches from being rebound to a different assistant."""
+        if self.instance is not None and assistant.pk != self.instance.assistant_id:
+            raise serializers.ValidationError("A dataset's assistant cannot be changed.")
+        return assistant
 
     def get_case_count(self, obj):
         """Return the annotated count or count the relation on create."""
@@ -112,6 +130,18 @@ class EvaluationDatasetSerializer(serializers.ModelSerializer):
         if annotated is not None:
             return annotated
         return obj.cases.count()
+
+    def get_latest_run(self, obj):
+        """Return the latest owned batch without substituting an older scored batch."""
+        uuid = getattr(obj, "latest_run_uuid", None)
+        if uuid is None:
+            return None
+        score = obj.latest_run_score
+        return {
+            "uuid": str(uuid),
+            "status": obj.latest_run_status,
+            "aggregate_score": float(score) if score is not None else None,
+        }
 
     def create(self, validated_data):
         """Create the next version of a named dataset."""
@@ -167,6 +197,16 @@ class EvaluationMetricSerializer(serializers.ModelSerializer):
         read_only_fields = ("uuid", "created_at", "updated_at")
 
 
+class EvaluationEvidenceListSerializer(serializers.ListSerializer):
+    """Batch the family lookup for an entire result page."""
+
+    def to_representation(self, data):
+        """Resolve scopes once before serializing individual results."""
+        rows = list(data.all() if hasattr(data, "all") else data)
+        prepare_evaluation_evidence(rows)
+        return super().to_representation(rows)
+
+
 class EvaluationResultListSerializer(serializers.ModelSerializer):
     """One case result without the full frozen trace payload."""
 
@@ -175,8 +215,13 @@ class EvaluationResultListSerializer(serializers.ModelSerializer):
     source_run = serializers.UUIDField(source="source_run_uuid", read_only=True)
     output_excerpt = serializers.SerializerMethodField()
 
+    def to_representation(self, instance):
+        """Consumer answers and scores do not grant access to provider evidence."""
+        return project_result_evidence(instance, super().to_representation(instance))
+
     class Meta:
         model = EvaluationResult
+        list_serializer_class = EvaluationEvidenceListSerializer
         fields = (
             "uuid",
             "case_uuid",
@@ -282,6 +327,15 @@ class EvaluationRunListSerializer(_EvaluationRunBaseSerializer):
 
 class EvaluationRunDetailSerializer(_EvaluationRunBaseSerializer):
     """Batch detail including the frozen configuration snapshot."""
+
+    def to_representation(self, instance):
+        """Keep requester identities off delegated inspection responses."""
+        data = super().to_representation(instance)
+        if is_delegated_request():
+            data["config_snapshot"] = {
+                key: value for key, value in (data.get("config_snapshot") or {}).items() if key != "requested_by"
+            }
+        return data
 
     class Meta(_EvaluationRunBaseSerializer.Meta):
         fields = _EvaluationRunBaseSerializer.Meta.fields + ("config_snapshot",)

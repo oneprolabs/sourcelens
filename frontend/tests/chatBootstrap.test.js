@@ -249,7 +249,7 @@ test('keeps collapsed account actions inside the sidebar as icon controls', asyn
   assert.match(source, /const isCollapsed = computed\(\(\) => props\.collapsed/)
   assert.match(source, /<Share2[\s\S]*<Settings[\s\S]*<LogOut/)
   assert.match(source, /v-if="isAdmin"\s+class="dock-section"/)
-  assert.match(source, /<Shield[\s\S]*platforms\.adminConsole/)
+  assert.match(source, /<Shield[\s\S]*management\.platformConsole[\s\S]*management\.tenantManagement/)
   assert.match(
     source,
     /v-if="!collapsed \|\| isMobile" class="dock-build-info"/

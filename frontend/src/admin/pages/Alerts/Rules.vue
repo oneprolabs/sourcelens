@@ -195,8 +195,7 @@ import { onMounted, ref } from 'vue'
 import { Pencil, Trash2 } from '@lucide/vue'
 import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import { useI18n } from 'vue-i18n'
-import { alertsAdminApi, managementApi } from '@/admin/api'
-import { listAssistants, listDataSources, listLensNodes } from '@/api/lens'
+import { alertsAdminApi } from '@/admin/api'
 import { collectPaginatedResults } from '@/api/pagination'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -237,56 +236,26 @@ const choices = (rows, identity = 'uuid') =>
     value: row[identity],
     label: row.name || row.username || row.email || String(row[identity])
   }))
-async function availableScopes(request) {
-  try {
-    return await request
-  } catch (error) {
-    if (error?.response?.status === 403) return []
-    throw error
-  }
-}
 async function initialize() {
   loading.value = true
   error.value = ''
   try {
-    const [
-      events,
-      assistants,
-      datasources,
-      lensnodes,
-      channelRows,
-      users,
-      groups
-    ] = await Promise.all([
+    const [events, scopes, channelRows] = await Promise.all([
       alertsAdminApi.getCatalog(),
-      listAssistants(),
-      availableScopes(
-        collectPaginatedResults((page) =>
-          listDataSources({ page, page_size: 100 })
-        )
-      ),
-      availableScopes(listLensNodes()),
+      alertsAdminApi.getScopes(),
       collectPaginatedResults((page) =>
         alertsAdminApi.getChannels({ page, page_size: 100 })
-      ),
-      managementApi.getAllUsers(),
-      managementApi.getAllGroups()
+      )
     ])
     catalog.value = events
     channels.value = channelRows
     options.value = {
-      assistants: choices(assistants),
-      datasources: choices(datasources),
-      lensnodes: choices(lensnodes),
-      channels: channelRows.filter(
-        (row) =>
-          row.is_active &&
-          ['email', 'webhook', 'feishu', 'wecom', 'dingtalk'].includes(
-            row.channel_type
-          )
-      ),
-      users: choices(users, 'id'),
-      groups: choices(groups, 'id')
+      assistants: choices(scopes.assistants),
+      datasources: choices(scopes.datasources),
+      lensnodes: choices(scopes.lensnodes),
+      channels: channelRows,
+      users: choices(scopes.users, 'id'),
+      groups: choices(scopes.groups, 'id')
     }
     ready.value = true
     await loadRules()

@@ -3,6 +3,8 @@
 import hashlib
 import json
 
+from django.db.models import F, Q
+
 from lens.evaluation.models import EvaluationDatasetRevision
 
 
@@ -64,7 +66,13 @@ def baseline_metadata(run):
 
     execution = getattr(run, "execution", None)
     snapshot = (execution.runtime_snapshot if execution else {}) or {}
-    rows = run.session.datasource_snapshots.select_related("datasource", "item", "version").order_by("uuid")
+    rows = (
+        run.session.datasource_snapshots.filter(datasource__tenant_id=run.tenant_id, session__tenant_id=run.tenant_id)
+        .filter(Q(item__isnull=True) | Q(item__datasource_id=F("datasource_id")))
+        .filter(Q(version__isnull=True) | Q(item__isnull=False, version__item_id=F("item_id")))
+        .select_related("datasource", "item", "version")
+        .order_by("uuid")
+    )
     sources = [
         {
             "datasource_uuid": str(row.datasource.uuid),
@@ -79,7 +87,9 @@ def baseline_metadata(run):
     models = sorted(
         {
             value
-            for payload in run.trace_events.filter(event_type="model.started").values_list("payload", flat=True)
+            for payload in run.trace_events.filter(event_type="model.started", tenant_id=run.tenant_id).values_list(
+                "payload", flat=True
+            )
             if isinstance(payload, dict)
             for value in [payload.get("model")]
             if isinstance(value, str) and value and len(value) <= 255

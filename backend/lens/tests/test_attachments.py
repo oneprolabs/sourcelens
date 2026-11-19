@@ -1,6 +1,7 @@
 import io
 import tempfile
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -73,6 +74,11 @@ class AttachmentServiceTests(TestCase):
         self.session = Session.objects.create(
             assistant=self.assistant, user=self.user, title=""
         )
+
+    def admin_request(self):
+        """Inspect legacy unowned runs with explicit configuration authority."""
+        admin = User.objects.create_user(username="attachment-admin", is_staff=True)
+        return SimpleNamespace(user=admin, auth=None)
 
     def test_store_downscales_and_strips_metadata(self):
         attachment = store_message_attachment(
@@ -702,7 +708,7 @@ class AttachmentServiceTests(TestCase):
         self.assertEqual(counts["subagent_count"], 0)
         self.assertEqual(counts["subagent_denied_count"], 1)
 
-        detail = _admin_run_detail(run)
+        detail = _admin_run_detail(run, request=self.admin_request())
 
         self.assertEqual(detail["structured_analysis_calls"], 1)
         self.assertNotIn("structured_analysis_limit_hits", detail)
@@ -751,7 +757,7 @@ class AttachmentServiceTests(TestCase):
             },
         )
 
-        detail = _admin_run_detail(run)
+        detail = _admin_run_detail(run, request=self.admin_request())
 
         self.assertEqual(detail["llm_calls"], 2)
         self.assertEqual(detail["subagent_model_calls"], 1)
@@ -785,7 +791,7 @@ class AttachmentServiceTests(TestCase):
                 metadata={"run_uuid": str(run.uuid)},
             )
 
-        detail = _admin_run_detail(run)
+        detail = _admin_run_detail(run, request=self.admin_request())
 
         self.assertEqual(
             detail["models_used"],

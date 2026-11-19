@@ -1,5 +1,6 @@
 import api from '@/api'
 import { citationSourceUrl } from '@/pages/lens/codeCitations'
+import { runStreamHeaders } from '@/utils/runAccess'
 
 import { createInFlightRequestCache } from './inFlight'
 import { collectPaginatedResults } from './pagination'
@@ -66,6 +67,19 @@ export async function replaceAssistantModels(payload) {
   return unwrapResponse(response)
 }
 
+export async function bulkUpdateAssistantVisibility(payload) {
+  const response = await api.post('/lens/assistants/bulk-visibility/', payload)
+  return unwrapResponse(response)
+}
+
+export async function listAssistantAccessSubjects(params = {}, config = {}) {
+  const response = await api.get('/lens/assistants/access-subjects/', {
+    ...config,
+    params
+  })
+  return unwrapResponse(response)
+}
+
 export async function listAssistantDataSourceBindings(uuid) {
   const response = await api.get(`/lens/assistants/${uuid}/datasources/`)
   return unwrapResponse(response)
@@ -105,9 +119,13 @@ export async function restoreAssistant(uuid) {
 }
 
 export async function listLensNodes() {
-  return collectPaginatedResults(async (page) =>
-    listLensNodePage({ page, page_size: 1000 })
-  )
+  const response = await api.get('/lens/admin/lensnodes/available/')
+  return unwrapResponse(response)
+}
+
+export async function listPublicConfig() {
+  const response = await api.get('/lens/admin/global-settings/public-config/')
+  return unwrapResponse(response)
 }
 
 export async function listLensNodePage(params = {}) {
@@ -152,14 +170,11 @@ export async function streamAdminRunTrajectory(
   if (category) params.set('category', category)
   const query = params.toString()
   const baseUrl = String(api.defaults.baseURL || '/api').replace(/\/$/, '')
-  const token = localStorage.getItem('access_token')
-  const headers = { Accept: 'text/event-stream' }
-  if (token) headers.Authorization = `Bearer ${token}`
   const response = await fetch(
     `${baseUrl}/lens/admin/runs/${runUuid}/trajectory/stream/${query ? `?${query}` : ''}`,
     {
       credentials: 'include',
-      headers,
+      headers: runStreamHeaders(),
       signal
     }
   )
@@ -461,14 +476,39 @@ export async function createDataSource(payload) {
 }
 
 export async function updateDataSource(uuid, payload) {
-  const response = await api.patch(`/lens/admin/datasources/${uuid}/`, payload, {
-    timeout: DATASOURCE_ACCESS_TIMEOUT
-  })
+  const response = await api.patch(
+    `/lens/admin/datasources/${uuid}/`,
+    payload,
+    {
+      timeout: DATASOURCE_ACCESS_TIMEOUT
+    }
+  )
   return unwrapResponse(response)
 }
 
 export async function deleteDataSource(uuid) {
   const response = await api.delete(`/lens/admin/datasources/${uuid}/`)
+  return unwrapResponse(response)
+}
+
+export async function getDataSource(uuid) {
+  const response = await api.get(`/lens/admin/datasources/${uuid}/`)
+  return unwrapResponse(response)
+}
+
+export async function setDataSourceSyncPolicy(uuid, policy) {
+  const response = await api.post(
+    `/lens/admin/datasources/${uuid}/sync-policy/`,
+    policy
+  )
+  return unwrapResponse(response)
+}
+
+export async function saveDataSourceSettings(uuid, settings) {
+  const response = await api.post(
+    `/lens/admin/datasources/${uuid}/settings/`,
+    settings
+  )
   return unwrapResponse(response)
 }
 
@@ -929,6 +969,15 @@ export async function getSkill(uuid) {
   return unwrapResponse(response)
 }
 
+export async function setCatalogEnablement(kind, uuid, enabled) {
+  const resource = kind === 'skill' ? 'skills' : 'mcp-servers'
+  const response = await api.post(
+    `/lens/admin/${resource}/${uuid}/enablement/`,
+    { enabled }
+  )
+  return unwrapResponse(response)
+}
+
 export async function createSkill(payload) {
   const response = await api.post('/lens/admin/skills/', payload)
   return unwrapResponse(response)
@@ -1024,10 +1073,10 @@ export async function beautifySkill(payload) {
   return unwrapResponse(response)
 }
 
-export async function listMcpServers() {
+export async function listMcpServers(params = {}) {
   return collectPaginatedResults(async (page) => {
     const response = await api.get('/lens/admin/mcp-servers/', {
-      params: { page_size: 1000, page }
+      params: { ...params, page_size: 1000, page }
     })
     return unwrapResponse(response)
   })
@@ -1138,5 +1187,15 @@ export async function getAdminShare(uuid) {
 
 export async function updateAdminShare(uuid, payload) {
   const response = await api.patch(`/lens/admin/shares/${uuid}/`, payload)
+  return unwrapResponse(response)
+}
+
+export async function bulkUpdateAssistantEnablement(payload) {
+  const response = await api.post('/lens/assistants/bulk-enablement/', payload)
+  return unwrapResponse(response)
+}
+
+export async function bulkDeleteAssistants(payload) {
+  const response = await api.post('/lens/assistants/bulk-delete/', payload)
   return unwrapResponse(response)
 }

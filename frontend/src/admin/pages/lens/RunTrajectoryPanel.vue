@@ -859,6 +859,7 @@ import {
 } from '@/api/lens'
 import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/utils/api'
+import { isRunAccessDenied } from '@/utils/runAccess'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import JsonTree from '@/components/ui/JsonTree.vue'
@@ -2071,6 +2072,10 @@ async function fetchTrajectory(
     return true
   } catch (error) {
     if (currentRequestId !== requestId) return
+    if (isRunAccessDenied(error)) {
+      clearTrajectoryAccess()
+      return
+    }
     if (!silent) showError(extractErrorMessage(error, t('common.error')))
     hasMore.value = false
     return false
@@ -2097,6 +2102,16 @@ function stopTrajectoryStream() {
   clearTimeout(fallbackTimer)
   fallbackTimer = null
   streamState.value = 'idle'
+}
+
+function clearTrajectoryAccess() {
+  stopTrajectoryStream()
+  cancelTerminalSync()
+  events.value = []
+  summary.value = {}
+  selectedEvent.value = null
+  hasMore.value = false
+  awaitingStreamDone.value = false
 }
 
 function scheduleFallbackRefresh() {
@@ -2210,6 +2225,11 @@ async function connectTrajectoryStream() {
     })
   } catch (error) {
     if (error?.name === 'AbortError') return
+    if (controller !== streamController || runUuid !== props.runUuid) return
+    if (isRunAccessDenied(error) && error?.response?.status !== 401) {
+      clearTrajectoryAccess()
+      return
+    }
   } finally {
     if (streamController === controller) streamController = null
   }

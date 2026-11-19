@@ -10,6 +10,7 @@ import {
   terminalSyncEvent
 } from '../src/pages/lens/runtimeEvents.js'
 import { resolveRunStatus } from '../src/pages/lens/chatRetryHint.js'
+import { isRunAccessDenied } from '../src/utils/runAccess.js'
 
 const source = await readFile(
   new URL('../src/pages/lens/Chat.vue', import.meta.url),
@@ -74,6 +75,7 @@ function chatContext(overrides = {}) {
     mapRunError: (code) => code,
     t: (key) => key,
     resolveRunStatus,
+    isRunAccessDenied,
     runtimeStateFor,
     applyRuntimeEvent,
     createRuntimeState,
@@ -86,6 +88,7 @@ function chatContext(overrides = {}) {
     'finishSubmittedRun',
     'handleEvent',
     'handleStepEvent',
+    'markRunUnavailable',
     'isTerminalRunStatus'
   ]
   for (const name of names) {
@@ -246,3 +249,39 @@ test('final history reconciliation retries a transient failure', async () => {
   assert.equal(context.messages.value[0].content, 'Final partial answer')
   assert.equal(context.currentRun.value.outcome, 'partial')
 })
+
+for (const status of [401, 403, 404]) {
+  test(`history restoration stops when run access returns ${status}`, async () => {
+    let polls = 0
+    const context = chatContext({
+      messages: ref([{ role: 'user', run: 'run-a', content: 'Question' }]),
+      getRun: async () => {
+        polls += 1
+        throw { response: { status } }
+      },
+      sleep: async () => assert.fail('must not retry denied history')
+    })
+    await context.maybeResumeActiveRun('a', () => true)
+    assert.equal(polls, 1)
+    assert.equal(context.runStatusResolvingSessionUuid.value, '')
+    assert.equal(context.currentRun.value, null)
+    assert.equal(context.messageError.value, true)
+    assert.equal(context.messages.value.length, 0)
+  })
+
+  test(`final history reconciliation stops on ${status}`, async () => {
+    const denied = { response: { status } }
+    const context = chatContext({
+      getRun: async () => {
+        throw denied
+      },
+      sleep: async () => assert.fail('must not retry denied history')
+    })
+    await assert.rejects(
+      context.finishSubmittedRun('run-a', 'a', () => true),
+      (error) => error === denied
+    )
+    assert.equal(context.currentRun.value, null)
+    assert.equal(context.messageError.value, true)
+  })
+}

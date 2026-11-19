@@ -115,7 +115,7 @@ def ensure_datasource_periodic_task(datasource):
     ):
         _disable_datasource_periodic_task(datasource)
         return None
-    if datasource.status == DataSource.Status.DISABLED:
+    if datasource.status == DataSource.Status.DISABLED or (datasource.sync_policy or {}).get("mode") == "manual":
         _disable_datasource_periodic_task(datasource)
         return None
 
@@ -185,7 +185,7 @@ def estimate_datasource_next_run(datasource, record=None):
         DataSource.SourceType.UPLOAD,
     ):
         return None
-    if datasource.status == DataSource.Status.DISABLED:
+    if datasource.status == DataSource.Status.DISABLED or (datasource.sync_policy or {}).get("mode") == "manual":
         return None
 
     record = record or ScheduledTask.objects.filter(

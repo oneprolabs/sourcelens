@@ -1946,6 +1946,7 @@ def _sync_context(command, target):
             command.get("excluded_datasource_roots") or [],
             target,
         ),
+        "conversion_token": command.get("conversion_token") or "",
         "ai_gateway_url": command.get("ai_gateway_url") or "",
         "lensnode_token": command.get("lensnode_token") or "",
         "gateway_http_client": command.get("gateway_http_client"),

@@ -81,6 +81,7 @@ def beautify_skill_content(*, content, name="", user_id=None):
         user=user,
         node_name=SKILL_BEAUTIFY_NODE,
         user_id=user_id,
+        platform_model=True,
     )
     return _strip_code_fence(result.content)
 

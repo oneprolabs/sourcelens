@@ -1,7 +1,9 @@
 <template>
   <div id="app" class="min-h-screen bg-surface-sunken">
     <ErrorBoundary>
-      <router-view />
+      <router-view
+        :key="$route.meta.notificationScope || $route.meta.modelScope"
+      />
     </ErrorBoundary>
     <Teleport to="body">
       <UserSettingsModal

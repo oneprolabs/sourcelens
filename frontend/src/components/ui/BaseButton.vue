@@ -1,5 +1,7 @@
 <template>
   <button
+    data-ui-button
+    :data-variant="variant"
     :type="type"
     :disabled="disabled || loading"
     :class="buttonClasses"

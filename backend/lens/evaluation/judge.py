@@ -212,6 +212,7 @@ def _call_judge(*, case, output, citations, execution_metrics, model_ref, user_i
             ),
             node_name=JUDGE_NODE_NAME,
             user_id=user_id,
+            platform_model=True,
         )
     except Exception as exc:
         logger.warning(

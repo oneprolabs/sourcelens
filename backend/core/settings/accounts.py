@@ -68,9 +68,10 @@ SOCIALACCOUNT_LOGIN_ON_GET = True
 # Unique email addresses (prevent duplicate registrations)
 ACCOUNT_UNIQUE_EMAIL = True
 
-# Keep Django's username backend for the admin while allauth handles email
-# authentication for the public password login API.
+# Share retry state across email login and Django admin username authentication.
 AUTHENTICATION_BACKENDS = [
+    'accounts.backends.PasswordAuthenticationBackend',
+    # The first backend fails closed; retain these paths for existing sessions.
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 ]

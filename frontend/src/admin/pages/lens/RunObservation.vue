@@ -1,189 +1,230 @@
 <template>
   <AdminLayout>
-    <div class="flex max-w-full flex-col gap-4 py-4">
-      <section class="admin-data-panel overflow-hidden">
-        <div
-          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
-        >
-          <div class="min-w-0">
-            <h1 class="admin-page-title">
-              {{ t('lensRuns.title') }}
-            </h1>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <BaseButton
-              variant="outline"
-              size="sm"
-              :loading="loading"
-              :title="t('common.refresh')"
-              @click="fetchRuns"
-            >
-              {{ t('common.refresh') }}
-            </BaseButton>
-          </div>
+    <div class="admin-list-page run-history-page">
+      <div class="admin-page-heading">
+        <div class="admin-heading-copy">
+          <h1>
+            {{
+              t(
+                historyView === 'history'
+                  ? 'lensRuns.title'
+                  : 'lensRuns.monitorTitle'
+              )
+            }}
+            <span v-if="hasLoaded" class="admin-heading-count">{{
+              total
+            }}</span>
+          </h1>
+          <p>
+            {{
+              t(
+                historyView === 'history'
+                  ? 'lensRuns.historySubtitle'
+                  : 'lensRuns.monitorSubtitle'
+              )
+            }}
+          </p>
         </div>
-
-        <div
-          data-testid="run-status-summary"
-          class="grid grid-cols-2 gap-3 border-b border-line bg-surface-sunken/50 px-5 py-4 md:grid-cols-5"
-        >
-          <button
-            v-for="item in statusSummaryCards"
-            :key="item.status"
-            type="button"
-            class="rounded-lg border bg-surface px-4 py-3 text-left transition-colors hover:border-primary-300"
-            :class="
-              filters.status === item.status
-                ? 'border-primary-400 ring-1 ring-primary-200'
-                : 'border-line'
-            "
-            @click="setStatusFilter(item.status)"
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :loading="loading"
+            @click="fetchRuns"
           >
-            <p class="text-xs font-medium text-ink-500">{{ item.label }}</p>
-            <p class="admin-metric-value mt-1">
-              <span
-                v-if="loading && !hasLoaded"
-                class="metric-loading"
-                aria-hidden="true"
-              >
-                …
-              </span>
-              <span v-else>{{ formatOperationMetric(item.count) }}</span>
-            </p>
-          </button>
+            <RefreshCw :size="14" aria-hidden="true" />{{ t('common.refresh') }}
+          </BaseButton>
         </div>
-
-        <div class="flex min-h-0 flex-col px-5 py-4">
-          <div class="mb-4 flex flex-col border-b border-line pb-4">
-            <div
-              class="flex w-full min-w-0 flex-col items-stretch gap-3 xl:flex-row xl:items-center"
-            >
-              <div
-                class="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-5"
-              >
-                <input
-                  v-model="filters.q"
-                  type="text"
-                  :placeholder="t('lensRuns.filterKeyword')"
-                  class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
-                  @input="onFiltersChanged"
-                />
-                <input
-                  v-model="filters.username"
-                  type="text"
-                  :placeholder="t('lensRuns.filterUsername')"
-                  class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
-                  @input="onUsernameChanged"
-                />
-                <BaseSelect
-                  v-model="filters.assistant"
-                  mobile-touch
-                  @change="onFiltersChanged"
-                >
-                  <option value="">{{ t('lensRuns.assistantAll') }}</option>
-                  <option v-for="a in assistants" :key="a.slug" :value="a.slug">
-                    {{ a.name }}
-                  </option>
-                </BaseSelect>
-                <BaseSelect
-                  v-model="filters.status"
-                  mobile-touch
-                  @change="onFiltersChanged"
-                >
-                  <option value="">{{ t('lensRuns.statusAll') }}</option>
-                  <option value="done">{{ t('lensRuns.statusDone') }}</option>
-                  <option value="failed">
-                    {{ t('lensRuns.statusFailed') }}
-                  </option>
-                  <option value="active">
-                    {{ t('lensRuns.statusRunning') }}
-                  </option>
-                  <option value="queued">
-                    {{ t('lensRuns.statusQueued') }}
-                  </option>
-                  <option value="cancelled">
-                    {{ t('lensRuns.statusCancelled') }}
-                  </option>
-                </BaseSelect>
-                <BaseSelect
-                v-model="filters.source"
-                mobile-touch
-                :aria-label="t('lensRuns.sourceFilter')"
-                @change="onFiltersChanged"
-              >
-                <option value="">{{ t('lensRuns.sourceAll') }}</option>
-                <option value="user">{{ t('lensRuns.sourceUser') }}</option>
-                <option value="evaluation">{{ t('lensRuns.sourceEvaluation') }}</option>
-              </BaseSelect>
-              </div>
-              <div class="flex w-full shrink-0 items-center gap-2 md:w-auto">
-                <BaseButton
-                  data-testid="toggle-run-advanced-filters"
-                  variant="outline"
-                  size="sm"
-                  class="flex-1 md:flex-none"
-                  :aria-expanded="advancedFiltersOpen"
-                  aria-controls="run-advanced-filters"
-                  @click="advancedFiltersOpen = !advancedFiltersOpen"
-                >
-                  {{ t('lensRuns.moreFilters') }}
-                  <span
-                    v-if="advancedFilterCount"
-                    class="rounded-full bg-primary-100 px-1.5 text-xs text-primary-700"
-                  >
-                    {{ advancedFilterCount }}
-                  </span>
-                </BaseButton>
-
-                <BaseButton
-                  variant="outline"
-                  size="sm"
-                  class="flex-1 md:flex-none"
-                  @click="resetFilters"
-                >
-                  {{ t('lensRuns.resetFilters') }}
-                </BaseButton>
-              </div>
-            </div>
-
-            <div
-              v-if="advancedFiltersOpen"
-              id="run-advanced-filters"
-              data-testid="run-advanced-filters"
-              class="mt-3 grid gap-3 border-t border-line pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center"
-            >
-              <input
-                v-model="filters.lensnode"
-                type="text"
-                :placeholder="t('lensRuns.filterLensNode')"
-                class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
-                @input="onFiltersChanged"
-              />
-              <input
-                v-model="filters.model"
-                type="text"
-                :placeholder="t('lensRuns.filterModel')"
-                class="min-h-11 w-full min-w-0 rounded-md border border-line bg-surface text-ink-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 md:min-h-9"
-                @input="onFiltersChanged"
-              />
-              <div class="flex w-full shrink-0 items-center gap-2 md:w-auto">
-                <BaseDateInput
-                  v-model="filters.start_date"
-                  compact
-                  :max="filters.end_date || undefined"
-                  @change="onFiltersChanged"
-                />
-                <span class="text-ink-400">–</span>
-                <BaseDateInput
-                  v-model="filters.end_date"
-                  compact
-                  :min="filters.start_date || undefined"
-                  @change="onFiltersChanged"
-                />
-              </div>
-            </div>
+      </div>
+      <div
+        class="admin-status-tabs run-view-tabs"
+        :aria-label="t('lensRuns.title')"
+      >
+        <button
+          type="button"
+          :aria-pressed="historyView === 'history'"
+          @click="setHistoryView('history')"
+        >
+          {{ t('lensRuns.allQuestions') }}
+        </button>
+        <button
+          type="button"
+          :aria-pressed="historyView === 'monitor'"
+          @click="setHistoryView('monitor')"
+        >
+          {{ t('lensRuns.monitorTitle') }}
+        </button>
+      </div>
+      <section class="admin-list-panel">
+        <div class="run-list-body">
+          <div v-if="filters.api_key" class="run-key-filter">
+            <span class="break-all">{{
+              t('management.apiKeyInsights.historyFilter', {
+                uuid: filters.api_key
+              })
+            }}</span>
+            <BaseButton size="sm" variant="ghost" @click="clearApiKeyFilter">{{
+              t('management.apiKeyInsights.clearFilter')
+            }}</BaseButton>
           </div>
-
+          <div class="admin-list-toolbar run-list-toolbar">
+            <div
+              v-if="historyView === 'history'"
+              class="admin-status-tabs run-result-tabs"
+            >
+              <button
+                v-for="item in historyResultTabs"
+                :key="item.key"
+                type="button"
+                :aria-pressed="filters.result === item.key"
+                @click="setResultFilter(item.key)"
+              >
+                {{ item.label
+                }}<small v-if="item.count !== undefined">{{
+                  formatOperationMetric(item.count)
+                }}</small>
+              </button>
+            </div>
+            <div
+              v-else
+              data-testid="run-status-summary"
+              class="admin-status-tabs run-result-tabs"
+            >
+              <button
+                v-for="item in statusSummaryCards"
+                :key="item.status"
+                type="button"
+                :aria-pressed="filters.status === item.status"
+                @click="setStatusFilter(item.status)"
+              >
+                {{ item.label
+                }}<small>{{ formatOperationMetric(item.count) }}</small>
+              </button>
+            </div>
+            <label class="admin-toolbar-search">
+              <Search :size="14" aria-hidden="true" />
+              <input
+                v-model="filters.q"
+                type="search"
+                :aria-label="t('common.search')"
+                :placeholder="
+                  t(
+                    historyView === 'history'
+                      ? 'lensRuns.historySearch'
+                      : 'lensRuns.filterKeyword'
+                  )
+                "
+                @input="onFiltersChanged"
+              />
+            </label>
+            <BaseSelect
+              v-model="filters.assistant"
+              class="admin-filter-chip"
+              :aria-label="t('lensRuns.colAssistant')"
+              @change="onFiltersChanged"
+            >
+              <option value="">{{ t('lensRuns.assistantAll') }}</option>
+              <option v-for="a in assistants" :key="a.slug" :value="a.slug">
+                {{ a.name }}
+              </option>
+            </BaseSelect>
+            <input
+              v-if="!isDelegated"
+              v-model="filters.username"
+              type="search"
+              class="run-user-filter"
+              :aria-label="t('lensRuns.filterUsername')"
+              :placeholder="t('lensRuns.filterUsername')"
+              @input="onUsernameChanged"
+            />
+            <BaseButton
+              data-testid="toggle-run-advanced-filters"
+              variant="ghost"
+              size="sm"
+              :aria-expanded="advancedFiltersOpen"
+              aria-controls="run-advanced-filters"
+              @click="advancedFiltersOpen = !advancedFiltersOpen"
+            >
+              {{ t('lensRuns.moreFilters')
+              }}<small v-if="advancedFilterCount">{{
+                advancedFilterCount
+              }}</small>
+            </BaseButton>
+            <BaseButton
+              v-if="hasActiveFilters"
+              variant="ghost"
+              size="sm"
+              @click="resetFilters"
+              >{{ t('lensRuns.resetFilters') }}</BaseButton
+            >
+          </div>
+          <div
+            v-if="advancedFiltersOpen"
+            id="run-advanced-filters"
+            data-testid="run-advanced-filters"
+            class="run-advanced-filters"
+          >
+            <BaseSelect
+              v-model="filters.status"
+              :aria-label="t('lensRuns.colStatus')"
+              @change="onFiltersChanged"
+            >
+              <option value="">{{ t('lensRuns.statusAll') }}</option>
+              <option
+                v-for="status in [
+                  'done',
+                  'failed',
+                  'active',
+                  'queued',
+                  'cancelled',
+                  'awaiting_user_input'
+                ]"
+                :key="status"
+                :value="status"
+              >
+                {{ statusText(status === 'active' ? 'running' : status) }}
+              </option>
+            </BaseSelect>
+            <BaseSelect
+              v-model="filters.source"
+              :aria-label="t('lensRuns.sourceFilter')"
+              @change="onFiltersChanged"
+            >
+              <option value="">{{ t('lensRuns.sourceAll') }}</option>
+              <option value="user">{{ t('lensRuns.sourceUser') }}</option>
+              <option value="evaluation">
+                {{ t('lensRuns.sourceEvaluation') }}
+              </option>
+            </BaseSelect>
+            <input
+              v-model="filters.lensnode"
+              type="text"
+              :aria-label="t('lensRuns.filterLensNode')"
+              :placeholder="t('lensRuns.filterLensNode')"
+              @input="onFiltersChanged"
+            />
+            <input
+              v-model="filters.model"
+              type="text"
+              :aria-label="t('lensRuns.filterModel')"
+              :placeholder="t('lensRuns.filterModel')"
+              @input="onFiltersChanged"
+            />
+            <BaseDateInput
+              v-model="filters.start_date"
+              compact
+              :aria-label="t('lensRuns.startDate')"
+              :max="filters.end_date || undefined"
+              @change="onFiltersChanged"
+            />
+            <BaseDateInput
+              v-model="filters.end_date"
+              compact
+              :aria-label="t('lensRuns.endDate')"
+              :min="filters.start_date || undefined"
+              @change="onFiltersChanged"
+            />
+          </div>
           <template v-if="loading && !hasLoaded">
             <div
               data-testid="run-loading-state"
@@ -245,6 +286,81 @@
               </p>
             </div>
 
+            <div
+              v-else-if="historyView === 'history'"
+              class="admin-list-table run-history-table"
+            >
+              <table>
+                <colgroup>
+                  <col />
+                  <col v-if="!isDelegated" style="width: 110px" />
+                  <col style="width: 170px" />
+                  <col style="width: 110px" />
+                  <col style="width: 145px" />
+                  <col style="width: 44px" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>{{ t('lensRuns.questionAndAnswer') }}</th>
+                    <th v-if="!isDelegated">{{ t('lensRuns.colCaller') }}</th>
+                    <th>{{ t('lensRuns.colAssistant') }}</th>
+                    <th>{{ t('lensRuns.colStatus') }}</th>
+                    <th>{{ t('lensRuns.colTime') }}</th>
+                    <th>
+                      <span class="sr-only">{{ t('common.actions') }}</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in runs" :key="r.uuid">
+                    <td class="run-history-content">
+                      <button
+                        type="button"
+                        class="run-history-question"
+                        @click="openHistoryAction({ key: 'answer' }, r)"
+                      >
+                        {{ r.question || '—' }}
+                      </button>
+                      <p class="run-history-answer">
+                        {{ r.answer_preview || t('lensRuns.noAnswer') }}
+                      </p>
+                      <span
+                        v-if="r.source === 'evaluation'"
+                        class="run-source-badge"
+                        >{{ t('lensRuns.sourceEvaluation') }}</span
+                      >
+                    </td>
+                    <td v-if="!isDelegated" class="run-history-caller">
+                      {{
+                        r.api_key
+                          ? `API Key · ${r.api_key.name}`
+                          : r.username || '—'
+                      }}
+                    </td>
+                    <td class="run-history-assistant">
+                      <span>{{ r.assistant_name || '—' }}</span>
+                    </td>
+                    <td class="run-history-result">
+                      <span
+                        class="prototype-run-state"
+                        :data-tone="resultTone(r)"
+                        >{{ resultText(r) }}</span
+                      >
+                    </td>
+                    <td class="run-history-time">
+                      {{ formatDate(r.created_at) }}
+                    </td>
+                    <td class="run-history-menu">
+                      <RowActionMenu
+                        :actions="historyActions(r)"
+                        :label="`${t('common.moreActions')}: ${r.question || r.uuid}`"
+                        @select="openHistoryAction($event, r)"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <div v-else class="flex flex-col md:min-h-9">
               <div
                 data-testid="mobile-run-observation-list"
@@ -265,7 +381,11 @@
                       >
                         {{ r.question || '-' }}
                       </h2>
-                      <span v-if="r.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
+                      <span
+                        v-if="r.source === 'evaluation'"
+                        class="run-source-badge"
+                        >{{ t('lensRuns.sourceEvaluation') }}</span
+                      >
                       <p class="mt-2 text-xs text-ink-500">
                         {{ formatDate(r.created_at) }}
                       </p>
@@ -276,12 +396,16 @@
                   </div>
 
                   <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                    <div>
+                    <div v-if="!isDelegated">
                       <dt class="text-xs text-ink-500">
-                        {{ t('lensRuns.colUser') }}
+                        {{ t('lensRuns.colCaller') }}
                       </dt>
                       <dd class="mt-0.5 truncate font-medium text-ink-800">
-                        {{ r.username || '-' }}
+                        {{
+                          r.api_key
+                            ? `API Key · ${r.api_key.name}`
+                            : r.username || '-'
+                        }}
                       </dd>
                     </div>
                     <div>
@@ -368,7 +492,9 @@
                   <thead class="sticky top-0 z-10 bg-surface-sunken">
                     <tr>
                       <th class="th">{{ t('lensRuns.colTime') }}</th>
-                      <th class="th">{{ t('lensRuns.colUser') }}</th>
+                      <th v-if="!isDelegated" class="th">
+                        {{ t('lensRuns.colCaller') }}
+                      </th>
                       <th class="th">{{ t('lensRuns.colExecutor') }}</th>
                       <th class="th">{{ t('lensRuns.colQuestion') }}</th>
                       <th class="th">{{ t('lensRuns.colStatus') }}</th>
@@ -388,19 +514,35 @@
                       <td class="td text-ink-600 whitespace-nowrap">
                         {{ formatDate(r.created_at) }}
                       </td>
-                      <td class="td text-ink-900 whitespace-nowrap">
-                        {{ r.username || '-' }}
+                      <td
+                        v-if="!isDelegated"
+                        class="td text-ink-900 whitespace-nowrap"
+                      >
+                        {{
+                          r.api_key
+                            ? `API Key · ${r.api_key.name}`
+                            : r.username || '-'
+                        }}
                       </td>
                       <td class="td whitespace-nowrap text-ink-600">
                         <div>{{ r.assistant_name || '-' }}</div>
-                        <div class="mt-1 text-xs text-ink-400">
+                        <div
+                          v-if="r.available_actions?.inspect_configuration"
+                          class="mt-1 text-xs text-ink-400"
+                        >
                           {{ r.lensnode_name || '-' }}
                         </div>
                       </td>
                       <td class="td text-ink-700 max-w-md">
                         <div class="flex items-center gap-2">
-                          <span v-if="r.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
-                          <span class="min-w-0 truncate">{{ r.question || '-' }}</span>
+                          <span
+                            v-if="r.source === 'evaluation'"
+                            class="run-source-badge"
+                            >{{ t('lensRuns.sourceEvaluation') }}</span
+                          >
+                          <span class="min-w-0 truncate">{{
+                            r.question || '-'
+                          }}</span>
                         </div>
                       </td>
                       <td class="td whitespace-nowrap">
@@ -440,7 +582,10 @@
                           ·
                           {{ t('lensRuns.retriesShort', { n: r.retry_count }) }}
                         </div>
-                        <div class="mt-1 text-xs text-ink-400">
+                        <div
+                          v-if="r.available_actions?.inspect_configuration"
+                          class="mt-1 text-xs text-ink-400"
+                        >
                           {{ r.model_ref || '-' }} ·
                           {{ budgetPercent(r.budget_consumption) }}
                         </div>
@@ -448,7 +593,7 @@
                       <td class="td whitespace-nowrap" @click.stop>
                         <div class="flex items-center gap-1">
                           <BaseButton
-                            v-if="r.available_actions?.cancel"
+                            v-if="canOperateRuns && r.available_actions?.cancel"
                             size="sm"
                             variant="outline"
                             @click="requestRunAction('cancel', r)"
@@ -456,7 +601,7 @@
                             {{ t('lensRuns.cancelAction') }}
                           </BaseButton>
                           <BaseButton
-                            v-if="r.available_actions?.retry"
+                            v-if="canOperateRuns && r.available_actions?.retry"
                             size="sm"
                             variant="outline"
                             @click="requestRunAction('retry', r)"
@@ -476,16 +621,15 @@
                   </tbody>
                 </table>
               </div>
-
-              <PaginationBar
-                v-model:page-size="pageSize"
-                :current-page="page"
-                :total="total"
-                @page-size-change="handlePageSizeChange"
-                @prev="goPrevPage"
-                @next="goNextPage"
-              />
             </div>
+            <PaginationBar
+              v-model:page-size="pageSize"
+              :current-page="page"
+              :total="total"
+              @page-size-change="handlePageSizeChange"
+              @prev="goPrevPage"
+              @next="goNextPage"
+            />
           </template>
         </div>
       </section>
@@ -551,7 +695,9 @@
               class="flex w-full shrink-0 items-center justify-end gap-2 md:w-auto"
             >
               <BaseButton
-                v-if="detail && detail.available_actions?.resume"
+                v-if="
+                  canOperateRuns && detail && detail.available_actions?.resume
+                "
                 size="sm"
                 variant="outline"
                 @click="requestRunAction('resume', detail)"
@@ -559,7 +705,7 @@
                 {{ t('lensRuns.resumeAction') }}
               </BaseButton>
               <BaseButton
-                v-if="detail?.available_actions?.cancel"
+                v-if="canOperateRuns && detail?.available_actions?.cancel"
                 size="sm"
                 variant="outline"
                 @click="requestRunAction('cancel', detail)"
@@ -567,7 +713,7 @@
                 {{ t('lensRuns.cancelAction') }}
               </BaseButton>
               <BaseButton
-                v-if="detail?.available_actions?.retry"
+                v-if="canOperateRuns && detail?.available_actions?.retry"
                 size="sm"
                 variant="outline"
                 @click="requestRunAction('retry', detail)"
@@ -575,7 +721,11 @@
                 {{ t('lensRuns.retryAction') }}
               </BaseButton>
               <BaseButton
-                v-if="canSetBaseline && detail?.status === 'done' && detail?.outcome === 'completed'"
+                v-if="
+                  canSetBaseline &&
+                  detail?.status === 'done' &&
+                  detail?.outcome === 'completed'
+                "
                 size="sm"
                 variant="outline"
                 @click="openBaseline"
@@ -583,7 +733,11 @@
                 {{ t('evaluation.baseline.action') }}
               </BaseButton>
               <router-link
-                v-if="detail?.source === 'evaluation' && detail?.evaluation_run_uuid && canSetBaseline"
+                v-if="
+                  detail?.source === 'evaluation' &&
+                  detail?.evaluation_run_uuid &&
+                  canSetBaseline
+                "
                 :to="`/management/lens/evaluation/runs/${detail.evaluation_run_uuid}`"
                 class="text-sm font-medium text-primary-600 hover:text-primary-700"
               >
@@ -636,6 +790,7 @@
                   {{ t('lensRuns.tabOverview') }}
                 </button>
                 <button
+                  v-if="canInspectConfiguration"
                   class="detail-tab"
                   data-testid="run-execution-tab"
                   :class="
@@ -678,12 +833,19 @@
                       <div class="min-w-0">
                         <p class="overview-eyebrow">
                           {{ t('lensRuns.overviewSummary') }}
-                          <span v-if="detail.source === 'evaluation'" class="run-source-badge">{{ t('lensRuns.sourceEvaluation') }}</span>
+                          <span
+                            v-if="detail.source === 'evaluation'"
+                            class="run-source-badge"
+                            >{{ t('lensRuns.sourceEvaluation') }}</span
+                          >
                         </p>
                         <h3 class="overview-hero-title truncate">
                           {{ detail.assistant_name || '-' }}
                         </h3>
-                        <p class="overview-hero-context truncate">
+                        <p
+                          v-if="canInspectConfiguration"
+                          class="overview-hero-context truncate"
+                        >
                           {{ detail.execution?.task || '-' }}
                           <span aria-hidden="true">·</span>
                           {{ detail.lensnode_name || '-' }}
@@ -766,7 +928,10 @@
                       data-testid="run-overview-execution"
                       class="overview-meta-row"
                     >
-                      <div class="overview-meta-item">
+                      <div
+                        v-if="canInspectConfiguration"
+                        class="overview-meta-item"
+                      >
                         <span class="overview-label">
                           {{ t('lensRuns.modelsUsed') }}
                         </span>
@@ -777,7 +942,10 @@
                           {{ detail.models_used?.join(', ') || '-' }}
                         </span>
                       </div>
-                      <div class="overview-meta-item">
+                      <div
+                        v-if="canInspectConfiguration"
+                        class="overview-meta-item"
+                      >
                         <span class="overview-label">
                           {{
                             t(
@@ -809,12 +977,16 @@
                         </span>
                       </div>
                       <AnswerReviewStatus :detail="detail.termination_detail" />
-                      <div class="overview-meta-item">
+                      <div v-if="!isDelegated" class="overview-meta-item">
                         <span class="overview-label">
-                          {{ t('lensRuns.colUser') }}
+                          {{ t('lensRuns.colCaller') }}
                         </span>
                         <span class="overview-meta-value">
-                          {{ detail.username || '-' }}
+                          {{
+                            detail.api_key
+                              ? `API Key · ${detail.api_key.name}`
+                              : detail.username || '-'
+                          }}
                         </span>
                       </div>
                       <div class="overview-meta-item">
@@ -1138,7 +1310,7 @@
                           </span>
                         </dd>
                       </div>
-                      <div>
+                      <div v-if="canInspectConfiguration">
                         <dt class="overview-label">
                           {{ t('lensRuns.lensnode') }}
                         </dt>
@@ -1176,7 +1348,7 @@
                   </section>
 
                   <section
-                    v-if="detail.execution"
+                    v-if="canInspectConfiguration && detail.execution"
                     data-testid="run-overview-resources"
                     class="overview-section"
                   >
@@ -1415,6 +1587,7 @@
 
               <!-- Execution analysis tab -->
               <div
+                v-if="canInspectConfiguration"
                 v-show="activeDetailTab === 'execution'"
                 data-testid="run-execution-content"
                 class="space-y-4 px-6 py-5"
@@ -1483,6 +1656,7 @@
                     activeExecutionView === 'diagnosis'
                   "
                   :can-generate="canGenerateDiagnosis"
+                  :readonly="!canOperateRuns"
                   @navigate="navigateFromEvidence"
                 />
               </div>
@@ -1493,6 +1667,14 @@
                 data-testid="run-results-content"
                 class="space-y-4 px-6 py-5"
               >
+                <section class="overview-section">
+                  <h3 class="overview-title">{{ t('lensRuns.question') }}</h3>
+                  <p
+                    class="mt-3 whitespace-pre-wrap break-words text-sm text-ink-700"
+                  >
+                    {{ detail.question || '—' }}
+                  </p>
+                </section>
                 <section v-if="detail.answer" class="overview-section">
                   <h3 class="overview-title">{{ t('lensRuns.answer') }}</h3>
                   <div
@@ -1736,29 +1918,63 @@
         @close="closePreview"
         @download="downloadOutputFile"
       />
-      <BaseModal :show="baselineOpen" :title="t('evaluation.baseline.action')" @close="baselineOpen = false">
+      <BaseModal
+        :show="baselineOpen"
+        :title="t('evaluation.baseline.action')"
+        @close="baselineOpen = false"
+      >
         <div class="space-y-4">
-          <p class="text-sm text-ink-600">{{ t('evaluation.baseline.review') }}</p>
-          <BaseSelect v-model="baselineDataset" :label="t('evaluation.baseline.dataset')">
-            <option value="">{{ t('evaluation.baseline.selectDataset') }}</option>
-            <option v-for="dataset in baselineDatasets" :key="dataset.uuid" :value="dataset.uuid">
+          <p class="text-sm text-ink-600">
+            {{ t('evaluation.baseline.review') }}
+          </p>
+          <BaseSelect
+            v-model="baselineDataset"
+            :label="t('evaluation.baseline.dataset')"
+          >
+            <option value="">
+              {{ t('evaluation.baseline.selectDataset') }}
+            </option>
+            <option
+              v-for="dataset in baselineDatasets"
+              :key="dataset.uuid"
+              :value="dataset.uuid"
+            >
               {{ dataset.name }} · v{{ dataset.version }}
             </option>
           </BaseSelect>
-          <p v-if="!baselineDatasets.length && !baselineLoading" class="text-sm text-ink-500">
+          <p
+            v-if="!baselineDatasets.length && !baselineLoading"
+            class="text-sm text-ink-500"
+          >
             {{ t('evaluation.baseline.noDatasets') }}
           </p>
-          <div><h3 class="text-sm font-semibold">{{ t('lensRuns.question') }}</h3>
-            <pre class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-xs">{{ detail?.question }}</pre>
+          <div>
+            <h3 class="text-sm font-semibold">{{ t('lensRuns.question') }}</h3>
+            <pre
+              class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-xs"
+              >{{ detail?.question }}</pre
+            >
           </div>
-          <div><h3 class="text-sm font-semibold">{{ t('evaluation.baseline.answer') }}</h3>
-            <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ detail?.answer }}</pre>
+          <div>
+            <h3 class="text-sm font-semibold">
+              {{ t('evaluation.baseline.answer') }}
+            </h3>
+            <pre
+              class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs"
+              >{{ detail?.answer }}</pre
+            >
           </div>
         </div>
         <template #footer>
           <div class="flex justify-end gap-2">
-            <BaseButton variant="outline" @click="baselineOpen = false">{{ t('common.cancel') }}</BaseButton>
-            <BaseButton :disabled="!baselineDataset" :loading="baselineLoading" @click="saveBaseline">
+            <BaseButton variant="outline" @click="baselineOpen = false">{{
+              t('common.cancel')
+            }}</BaseButton>
+            <BaseButton
+              :disabled="!baselineDataset"
+              :loading="baselineLoading"
+              @click="saveBaseline"
+            >
               {{ t('common.confirm') }}
             </BaseButton>
           </div>
@@ -1798,9 +2014,21 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { format } from 'date-fns'
 import { useDebounceFn } from '@vueuse/core'
-import { Download, Eye, FileText, ThumbsDown, ThumbsUp } from '@lucide/vue'
+import {
+  Activity,
+  Download,
+  Eye,
+  FileText,
+  RefreshCw,
+  Search,
+  ThumbsDown,
+  ThumbsUp
+} from '@lucide/vue'
 import { useToast } from '@/composables/useToast'
-import { createEvaluationBaseline, listEvaluationDatasets } from '@/api/evaluation'
+import {
+  createEvaluationBaseline,
+  listEvaluationDatasets
+} from '@/api/evaluation'
 import { extractErrorMessage } from '@/utils/api'
 import { fetchDeliverableBlob, isPreviewable } from '@/utils/filePreview'
 import {
@@ -1837,23 +2065,33 @@ const { showError, showSuccess } = useToast()
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const isDelegated = computed(() => Boolean(userStore.delegation))
+const canOperateRuns = computed(() => userStore.delegation?.mode !== 'readonly')
 
 const baselineOpen = ref(false)
 const baselineLoading = ref(false)
 const baselineDataset = ref('')
 const baselineDatasets = ref([])
-const canSetBaseline = computed(() =>
-  userStore.userInfo?.is_staff ||
-  (userStore.userHasFeature('run_evaluations') && userStore.userHasPermission('lens.run_evaluations'))
+const canSetBaseline = computed(
+  () =>
+    canInspectConfiguration.value &&
+    !isDelegated.value &&
+    (userStore.userInfo?.is_staff ||
+      (userStore.userHasFeature('run_evaluations') &&
+        userStore.userHasPermission('lens.run_evaluations')))
 )
 
 async function openBaseline() {
+  if (!canSetBaseline.value) return
   baselineOpen.value = true
   baselineDataset.value = ''
   baselineDatasets.value = []
   baselineLoading.value = true
   try {
-    const data = await listEvaluationDatasets({ assistant_slug: detail.value.assistant_slug, page_size: 100 })
+    const data = await listEvaluationDatasets({
+      assistant_slug: detail.value.assistant_slug,
+      page_size: 100
+    })
     baselineDatasets.value = Array.isArray(data) ? data : data?.results || []
   } catch (error) {
     showError(extractErrorMessage(error, t('common.error')))
@@ -1863,6 +2101,7 @@ async function openBaseline() {
 }
 
 async function saveBaseline() {
+  if (!canSetBaseline.value) return
   baselineLoading.value = true
   try {
     await createEvaluationBaseline(baselineDataset.value, selectedUuid.value)
@@ -1884,6 +2123,9 @@ const page = ref(1)
 const pageSize = ref(20)
 const assistants = ref([])
 const statusSummary = ref(null)
+const resultSummary = ref(null)
+const historyView = ref('history')
+let listRequestVersion = 0
 
 const detailVisible = ref(false)
 const detailLoading = ref(false)
@@ -1891,6 +2133,9 @@ const detail = ref(null)
 const selectedUuid = ref(null)
 const activeDetailTab = ref('overview')
 const activeExecutionView = ref('trace')
+const canInspectConfiguration = computed(
+  () => detail.value?.available_actions?.inspect_configuration === true
+)
 const advancedFiltersOpen = ref(false)
 const previewFile = ref(null)
 const pendingAction = ref(null)
@@ -1983,15 +2228,17 @@ const ACTIVE_RUN_STATUSES = new Set(['queued', 'running', 'streaming'])
 const canDiagnoseRun = computed(() => {
   const user = userStore.userInfo
   return Boolean(
-    user?.is_staff ||
-      user?.is_superuser ||
-      userStore.userHasPermission('lens.run_diagnostics')
+    canInspectConfiguration.value &&
+      (user?.is_staff ||
+        user?.is_superuser ||
+        userStore.userHasPermission('lens.run_diagnostics'))
   )
 })
 
 const canGenerateDiagnosis = computed(
   () =>
     canDiagnoseRun.value &&
+    canOperateRuns.value &&
     Boolean(detail.value) &&
     ['done', 'failed', 'cancelled'].includes(detail.value.status)
 )
@@ -2005,6 +2252,7 @@ const detailMoreActions = computed(() => [
 ])
 
 const filters = ref({
+  api_key: '',
   q: '',
   username: '',
   user_id: '',
@@ -2013,14 +2261,72 @@ const filters = ref({
   lensnode: '',
   model: '',
   status: '',
+  result: '',
   source: '',
   start_date: '',
   end_date: ''
 })
 
+const hasActiveFilters = computed(() =>
+  Object.values(filters.value).some(Boolean)
+)
+const historyResultTabs = computed(() => [
+  {
+    key: '',
+    label: t('lensRuns.summaryTotal'),
+    count: statusSummary.value?.total
+  },
+  ...['completed', 'failed', 'partial', 'awaiting_user_input'].map((key) => ({
+    key,
+    label: t(`lensRuns.historyResults.${key}`),
+    count: resultSummary.value?.[key]
+  }))
+])
+function historyActions(run) {
+  return [
+    { key: 'answer', label: t('lensRuns.viewQuestionAnswer'), icon: Eye },
+    ...(run.available_actions?.inspect_configuration
+      ? [{ key: 'trace', label: t('lensRuns.viewTrace'), icon: Activity }]
+      : [])
+  ]
+}
+function openHistoryAction(action, run) {
+  openDetail(run.uuid)
+  activeDetailTab.value = action.key === 'trace' ? 'execution' : 'results'
+}
+function setHistoryView(view) {
+  historyView.value = view
+  filters.value.result = ''
+  filters.value.status = ''
+  page.value = 1
+  fetchRuns()
+}
+function setResultFilter(result) {
+  filters.value.result = result
+  filters.value.status = ''
+  onFiltersChanged()
+}
+function resultTone(run) {
+  if (
+    run.status === 'failed' ||
+    (run.status === 'done' && run.outcome === 'blocked')
+  )
+    return 'bad'
+  if (run.status === 'done') return run.outcome === 'partial' ? 'warn' : 'ok'
+  if (run.status === 'queued') return 'warn'
+  if (['running', 'streaming', 'awaiting_user_input'].includes(run.status))
+    return 'info'
+  return 'neutral'
+}
+function resultText(run) {
+  if (run.status === 'done' && ['partial', 'blocked'].includes(run.outcome))
+    return statusText(run.outcome)
+  return statusText(run.status)
+}
+
 const advancedFilterCount = computed(
   () =>
-    ['lensnode', 'model', 'start_date', 'end_date'].filter(
+    ['lensnode', 'model', 'start_date', 'end_date', 'source', 'status'].filter(
       (key) => filters.value[key]
     ).length
 )
@@ -2270,6 +2576,7 @@ const debouncedFetch = useDebounceFn(() => fetchRuns(), 300)
 
 function resetFilters() {
   filters.value = {
+    api_key: '',
     q: '',
     username: '',
     user_id: '',
@@ -2278,6 +2585,7 @@ function resetFilters() {
     lensnode: '',
     model: '',
     status: '',
+    result: '',
     source: '',
     start_date: '',
     end_date: ''
@@ -2288,13 +2596,20 @@ function resetFilters() {
   fetchRuns()
 }
 
+function clearApiKeyFilter() {
+  const query = { ...route.query }
+  delete query.api_key
+  router.replace({ path: route.path, query })
+}
+
 function requestRunAction(type, run) {
+  if (!canOperateRuns.value) return
   pendingAction.value = { type, run }
 }
 
 async function confirmRunAction() {
   const action = pendingAction.value
-  if (!action || actionLoading.value) return
+  if (!action || actionLoading.value || !canOperateRuns.value) return
   actionLoading.value = true
   try {
     if (action.type === 'cancel') {
@@ -2321,7 +2636,9 @@ async function confirmRunAction() {
 async function exportRun() {
   if (!selectedUuid.value || !detail.value) return
   try {
-    const trajectory = await getAdminRunTrajectoryExport(selectedUuid.value)
+    const trajectory = canInspectConfiguration.value
+      ? await getAdminRunTrajectoryExport(selectedUuid.value)
+      : undefined
     const blob = new Blob(
       [JSON.stringify({ run: detail.value, trajectory }, null, 2)],
       { type: 'application/json' }
@@ -2408,23 +2725,29 @@ function navigateFromEvidence(evidenceRef) {
 }
 
 async function fetchRuns() {
+  const requestVersion = ++listRequestVersion
   loading.value = true
   loadError.value = ''
   try {
     const params = { page: page.value, page_size: pageSize.value }
     for (const [k, v] of Object.entries(filters.value)) {
+      if (isDelegated.value && ['username', 'user_id', 'group_id'].includes(k))
+        continue
       if (v) params[k] = v
     }
     const data = await getAdminRuns(params)
+    if (requestVersion !== listRequestVersion) return
     runs.value = data?.results ?? []
     total.value = data?.total ?? 0
     statusSummary.value = resolveRunSummary(data)
+    resultSummary.value = data?.result_summary ?? null
     hasLoaded.value = true
   } catch (e) {
+    if (requestVersion !== listRequestVersion) return
     loadError.value = extractErrorMessage(e, t('common.error'))
     showError(loadError.value)
   } finally {
-    loading.value = false
+    if (requestVersion === listRequestVersion) loading.value = false
   }
 }
 
@@ -2471,10 +2794,13 @@ function scheduleDetailRefresh() {
 
 onMounted(() => {
   restoreDetailWidth()
+  filters.value.api_key = String(route.query.api_key || '')
   filters.value.user_id = String(route.query.user_id || '')
   filters.value.group_id = String(route.query.group_id || '')
   filters.value.username = String(route.query.username || '')
-  filters.value.source = ['user', 'evaluation'].includes(String(route.query.source || ''))
+  filters.value.source = ['user', 'evaluation'].includes(
+    String(route.query.source || '')
+  )
     ? String(route.query.source)
     : ''
   filters.value.assistant = String(route.query.assistant || '')
@@ -2492,6 +2818,17 @@ onMounted(() => {
     fetchRuns()
   ])
 })
+
+watch(
+  () => route.query.api_key,
+  (value) => {
+    const uuid = String(value || '')
+    if (filters.value.api_key === uuid) return
+    filters.value.api_key = uuid
+    page.value = 1
+    fetchRuns()
+  }
+)
 
 watch(
   () => route.query.run,

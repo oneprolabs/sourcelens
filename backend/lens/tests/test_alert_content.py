@@ -7,10 +7,21 @@ from agentcore_notifier.adapters.django.models import NotificationChannel
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
+from accounts.models import Tenant, TenantMembership
 from core.services.notification_targets import build_payload
 from lens.alert_content import notification_card_content, render_notification, run_detail_url, run_link_label
 from lens.alerts import evaluate_run_alerts, send_alert_delivery
-from lens.models import AlertDelivery, AlertDiagnosis, AlertRule, AlertSubscription, Assistant, LensNode, Run, Session
+from lens.models import (
+    AlertDelivery,
+    AlertDiagnosis,
+    AlertRule,
+    AlertSubscription,
+    Assistant,
+    LensNode,
+    NotificationChannelScope,
+    Run,
+    Session,
+)
 from lens.services import create_execution_run
 
 
@@ -19,13 +30,18 @@ class AlertContentTests(TestCase):
     """Render actual persisted occurrences without sending external notifications."""
 
     def setUp(self):
+        tenant = Tenant.objects.create(name="Notification tenant", slug="notification-content")
         self.user = get_user_model().objects.create_user(username="alice", first_name="Alice", last_name="Chen")
+        TenantMembership.objects.create(user=self.user, tenant=tenant, role="tenant_admin")
         node = LensNode.objects.create(name="Notification node")
-        assistant = Assistant.objects.create(name="Engineering assistant", slug="content-test", lensnode=node)
-        session = Session.objects.create(assistant=assistant, user=self.user)
-        rule = AlertRule.objects.create(name="Failed answers", events=["run_failed"])
+        assistant = Assistant.objects.create(
+            tenant=tenant, name="Engineering assistant", slug="content-test", lensnode=node
+        )
+        session = Session.objects.create(tenant=tenant, assistant=assistant, user=self.user)
+        rule = AlertRule.objects.create(tenant=tenant, name="Failed answers", events=["run_failed"])
         AlertRule.objects.filter(pk=rule.pk).update(created_at=datetime(2026, 10, 18, tzinfo=timezone.utc))
         self.channel = NotificationChannel.objects.create(name="Ops", channel_type="email", config={})
+        NotificationChannelScope.objects.create(channel=self.channel, tenant=tenant)
         AlertSubscription.objects.create(
             rule=rule, channel_uuid=self.channel.uuid, email_recipients=["ops@example.test"]
         )
@@ -54,9 +70,7 @@ class AlertContentTests(TestCase):
         self.assertNotIn("开始时间:", body)
         self.assertNotIn("Run: ", body)
         content = notification_card_content(self.delivery, "zh-CN")
-        self.assertIn(
-            ("问答任务时间", "2026-10-19 07:30:00 UTC ～ 2026-10-19 07:35:00 UTC"), content["fields"]
-        )
+        self.assertIn(("问答任务时间", "2026-10-19 07:30:00 UTC ～ 2026-10-19 07:35:00 UTC"), content["fields"])
 
     def test_running_alert_interval_ends_at_snapshot_time_in_both_formats(self):
         self.delivery.event.detail.update(

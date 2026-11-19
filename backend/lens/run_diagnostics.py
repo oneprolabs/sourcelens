@@ -13,6 +13,7 @@ from django.utils import timezone
 from accounts.models import answer_language_name, normalize_answer_language
 
 from .llm import run_completion
+from .model_scope import is_platform_model
 from .models import (
     GlobalSetting,
     Run,
@@ -302,6 +303,8 @@ def execute_diagnostic(diagnostic_uuid):
             ),
             node_name="run_diagnostics",
             user_id=diagnostic.requested_by_id,
+            run_uuid=diagnostic.run_id,
+            platform_model=is_platform_model(diagnostic.model_ref),
         )
         _set_diagnostic_progress(diagnostic, "validating")
         result = validate_diagnostic_result(
@@ -373,6 +376,8 @@ def execute_diagnostic_follow_up(turn_uuid):
             ),
             node_name="run_diagnostics_follow_up",
             user_id=turn.requested_by_id,
+            run_uuid=diagnostic.run_id,
+            platform_model=is_platform_model(diagnostic.model_ref),
         )
         result = _validate_follow_up_result(
             _parse_json_object(completion.content),
@@ -762,7 +767,7 @@ def _diagnostic_model_snapshot(run):
         or {}
     )
     model_refs = runtime_snapshot.get("model_refs") or {}
-    raw_model_ref = configured or model_refs.get("agent")
+    raw_model_ref = configured if is_platform_model(configured) else model_refs.get("agent")
     try:
         model_ref = uuid.UUID(str(raw_model_ref)) if raw_model_ref else None
     except (TypeError, ValueError):
@@ -778,10 +783,9 @@ def _diagnostic_model_snapshot(run):
 def _run_answer_language(run):
     execution = getattr(run, "execution", None)
     runtime_snapshot = execution.runtime_snapshot if execution else {}
-    profile = getattr(run.session.user, "profile", None)
     return normalize_answer_language(
         runtime_snapshot.get("answer_language")
-        or getattr(profile, "language", None)
+        or run.session.preferred_language
     )
 
 

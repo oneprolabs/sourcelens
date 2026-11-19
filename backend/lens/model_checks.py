@@ -13,7 +13,9 @@ def build_model_check_settings(assistant):
     result = {"checked_at": timezone.now().isoformat()}
     for field_name in MODEL_REF_FIELDS:
         model_ref = getattr(assistant, field_name)
-        result[field_name] = _check_model_ref(model_ref, "decision" if field_name == "decision_model_ref" else "llm")
+        result[field_name] = _check_model_ref(
+            model_ref, "decision" if field_name == "decision_model_ref" else "llm", assistant.tenant
+        )
     return result
 
 
@@ -27,7 +29,7 @@ def check_assistant_model_refs(assistant):
     return settings["_model_check"]
 
 
-def _check_model_ref(model_ref, model_type="llm"):
+def _check_model_ref(model_ref, model_type="llm", tenant=None):
     if not model_ref:
         return {
             "status": "skipped",
@@ -37,9 +39,10 @@ def _check_model_ref(model_ref, model_type="llm"):
 
     model_ref_value = str(model_ref)
     from agentcore_metering.adapters.django.models import LLMConfig
+    from .model_scope import model_queryset
 
     try:
-        config = LLMConfig.objects.get(uuid=model_ref)
+        config = model_queryset(tenant).get(uuid=model_ref)
     except (LLMConfig.DoesNotExist, ValueError, TypeError):
         return {
             "status": "error",

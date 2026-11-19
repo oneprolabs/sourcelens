@@ -17,6 +17,13 @@ User = get_user_model()
 
 
 class LLMResilienceTests(TestCase):
+    def setUp(self):
+        """Retry unit tests use symbolic provider names; isolation has its own integration coverage."""
+
+        authorization = patch("lens.model_scope.authorized_model_ref", side_effect=lambda ref, tenant: str(ref))
+        authorization.start()
+        self.addCleanup(authorization.stop)
+
     def test_stream_fallback_happens_before_first_chunk(self):
         class ProviderBusyError(Exception):
             status_code = 503
@@ -268,6 +275,11 @@ class LLMResilienceTests(TestCase):
             config={"model": "gpt-4o-mini"},
             is_active=True,
         )
+
+        from lens.models import LLMConfigScope
+
+        for config in (primary, explicit, safety_net):
+            LLMConfigScope.objects.create(config=config, tenant=None)
 
         self.assertEqual(
             fallback_model_refs(primary.uuid), [str(explicit.uuid)]

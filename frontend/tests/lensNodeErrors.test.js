@@ -76,3 +76,10 @@ test('returns no message for an unmapped error code', () => {
     ''
   )
 })
+
+test('explains why a queued question cannot run after disabling its assistant', () => {
+  assert.equal(
+    lensNodeErrorMessage('ASSISTANT_DISABLED', (key) => key),
+    'lensNodeErrors.assistantDisabled'
+  )
+})

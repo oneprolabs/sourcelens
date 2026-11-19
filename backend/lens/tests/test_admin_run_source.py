@@ -8,6 +8,7 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
+from accounts.models import Role
 from lens.models import EvaluationCase, EvaluationDataset, EvaluationResult, EvaluationRun, Run
 from lens.services import create_execution_run
 from lens.tests.test_run_trace import RunTraceFixtureMixin
@@ -68,6 +69,8 @@ class AdminRunSourceTests(RunTraceFixtureMixin, TestCase):
 
     def test_batch_uuid_requires_evaluation_access_and_batch_visibility(self):
         user = get_user_model().objects.create_user(username="limited-operator")
+        role = Role.objects.create(name="Run operator", visible_features=["admin_console"])
+        role.users.add(user)
         self.client.force_authenticate(user)
         url = f"/api/lens/admin/runs/{self.evaluation.uuid}/"
         with patch("accounts.permissions.get_effective_feature_keys", return_value={"admin_console"}):

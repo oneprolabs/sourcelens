@@ -2402,7 +2402,19 @@ def describe_image_bytes(image_bytes, mime_type, context):
         with _conversion_cost_lock(context):
             bucket["raw_attempts"] += 1
         try:
-            result = describe_image_result(image_bytes, image_prompt(context), mime_type, model_ref=model_ref, ai_gateway_url=gateway_url, token=token, run_uuid=context.get("run_uuid"), tls_skip_verify=context.get("tls_skip_verify", False), tls_ca_file=context.get("tls_ca_file"), http_client=context.get("gateway_http_client"))
+            result = describe_image_result(
+                image_bytes,
+                image_prompt(context),
+                mime_type,
+                model_ref=model_ref,
+                ai_gateway_url=gateway_url,
+                token=token,
+                run_uuid=context.get("run_uuid"),
+                conversion_token=context.get("conversion_token"),
+                tls_skip_verify=context.get("tls_skip_verify", False),
+                tls_ca_file=context.get("tls_ca_file"),
+                http_client=context.get("gateway_http_client"),
+            )
             usage = result.get("usage") or {}
             with _conversion_cost_lock(context):
                 bucket["successful_requests"] += 1

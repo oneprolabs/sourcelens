@@ -27,10 +27,13 @@ from accounts.models import (
     Role,
     normalize_answer_language,
 )
-from accounts.permissions import HasRequiredFeature
+from accounts.permissions import HasLegacyAccountManagementAccess
 from accounts.services.management_bulk import (
     BulkMutationError,
     delete_groups,
+    legacy_groups,
+    legacy_roles,
+    legacy_users,
     normalize_bulk_ids,
     set_roles_active,
     set_users_active,
@@ -85,11 +88,11 @@ def _user_payload(u):
     )
     ordered_groups = getattr(u, 'ordered_groups', None)
     if ordered_groups is None:
-        ordered_groups = u.groups.all().order_by('name')
+        ordered_groups = legacy_groups().filter(user=u).order_by('name')
     groups = [{'id': g.pk, 'name': g.name} for g in ordered_groups]
     direct_roles = getattr(u, 'ordered_roles', None)
     if direct_roles is None:
-        direct_roles = u.platform_roles.filter(is_active=True).order_by(
+        direct_roles = legacy_roles().filter(users=u, is_active=True).order_by(
             'name',
             'id',
         )
@@ -159,7 +162,7 @@ class ManagementUserListView(APIView):
     Admin-only.
     """
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def get(self, request):
@@ -173,17 +176,23 @@ class ManagementUserListView(APIView):
             request.query_params.get('compact') or ''
         ).lower() in {'1', 'true', 'yes'}
         if compact:
-            qs = User.objects.only(
+            qs = legacy_users().select_related(
+                'profile',
+                'membership',
+            ).only(
                 'id',
                 'username',
                 'email',
                 'first_name',
                 'last_name',
+                'profile__platform_role',
+                'membership__role',
+                'membership__status',
             ).order_by('id')
         else:
             user_role_prefetch = Prefetch(
                 'platform_roles',
-                queryset=Role.objects.filter(is_active=True).order_by(
+                queryset=legacy_roles().filter(is_active=True).order_by(
                     'name',
                     'id',
                 ),
@@ -191,7 +200,7 @@ class ManagementUserListView(APIView):
             )
             group_role_prefetch = Prefetch(
                 'platform_roles',
-                queryset=Role.objects.filter(is_active=True).order_by(
+                queryset=legacy_roles().filter(is_active=True).order_by(
                     'name',
                     'id',
                 ),
@@ -199,12 +208,15 @@ class ManagementUserListView(APIView):
             )
             groups_prefetch = Prefetch(
                 'groups',
-                queryset=Group.objects.order_by('name').prefetch_related(
+                queryset=legacy_groups().order_by('name').prefetch_related(
                     group_role_prefetch
                 ),
                 to_attr='ordered_groups',
             )
-            qs = User.objects.select_related('profile').prefetch_related(
+            qs = legacy_users().select_related(
+                'profile',
+                'membership',
+            ).prefetch_related(
                 groups_prefetch,
                 user_role_prefetch,
             ).order_by('id')
@@ -281,7 +293,7 @@ class ManagementUserListView(APIView):
             user.save(update_fields=['is_staff'])
         if group_ids:
             valid_ids = list(
-                Group.objects.filter(pk__in=group_ids).values_list(
+                legacy_groups().filter(pk__in=group_ids).values_list(
                     'pk', flat=True
                 )
             )
@@ -289,7 +301,7 @@ class ManagementUserListView(APIView):
                 user.groups.set(valid_ids)
         if role_ids:
             valid_role_ids = list(
-                Role.objects.filter(pk__in=role_ids).values_list('pk', flat=True)
+                legacy_roles().filter(pk__in=role_ids).values_list('pk', flat=True)
             )
             if valid_role_ids:
                 user.platform_roles.set(valid_role_ids)
@@ -310,7 +322,7 @@ class ManagementUserListView(APIView):
 class ManagementUserDetailView(APIView):
     """PATCH: Update user group and role bindings."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def patch(self, request, user_id):
@@ -325,6 +337,16 @@ class ManagementUserDetailView(APIView):
         language = request.data.get('language')
         timezone = request.data.get('timezone')
         preferred_platform = request.data.get('preferred_platform')
+
+        membership = getattr(user, 'membership', None)
+        if is_active and membership is not None and (
+            membership.status == 'invited'
+            or (membership.invited_at is not None and membership.joined_at is None)
+        ):
+            return Response(
+                {'detail': 'INVITATION_ACCEPTANCE_REQUIRED'},
+                status=HTTP_400_BAD_REQUEST,
+            )
 
         update_fields = []
         if username is not None:
@@ -376,7 +398,7 @@ class ManagementUserDetailView(APIView):
             if not isinstance(group_ids, list):
                 group_ids = []
             valid_group_ids = list(
-                Group.objects.filter(pk__in=group_ids).values_list('pk', flat=True)
+                legacy_groups().filter(pk__in=group_ids).values_list('pk', flat=True)
             )
             user.groups.set(valid_group_ids)
 
@@ -384,7 +406,7 @@ class ManagementUserDetailView(APIView):
             if not isinstance(role_ids, list):
                 role_ids = []
             valid_role_ids = list(
-                Role.objects.filter(pk__in=role_ids).values_list('pk', flat=True)
+                legacy_roles().filter(pk__in=role_ids).values_list('pk', flat=True)
             )
             user.platform_roles.set(valid_role_ids)
 
@@ -416,7 +438,7 @@ class ManagementUserDetailView(APIView):
 class ManagementUserBulkView(APIView):
     """Atomically enable or disable a bounded user selection."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def post(self, request):
@@ -447,7 +469,7 @@ class ManagementUserBulkView(APIView):
 def _group_payload(g):
     direct_roles = getattr(g, 'ordered_roles', None)
     if direct_roles is None:
-        direct_roles = g.platform_roles.filter(is_active=True).order_by(
+        direct_roles = legacy_roles().filter(groups=g, is_active=True).order_by(
             'name',
             'id',
         )
@@ -478,7 +500,7 @@ class ManagementGroupListView(APIView):
     Admin-only.
     """
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def get(self, request):
@@ -492,11 +514,11 @@ class ManagementGroupListView(APIView):
             request.query_params.get('compact') or ''
         ).lower() in {'1', 'true', 'yes'}
         if compact:
-            qs = Group.objects.order_by('name')
+            qs = legacy_groups().order_by('name')
         else:
             role_prefetch = Prefetch(
                 'platform_roles',
-                queryset=Role.objects.filter(is_active=True).order_by(
+                queryset=legacy_roles().filter(is_active=True).order_by(
                     'name',
                     'id',
                 ),
@@ -512,7 +534,7 @@ class ManagementGroupListView(APIView):
                     distinct=True,
                 )
             qs = (
-                Group.objects.annotate(**annotations)
+                legacy_groups().annotate(**annotations)
                 .prefetch_related(role_prefetch)
                 .order_by('name')
             )
@@ -550,7 +572,7 @@ class ManagementGroupListView(APIView):
         user_ids = request.data.get('user_ids')
         if isinstance(user_ids, list) and user_ids:
             valid_user_ids = list(
-                User.objects.filter(pk__in=user_ids).values_list(
+                legacy_users().filter(pk__in=user_ids).values_list(
                     'pk', flat=True
                 )
             )
@@ -561,7 +583,7 @@ class ManagementGroupListView(APIView):
 class ManagementGroupDetailView(APIView):
     """PATCH: Update group name and role bindings."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def patch(self, request, group_id):
@@ -591,7 +613,7 @@ class ManagementGroupDetailView(APIView):
             if not isinstance(role_ids, list):
                 role_ids = []
             valid_role_ids = list(
-                Role.objects.filter(pk__in=role_ids).values_list('pk', flat=True)
+                legacy_roles().filter(pk__in=role_ids).values_list('pk', flat=True)
             )
             group.platform_roles.set(valid_role_ids)
 
@@ -600,7 +622,7 @@ class ManagementGroupDetailView(APIView):
             if not isinstance(user_ids, list):
                 user_ids = []
             valid_user_ids = list(
-                User.objects.filter(pk__in=user_ids).values_list(
+                legacy_users().filter(pk__in=user_ids).values_list(
                     'pk', flat=True
                 )
             )
@@ -624,7 +646,7 @@ class ManagementGroupDetailView(APIView):
 class ManagementGroupBulkDeleteView(APIView):
     """Atomically delete a bounded group selection."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def post(self, request):
@@ -668,7 +690,7 @@ def _role_payload(role):
 class ManagementRoleListView(APIView):
     """GET/POST role definitions used for visibility control."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def get(self, request):
@@ -678,7 +700,7 @@ class ManagementRoleListView(APIView):
             default=20,
             max_value=1000,
         )
-        qs = Role.objects.annotate(
+        qs = legacy_roles().annotate(
             user_count=Count('users', distinct=True),
             group_count=Count('groups', distinct=True),
         ).order_by('name', 'id')
@@ -727,7 +749,7 @@ class ManagementRoleListView(APIView):
 class ManagementRoleDetailView(APIView):
     """PATCH role definitions."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def patch(self, request, role_id):
@@ -779,7 +801,7 @@ class ManagementRoleDetailView(APIView):
 class ManagementRoleBulkView(APIView):
     """Atomically enable or disable a bounded role selection."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasLegacyAccountManagementAccess]
     required_feature = 'admin_console'
 
     def post(self, request):
@@ -806,7 +828,7 @@ class ManagementRoleBulkView(APIView):
 def _get_user_or_404(user_id):
     """Load a user or raise 404."""
     try:
-        return User.objects.get(pk=user_id)
+        return legacy_users().get(pk=user_id)
     except User.DoesNotExist as exc:
         raise Http404 from exc
 
@@ -814,7 +836,7 @@ def _get_user_or_404(user_id):
 def _get_group_or_404(group_id):
     """Load a group or raise 404."""
     try:
-        return Group.objects.get(pk=group_id)
+        return legacy_groups().get(pk=group_id)
     except Group.DoesNotExist as exc:
         raise Http404 from exc
 
@@ -822,6 +844,6 @@ def _get_group_or_404(group_id):
 def _get_role_or_404(role_id):
     """Load a role or raise 404."""
     try:
-        return Role.objects.get(pk=role_id)
+        return legacy_roles().get(pk=role_id)
     except Role.DoesNotExist as exc:
         raise Http404 from exc

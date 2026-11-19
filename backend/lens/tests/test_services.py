@@ -61,7 +61,7 @@ from lens.runtime_events import (
     sanitize_runtime_event,
     sanitize_termination_detail,
 )
-from lens.serializers import DataSourceSerializer, MessageSerializer, RunSerializer
+from lens.serializers import DataSourceSerializer, MessageSerializer, RunExecutionSerializer, RunSerializer
 from lens.services import (
     AssistantNotRunnableError,
     LensNodeDispatchError,
@@ -147,7 +147,7 @@ class LensServiceTests(TransactionTestCase):
             payload = mock_async_to_sync.return_value.call_args.args[1]["payload"]
             self.assertEqual(payload["token_budget"]["max_tokens"], 200000)
             self.assertEqual(payload["max_agent_turns"], 40)
-            self.assertEqual(RunSerializer(run).data["execution"]["max_agent_turns"], 40)
+            self.assertEqual(RunExecutionSerializer(run.execution).data["max_agent_turns"], 40)
 
     def test_thinking_default_override_and_continuation(self):
         """Assistant edits cannot change the chosen mode of existing or continued work."""
@@ -3425,6 +3425,9 @@ class LensServiceTests(TransactionTestCase):
         payload = RunSerializer(run).data
 
         self.assertNotIn("secret-token", str(payload))
+        self.assertEqual(set(payload["execution"]), {"uuid", "status", "started_at", "finished_at"})
+        payload = {"execution": RunExecutionSerializer(run.execution).data}
+        self.assertNotIn("secret-token", str(payload))
         self.assertEqual(payload["execution"]["agent_rounds"], "balanced")
         self.assertEqual(payload["execution"]["run_timeout_s"], 3600)
         self.assertNotIn("endpoint", payload["execution"]["loaded_mcps"][0])
@@ -4061,14 +4064,24 @@ class LensServiceTests(TransactionTestCase):
     def test_upload_dispatches_file_and_conversion_policy(
         self,
     ):
+        from agentcore_metering.adapters.django.models import LLMConfig
+        from accounts.models import Tenant
+        from lens.models import LLMConfigScope
+
+        tenant = Tenant.objects.create(name="Upload tenant", slug="upload-tenant")
+        model = LLMConfig.objects.create(
+            provider="openai", config={"model": "gpt-4o", "api_key": "test-key", "supports_vision": True}
+        )
+        LLMConfigScope.objects.create(config=model, tenant=tenant)
         datasource = DataSource.objects.create(
+            tenant=tenant,
             name="Manual Upload",
             plugin_key="file_upload",
             source_type=DataSource.SourceType.UPLOAD,
             lensnode=self.lensnode,
             sync_policy={
                 "conversion": {
-                    "vision_model_ref": "qwen-vision-ref",
+                    "vision_model_ref": str(model.uuid),
                 }
             },
         )
@@ -4107,7 +4120,7 @@ class LensServiceTests(TransactionTestCase):
             {
                 "document": True,
                 "image": True,
-                "vision_model_ref": "qwen-vision-ref",
+                "vision_model_ref": str(model.uuid),
             },
         )
         self.assertEqual(payload["ai_gateway_url"], "http://gateway.test")

@@ -32,9 +32,10 @@ from lens.skill_packages import (
 )
 from lens.services import invalidate_skill_cache
 from .base import BaseAdminViewSet
+from .catalog import CatalogOwnershipMixin
 
 
-class SkillViewSet(BaseAdminViewSet):
+class SkillViewSet(CatalogOwnershipMixin, BaseAdminViewSet):
     """CRUD for skills."""
 
     queryset = Skill.objects.all()
@@ -103,7 +104,7 @@ class SkillViewSet(BaseAdminViewSet):
                     "name": skill.name,
                     "kind": skill.kind,
                 },
-                "bound_count": len(assistants),
+                "bound_count": skill.assistantskill_set.count() if self.catalog_tenant() is None else len(assistants),
                 "bound_assistants": assistants,
             }
         )
@@ -113,6 +114,11 @@ class SkillViewSet(BaseAdminViewSet):
         """Return a bounded UTF-8 preview for a package text file."""
 
         skill = self.get_object()
+        if not skill.package_path:
+            return Response(
+                {"detail": "Package file was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         relative_path = str(request.query_params.get("path") or "").strip()
         try:
             path = PurePosixPath(relative_path)
@@ -269,6 +275,9 @@ class SkillViewSet(BaseAdminViewSet):
         """Refresh GitHub tag metadata for all imported Skills."""
 
         skills = self.get_queryset().filter(source_type="github")
+        tenant = self.catalog_tenant()
+        if tenant is not None:
+            skills = skills.filter(tenant=tenant)
         for skill in skills:
             try:
                 check_skill_github_update(skill)
@@ -287,6 +296,11 @@ class SkillViewSet(BaseAdminViewSet):
             .select_related("assistant", "assistant__lensnode")
             .order_by("assistant__name")
         )
+        tenant = self.catalog_tenant()
+        if tenant is not None:
+            bindings = bindings.filter(assistant__tenant=tenant)
+        elif skill.tenant_id is None:
+            return []
         return [
             {
                 "uuid": str(binding.assistant.uuid),
@@ -334,6 +348,7 @@ class SkillViewSet(BaseAdminViewSet):
                 file_obj=file_obj,
                 original_name=getattr(file_obj, "name", ""),
                 environment_override=environment_override,
+                tenant=self.catalog_tenant(),
             )
         except SkillPackageError as exc:
             return Response(
@@ -372,7 +387,7 @@ class SkillViewSet(BaseAdminViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            skill = import_skill_from_github(url)
+            skill = import_skill_from_github(url, tenant=self.catalog_tenant())
         except SkillPackageError as exc:
             return Response(
                 {"detail": str(exc)},
@@ -397,11 +412,15 @@ class SkillViewSet(BaseAdminViewSet):
         """Polish a draft SKILL.md via the configured generator model."""
 
         try:
-            content = beautify_skill_content(
-                content=request.data.get("content", ""),
-                name=request.data.get("name", ""),
-                user_id=request.user.id,
-            )
+            from accounts.access import get_user_tenant
+            from lens.model_scope import model_call_scope
+
+            with model_call_scope(get_user_tenant(request.user)):
+                content = beautify_skill_content(
+                    content=request.data.get("content", ""),
+                    name=request.data.get("name", ""),
+                    user_id=request.user.id,
+                )
         except SkillGeneratorNotConfigured:
             return Response(
                 {"detail": "Skill generator model is not configured."},
@@ -415,11 +434,12 @@ class SkillViewSet(BaseAdminViewSet):
         return Response({"content": content})
 
 
-class MCPServerViewSet(BaseAdminViewSet):
+class MCPServerViewSet(CatalogOwnershipMixin, BaseAdminViewSet):
     """CRUD for MCP servers."""
 
     queryset = MCPServer.objects.all()
     serializer_class = MCPServerSerializer
+    catalog_kind = "mcp"
 
     def destroy(self, request, *args, **kwargs):
         mcp = self.get_object()

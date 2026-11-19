@@ -33,6 +33,7 @@
         </label>
         <input
           v-model="title"
+          :disabled="creating || saving"
           type="text"
           class="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-800 focus:border-primary-500 focus:outline-none"
         />
@@ -57,6 +58,7 @@
           >
             <input
               :checked="accessChoice === option.value"
+              :disabled="creating || saving"
               type="radio"
               :value="option.value"
               class="mt-0.5 h-4 w-4 border-line text-brand-600 focus:ring-brand-500"
@@ -122,6 +124,7 @@
           class="qa-share-action"
           variant="danger"
           size="sm"
+          :disabled="creating || saving"
           @click="unshare"
         >
           {{ t('lens.qa.unshare') }}
@@ -182,7 +185,8 @@ const share = ref(null)
 const creating = ref(false)
 const saving = ref(false)
 const accessPolicy = ref(null)
-const accessChoice = ref('public')
+const accessChoice = ref('login')
+let policyRequest = 0
 const accessChoiceDirty = ref(false)
 
 const configuredAccessPolicy = computed(
@@ -197,7 +201,7 @@ const effectiveAccessChoice = computed(() => {
     if (share.value.require_login === true) return 'login'
     if (share.value.require_login === false) return 'public'
   }
-  return 'public'
+  return accessPolicy.value?.effective_policy || 'login'
 })
 
 const showsAccessChoice = computed(
@@ -205,6 +209,8 @@ const showsAccessChoice = computed(
 )
 
 const accessPolicyHint = computed(() => {
+  if (accessPolicy.value?.source === 'visibility')
+    return t('lens.qa.shareAccessFollowsAssistant')
   if (configuredAccessPolicy.value === 'inherit') {
     return ''
   }
@@ -267,13 +273,17 @@ watch(
 
 async function loadAccessPolicy() {
   accessPolicy.value = null
-  accessChoice.value = 'public'
+  const request = ++policyRequest
+  accessChoice.value = 'login'
   try {
-    accessPolicy.value = await getSharePolicy({
+    const policy = await getSharePolicy({
       assistant_uuid: props.assistantUuid || undefined,
       assistant_slug: props.assistantSlug || undefined
     })
+    if (request !== policyRequest || !props.open) return
+    accessPolicy.value = policy
   } catch {
+    if (request !== policyRequest || !props.open) return
     accessPolicy.value = null
   }
   accessChoice.value = effectiveAccessChoice.value
@@ -285,6 +295,8 @@ function onAccessChoiceChange(value) {
 }
 
 function emitClose() {
+  if (creating.value || saving.value) return
+  policyRequest++
   emit('close')
 }
 
@@ -299,7 +311,7 @@ function primaryAction() {
 }
 
 async function create() {
-  if (!props.runUuid) {
+  if (!props.runUuid || creating.value || saving.value) {
     return
   }
   creating.value = true
@@ -310,6 +322,7 @@ async function create() {
     }
     share.value = await shareRun(props.runUuid, payload)
     title.value = share.value.title || ''
+    accessChoiceDirty.value = false
     emit('shared', share.value)
     showSuccess(t('lens.qa.shared'))
   } catch {
@@ -320,7 +333,7 @@ async function create() {
 }
 
 async function saveChanges() {
-  if (!share.value) {
+  if (!share.value || creating.value || saving.value) {
     return
   }
   saving.value = true
@@ -349,17 +362,20 @@ async function copy() {
 }
 
 async function unshare() {
-  if (!share.value) {
+  if (!share.value || creating.value || saving.value) {
     return
   }
+  saving.value = true
   try {
     await deleteShare(share.value.uuid)
     showSuccess(t('lens.qa.unshared'))
     emit('unshared', share.value)
     share.value = null
-    emitClose()
+    emit('close')
   } catch {
     showError(t('lens.qa.shareFailed'))
+  } finally {
+    saving.value = false
   }
 }
 </script>

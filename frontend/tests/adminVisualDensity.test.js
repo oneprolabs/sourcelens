@@ -5,16 +5,18 @@ import test from 'node:test'
 const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), 'utf8')
 
-test('admin shell uses a compact modern navigation scale', async () => {
-  const [header, sidebar] = await Promise.all([
+test('admin shell follows the prototype navigation and header dimensions', async () => {
+  const [header, sidebar, styles] = await Promise.all([
     source('admin/layout/AdminHeader.vue'),
-    source('admin/layout/AdminSidebar.vue')
+    source('admin/layout/AdminSidebar.vue'),
+    source('assets/css/admin-prototype.css')
   ])
-
-  assert.match(header, /h-14/)
-  assert.match(sidebar, /h-14/)
-  assert.match(sidebar, /w-60/)
-  assert.match(sidebar, /text-\[13px\]/)
+  assert.match(header, /layout-admin-header/)
+  assert.match(sidebar, /layout-admin-sidebar/)
+  assert.match(styles, /width: 282px/)
+  assert.match(styles, /height: 48px/)
+  assert.match(styles, /#f4f7fd/)
+  assert.match(styles, /#6384f4/)
 })
 
 test('statistics pages share the compact surface and typography contract', async () => {

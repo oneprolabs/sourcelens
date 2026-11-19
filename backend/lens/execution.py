@@ -20,6 +20,7 @@ from .services import (
     rewrite_query,
     resolve_run_answer_language,
     run_execution_question,
+    validate_assistant_dispatch,
     validate_run_dispatch,
 )
 
@@ -29,8 +30,7 @@ logger = logging.getLogger(__name__)
 def _document_analysis_prompt(run):
     """Return the document-only prompt in the user's AI language."""
 
-    profile = getattr(run.session.user, "profile", None)
-    language = str(getattr(profile, "language", "") or "").lower()
+    language = str(run.session.preferred_language or "").lower()
     if language.startswith("zh"):
         return "请分析所附文档"
     return "Analyze the attached document."
@@ -93,6 +93,7 @@ def _lensnode_dispatch(state):
 
     run = state["run"]
     assistant = run.session.assistant
+    validate_assistant_dispatch(assistant)
     question = run_execution_question(run)
     execution = RunExecution.objects.filter(run=run).first()
     selected_image_uuids = set(

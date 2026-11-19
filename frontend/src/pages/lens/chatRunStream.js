@@ -1,3 +1,5 @@
+import { isRunAccessDenied } from '../../utils/runAccess.js'
+
 const TERMINAL_STATUSES = new Set([
   'awaiting_user_input',
   'done',
@@ -43,7 +45,12 @@ export async function recoverRunStream({
     try {
       const response = await openStream(signal)
       assertCurrent()
-      if (!response.ok || !response.body) throw new Error('SSE failed')
+      if (!response.ok || !response.body) {
+        const error = new Error('SSE failed')
+        // Let REST use the existing token refresh flow for an expired JWT.
+        if (response.status !== 401) error.status = response.status
+        throw error
+      }
       reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -76,8 +83,9 @@ export async function recoverRunStream({
           boundary = buffer.indexOf('\n\n')
         }
       }
-    } catch {
+    } catch (error) {
       assertCurrent()
+      if (isRunAccessDenied(error)) throw error
     } finally {
       await reader?.cancel().catch(() => {})
     }
@@ -88,8 +96,9 @@ export async function recoverRunStream({
       assertCurrent()
       onRun(run)
       if (TERMINAL_STATUSES.has(run?.status)) return run
-    } catch {
+    } catch (error) {
       assertCurrent()
+      if (isRunAccessDenied(error)) throw error
     }
     await wait(retryMs, signal)
   }

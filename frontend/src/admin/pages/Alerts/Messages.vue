@@ -103,7 +103,9 @@
                       <router-link
                         class="text-primary-600 underline"
                         :to="{
-                          path: '/management/alerts/events',
+                          path: route.path.startsWith('/management/platform/')
+                            ? '/management/platform/notifications/events'
+                            : '/management/alerts/events',
                           query: {
                             subject: 'message',
                             source_uuid: row.source_uuid
@@ -241,6 +243,7 @@
   </AdminLayout>
 </template>
 <script setup>
+import { useRoute } from 'vue-router'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { alertsAdminApi } from '@/admin/api'
@@ -254,6 +257,7 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import { alertApiError } from './alertOptions'
 import { generateUUID } from '@/utils/uuid'
+const route = useRoute()
 const { t } = useI18n()
 const messages = ref([]),
   topic = ref(''),

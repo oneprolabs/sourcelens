@@ -1,5 +1,8 @@
 """Compare frozen evaluation results without inferring statistical significance."""
 
+from lens.evaluation.evidence import prepare_evaluation_evidence, project_result_evidence
+from lens.evaluation.scope import evaluation_results
+
 
 def compare_batches(left, right):
     """Return paired case results and explicit comparability limitations."""
@@ -36,20 +39,21 @@ def compare_batches(left, right):
     if left.status != "completed" or right.status != "completed":
         reasons.append("batch_not_completed")
     reasons.append("runtime_environment_not_fully_frozen")
-    left_results = {str(result.case_id): result for result in left.results.all()}
-    right_results = {str(result.case_id): result for result in right.results.all()}
+    left_results = {str(result.case_id): result for result in evaluation_results(left)}
+    right_results = {str(result.case_id): result for result in evaluation_results(right)}
+    prepare_evaluation_evidence([*left_results.values(), *right_results.values()])
     ids = sorted(set(left_results) | set(right_results))
 
     def item(result):
         if result is None:
             return None
-        return {
+        return project_result_evidence(result, {
             "passed": result.passed,
             "output": result.output_snapshot,
             "scores": result.scores,
             "execution_metrics": result.execution_metrics,
             "error": result.error,
-        }
+        })
 
     return {
         "left": str(left.uuid),

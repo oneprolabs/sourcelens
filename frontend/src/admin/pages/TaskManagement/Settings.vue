@@ -2,15 +2,15 @@
   <AdminLayout>
     <div class="w-full max-w-full p-6">
       <div class="mb-4">
-        <h1 class="text-lg font-semibold text-gray-900">
+        <h1 class="text-lg font-semibold text-ink-900">
           {{ t('taskManagement.settings.moduleConfigTitle') }}
         </h1>
-        <p class="mt-1 text-sm text-gray-500">
+        <p class="mt-1 text-sm text-ink-500">
           {{ t('taskManagement.settings.moduleConfigSubtitle') }}
         </p>
       </div>
 
-      <div class="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <div class="bg-surface rounded-lg border border-line">
         <div class="p-6">
           <TaskConfigSection />
         </div>

@@ -42,6 +42,16 @@
           </div>
 
           <BaseLoading v-if="loading" />
+          <p
+            v-else-if="loadError"
+            role="alert"
+            class="py-6 text-sm text-danger-700"
+          >
+            {{ loadError }}
+            <button type="button" class="underline" @click="loadList">
+              {{ t('common.refresh') }}
+            </button>
+          </p>
           <template v-else>
             <div
               v-if="list.length === 0"
@@ -115,15 +125,13 @@
                       {{ row.name || '–' }}
                     </td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
-                      <span
-                        v-if="row.scope === 'global'"
-                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700"
-                      >
-                        {{ t('notificationManagement.channels.scopeGlobal') }}
+                      <span class="rounded bg-surface-sunken px-2 py-1 text-xs">
+                        {{
+                          t(
+                            `notificationManagement.channels.${row.scope === 'platform' ? 'scopePlatform' : 'scopeTenant'}`
+                          )
+                        }}
                       </span>
-                      <span v-else class="text-gray-700">{{
-                        row.user_display || '–'
-                      }}</span>
                     </td>
                     <td class="px-4 py-3 text-sm max-w-xs truncate">
                       {{ configSummary(row) }}
@@ -739,7 +747,7 @@
 
 <script setup>
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
-import { Pencil, Trash2 } from '@lucide/vue'
+import { Pencil, Trash2, Send, Power } from '@lucide/vue'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -761,6 +769,8 @@ const { t } = useI18n()
 const { showSuccess, showError } = useToast()
 
 const loading = ref(false)
+const loadError = ref('')
+const mutating = ref(false)
 const list = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -854,12 +864,26 @@ const pagedList = computed(() => {
 
 const rowActions = computed(() => [
   {
+    key: 'test',
+    label: t('notificationManagement.channels.sendTest'),
+    icon: Send,
+    loading: mutating.value
+  },
+  {
+    key: 'toggle',
+    label: t('notificationManagement.channels.toggleActive'),
+    icon: Power,
+    loading: mutating.value
+  },
+  {
     key: 'edit',
+    loading: mutating.value,
     label: t('common.edit'),
     icon: Pencil
   },
   {
     key: 'delete',
+    loading: mutating.value,
     label: t('common.delete'),
     icon: Trash2,
     variant: 'danger',
@@ -1184,6 +1208,7 @@ function closeModal() {
 
 async function loadList() {
   loading.value = true
+  loadError.value = ''
   try {
     const data = await notificationsAdminApi.getChannels()
     const rawList = Array.isArray(data)
@@ -1195,7 +1220,8 @@ async function loadList() {
       ...row,
       config: normalizeConfig(row?.config)
     }))
-  } catch {
+  } catch (error) {
+    loadError.value = error?.message || t('common.error')
     list.value = []
   } finally {
     loading.value = false
@@ -1258,12 +1284,35 @@ function confirmDelete(row) {
   showDeleteConfirm.value = true
 }
 
-function handleRowAction(action, row) {
-  if (action === 'edit') {
-    openEditModal(row)
-    return
+async function handleRowAction(action, row) {
+  if (mutating.value) return
+  if (action === 'edit') return openEditModal(row)
+  if (action === 'delete') return confirmDelete(row)
+  mutating.value = true
+  try {
+    if (action === 'test') {
+      const result = await notificationsAdminApi.testChannel(row.uuid)
+      if (!result.success)
+        throw new Error(
+          result.error || t('notificationManagement.channels.validateFailed')
+        )
+      showSuccess(t('notificationManagement.channels.testSent'))
+    } else if (action === 'toggle') {
+      await notificationsAdminApi.putChannel(row.uuid, {
+        is_active: !row.is_active
+      })
+      await loadList()
+    }
+  } catch (error) {
+    showError(
+      error?.response?.data?.data?.error ||
+        error?.response?.data?.error ||
+        error?.message ||
+        t('common.error')
+    )
+  } finally {
+    mutating.value = false
   }
-  confirmDelete(row)
 }
 
 async function doDelete() {

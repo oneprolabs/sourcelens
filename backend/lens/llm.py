@@ -3,7 +3,6 @@ from functools import lru_cache
 
 from .llm_resilience import call_and_track_with_fallback
 
-
 VISION_SUPPORTED = "supported"
 VISION_UNSUPPORTED = "unsupported"
 VISION_UNKNOWN = "unknown"
@@ -32,6 +31,8 @@ def _metered_chat_model_class():
         model_ref: str | None = None
         node_name: str
         user_id: int | None = None
+        run_uuid: str | None = None
+        platform_model: bool = False
 
         @property
         def _llm_type(self):
@@ -61,6 +62,8 @@ def _metered_chat_model_class():
                     "user_id": self.user_id,
                     "source_type": "lens",
                     "node_name": self.node_name,
+                    "metadata": {"run_uuid": self.run_uuid} if self.run_uuid else {},
+                    "_platform_model": self.platform_model,
                 },
             )
             message = AIMessage(
@@ -110,9 +113,7 @@ def model_supports_vision(model_ref):
     from litellm.utils import supports_vision
 
     params = get_litellm_params(model_uuid=str(model_ref))
-    config = LLMConfig.objects.filter(uuid=model_ref).values(
-        "provider", "config"
-    ).first() or {}
+    config = LLMConfig.objects.filter(uuid=model_ref).values("provider", "config").first() or {}
     config_data = config.get("config") or {}
     model = str(params.get("model") or "")
     if not model:
@@ -157,7 +158,7 @@ def _message_to_dict(message):
     }
 
 
-def _call_metered_model(*, model_ref, messages, node_name, user_id):
+def _call_metered_model(*, model_ref, messages, node_name, user_id, run_uuid=None, platform_model=False):
     """Call agentcore metering through the LangChain adapter."""
 
     chat_model_class = _metered_chat_model_class()
@@ -165,6 +166,8 @@ def _call_metered_model(*, model_ref, messages, node_name, user_id):
         model_ref=str(model_ref) if model_ref else None,
         node_name=node_name,
         user_id=user_id,
+        run_uuid=str(run_uuid) if run_uuid else None,
+        platform_model=platform_model,
     )
     message = model.invoke(messages)
     usage = message.response_metadata.get("usage", {})
@@ -175,7 +178,7 @@ def _call_metered_model(*, model_ref, messages, node_name, user_id):
     )
 
 
-def run_completion(*, model_ref, system, user, node_name, user_id=None):
+def run_completion(*, model_ref, system, user, node_name, user_id=None, run_uuid=None, platform_model=False):
     """Run one system+user completion through metering.
 
     Public entry point for backend LLM calls (e.g. query rewrite).
@@ -186,6 +189,8 @@ def run_completion(*, model_ref, system, user, node_name, user_id=None):
         messages=_messages(system, user),
         node_name=node_name,
         user_id=user_id,
+        run_uuid=str(run_uuid) if run_uuid else None,
+        platform_model=platform_model,
     )
 
 
@@ -197,6 +202,7 @@ def run_completion_multimodal(
     image_data_urls,
     node_name,
     user_id=None,
+    run_uuid=None,
 ):
     """Run one multimodal (text + images) completion through metering.
 
@@ -210,4 +216,5 @@ def run_completion_multimodal(
         messages=_multimodal_messages(system, user_text, image_data_urls),
         node_name=node_name,
         user_id=user_id,
+        run_uuid=str(run_uuid) if run_uuid else None,
     )

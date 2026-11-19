@@ -4,6 +4,7 @@
     :title="drawerTitle"
     :subtitle="drawerSubtitle"
     width="5xl"
+    panel-class="knowledge-drawer knowledge-form-drawer"
     @close="$emit('close')"
   >
     <div class="datasource-wizard-layout">
@@ -18,66 +19,73 @@
               class="datasource-wizard-step"
               :class="{
                 'datasource-wizard-step-active': i + 1 === wizardStep,
-                'datasource-wizard-step-complete': i + 1 < wizardStep
+                'datasource-wizard-step-complete':
+                  i + 1 < wizardStep || step.skipped
               }"
               :aria-current="i + 1 === wizardStep ? 'step' : undefined"
-              :disabled="mode !== 'edit' && i + 1 > wizardStep"
+              :disabled="saving || (mode !== 'edit' && i + 1 > wizardStep)"
               @click="goToWizardStep(i + 1)"
             >
               <span class="datasource-wizard-number">
-                <CheckIcon v-if="i + 1 < wizardStep" class="h-4 w-4" />
-                <span v-else>{{ String(i + 1).padStart(2, '0') }}</span>
+                <CheckIcon
+                  v-if="i + 1 < wizardStep || step.skipped"
+                  class="h-4 w-4"
+                />
+                <span v-else>{{ i + 1 }}</span>
               </span>
               <span class="datasource-wizard-step-copy">
                 <strong>{{ step.title }}</strong>
-                <small>{{ step.description }}</small>
               </span>
             </button>
           </template>
         </nav>
-        <p class="datasource-wizard-sidebar-note">
-          {{
-            mode === 'edit'
-              ? t('lensAdmin.wizard.editProgressHint')
-              : t('lensAdmin.wizard.createProgressHint')
-          }}
-        </p>
       </aside>
 
       <section class="datasource-wizard-panel">
-        <header class="datasource-wizard-heading">
-          <div>
-            <h3>{{ wizardStepsMeta[wizardStep - 1]?.title }}</h3>
-            <p>{{ wizardStepsMeta[wizardStep - 1]?.description }}</p>
-          </div>
-          <span>
-            {{ String(wizardStep).padStart(2, '0') }} /
-            {{ String(wizardStepCount).padStart(2, '0') }}
-          </span>
-        </header>
-
         <div v-if="activeStepKey === 'basic'" class="space-y-5">
-          <FormRow :label="t('lensAdmin.fields.type')" required>
-            <BaseSelect
-              v-model="form.source_type"
-              @change="$emit('type-change')"
+          <div class="datasource-source-lead">
+            <span>{{ t('lensAdmin.datasourceWizard.sourceLead') }}</span
+            ><strong>{{
+              t('lensAdmin.datasourceWizard.sourceConnectionLead')
+            }}</strong
+            ><span>{{ t('lensAdmin.datasourceWizard.sourcePublicLead') }}</span>
+          </div>
+          <div
+            class="datasource-source-options"
+            role="group"
+            :aria-label="t('lensAdmin.fields.type')"
+          >
+            <button
+              v-for="type in sourceTypes"
+              :key="type.value"
+              type="button"
+              class="datasource-source-option"
+              :class="{
+                'datasource-source-selected': form.source_type === type.value
+              }"
+              :aria-pressed="form.source_type === type.value"
+              :disabled="saving"
+              @click="selectSourceType(type.value)"
             >
-              <option
-                v-for="type in sourceTypes"
-                :key="type.value"
-                :value="type.value"
+              <span class="datasource-source-icon" aria-hidden="true">
+                <component :is="sourceTypeIcon(type.value)" :size="18" />
+              </span>
+              <span
+                ><strong>{{ type.label }}</strong
+                ><small>{{ type.description }}</small></span
               >
-                {{ type.label }}
-              </option>
-            </BaseSelect>
-            <p class="mt-1 text-xs text-ink-500">
-              {{ selectedSourceTypeDescription }}
-            </p>
-          </FormRow>
+            </button>
+          </div>
         </div>
-
-        <div v-else-if="activeStepKey === 'connection'" class="space-y-5">
-          <FormRow :label="t('lensAdmin.fields.name')" required>
+        <div
+          v-else-if="['connection', 'content'].includes(activeStepKey)"
+          class="space-y-5"
+        >
+          <FormRow
+            v-if="activeStepKey === 'content'"
+            :label="t('lensAdmin.fields.name')"
+            required
+          >
             <input
               v-model="form.name"
               :aria-label="t('lensAdmin.fields.name')"
@@ -88,7 +96,18 @@
           <template
             v-if="isPluginSourceType(form.source_type) && !isManagedWorkspace"
           >
+            <p
+              v-if="activeStepKey === 'connection' && !pluginConnections.length"
+              class="datasource-source-lead"
+            >
+              {{
+                t('lensAdmin.datasourceWizard.noConnections', {
+                  source: selectedSourceTypeLabel
+                })
+              }}
+            </p>
             <FormRow
+              v-if="activeStepKey === 'connection'"
               :label="t('lensAdmin.pages.connections.label')"
               :required="!isRepositoryPlugin"
             >
@@ -111,9 +130,9 @@
                     class="h-4 w-4 shrink-0 border-line text-brand-600 focus:ring-brand-500"
                     @change="handlePluginConnectionChange('')"
                   />
-                  <span class="text-sm font-medium text-ink-900">
-                    {{ t('lensAdmin.datasourceWizard.publicAccess') }}
-                  </span>
+                  <span class="text-sm font-medium text-ink-900">{{
+                    t('lensAdmin.datasourceWizard.publicAccess')
+                  }}</span>
                 </label>
                 <label
                   v-for="connection in pluginConnections"
@@ -137,16 +156,14 @@
                     :plugin-key="connection.plugin_key"
                     :label="selectedSourceTypeLabel"
                   />
-                  <span class="min-w-0">
-                    <span
+                  <span class="min-w-0"
+                    ><span
                       class="block break-words text-sm font-medium text-ink-900"
-                    >
-                      {{ connection.name }}
-                    </span>
-                    <span class="mt-0.5 block text-xs text-ink-500">
-                      {{ selectedSourceTypeLabel }}
-                    </span>
-                  </span>
+                      >{{ connection.name }}</span
+                    ><span class="mt-0.5 block text-xs text-ink-500">{{
+                      selectedSourceTypeLabel
+                    }}</span></span
+                  >
                 </label>
               </div>
               <p
@@ -156,18 +173,44 @@
                 {{ t('lensAdmin.datasourceWizard.requiredField') }}
               </p>
               <p
-                v-if="!isRepositoryPlugin || form.connection_uuid"
+                v-if="
+                  inlineConnections ||
+                  !isRepositoryPlugin ||
+                  form.connection_uuid
+                "
                 class="mt-1 text-xs text-ink-500"
               >
-                {{ t('lensAdmin.datasourceWizard.createConnectionHint') }}
+                {{
+                  inlineConnections
+                    ? t('lensAdmin.datasourceWizard.inlineConnectionHint')
+                    : t('lensAdmin.datasourceWizard.createConnectionHint')
+                }}
+                <button
+                  v-if="inlineConnections"
+                  type="button"
+                  class="font-medium text-brand-600 hover:text-brand-700"
+                  :disabled="saving"
+                  @click="$emit('create-connection')"
+                >
+                  {{ t('lensAdmin.connections.createTitle') }}
+                </button>
                 <a
+                  v-else
                   class="font-medium text-brand-600 hover:text-brand-700"
                   href="/management/lens/resources/connections"
                   rel="noopener noreferrer"
                   target="_blank"
+                  >{{ t('lensAdmin.datasourceWizard.createConnectionLink') }}</a
                 >
-                  {{ t('lensAdmin.datasourceWizard.createConnectionLink') }}
-                </a>
+                <button
+                  v-if="inlineConnections"
+                  type="button"
+                  class="ml-3 font-medium text-brand-600 hover:text-brand-700"
+                  :disabled="saving"
+                  @click="$emit('refresh-connections')"
+                >
+                  {{ t('common.refresh') }}
+                </button>
               </p>
             </FormRow>
             <div
@@ -177,8 +220,16 @@
               <LoaderCircleIcon class="h-4 w-4 animate-spin" />
               <span>{{ t('lensAdmin.datasourceWizard.loadingGitScope') }}</span>
             </div>
+            <p
+              v-if="
+                activeStepKey === 'content' && selectedConnectionScopeSummary
+              "
+              class="text-xs text-ink-500"
+            >
+              {{ selectedConnectionScopeSummary }}
+            </p>
             <ManifestSchemaForm
-              v-if="datasourceSchema"
+              v-if="activeStepKey === 'content' && datasourceSchema"
               :model-value="config"
               :resources="pluginResources"
               :loading-resource="loadingResourceOptions"
@@ -275,7 +326,10 @@
                 </span>
               </template>
             </ManifestSchemaForm>
-            <div v-if="isRepositoryPlugin" class="space-y-3">
+            <div
+              v-if="activeStepKey === 'content' && isRepositoryPlugin"
+              class="space-y-3"
+            >
               <BaseButton
                 variant="outline"
                 :disabled="
@@ -310,7 +364,11 @@
             </div>
           </template>
           <template v-else-if="isGitSourceType(form.source_type)">
-            <FormRow :label="t('lensAdmin.fields.credential')" required>
+            <FormRow
+              v-if="activeStepKey === 'connection'"
+              :label="t('lensAdmin.fields.credential')"
+              required
+            >
               <div class="flex flex-col gap-2">
                 <div class="flex gap-2">
                   <BaseSelect
@@ -346,7 +404,7 @@
               </div>
             </FormRow>
             <div
-              v-if="selectedCredential"
+              v-if="activeStepKey === 'connection' && selectedCredential"
               class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
             >
               <div class="flex flex-wrap items-center gap-2">
@@ -370,7 +428,11 @@
               </div>
             </div>
             <FormRow
-              v-if="!testingConnection && gitBranchOptions.length"
+              v-if="
+                activeStepKey === 'content' &&
+                !testingConnection &&
+                gitBranchOptions.length
+              "
               :label="t('lensAdmin.fields.branch')"
               required
             >
@@ -488,7 +550,11 @@
             </p>
           </template>
           <template v-else>
-            <FormRow :label="t('lensAdmin.fields.credential')" required>
+            <FormRow
+              v-if="activeStepKey === 'connection'"
+              :label="t('lensAdmin.fields.credential')"
+              required
+            >
               <div class="flex flex-col gap-2">
                 <div class="flex gap-2">
                   <BaseSelect
@@ -526,7 +592,7 @@
               </div>
             </FormRow>
             <div
-              v-if="selectedCredential"
+              v-if="activeStepKey === 'connection' && selectedCredential"
               class="grid gap-2 rounded-md border border-line bg-surface-sunken p-3 text-xs text-ink-600"
             >
               <div class="flex flex-wrap items-center gap-2">
@@ -558,7 +624,10 @@
                 t('lensAdmin.datasourceWizard.loadingFeishuScope')
               }}</span>
             </div>
-            <div v-else class="grid gap-4 md:grid-cols-2">
+            <div
+              v-else-if="activeStepKey === 'content'"
+              class="grid gap-4 md:grid-cols-2"
+            >
               <FormRow :label="t('lensAdmin.fields.recursive')">
                 <label
                   class="inline-flex items-center gap-2 text-sm text-ink-600"
@@ -625,7 +694,11 @@
             </span>
           </div>
           <section
-            v-if="!testingConnection && gitOrganizationRepositories.length"
+            v-if="
+              activeStepKey === 'content' &&
+              !testingConnection &&
+              gitOrganizationRepositories.length
+            "
             class="space-y-3 rounded-md border border-line bg-surface p-3"
           >
             <div class="flex items-center justify-between gap-3">
@@ -1064,6 +1137,9 @@
                 <option value="crontab">
                   {{ t('lensAdmin.datasourceWizard.syncPolicyCrontab') }}
                 </option>
+                <option value="manual">
+                  {{ t('lensAdmin.knowledgeBulk.presets.manual') }}
+                </option>
               </BaseSelect>
               <BaseButton
                 class="h-10 w-10 shrink-0"
@@ -1096,7 +1172,7 @@
             </p>
           </FormRow>
           <div
-            v-else-if="!isManagedWorkspace"
+            v-else-if="!isManagedWorkspace && syncPolicyMode === 'crontab'"
             class="grid gap-4 md:grid-cols-2"
           >
             <FormRow :label="t('lensAdmin.fields.cron')" required>
@@ -1515,18 +1591,27 @@
     </div>
 
     <template #footer>
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-2">
           <BaseButton
             variant="outline"
+            :disabled="saving"
             @click="wizardStep > 1 ? prevWizardStep() : $emit('close')"
           >
             {{
               wizardStep > 1 ? t('lensAdmin.wizard.back') : t('common.cancel')
             }}
           </BaseButton>
+          <BaseButton
+            v-if="skipLabel"
+            variant="outline"
+            :disabled="saving"
+            @click="$emit('skip')"
+          >
+            {{ skipLabel }}
+          </BaseButton>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <span class="text-xs text-ink-400">
             {{ wizardStep }} / {{ wizardStepCount }}
           </span>
@@ -1538,24 +1623,35 @@
           >
             {{ t('lensAdmin.wizard.next') }}
           </BaseButton>
-          <BaseButton
-            v-else
-            variant="primary"
-            :loading="saving"
-            :disabled="
-              !canProceedWizard ||
-              (!isManagedWorkspace && connectionResult?.status !== 'success')
-            "
-            @click="$emit('save')"
-          >
-            {{
-              isFileUpload && mode === 'create' && uploadFiles.length
-                ? t('lensAdmin.actions.uploadFile')
-                : mode === 'create'
-                  ? t('lensAdmin.wizard.finish')
-                  : t('common.save')
-            }}
-          </BaseButton>
+          <template v-else>
+            <BaseButton
+              :variant="continueLabel ? 'outline' : 'primary'"
+              :loading="saving"
+              :disabled="
+                !canProceedWizard ||
+                (!isManagedWorkspace && connectionResult?.status !== 'success')
+              "
+              @click="$emit('save')"
+            >
+              {{
+                isFileUpload && mode === 'create' && uploadFiles.length
+                  ? t('lensAdmin.actions.uploadFile')
+                  : mode === 'create'
+                    ? t('lensAdmin.wizard.finish')
+                    : t('common.save')
+              }}
+            </BaseButton>
+            <BaseButton
+              v-if="continueLabel"
+              :loading="saving"
+              :disabled="
+                !canProceedWizard ||
+                (!isManagedWorkspace && connectionResult?.status !== 'success')
+              "
+              @click="$emit('save', true)"
+              >{{ continueLabel }}</BaseButton
+            >
+          </template>
         </div>
       </div>
     </template>
@@ -1581,6 +1677,9 @@ import {
   Check as CheckIcon,
   ChevronDown as ChevronDownIcon,
   ChevronRight as ChevronRightIcon,
+  Database as DatabaseIcon,
+  FileText as FileTextIcon,
+  GitBranch as GitBranchIcon,
   Folder as FolderIcon,
   FolderOpen as FolderOpenIcon,
   HelpCircle as HelpCircleIcon,
@@ -1629,6 +1728,9 @@ const props = defineProps({
   refreshingCredentials: Boolean,
   refreshingDirectories: Boolean,
   saving: Boolean,
+  continueLabel: { type: String, default: '' },
+  inlineConnections: Boolean,
+  skipLabel: { type: String, default: '' },
   formError: { type: String, default: '' },
   uploadFiles: { type: Array, default: () => [] }
 })
@@ -1636,6 +1738,9 @@ const props = defineProps({
 const emit = defineEmits([
   'close',
   'save',
+  'create-connection',
+  'refresh-connections',
+  'skip',
   'upload',
   'upload-files',
   'remove-upload-file',
@@ -1807,7 +1912,11 @@ const drawerTitle = computed(() =>
 )
 
 const drawerSubtitle = computed(() =>
-  props.mode === 'edit' ? props.form.name || '' : ''
+  t('lensAdmin.datasourceWizard.stepProgress', {
+    step: wizardStep.value,
+    total: wizardStepCount.value,
+    title: wizardStepsMeta.value[wizardStep.value - 1]?.title || ''
+  })
 )
 
 const sourceTypes = computed(() => {
@@ -1820,7 +1929,11 @@ const sourceTypes = computed(() => {
         label: fileUploadPlugin
           ? t('lensAdmin.datasourceWizard.fileUploadTitle')
           : localized.display_name,
-        description: localized.description || ''
+        description: ['github', 'gitlab', 'feishu', 'file_upload'].includes(
+          plugin.key
+        )
+          ? t(`lensAdmin.datasourceWizard.sourceHints.${plugin.key}`)
+          : localized.description || ''
       }
     })
   ]
@@ -1865,14 +1978,17 @@ const sourceTypes = computed(() => {
       description: t('lensAdmin.datasourceWizard.feishuDesc')
     })
   }
-  return types
-})
-
-const selectedSourceTypeDescription = computed(() => {
-  const selected = sourceTypes.value.find(
-    (type) => type.value === props.form.source_type
-  )
-  return selected?.description || ''
+  const order = [
+    'plugin:github',
+    'plugin:gitlab',
+    'plugin:feishu',
+    'plugin:file_upload'
+  ]
+  return types.sort((a, b) => {
+    const rank = (value) =>
+      order.includes(value) ? order.indexOf(value) : order.length
+    return rank(a.value) - rank(b.value)
+  })
 })
 
 const selectedSourceTypeLabel = computed(() => {
@@ -1921,15 +2037,15 @@ const wizardStepsMeta = computed(() => {
     {
       key: 'connection',
       title: t(
-        isFileUpload.value
-          ? 'lensAdmin.datasourceWizard.fileUploadTitle'
+        isManagedWorkspace.value
+          ? 'lensAdmin.datasourceWizard.connectionNotNeeded'
           : 'lensAdmin.datasourceWizard.step2Title'
       ),
-      description: t(
-        isFileUpload.value
-          ? 'lensAdmin.datasourceWizard.fileUploadDesc'
-          : 'lensAdmin.datasourceWizard.step2Desc'
-      )
+      skipped: isManagedWorkspace.value
+    },
+    {
+      key: 'content',
+      title: t('lensAdmin.datasourceWizard.contentTitle')
     },
     {
       key: 'sync',
@@ -1946,7 +2062,8 @@ const activeStepKey = computed(
 
 function goToWizardStep(step) {
   if (step < 1 || step > wizardStepCount.value) return
-  if (props.mode !== 'edit' && step > wizardStep.value) return
+  if (props.saving || (props.mode !== 'edit' && step > wizardStep.value)) return
+  if (wizardStepsMeta.value[step - 1]?.skipped) return
   wizardStep.value = step
 }
 
@@ -2084,18 +2201,20 @@ const connectionFieldInvalid = computed(
 )
 
 const canProceedWizard = computed(() => {
+  if (props.saving) return false
   if (activeStepKey.value === 'basic') {
     return !!props.form.source_type
   }
-  if (activeStepKey.value === 'node') return true
   if (activeStepKey.value === 'connection') {
+    if (isManagedWorkspace.value) return true
+    if (isPluginSourceType(props.form.source_type)) {
+      return isRepositoryPlugin.value || !!props.form.connection_uuid
+    }
+    return !!props.form.credential_uuid
+  }
+  if (activeStepKey.value === 'content') {
     if (!props.form.name?.trim()) return false
     if (isManagedWorkspace.value) {
-      if (isFileUpload.value) {
-        return onlineLensNodes.value.some(
-          (node) => node.uuid === props.form.lensnode_uuid
-        )
-      }
       return onlineLensNodes.value.some(
         (node) => node.uuid === props.form.lensnode_uuid
       )
@@ -2355,12 +2474,36 @@ function credentialScopeUrl(credential) {
   )
 }
 
+function sourceTypeIcon(value) {
+  if (/github|gitlab|^git$/.test(value)) return GitBranchIcon
+  if (/feishu/.test(value)) return FileTextIcon
+  if (/upload/.test(value)) return UploadCloudIcon
+  return DatabaseIcon
+}
+
+async function selectSourceType(value) {
+  if (props.saving) return
+  if (props.form.source_type !== value) {
+    props.form.source_type = value
+    emit('type-change')
+  }
+  await nextTick()
+  if (props.show && !props.saving && activeStepKey.value === 'basic')
+    nextWizardStep()
+}
+
 function nextWizardStep() {
-  if (wizardStep.value < wizardStepCount.value) wizardStep.value++
+  if (!canProceedWizard.value) return
+  const next =
+    wizardStep.value +
+    (wizardStep.value === 1 && isManagedWorkspace.value ? 2 : 1)
+  if (next <= wizardStepCount.value) wizardStep.value = next
 }
 
 function prevWizardStep() {
-  if (wizardStep.value > 1) wizardStep.value--
+  if (props.saving) return
+  if (wizardStep.value === 3 && isManagedWorkspace.value) wizardStep.value = 1
+  else if (wizardStep.value > 1) wizardStep.value--
 }
 
 function normalizeDirectoryNode(raw) {
@@ -2556,11 +2699,11 @@ function shouldConfirmCredentialChange(nextUuid, previousUuid) {
 function testConnectionIfVisible() {
   const pluginConnectionStep =
     isPluginSourceType(props.form.source_type) &&
-    (activeStepKey.value === 'connection' || activeStepKey.value === 'sync')
+    ['connection', 'content', 'sync'].includes(activeStepKey.value)
   const legacyConnectionStep =
     !isPluginSourceType(props.form.source_type) &&
     !isManagedWorkspace.value &&
-    activeStepKey.value === 'sync'
+    ['connection', 'content', 'sync'].includes(activeStepKey.value)
   if (
     props.show &&
     (pluginConnectionStep || legacyConnectionStep) &&
@@ -2725,165 +2868,150 @@ function datasourceConnectionConfigSignature() {
 <style scoped>
 .datasource-wizard-layout {
   display: grid;
-  grid-template-columns: minmax(10.5rem, 13rem) minmax(0, 1fr);
-  align-items: start;
-  gap: 1.5rem;
+  gap: 16px;
 }
-
-.datasource-wizard-sidebar {
+.datasource-wizard-sidebar,
+.datasource-wizard-panel {
   min-width: 0;
 }
-
 .datasource-wizard-steps {
-  display: grid;
-  gap: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
-
 .datasource-wizard-step {
   display: flex;
-  width: 100%;
-  min-height: 3.75rem;
-  align-items: flex-start;
-  gap: 0.75rem;
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
-  padding: 0.75rem;
-  background: transparent;
-  color: var(--sl-text-muted);
+  align-items: center;
+  gap: 8px;
+  color: var(--sl-text-subtle);
+  font-size: 12.5px;
   text-align: left;
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease,
-    color 150ms ease;
 }
-
-.datasource-wizard-step:hover:not(:disabled) {
-  border-color: var(--sl-border-default);
-  background: var(--sl-bg-surface);
-  color: var(--sl-text-secondary);
+.datasource-wizard-step:not(:last-child)::after {
+  content: '';
+  width: 24px;
+  height: 1.5px;
+  margin-right: 2px;
+  background: var(--sl-border-strong);
 }
-
+.datasource-wizard-number {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border: 1.5px solid var(--sl-border-strong);
+  border-radius: 50%;
+  font:
+    600 10.5px/1 ui-monospace,
+    monospace;
+}
+.datasource-wizard-step-copy strong {
+  font-weight: 500;
+}
 .datasource-wizard-step-active {
-  border-color: var(--sl-border-default);
-  background: var(--sl-bg-surface);
   color: var(--sl-text-primary);
 }
-
+.datasource-wizard-step-active .datasource-wizard-number {
+  border-color: var(--sl-accent);
+  background: var(--sl-accent);
+  color: white;
+}
 .datasource-wizard-step-complete {
   color: var(--sl-text-secondary);
 }
-
-.datasource-wizard-number {
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  flex: none;
-  place-items: center;
-  border: 1px solid var(--sl-border-default);
-  border-radius: 9999px;
-  color: var(--sl-text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-}
-
-.datasource-wizard-step-active .datasource-wizard-number,
 .datasource-wizard-step-complete .datasource-wizard-number {
-  border-color: var(--sl-brand-strong);
-  background: var(--sl-brand-strong);
-  color: var(--sl-on-accent);
+  border-color: #389d76;
+  background: #389d76;
+  color: white;
 }
-
-.datasource-wizard-step-copy {
-  display: grid;
-  min-width: 0;
-  gap: 0.25rem;
-}
-
-.datasource-wizard-step-copy strong {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.datasource-wizard-step-copy small {
-  color: var(--sl-text-muted);
-  font-size: 0.75rem;
-  line-height: 1.45;
-}
-
-.datasource-wizard-sidebar-note {
-  margin: 1.25rem 0.75rem 0;
-  border-top: 1px solid var(--sl-border-soft);
-  padding-top: 1.25rem;
-  color: var(--sl-text-muted);
-  font-size: 0.75rem;
-  line-height: 1.55;
-}
-
-.datasource-wizard-panel {
-  min-width: 0;
-  border: 1px solid var(--sl-border-default);
-  border-radius: 0.75rem;
-  padding: 1.5rem;
-  background: var(--sl-bg-surface);
-}
-
-.datasource-wizard-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--sl-border-soft);
-  padding-bottom: 1.25rem;
-}
-
-.datasource-wizard-heading h3 {
-  color: var(--sl-text-primary);
-  font-size: 1.125rem;
-  font-weight: 650;
-}
-
-.datasource-wizard-heading p {
-  margin-top: 0.375rem;
-  color: var(--sl-text-muted);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-.datasource-wizard-heading > span {
-  flex: none;
-  color: var(--sl-text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-}
-
-@media (max-width: 767px) {
-  .datasource-wizard-layout {
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-
-  .datasource-wizard-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .datasource-wizard-sidebar-note {
-    display: none;
-  }
-
-  .datasource-wizard-panel {
-    padding: 1rem;
-  }
-}
-
 .datasource-wizard-step:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
 }
-
 .datasource-wizard-step:focus-visible {
-  outline: 2px solid var(--sl-brand-strong);
-  outline-offset: 2px;
+  outline: 2px solid var(--sl-accent);
+  outline-offset: 3px;
+}
+.datasource-source-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 631px;
+  margin: 16px 0 30px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--sl-accent);
+  border-radius: 8px;
+  background: #ebebee;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--sl-text-primary);
+}
+.datasource-source-lead strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.datasource-source-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.datasource-source-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  border: 1px solid var(--sl-border-strong);
+  border-radius: 18px;
+  padding: 11px 13px;
+  text-align: left;
+  background: var(--sl-bg-surface);
+}
+.datasource-source-option:hover {
+  background: var(--sl-bg-hover);
+}
+.datasource-source-selected {
+  border-color: var(--sl-accent);
+  background: var(--sl-brand-soft);
+}
+.datasource-source-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--sl-bg-hover);
+  color: var(--sl-text-muted);
+}
+.datasource-source-option > span {
+  min-width: 0;
+}
+.datasource-source-option strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.datasource-source-option small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sl-text-muted);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 820px) {
+  .datasource-source-options {
+    grid-template-columns: 1fr;
+  }
+  .datasource-wizard-step:not(.datasource-wizard-step-active)
+    .datasource-wizard-step-copy {
+    display: none;
+  }
+  .datasource-wizard-step:not(:last-child)::after {
+    width: 16px;
+  }
 }
 
 .connection-card {

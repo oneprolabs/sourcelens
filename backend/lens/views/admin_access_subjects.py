@@ -3,11 +3,24 @@
 from django.contrib.auth.models import Group, User
 from django.db.models import Count, Max, Q
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.access import get_group_display_name
+from accounts.delegation import is_delegated_request
 from accounts.permissions import HasRequiredFeature
+from lens.assistant_management import assistant_configuration_scope
 from lens.models import Assistant, AssistantAccess, Run, Session
+
+
+def _subject_tenant_id(request):
+    """Require tenant membership authority before accessing any subject identity."""
+
+    allowed, tenant_id = assistant_configuration_scope(request)
+    if not allowed or is_delegated_request():
+        raise PermissionDenied("Member and group access details are managed by the tenant.")
+    return tenant_id
 
 
 def _safe_int(value, default, *, maximum=100):
@@ -53,37 +66,44 @@ class AdminUserAccessDetailView(APIView):
     def get(self, request, user_id):
         """Return aggregated access and activity for a user."""
 
+        tenant_id = _subject_tenant_id(request)
         try:
-            user = User.objects.prefetch_related("groups").get(pk=user_id)
+            user = User.objects.filter(membership__tenant_id=tenant_id).get(pk=user_id)
         except User.DoesNotExist:
             return Response(
                 {"detail": "User not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        group_ids = list(user.groups.values_list("id", flat=True))
+        groups = user.groups.filter(tenant_group__tenant_id=tenant_id)
+        group_ids = list(groups.values_list("id", flat=True))
+        sessions = Session.objects.filter(user=user, tenant_id=tenant_id, assistant__tenant_id=tenant_id)
+        session_filter = Q(session__user=user, session__tenant_id=tenant_id)
+        run_filter = session_filter & Q(session__run__tenant_id=tenant_id)
         assistant_filter = (
             Q(visibility=Assistant.Visibility.PUBLIC)
             | Q(access_grants__user=user)
             | Q(access_grants__group_id__in=group_ids)
-            | Q(session__user=user)
+            | Q(session__in=sessions)
         )
+        if tenant_id is not None:
+            assistant_filter |= Q(visibility=Assistant.Visibility.TENANT)
         assistants = (
-            Assistant.objects.filter(assistant_filter)
+            Assistant.objects.filter(assistant_filter, tenant_id=tenant_id)
             .annotate(
                 conversation_count=Count(
                     "session",
-                    filter=Q(session__user=user),
+                    filter=session_filter,
                     distinct=True,
                 ),
                 qa_count=Count(
                     "session__run",
-                    filter=Q(session__user=user),
+                    filter=run_filter,
                     distinct=True,
                 ),
                 last_used_at=Max(
                     "session__run__created_at",
-                    filter=Q(session__user=user),
+                    filter=run_filter,
                 ),
             )
             .distinct()
@@ -97,6 +117,8 @@ class AdminUserAccessDetailView(APIView):
             )
             if assistant.visibility == Assistant.Visibility.PUBLIC:
                 sources[assistant_id].append("public")
+            elif assistant.visibility == Assistant.Visibility.TENANT:
+                sources[assistant_id].append("tenant")
         grants = AssistantAccess.objects.filter(
             assistant_id__in=assistant_ids,
         ).filter(Q(user=user) | Q(group_id__in=group_ids))
@@ -105,7 +127,7 @@ class AdminUserAccessDetailView(APIView):
             if source not in sources[grant.assistant_id]:
                 sources[grant.assistant_id].append(source)
         used_ids = set(
-            Session.objects.filter(user=user).values_list(
+            sessions.values_list(
                 "assistant_id",
                 flat=True,
             )
@@ -114,8 +136,8 @@ class AdminUserAccessDetailView(APIView):
             if not sources.get(assistant_id):
                 sources[assistant_id] = ["history"]
 
-        conversations = Session.objects.filter(user=user).count()
-        runs = Run.objects.filter(session__user=user)
+        conversations = sessions.count()
+        runs = Run.objects.filter(session__in=sessions, tenant_id=tenant_id)
         last_active_at = runs.aggregate(value=Max("created_at"))["value"]
         return Response(
             {
@@ -126,8 +148,7 @@ class AdminUserAccessDetailView(APIView):
                     "is_active": user.is_active,
                     "is_staff": user.is_staff,
                     "groups": [
-                        {"id": group.pk, "name": group.name}
-                        for group in user.groups.all().order_by("name")
+                        {"id": group.pk, "name": get_group_display_name(group)} for group in groups.order_by("name")
                     ],
                 },
                 "stats": {
@@ -155,9 +176,12 @@ class AdminGroupAccessDetailView(APIView):
     def get(self, request, group_id):
         """Return group detail with paginated searchable members."""
 
+        tenant_id = _subject_tenant_id(request)
         try:
-            group = Group.objects.prefetch_related("platform_roles").get(
-                pk=group_id
+            group = (
+                Group.objects.filter(tenant_group__tenant_id=tenant_id)
+                .prefetch_related("platform_roles")
+                .get(pk=group_id)
             )
         except Group.DoesNotExist:
             return Response(
@@ -168,7 +192,8 @@ class AdminGroupAccessDetailView(APIView):
         page = _safe_int(request.query_params.get("page"), 1)
         page_size = _safe_int(request.query_params.get("page_size"), 20)
         search = (request.query_params.get("search") or "").strip()
-        members = group.user_set.order_by("username", "id")
+        all_members = group.user_set.filter(membership__tenant_id=tenant_id)
+        members = all_members.order_by("username", "id")
         if search:
             members = members.filter(
                 Q(username__icontains=search) | Q(email__icontains=search)
@@ -185,22 +210,24 @@ class AdminGroupAccessDetailView(APIView):
             for user in members[start : start + page_size]
         ]
 
+        session_filter = Q(session__user__in=all_members, session__tenant_id=tenant_id)
+        run_filter = session_filter & Q(session__run__tenant_id=tenant_id)
         assistants = (
-            Assistant.objects.filter(access_grants__group=group)
+            Assistant.objects.filter(access_grants__group=group, tenant_id=tenant_id)
             .annotate(
                 conversation_count=Count(
                     "session",
-                    filter=Q(session__user__groups=group),
+                    filter=session_filter,
                     distinct=True,
                 ),
                 qa_count=Count(
                     "session__run",
-                    filter=Q(session__user__groups=group),
+                    filter=run_filter,
                     distinct=True,
                 ),
                 last_used_at=Max(
                     "session__run__created_at",
-                    filter=Q(session__user__groups=group),
+                    filter=run_filter,
                 ),
             )
             .distinct()
@@ -213,7 +240,7 @@ class AdminGroupAccessDetailView(APIView):
             {
                 "subject": {
                     "id": group.pk,
-                    "name": group.name,
+                    "name": get_group_display_name(group),
                     "roles": [
                         {"id": role.pk, "name": role.name}
                         for role in roles
@@ -221,7 +248,7 @@ class AdminGroupAccessDetailView(APIView):
                     "permission_count": permission_count,
                 },
                 "stats": {
-                    "members": group.user_set.count(),
+                    "members": all_members.count(),
                     "assigned_assistants": len(source_map),
                     "roles": len(roles),
                     "permissions": permission_count,

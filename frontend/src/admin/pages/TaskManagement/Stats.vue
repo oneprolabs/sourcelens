@@ -704,11 +704,7 @@ import { useRouter } from 'vue-router'
 import { hasStatisticsData } from '@/admin/utils/statisticsState'
 import { useToast } from '@/composables/useToast'
 import { extractResponseData, extractErrorMessage } from '@/utils/api'
-import {
-  taskManagementApi,
-  notificationsAdminApi,
-  llmAdminApi
-} from '@/admin/api'
+import { taskManagementApi, managementApi } from '@/admin/api'
 import { Doughnut, Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -1061,36 +1057,10 @@ async function fetchStats() {
 
 async function fetchUserOptions() {
   try {
-    const list = await notificationsAdminApi.getUsers()
-    if (Array.isArray(list) && list.length > 0) {
-      userOptions.value = list.map((u) => ({
-        user_id: u.user_id ?? u.id,
-        display: (
-          u.display ??
-          u.username ??
-          (u.user_id != null ? `#${u.user_id}` : u.id != null ? `#${u.id}` : '')
-        ).toString()
-      }))
-      return
-    }
-  } catch {
-    /* fallback to admin users list */
-  }
-  try {
-    const data = await llmAdminApi.getUsers({ page_size: 200 })
-    const raw = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.results)
-        ? data.results
-        : []
-    userOptions.value = raw.map((u) => ({
-      user_id: u.id ?? u.user_id,
-      display: (
-        u.username ??
-        u.display ??
-        u.email ??
-        (u.id != null ? `#${u.id}` : '')
-      ).toString()
+    const list = await managementApi.getAllUsers({ compact: 'true' })
+    userOptions.value = list.map((user) => ({
+      user_id: user.id,
+      display: user.display_name || user.username || String(user.id)
     }))
   } catch {
     userOptions.value = []

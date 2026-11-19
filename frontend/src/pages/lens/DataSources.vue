@@ -1,36 +1,171 @@
 <template>
-  <AdminLayout>
-    <div class="flex h-full min-h-0 max-w-full flex-col gap-4 py-4">
-      <section
-        class="flex max-h-full min-h-0 w-full flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
-      >
-        <div
-          class="flex flex-shrink-0 flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
+  <component :is="embedded ? 'div' : AdminLayout" :class="{ hidden: embedded }">
+    <div class="knowledge-page">
+      <header class="admin-page-heading">
+        <div class="admin-heading-copy">
+          <h1>
+            {{ t('lensAdmin.pages.datasources.title')
+            }}<span class="admin-heading-count">{{ totalDataSources }}</span>
+          </h1>
+          <p>{{ t('lensAdmin.pages.datasources.description') }}</p>
+        </div>
+        <BaseButton :disabled="loading" @click="startCreate"
+          ><PlusIcon :size="14" aria-hidden="true" />{{
+            t('lensAdmin.pages.datasources.action')
+          }}</BaseButton
         >
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="text-xl font-semibold text-ink-900">
-                {{ t('lensAdmin.pages.datasources.title') }}
-              </h1>
+      </header>
+      <section class="catalog-capability-bar">
+        <span class="catalog-capability-icon"
+          ><DatabaseIcon :size="16" aria-hidden="true"
+        /></span>
+        <div class="catalog-capability-copy">
+          <h2>{{ t('lensAdmin.knowledgeList.summaryTitle') }}</h2>
+          <p>{{ t('lensAdmin.knowledgeList.summaryHint') }}</p>
+        </div>
+        <span class="catalog-capability-counts">{{
+          t('lensAdmin.knowledgeList.count', { count: totalDataSources })
+        }}</span>
+      </section>
+      <div class="catalog-tab-row">
+        <div
+          class="catalog-type-tabs"
+          role="group"
+          :aria-label="t('lensAdmin.knowledgeList.views')"
+        >
+          <button
+            type="button"
+            :aria-pressed="knowledgeView === 'mine'"
+            @click="knowledgeView = 'mine'"
+          >
+            {{ t('lensAdmin.knowledgeList.mine')
+            }}<span class="catalog-count">{{ totalDataSources }}</span>
+          </button>
+          <button
+            type="button"
+            :aria-pressed="knowledgeView === 'catalog'"
+            @click="knowledgeView = 'catalog'"
+          >
+            {{ t('lensAdmin.knowledgeList.sources')
+            }}<span class="catalog-count">{{ datasourcePlugins.length }}</span>
+          </button>
+        </div>
+        <router-link
+          class="knowledge-manage-connections"
+          to="/management/lens/resources/connections"
+          >{{ t('tenantSetup.connections') }} ›</router-link
+        >
+      </div>
+      <section v-if="knowledgeView === 'catalog'" class="catalog-section">
+        <header class="catalog-section-heading">
+          <h2>
+            {{ t('lensAdmin.knowledgeList.sources')
+            }}<span class="catalog-count">{{ datasourcePlugins.length }}</span>
+          </h2>
+          <p class="text-xs text-ink-500">
+            {{ t('lensAdmin.knowledgeList.sourceHint') }}
+          </p>
+        </header>
+        <BaseLoading v-if="loading && !datasourcePlugins.length" />
+        <ul class="knowledge-grid">
+          <li
+            v-for="plugin in datasourcePlugins"
+            :key="plugin.key"
+            class="knowledge-source-card"
+          >
+            <button
+              type="button"
+              class="knowledge-source-open"
+              :aria-label="`${t('lensAdmin.knowledgeList.connect')}: ${formatSourceType({ plugin_key: plugin.key })}`"
+              :disabled="loading"
+              @click="startSource(plugin)"
+            />
+            <div class="knowledge-card-heading">
+              <CatalogTile :name="formatSourceType({ plugin_key: plugin.key })"
+                ><component :is="knowledgeSourceIcon(plugin.key)" :size="20"
+              /></CatalogTile>
+              <div class="min-w-0">
+                <h3>{{ formatSourceType({ plugin_key: plugin.key }) }}</h3>
+                <span class="knowledge-source-label">{{
+                  t('lensAdmin.knowledgeList.sourceLabel')
+                }}</span>
+              </div>
             </div>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
+            <p class="knowledge-source-description">
+              {{ localizePluginManifest(plugin, t, te).description }}
+            </p>
+            <div class="knowledge-source-footer">
+              <span>{{
+                t(
+                  plugin.key === 'file_upload'
+                    ? 'lensAdmin.knowledgeList.noConnection'
+                    : 'lensAdmin.knowledgeList.chooseConnection'
+                )
+              }}</span
+              ><span class="knowledge-connect-label"
+                >＋ {{ t('lensAdmin.knowledgeList.connect') }}</span
+              >
+            </div>
+          </li>
+        </ul>
+      </section>
+      <section v-else class="knowledge-list-section">
+        <div class="knowledge-view-toolbar">
+          <p>{{ t('lensAdmin.knowledgeList.mineHint') }}</p>
+          <div class="knowledge-view-actions">
+            <button
+              v-if="knowledgeLayout === 'cards'"
+              type="button"
+              class="connections-filter-toggle"
+              @click="knowledgeLayout = 'table'"
+            >
+              <ListFilterIcon :size="14" aria-hidden="true" />{{
+                t('lensAdmin.knowledgeBulk.entry')
+              }}
+            </button>
+            <button
+              type="button"
+              class="connections-filter-toggle"
+              :aria-expanded="showKnowledgeFilters"
+              aria-controls="knowledge-filters"
+              @click="showKnowledgeFilters = !showKnowledgeFilters"
+            >
+              <ListFilterIcon :size="14" aria-hidden="true" />{{
+                t('common.filter')
+              }}
+            </button>
             <BaseButton
-              variant="outline"
+              variant="ghost"
               size="sm"
               :loading="loading"
+              :title="t('common.refresh')"
               @click="load"
+              ><RefreshCwIcon :size="14" aria-hidden="true" /><span
+                class="sr-only"
+                >{{ t('common.refresh') }}</span
+              ></BaseButton
             >
-              {{ t('common.refresh') }}
-            </BaseButton>
-            <BaseButton variant="primary" size="sm" @click="startCreate">
-              {{ t('lensAdmin.pages.datasources.action') }}
-            </BaseButton>
+            <div
+              class="catalog-segments"
+              role="group"
+              :aria-label="t('lensAdmin.knowledgeList.layout')"
+            >
+              <button
+                v-for="layout in ['cards', 'table']"
+                :key="layout"
+                type="button"
+                :aria-pressed="knowledgeLayout === layout"
+                @click="knowledgeLayout = layout"
+              >
+                {{ t(`lensAdmin.knowledgeList.${layout}`) }}
+              </button>
+            </div>
           </div>
         </div>
-
-        <div class="flex min-h-0 flex-col px-5 py-4">
+        <div class="knowledge-list-body">
           <div
+            v-show="showKnowledgeFilters"
+            id="knowledge-filters"
             class="datasource-toolbar mb-4 flex flex-shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <div
@@ -172,30 +307,159 @@
           </div>
 
           <div
-            v-else
-            class="grid min-h-0 grid-cols-1 gap-3 overflow-x-hidden overflow-y-auto md:grid-cols-2 xl:grid-cols-3"
+            v-else-if="knowledgeLayout === 'table'"
+            class="knowledge-table-panel"
           >
+            <div
+              v-if="selectedSourceIds.length"
+              class="knowledge-bulkbar"
+              role="group"
+              :aria-label="t('lensAdmin.knowledgeBulk.entry')"
+            >
+              <button
+                type="button"
+                class="knowledge-clear-selection"
+                :disabled="bulkBusy"
+                :aria-label="t('lensAdmin.knowledgeBulk.clear')"
+                @click="selectedSourceIds = []"
+              >
+                <XIcon :size="14" />
+              </button>
+              <span>{{
+                t('lensAdmin.knowledgeBulk.selection', {
+                  count: selectedSourceIds.length
+                })
+              }}</span>
+              <button
+                v-for="action in bulkActions"
+                :key="action.key"
+                type="button"
+                :class="{ danger: action.key === 'delete' }"
+                :disabled="loading || bulkBusy || readonly"
+                @click="openBulk(action.key)"
+              >
+                <component :is="action.icon" :size="13" aria-hidden="true" />{{
+                  t(`lensAdmin.knowledgeBulk.actions.${action.key}`)
+                }}
+              </button>
+            </div>
+            <div class="knowledge-table-wrap">
+              <table class="knowledge-table">
+                <thead>
+                  <tr>
+                    <th class="knowledge-select-cell">
+                      <input
+                        type="checkbox"
+                        :checked="allSourcesSelected"
+                        :indeterminate="
+                          selectedSourceIds.length > 0 && !allSourcesSelected
+                        "
+                        :disabled="loading || bulkBusy || readonly"
+                        :aria-label="t('lensAdmin.knowledgeBulk.selectPage')"
+                        @change="selectSourcePage($event.target.checked)"
+                      />
+                    </th>
+                    <th>{{ t('lensAdmin.pages.datasources.title') }}</th>
+                    <th>{{ t('lensAdmin.knowledgeList.sync') }}</th>
+                    <th>{{ t('lensAdmin.knowledgeList.policy') }}</th>
+                    <th>{{ t('lensAdmin.knowledgeList.filesStorage') }}</th>
+                    <th>{{ t('lensAdmin.table.lastSync') }}</th>
+                    <th>{{ t('common.actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in dataSources"
+                    :key="row.uuid"
+                    :class="{ selected: selectedSourceIds.includes(row.uuid) }"
+                  >
+                    <td class="knowledge-select-cell">
+                      <input
+                        v-model="selectedSourceIds"
+                        type="checkbox"
+                        :value="row.uuid"
+                        :disabled="loading || bulkBusy || readonly"
+                        :aria-label="
+                          t('lensAdmin.knowledgeBulk.selectRow', {
+                            name: row.name
+                          })
+                        "
+                      />
+                    </td>
+                    <td>
+                      <div class="knowledge-table-source">
+                        <span class="knowledge-table-icon"
+                          ><component
+                            :is="
+                              knowledgeSourceIcon(
+                                row.plugin_key || row.source_type
+                              )
+                            "
+                            :size="16"
+                            aria-hidden="true"
+                        /></span>
+                        <div class="min-w-0">
+                          <button
+                            type="button"
+                            class="knowledge-table-name"
+                            @click="selectDataSource(row)"
+                          >
+                            {{ row.name }}</button
+                          ><small
+                            >{{ formatSourceType(row) }} ·
+                            {{
+                              isManualUpload(row)
+                                ? datasourceLensNodeName(row)
+                                : dataSourceRepository(row)
+                            }}</small
+                          >
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        v-for="tag in datasourceSyncTags(row)"
+                        :key="tag.key"
+                        :class="tag.class"
+                        class="knowledge-sync-state"
+                        :data-state="tag.key"
+                        >{{ tag.label }}</span
+                      >
+                    </td>
+                    <td>{{ dataSourcePolicyLabel(row, t) }}</td>
+                    <td>— · {{ dataSourceStorageLabel(row, t) }}</td>
+                    <td>{{ formatDateTime(row.last_synced_at) }}</td>
+                    <td>
+                      <RowActions
+                        :row="row"
+                        @edit="startEdit"
+                        @delete="remove"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div v-else class="knowledge-grid">
             <article
               v-for="row in dataSources"
               :key="row.uuid"
-              class="datasource-card flex min-w-0 cursor-pointer flex-col rounded-xl border border-line bg-surface p-3 shadow-sm transition hover:border-brand-200 hover:shadow-md"
-              @click="selectDataSource(row)"
+              class="datasource-card knowledge-card"
             >
-              <div class="flex items-start gap-3">
-                <div
-                  class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-surface-sunken"
-                >
-                  <img
-                    v-if="pluginIconUrl(row.plugin_key)"
-                    :src="pluginIconUrl(row.plugin_key)"
-                    :alt="formatSourceType(row)"
-                    class="h-full w-full object-cover"
+              <button
+                type="button"
+                class="knowledge-source-open"
+                :aria-label="`${t('common.viewDetails')}: ${row.name}`"
+                @click="selectDataSource(row)"
+              />
+              <div class="knowledge-card-heading">
+                <div class="knowledge-card-icon">
+                  <component
+                    :is="knowledgeSourceIcon(row.plugin_key || row.source_type)"
+                    :size="20"
+                    aria-hidden="true"
                   />
-                  <span
-                    v-else
-                    class="text-xs font-semibold uppercase text-brand-700"
-                    >{{ sourceTypeInitials(row) }}</span
-                  >
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-start justify-between gap-2">
@@ -205,25 +469,31 @@
                       </h2>
                       <p class="mt-0.5 truncate text-xs text-ink-500">
                         {{ formatSourceType(row) }}
-                        <template v-if="connectionName(row)">
-                          · {{ connectionName(row) }}</template
+                        <span
+                          v-if="connectionName(row)"
+                          :title="connectionEndpoint(row)"
+                        >
+                          · {{ connectionName(row) }}</span
                         >
                       </p>
                     </div>
-                    <span
-                      v-for="tag in datasourceSyncTags(row).slice(0, 1)"
-                      :key="tag.key"
-                      :class="tag.class"
-                      class="shrink-0 rounded-md border px-2 py-0.5 text-xs font-medium"
-                      >{{ tag.label }}</span
-                    >
                   </div>
                 </div>
               </div>
 
+              <div class="knowledge-card-status">
+                <span
+                  v-for="tag in datasourceSyncTags(row).slice(0, 1)"
+                  :key="tag.key"
+                  :class="tag.class"
+                  class="knowledge-sync-state"
+                  :data-state="tag.key"
+                  >{{ tag.label }}</span
+                >
+              </div>
               <div
                 v-if="row.source_type !== 'managed_workspace'"
-                class="mt-3 min-w-0 rounded-lg bg-surface-sunken px-3"
+                class="knowledge-card-resource"
               >
                 <div
                   class="datasource-source-summary flex min-w-0 items-center gap-2 py-2"
@@ -268,7 +538,7 @@
               </div>
 
               <div
-                class="datasource-run-summary mt-3 flex flex-1 items-center justify-between gap-3 border-t border-line pt-2"
+                class="datasource-run-summary knowledge-card-footer"
                 @click.stop
               >
                 <div class="min-w-0 text-xs text-ink-500">
@@ -351,6 +621,18 @@
         </div>
       </section>
 
+      <DataSourceBulkDrawer
+        :show="Boolean(bulkAction)"
+        :action="bulkAction || 'policy'"
+        :targets="bulkTargets"
+        :results="bulkResults"
+        :busy="bulkBusy"
+        :started="bulkStarted"
+        :blocked="loading || readonly"
+        @close="closeBulk"
+        @confirm="runBulk"
+      />
+
       <DataSourceFormDrawer
         :show="showDrawer"
         :mode="mode"
@@ -375,9 +657,15 @@
         :refreshing-credentials="refreshingCredentials"
         :refreshing-directories="refreshingDirectories"
         :saving="saving"
+        :continue-label="continueLabel"
+        inline-connections
+        :skip-label="embedded ? skipLabel : ''"
         :form-error="formError"
         :upload-files="pendingUploadFiles"
-        @close="closeDrawer"
+        @close="!saving && !connectionEditorOpen && closeDrawer()"
+        @skip="!saving && !connectionEditorOpen && emit('skip')"
+        @create-connection="openConnectionEditor"
+        @refresh-connections="refreshConnections"
         @save="save"
         @upload-files="handleSelectedUploadFiles"
         @remove-upload-file="removeSelectedUploadFile"
@@ -390,6 +678,13 @@
         @request-resource-options="loadPluginResourceOptions"
         @load-more-repositories="loadMorePluginRepositories"
       />
+      <ConnectionEditor
+        v-if="connectionEditorOpen"
+        embedded
+        :initial-plugin-key="form.plugin_key"
+        @saved="connectionSaved"
+        @close="connectionEditorOpen = false"
+      />
       <input
         ref="uploadFileInput"
         type="file"
@@ -400,10 +695,12 @@
       />
 
       <DataSourceDetailDrawer
+        :key="bulkIdentity()"
         :show="showDatasourceDetailDrawer"
         :datasource="selectedDataSource"
         :plugin-icon-urls="pluginIconUrls"
         :lensnodes="lensnodes"
+        @settings-saved="applyDetailSettings"
         @cancel-sync="cancelSync"
         @reprocess="reprocess"
         @close="closeDataSourceDetail"
@@ -449,13 +746,36 @@
         </template>
       </BaseModal>
     </div>
-  </AdminLayout>
+  </component>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Search as SearchIcon, X as XIcon } from '@lucide/vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch
+} from 'vue'
+import {
+  Database as DatabaseIcon,
+  FileText as FileTextIcon,
+  GitBranch as GitBranchIcon,
+  Upload as UploadIcon,
+  ListFilter as ListFilterIcon,
+  Plus as PlusIcon,
+  RefreshCw as RefreshCwIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  SlidersHorizontal as SlidersIcon,
+  Trash2 as TrashIcon,
+  Search as SearchIcon,
+  X as XIcon
+} from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 
 import { createFeishuResourceValidation } from './feishuResourceValidation'
@@ -471,6 +791,7 @@ import {
   createDataSource,
   deleteDataSource,
   getConnectionResources,
+  getDataSource,
   getConnectionResourceCandidates,
   getPluginIcon,
   getPluginManifest,
@@ -484,6 +805,7 @@ import {
   scanLensNodeDirs,
   refreshDataSourceAvailability,
   setDataSourceEnabled,
+  setDataSourceSyncPolicy,
   syncDataSource,
   testLensNodeDataSourceConnection,
   updateDataSource,
@@ -494,19 +816,28 @@ import {
   deleteDataSourceUpload
 } from '@/api/lens'
 import { useToast } from '@/composables/useToast'
+import { useUserStore } from '@/store/user'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
-import { pluginDisplayName } from '@/utils/pluginI18n'
+import CatalogTile from './components/CatalogTile.vue'
+import { localizePluginManifest, pluginDisplayName } from '@/utils/pluginI18n'
 
 import DataSourceDetailDrawer from './DataSourceDetailDrawer.vue'
+import DataSourceBulkDrawer from './DataSourceBulkDrawer.vue'
+import {
+  executeDataSourceBatch,
+  freezeDataSourceTargets
+} from './datasourceBulk.js'
 import DataSourceFormDrawer from './DataSourceFormDrawer.vue'
 import RowActions from './components/RowActions.vue'
 import { EMPTY_VALUE as emptyValue, normalizeList } from './adminHelpers'
 import {
   dataSourceBranch,
+  dataSourcePolicyLabel,
+  dataSourceStorageLabel,
   dataSourceRepositories,
   dataSourceRepository,
   isDataSourceEnabled,
@@ -527,9 +858,35 @@ import {
 import { buildPluginGitPathCheckConfig } from './dataSourcePathCheck'
 import { useShortDateTime } from './useShortDateTime'
 
+const props = defineProps({
+  embedded: Boolean,
+  continueLabel: { type: String, default: '' },
+  skipLabel: { type: String, default: '' }
+})
+const emit = defineEmits(['saved', 'close', 'skip', 'connection-saved'])
+const ConnectionEditor = defineAsyncComponent(() => import('./Connections.vue'))
+const connectionEditorOpen = ref(false)
+
 const { t, te } = useI18n()
 const { showSuccess, showError, showInfo } = useToast()
 const route = useRoute()
+const userStore = useUserStore()
+const readonly = computed(() => userStore.delegation?.mode === 'readonly')
+const selectedSourceIds = ref([])
+const bulkAction = ref('')
+const bulkTargets = ref([])
+const bulkResults = ref([])
+const bulkBusy = ref(false)
+const bulkStarted = ref(false)
+let pageActive = true
+const bulkActions = [
+  { key: 'sync', icon: RefreshCwIcon },
+  { key: 'retry', icon: RefreshCwIcon },
+  { key: 'policy', icon: SlidersIcon },
+  { key: 'pause', icon: PauseIcon },
+  { key: 'resume', icon: PlayIcon },
+  { key: 'delete', icon: TrashIcon }
+]
 
 const loading = ref(false)
 const saving = ref(false)
@@ -540,6 +897,15 @@ const showDrawer = ref(false)
 const showDatasourceDetailDrawer = ref(false)
 
 const dataSources = ref([])
+const allSourcesSelected = computed(
+  () =>
+    dataSources.value.length > 0 &&
+    dataSources.value.every((row) => selectedSourceIds.value.includes(row.uuid))
+)
+const knowledgeView = ref('mine')
+const knowledgeLayout = ref('cards')
+const showKnowledgeFilters = ref(false)
+let knowledgeViewInitialized = false
 const totalDataSources = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -853,6 +1219,15 @@ function selectDataSource(row) {
   showDatasourceDetailDrawer.value = true
 }
 
+function applyDetailSettings(row) {
+  if (!pageActive || !row?.uuid || row.uuid !== selectedDataSource.value?.uuid)
+    return
+  selectedDataSource.value = row
+  dataSources.value = dataSources.value.map((source) =>
+    source.uuid === row.uuid ? row : source
+  )
+}
+
 function closeDataSourceDetail() {
   showDatasourceDetailDrawer.value = false
 }
@@ -904,7 +1279,7 @@ function isManualUpload(rowOrType) {
 }
 
 function datasourceLensNodeName(row) {
-  return row.lensnode_name || row.lensnode?.name || row.lensnode || emptyValue
+  return row.lensnode_name || row.lensnode?.name || lensNodeName(row.lensnode)
 }
 
 function datasourceTaskKind(row) {
@@ -1081,13 +1456,12 @@ function pluginKeyFromSourceType(sourceType) {
   return isPluginSourceType(sourceType) ? sourceType.slice(7) : ''
 }
 
-function pluginIconUrl(pluginKey) {
-  return pluginIconUrls.value[pluginKey] || ''
-}
-
-function sourceTypeInitials(row) {
-  const label = row.plugin_key || formatSourceType(row.source_type)
-  return String(label || 'DS').slice(0, 2)
+function knowledgeSourceIcon(key) {
+  if (['github', 'gitlab', 'git'].includes(key)) return GitBranchIcon
+  if (key === 'feishu') return FileTextIcon
+  if (['file_upload', 'upload', 'managed_workspace'].includes(key))
+    return UploadIcon
+  return DatabaseIcon
 }
 
 function uiSourceTypeFromRow(row) {
@@ -1154,6 +1528,7 @@ function connectionEndpoint(row) {
 }
 
 async function load() {
+  selectedSourceIds.value = []
   stopDynamicRefresh()
   loading.value = true
   formError.value = ''
@@ -1186,6 +1561,15 @@ async function load() {
     )
     await loadPluginIcons(plugins.value)
     llmConfigOptions.value = normalizeList(llmConfigRows)
+    if (!knowledgeViewInitialized) {
+      knowledgeView.value =
+        totalDataSources.value ||
+        searchFilters.value.length ||
+        pluginFilter.value !== 'all'
+          ? 'mine'
+          : 'catalog'
+      knowledgeViewInitialized = true
+    }
     updateDynamicRefresh()
   } catch (error) {
     showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
@@ -1337,6 +1721,13 @@ function handleVisibilityChange() {
   updateDynamicRefresh()
 }
 
+function startSource(plugin) {
+  if (loading.value || saving.value) return
+  startCreate()
+  form.value.source_type = `plugin:${plugin.key}`
+  handleDatasourceTypeChange()
+}
+
 function startCreate() {
   feishuValidation.reset()
   showDatasourceDetailDrawer.value = false
@@ -1396,6 +1787,51 @@ function closeDrawer() {
   uploadBaselineNames.value = []
   datasourceConnectionResult.value = null
   resetDatasourceSyncPolicy()
+}
+
+function openConnectionEditor() {
+  if (saving.value || !showDrawer.value || !form.value.plugin_key) return
+  connectionEditorOpen.value = true
+}
+
+async function refreshConnections() {
+  try {
+    connections.value = normalizeList(
+      await listConnections({ status: 'active' })
+    )
+    return true
+  } catch (error) {
+    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+    return false
+  }
+}
+
+async function connectionSaved({ uuid, plugin_key: pluginKey }) {
+  const draft = form.value
+  const previousSelection = form.value.connection_uuid
+  connectionEditorOpen.value = false
+  emit('connection-saved')
+  if (!(await refreshConnections())) return
+  const connection = connections.value.find(
+    (row) =>
+      row.uuid === uuid &&
+      row.plugin_key === pluginKey &&
+      row.status === 'active'
+  )
+  if (
+    !connection ||
+    !showDrawer.value ||
+    saving.value ||
+    form.value !== draft ||
+    form.value.plugin_key !== pluginKey ||
+    form.value.connection_uuid !== previousSelection
+  )
+    return
+  form.value.connection_uuid = connection.uuid
+  form.value.public_endpoint = ''
+  resetDatasourceConnectionResult()
+  await nextTick()
+  await testDatasourceConnection({ automatic: true })
 }
 
 function defaultForm() {
@@ -1629,6 +2065,10 @@ function resetDatasourceSyncPolicy() {
 }
 
 function hydrateDatasourceSyncPolicy(syncPolicy) {
+  if (syncPolicy.mode === 'manual') {
+    syncPolicyMode.value = 'manual'
+    return
+  }
   if ((syncPolicy.mode || 'interval') === 'crontab') {
     syncPolicyMode.value = 'crontab'
     syncCron.value = syncPolicy.cron || '0 2 * * *'
@@ -1641,17 +2081,30 @@ function hydrateDatasourceSyncPolicy(syncPolicy) {
   syncTimezone.value = 'Asia/Shanghai'
 }
 
-async function save() {
+async function save(advance = false) {
+  if (saving.value) return
   saving.value = true
   formError.value = ''
-  const datasourceName = form.value.name
   const filesToUpload = pendingUploadFiles.value.filter(
     (file) => !file.existing
   )
-  const shouldOpenUpload =
-    mode.value === 'create' && form.value.plugin_key === 'file_upload'
   try {
     const isFileUpload = form.value.plugin_key === 'file_upload'
+    if (filesToUpload.length) {
+      const limits = await getDataSourceUploadLimits()
+      for (const file of filesToUpload) {
+        if (!isSupportedUploadFile(file.name)) {
+          throw new Error(t('lensAdmin.messages.uploadUnsupportedType'))
+        }
+        if (file.size > limits.max_bytes) {
+          throw new Error(
+            t('lensAdmin.messages.uploadTooLarge', {
+              size: limits.max_bytes / (1024 * 1024)
+            })
+          )
+        }
+      }
+    }
     if (
       !isFileUpload &&
       form.value.source_type !== 'managed_workspace' &&
@@ -1659,17 +2112,28 @@ async function save() {
     ) {
       throw new Error(t('lensAdmin.datasourceWizard.connectionRequired'))
     }
-    const uuid = form.value.uuid
+    let uuid = form.value.uuid
     if (mode.value === 'create') {
       const payloads = await buildCreatePayloads()
       for (const payload of payloads) {
-        await createDataSource(payload)
+        const created = await createDataSource(payload)
+        if (isFileUpload) {
+          uuid = created.uuid
+          form.value.uuid = uuid
+          mode.value = 'edit'
+        }
       }
     } else {
       const payload = buildPayload()
       await updateDataSource(uuid, payload)
-      const files = pendingUploadFiles.value.filter((file) => !file.existing)
-      if (files.length) await uploadDataSourceFile(uuid, files)
+    }
+    if (filesToUpload.length) {
+      showInfo(t('lensAdmin.upload.uploading'))
+      await uploadDataSourceFile(uuid, filesToUpload)
+      for (const file of filesToUpload) file.existing = true
+      showSuccess(t('lensAdmin.messages.uploadStarted'))
+    }
+    if (isFileUpload) {
       const currentNames = new Set(
         pendingUploadFiles.value.map((file) => file.name)
       )
@@ -1678,32 +2142,9 @@ async function save() {
       }
     }
     showSuccess(t('lensAdmin.messages.saveSuccess'))
+    if (props.embedded) emit('saved', { advance })
     closeDrawer()
     await load()
-    if (shouldOpenUpload && filesToUpload.length) {
-      const created = dataSources.value.find(
-        (row) => row.plugin_key === 'file_upload' && row.name === datasourceName
-      )
-      if (created) {
-        const limits = await getDataSourceUploadLimits()
-        for (const file of filesToUpload) {
-          if (!isSupportedUploadFile(file.name)) {
-            throw new Error(t('lensAdmin.messages.uploadUnsupportedType'))
-          }
-          if (file.size > limits.max_bytes) {
-            throw new Error(
-              t('lensAdmin.messages.uploadTooLarge', {
-                size: limits.max_bytes / (1024 * 1024)
-              })
-            )
-          }
-        }
-        showInfo(t('lensAdmin.upload.uploading'))
-        await uploadDataSourceFile(created.uuid, filesToUpload)
-        pendingUploadFiles.value = []
-        showSuccess(t('lensAdmin.messages.uploadStarted'))
-      }
-    }
   } catch (error) {
     formError.value = extractErrorMessage(
       error,
@@ -1923,6 +2364,7 @@ function buildDatasourceConversionPolicy() {
 
 function buildDatasourceSyncPolicy() {
   const conversion = buildDatasourceConversion()
+  if (syncPolicyMode.value === 'manual') return { mode: 'manual', conversion }
   if (syncPolicyMode.value === 'crontab') {
     return {
       mode: 'crontab',
@@ -2853,20 +3295,136 @@ async function cancelSync(row) {
   }
 }
 
+watch([showDrawer, saving], ([visible, busy], [previous, wasBusy]) => {
+  if (props.embedded && !visible && !busy && (previous || wasBusy))
+    emit('close')
+})
 onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   await load()
+  if (props.embedded) startCreate()
 })
 
 onBeforeRouteLeave(() => {
+  pageActive = false
   stopDynamicRefresh()
 })
 
 onBeforeUnmount(() => {
+  pageActive = false
   feishuValidation.reset()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopDynamicRefresh()
   revokePluginIconUrls()
+})
+
+function selectSourcePage(checked) {
+  if (loading.value || bulkBusy.value || readonly.value) return
+  selectedSourceIds.value = checked
+    ? dataSources.value.map((row) => row.uuid)
+    : []
+}
+
+function bulkIdentity() {
+  return JSON.stringify([
+    userStore.userInfo?.id,
+    userStore.userInfo?.tenant?.uuid,
+    userStore.userInfo?.tenant_role,
+    userStore.delegation || null
+  ])
+}
+
+let bulkOpenedBy = ''
+let bulkGeneration = 0
+function openBulk(action) {
+  if (
+    loading.value ||
+    bulkBusy.value ||
+    readonly.value ||
+    !selectedSourceIds.value.length ||
+    !bulkActions.some((item) => item.key === action)
+  )
+    return
+  bulkTargets.value = freezeDataSourceTargets(
+    dataSources.value.filter((row) =>
+      selectedSourceIds.value.includes(row.uuid)
+    )
+  )
+  if (!bulkTargets.value.length) return
+  bulkOpenedBy = bulkIdentity()
+  bulkGeneration += 1
+  bulkAction.value = action
+  bulkResults.value = []
+  bulkStarted.value = false
+  if (!['policy', 'delete'].includes(action)) runBulk()
+}
+
+function closeBulk() {
+  if (bulkBusy.value) return
+  bulkAction.value = ''
+  bulkTargets.value = []
+  bulkResults.value = []
+}
+
+async function runBulk(policy = {}) {
+  if (
+    bulkBusy.value ||
+    bulkStarted.value ||
+    readonly.value ||
+    !bulkAction.value ||
+    bulkOpenedBy !== bulkIdentity()
+  )
+    return
+  bulkStarted.value = true
+  bulkBusy.value = true
+  const generation = bulkGeneration
+  const action = bulkAction.value
+  const canContinue = () =>
+    pageActive &&
+    generation === bulkGeneration &&
+    !readonly.value &&
+    bulkOpenedBy === bulkIdentity()
+  try {
+    await executeDataSourceBatch({
+      targets: bulkTargets.value,
+      action,
+      policy,
+      api: {
+        get: getDataSource,
+        sync: syncDataSource,
+        setPolicy: setDataSourceSyncPolicy,
+        setEnabled: setDataSourceEnabled,
+        remove: deleteDataSource
+      },
+      canContinue,
+      onResult: (result) => bulkResults.value.push(result)
+    })
+    if (!canContinue()) return
+    const deleted = new Set(
+      action === 'delete'
+        ? bulkResults.value
+            .filter((r) => r.status === 'success')
+            .map((r) => r.uuid)
+        : []
+    )
+    if (deleted.has(selectedDataSource.value?.uuid)) closeDataSourceDetail()
+    if (deleted.size === dataSources.value.length && currentPage.value > 1)
+      currentPage.value -= 1
+    await load()
+  } finally {
+    if (pageActive && generation === bulkGeneration) bulkBusy.value = false
+  }
+}
+
+watch([knowledgeView, knowledgeLayout], () => {
+  selectedSourceIds.value = []
+})
+
+watch(bulkIdentity, () => {
+  bulkGeneration += 1
+  bulkBusy.value = false
+  closeBulk()
+  selectedSourceIds.value = []
 })
 </script>
 

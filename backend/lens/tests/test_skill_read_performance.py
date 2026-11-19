@@ -8,6 +8,7 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
+from accounts.models import Profile
 from lens.models import Skill
 
 
@@ -18,7 +19,9 @@ class SkillReadPerformanceTests(TestCase):
         """Create a definition with content that list consumers never display."""
 
         self.client = APIClient()
-        self.client.force_authenticate(get_user_model().objects.create_user(username="skill-reader", is_staff=True))
+        user = get_user_model().objects.create_user(username="skill-reader")
+        Profile.objects.update_or_create(user=user, defaults={"platform_role": "super_admin"})
+        self.client.force_authenticate(user)
         self.skill = Skill.objects.create(
             name="Large skill",
             definition={

@@ -25,3 +25,7 @@ const SUGGESTIONS_BY_TASK = {
 export function promptSuggestionKeys(task) {
   return SUGGESTIONS_BY_TASK[task] || GENERAL_SUGGESTIONS
 }
+
+export function assistantCapability(assistant) {
+  return assistant?.capability || assistant?.selected_task
+}

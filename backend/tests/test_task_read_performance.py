@@ -9,6 +9,8 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import resolve
 from rest_framework.test import APIClient
 
+from accounts.models import Profile
+
 
 class TaskExecutionReadPerformanceTests(TestCase):
     """Exercise the public task routes and their database read footprint."""
@@ -19,6 +21,7 @@ class TaskExecutionReadPerformanceTests(TestCase):
 
         user_model = get_user_model()
         cls.user = user_model.objects.create_user(username="task-list-owner")
+        Profile.objects.update_or_create(user=cls.user, defaults={"platform_role": "super_admin"})
         cls.other_user = user_model.objects.create_user(username="task-list-other")
         cls.tasks = []
         for index, (owner, status) in enumerate(

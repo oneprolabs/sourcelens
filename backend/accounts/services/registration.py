@@ -264,7 +264,9 @@ class RegistrationService:
             )
         )
 
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
+        if user is not None and (not user.is_active or hasattr(user, 'membership')):
+            raise ValueError('ACCOUNT_REGISTRATION_UNAVAILABLE')
 
         if not user:
             username = email.split('@')[0]
@@ -344,6 +346,10 @@ class RegistrationService:
         language = normalize_answer_language(language)
         user = User.objects.filter(email__iexact=email).first()
         user_created = user is None
+        if user is not None and not user.is_active:
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("ACCOUNT_INACTIVE")
 
         if user_created:
             base_username = re.sub(

@@ -53,6 +53,7 @@ def import_skill_zip(
     source_path="",
     latest_source_ref="",
     environment_override=None,
+    tenant=None,
 ):
     """Validate and persist a Skill zip package."""
 
@@ -76,7 +77,7 @@ def import_skill_zip(
         _apply_environment_override(metadata, environment_override)
         package_name = _package_name_from_metadata(metadata)
         manifest = _package_manifest(skill_root)
-        existing = _find_skill_by_package_name(package_name)
+        existing = _find_skill_by_package_name(package_name, tenant=tenant)
         skill_uuid = existing.uuid if existing else uuid4()
         package_root = skill_package_root(skill_uuid, digest)
         if existing and (
@@ -104,7 +105,7 @@ def import_skill_zip(
                     skill = existing
                     created = False
                 else:
-                    skill = Skill(uuid=skill_uuid)
+                    skill = Skill(uuid=skill_uuid, tenant=tenant)
                     created = True
                 skill.name = metadata["name"]
                 skill.package_name = package_name
@@ -259,10 +260,10 @@ def update_skill_zip(
     return skill
 
 
-def import_skill_from_github(url):
+def import_skill_from_github(url, *, tenant=None):
     """Download a public GitHub repository and import its Skills."""
 
-    return _github_skills_zip(url, import_skill_zip)
+    return _github_skills_zip(url, lambda **kwargs: import_skill_zip(tenant=tenant, **kwargs))
 
 
 def update_skill_from_github(skill, url):
@@ -854,10 +855,10 @@ def _package_name_from_metadata(metadata):
     return package_name
 
 
-def _find_skill_by_package_name(package_name):
+def _find_skill_by_package_name(package_name, *, tenant=None):
     """Return the existing Skill imported from the same package name."""
 
-    return Skill.objects.filter(package_name=package_name).first()
+    return Skill.objects.filter(package_name=package_name, tenant=tenant).first()
 
 
 def _package_manifest(skill_root):

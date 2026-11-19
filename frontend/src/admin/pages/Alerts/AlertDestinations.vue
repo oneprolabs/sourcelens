@@ -11,7 +11,11 @@
     <p v-if="!channels.length" class="text-sm text-theme-secondary">
       {{ t('alertManagement.unified.noChannels') }}
       <router-link
-        to="/management/notifier/channels"
+        :to="
+          route.path.startsWith('/management/platform/')
+            ? '/management/platform/notifications/channels'
+            : '/management/notifier/channels'
+        "
         class="text-primary-600 underline"
         >{{ t('notificationManagement.channels.menuTitle') }}</router-link
       >
@@ -131,6 +135,7 @@
   </section>
 </template>
 <script setup>
+import { useRoute } from 'vue-router'
 import BaseCheckbox from '@/components/ui/BaseCheckbox.vue'
 import { notificationTargetLabel } from '@/admin/utils/notificationTargets'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -139,6 +144,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import AlertScopeSelect from './AlertScopeSelect.vue'
 import { createAlertDestination } from './alertOptions'
+const route = useRoute()
 const props = defineProps({
   modelValue: { type: Array, required: true },
   channels: { type: Array, required: true },

@@ -452,3 +452,21 @@ test('stops background polling without producing a terminal result', async () =>
 
   assert.equal(run, null)
 })
+
+for (const status of [401, 403, 404]) {
+  test(`stops completion polling when access is rejected with ${status}`, async () => {
+    let polls = 0
+    const run = await pollRunUntilTerminal({
+      getRun: async () => {
+        polls += 1
+        throw { response: { status } }
+      },
+      initialRun: { status: 'running', uuid: 'run-a' },
+      maxAttempts: 4,
+      runUuid: 'run-a',
+      sleep: async () => {}
+    })
+    assert.equal(polls, 1)
+    assert.equal(run, null)
+  })
+}

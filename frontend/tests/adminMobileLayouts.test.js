@@ -26,13 +26,15 @@ test('data-heavy admin pages provide mobile cards and desktop tables', async () 
 })
 
 test('compact controls keep mobile touch targets at least 44 pixels', async () => {
-  const [button, rowAction, pagination, header, sidebar] = await Promise.all([
-    source('components/ui/BaseButton.vue'),
-    source('components/ui/RowActionMenu.vue'),
-    source('components/ui/PaginationBar.vue'),
-    source('admin/layout/AdminHeader.vue'),
-    source('admin/layout/AdminSidebar.vue')
-  ])
+  const [button, rowAction, pagination, header, sidebar, styles] =
+    await Promise.all([
+      source('components/ui/BaseButton.vue'),
+      source('components/ui/RowActionMenu.vue'),
+      source('components/ui/PaginationBar.vue'),
+      source('admin/layout/AdminHeader.vue'),
+      source('admin/layout/AdminSidebar.vue'),
+      source('assets/css/admin-prototype.css')
+    ])
 
   assert.match(button, /sm: '[^']*h-11[^']*md:h-8/)
   assert.match(button, /md: '[^']*h-11[^']*md:h-9/)
@@ -41,8 +43,15 @@ test('compact controls keep mobile touch targets at least 44 pixels', async () =
   assert.match(rowAction, /window\.innerWidth < 768 \? 44 : 40/)
   assert.match(pagination, /min-h-11[^"\n]*md:min-h-0/)
   assert.match(pagination, /grid-cols-\[2\.75rem_1fr_2\.75rem\]/)
-  assert.match(header, /h-11 w-11[^"\n]*lg:hidden/)
-  assert.match(header, /backToUserPlatform[\s\S]{0,200}min-h-11/)
+  assert.match(header, /admin-navigation-toggle/)
+  assert.match(
+    styles,
+    /\.admin-navigation-toggle\s*\{\s*width: 44px;\s*height: 44px;/
+  )
+  assert.match(
+    styles,
+    /\.admin-workbench-link\s*\{\s*min-height: 44px;\s*min-width: 44px;/
+  )
   assert.match(sidebar, /h-11 w-11[^"\n]*text-ink-400/)
-  assert.match(sidebar, /admin-nav-item\s*\{[\s\S]{0,80}min-h-11/)
+  assert.match(sidebar, /admin-nav-item\s*\{[\s\S]{0,80}min-height: 44px/)
 })

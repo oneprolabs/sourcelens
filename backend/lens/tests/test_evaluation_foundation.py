@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from lens.evaluation.evaluators import derive_run_quality
+from lens.evaluation.scoring import ensure_default_metrics
 from lens.models import (
     Assistant,
     EvaluationCase,
@@ -153,6 +154,7 @@ class EvaluationFoundationTests(TestCase):
         self.assertEqual(response.json()["data"]["feature"], "run_evaluations")
 
     def test_builtin_metric_catalog_scores_answer_quality(self):
+        ensure_default_metrics()
         metrics = {metric.name: metric for metric in EvaluationMetric.objects.all()}
 
         self.assertEqual(metrics["answer_correctness"].category, "correctness")

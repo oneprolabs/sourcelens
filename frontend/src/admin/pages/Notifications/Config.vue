@@ -15,6 +15,12 @@
       >
         <div class="p-6">
           <BaseLoading v-if="loading" />
+          <p v-else-if="loadError" role="alert" class="text-sm text-danger-700">
+            {{ loadError }}
+            <button class="underline" type="button" @click="load">
+              {{ t('common.refresh') }}
+            </button>
+          </p>
           <template v-else>
             <h2 class="text-base font-semibold text-gray-900 mb-6">
               {{ t('notificationManagement.settings.scheduleSection') }}
@@ -35,6 +41,9 @@
                 <div class="w-full md:w-64 flex items-center justify-end gap-2">
                   <input
                     v-model.number="form.retention_days"
+                    :aria-label="
+                      t('notificationManagement.settings.retentionTitle')
+                    "
                     type="number"
                     min="1"
                     max="3650"
@@ -69,6 +78,10 @@
                     >
                       <input
                         v-model="form.cleanup_enabled"
+                        :disabled="!cleanupAvailable"
+                        :aria-label="
+                          t('notificationManagement.settings.cleanupTitle')
+                        "
                         type="checkbox"
                         class="sr-only peer"
                       />
@@ -94,6 +107,9 @@
                   <div class="w-full md:w-64">
                     <input
                       v-model="form.cleanup_crontab"
+                      :aria-label="
+                        t('notificationManagement.settings.cleanupCrontab')
+                      "
                       type="text"
                       :placeholder="
                         t(
@@ -114,7 +130,7 @@
               <BaseButton
                 variant="secondary"
                 size="sm"
-                :disabled="saving"
+                :disabled="saving || !dirty"
                 @click="resetForm"
               >
                 {{ t('notificationManagement.settings.reset') }}
@@ -123,6 +139,7 @@
                 variant="primary"
                 size="sm"
                 :loading="saving"
+                :disabled="!dirty"
                 @click="saveConfig"
               >
                 {{ t('notificationManagement.settings.saveChanges') }}
@@ -142,10 +159,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { notificationsAdminApi } from '@/admin/api'
+import { extractErrorMessage } from '@/utils/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoading from '@/components/ui/BaseLoading.vue'
@@ -153,6 +172,8 @@ import BaseLoading from '@/components/ui/BaseLoading.vue'
 const { t } = useI18n()
 const { showSuccess, showError } = useToast()
 const loading = ref(false)
+const loadError = ref('')
+const cleanupAvailable = ref(true)
 const saving = ref(false)
 const saveError = ref('')
 const saveSuccess = ref(false)
@@ -169,6 +190,10 @@ const initialValues = reactive({
   cleanup_crontab: '0 2 * * *'
 })
 
+const dirty = computed(() =>
+  Object.keys(form).some((key) => form[key] !== initialValues[key])
+)
+
 function resetForm() {
   form.retention_days = initialValues.retention_days
   form.cleanup_enabled = initialValues.cleanup_enabled
@@ -179,6 +204,7 @@ function resetForm() {
 
 function assignFromValue(raw) {
   if (!raw || typeof raw !== 'object') return
+  cleanupAvailable.value = raw.cleanup_available !== false
   const rd = raw.retention_days
   form.retention_days = typeof rd === 'number' && rd > 0 ? rd : 180
   form.cleanup_enabled = raw.cleanup_enabled !== false
@@ -192,15 +218,21 @@ function assignFromValue(raw) {
 }
 
 async function load() {
+  if (
+    dirty.value &&
+    !window.confirm(t('notificationManagement.settings.confirmLeave'))
+  )
+    return
   loading.value = true
+  loadError.value = ''
   saveError.value = ''
   saveSuccess.value = false
   try {
     const data = await notificationsAdminApi.getGlobalConfig()
     const raw = data?.value
     assignFromValue(raw)
-  } catch {
-    assignFromValue(null)
+  } catch (error) {
+    loadError.value = error?.message || t('common.error')
   } finally {
     loading.value = false
   }
@@ -209,7 +241,7 @@ async function load() {
 async function saveConfig() {
   saveError.value = ''
   saveSuccess.value = false
-  const value = {
+  const proposed = {
     retention_days: Math.max(
       1,
       Math.min(3650, Number(form.retention_days) || 180)
@@ -217,28 +249,44 @@ async function saveConfig() {
     cleanup_enabled: !!form.cleanup_enabled,
     cleanup_crontab: (form.cleanup_crontab || '').trim() || '0 2 * * *'
   }
+  const value = Object.fromEntries(
+    Object.keys(proposed)
+      .filter((key) => proposed[key] !== initialValues[key])
+      .map((key) => [key, proposed[key]])
+  )
   saving.value = true
   try {
-    await notificationsAdminApi.putGlobalConfig(value)
-    initialValues.retention_days = value.retention_days
-    initialValues.cleanup_enabled = value.cleanup_enabled
-    initialValues.cleanup_crontab = value.cleanup_crontab
+    const result = await notificationsAdminApi.putGlobalConfig(value)
+    assignFromValue(result.value)
     saveSuccess.value = true
     showSuccess(t('notificationManagement.settings.saveSuccess'))
     setTimeout(() => {
       saveSuccess.value = false
     }, 3000)
   } catch (e) {
-    const detail = e?.response?.data?.data?.detail ?? e?.response?.data?.detail
-    saveError.value =
-      detail || e?.message || t('notificationManagement.settings.saveFailed')
+    saveError.value = extractErrorMessage(
+      e,
+      t('notificationManagement.settings.saveFailed')
+    )
     showError(saveError.value)
   } finally {
     saving.value = false
   }
 }
 
+function beforeUnload(event) {
+  if (!dirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onBeforeRouteLeave(
+  () =>
+    !dirty.value ||
+    window.confirm(t('notificationManagement.settings.confirmLeave'))
+)
 onMounted(() => {
   load()
+  window.addEventListener('beforeunload', beforeUnload)
 })
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 </script>

@@ -339,7 +339,8 @@ class PasswordResetEmailService:
             )
             email_message.attach_alternative(html_content, "text/html")
 
-            email_message.send()
+            if email_message.send() != 1:
+                return False
 
             logger.info(
                 f"Sent password reset email to {email} "

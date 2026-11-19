@@ -1,6 +1,7 @@
 """Datasource credential CRUD and connectivity validation."""
 
 import json
+import logging
 from urllib import error as urlerror
 from urllib import parse, request
 
@@ -9,23 +10,34 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from accounts.access import get_user_tenant
+from accounts.permissions import HasTenantOrLegacyAdminAccess
 from lens.models import DataSourceCredential
 from lens.serializers import DataSourceCredentialSerializer
 from .base import BaseAuthenticatedViewSet
 
 
-class DataSourceCredentialViewSet(BaseAuthenticatedViewSet):
-    """CRUD for reusable datasource credentials."""
+LOGGER = logging.getLogger(__name__)
 
+
+class DataSourceCredentialViewSet(BaseAuthenticatedViewSet):
+    """CRUD for tenant-scoped datasource credentials.
+
+    Staff and tenant administrators may manage credentials; members cannot.
+    Secrets are never returned by list/retrieve; ``reveal`` is the only
+    plaintext path and is audited.
+    """
+
+    permission_classes = [HasTenantOrLegacyAdminAccess]
     queryset = DataSourceCredential.objects.all().prefetch_related(
         "datasources"
     )
     serializer_class = DataSourceCredentialSerializer
 
     def get_queryset(self):
-        """Optionally filter credentials by provider or auth type."""
+        """Scope credentials to the tenant and optional filters."""
 
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().filter(tenant=get_user_tenant(self.request.user))
         provider = self.request.query_params.get("provider")
         auth_type = self.request.query_params.get("auth_type")
         if provider:
@@ -53,13 +65,24 @@ class DataSourceCredentialViewSet(BaseAuthenticatedViewSet):
         secret = credential.get_secret()
         if credential.auth_type == DataSourceCredential.AuthType.FEISHU_APP:
             app_id, _, app_secret = secret.partition(":")
-            return Response(
-                {
-                    "app_id": app_id,
-                    "app_secret": app_secret,
-                }
-            )
-        return Response({"secret": secret})
+            payload = {
+                "app_id": app_id,
+                "app_secret": app_secret,
+            }
+        else:
+            payload = {"secret": secret}
+        LOGGER.info(
+            "credential_reveal actor_id=%s credential_uuid=%s source_ip=%s "
+            "request_id=%s result=success",
+            request.user.pk,
+            credential.uuid,
+            request.META.get("REMOTE_ADDR", ""),
+            request.headers.get("X-Request-ID", ""),
+        )
+        response = Response(payload)
+        response["Cache-Control"] = "no-store"
+        response["Pragma"] = "no-cache"
+        return response
 
     @action(detail=True, methods=["post"], url_path="validate")
     def validate_credential(self, request, uuid=None):

@@ -4,7 +4,7 @@
     data-testid="task-summary-card"
   >
     <div class="mb-3 flex flex-wrap items-center gap-3">
-      <StatusBadge :status="statusKey" />
+      <StatusBadge v-if="showStatus" :status="statusKey" />
       <div v-if="hasProgress" class="flex items-center gap-2">
         <div class="h-1.5 w-32 overflow-hidden rounded-full bg-surface-sunken">
           <div
@@ -20,7 +20,7 @@
     </div>
 
     <div
-      v-if="syncStats.length"
+      v-if="showStats && syncStats.length"
       class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4"
     >
       <div
@@ -49,8 +49,8 @@
 
     <div class="mt-3 flex justify-end">
       <a
-        v-if="taskId"
-        :href="`/management/task-management/list?execution_id=${taskId}`"
+        v-if="taskId && isPlatformAdmin(userStore.user)"
+        :href="`/management/platform/tasks/list?execution_id=${taskId}`"
         target="_blank"
         rel="noopener"
         class="text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline"
@@ -63,14 +63,19 @@
 
 <script setup>
 import { computed } from 'vue'
+import { useUserStore } from '@/store/user'
+import { isPlatformAdmin } from '@/utils/platformAccess'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 const props = defineProps({
-  task: { type: Object, default: null }
+  task: { type: Object, default: null },
+  showStatus: { type: Boolean, default: true },
+  showStats: { type: Boolean, default: true }
 })
 
 const { t } = useI18n()
+const userStore = useUserStore()
 
 const SYNC_ERROR_KEYS = {
   LENS_SOURCE_RESOURCE_LIMIT_EXCEEDED: 'datasourceResourceLimit',

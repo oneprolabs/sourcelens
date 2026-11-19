@@ -58,6 +58,7 @@ def build_ingestion_batch(
     )
     run_metadata = {
         "runUuid": str(run.uuid),
+        "apiKeyUuid": str(run.session.api_key_id) if run.session.api_key_id else None,
         "status": run.status,
         "outcome": run.outcome,
         "retryOfRunUuid": (
@@ -94,7 +95,7 @@ def build_ingestion_batch(
                 "timestamp": started_at,
                 "name": "sourcelens.run",
                 "sessionId": str(run.session.uuid),
-                "userId": str(run.session.user_id),
+                "userId": str(run.session.user_id) if run.session.user_id is not None else None,
                 "metadata": run_metadata,
             },
         ),

@@ -1358,9 +1358,14 @@ class DocumentAttachmentTests(TestCase):
         )
         self.client.force_authenticate(self.user)
 
-        response = self.client.delete(
-            f"/api/lens/sessions/{self.session.uuid}/"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(
+                f"/api/lens/sessions/{self.session.uuid}/"
+            )
+            self.assertIsNotNone(get_document_attachment(metadata["uuid"]))
+            self.assertTrue(
+                storages["document_attachments"].exists(metadata["storage_name"])
+            )
 
         self.assertEqual(response.status_code, 204)
         self.assertIsNone(get_document_attachment(metadata["uuid"]))

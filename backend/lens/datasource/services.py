@@ -437,6 +437,11 @@ def dispatch_datasource_sync_async(
         raise DataSourceDispatchError("DATASOURCE_SYNC_NOT_SUPPORTED")
     lensnode = lensnode or resolve_datasource_lensnode(datasource)
     validate_datasource_lensnode(lensnode)
+    sync_policy = datasource.sync_policy or {}
+    conversion = datasource_conversion_policy(sync_policy)
+    conversion_token = _conversion_model_grant(datasource, lensnode, task_id, conversion, sync_policy.get("conversion"))
+    conversion["queue"] = "parallel"
+    conversion["workers"] = get_datasource_sync_max_workers()
     if datasource.connection_id and datasource.plugin_key:
         snapshot = create_datasource_sync_snapshot(
             datasource, lensnode=lensnode
@@ -446,6 +451,8 @@ def dispatch_datasource_sync_async(
             lensnode,
             {
                 "type": "plugin_datasource_sync",
+                "conversion": conversion,
+                "conversion_token": conversion_token,
                 "request_id": request_id,
                 "task_id": task_id,
                 "datasource_uuid": str(datasource.uuid),
@@ -464,15 +471,12 @@ def dispatch_datasource_sync_async(
         )
         return request_id
     config = datasource_runtime_config(datasource)
-    sync_policy = datasource.sync_policy or {}
-    conversion = datasource_conversion_policy(sync_policy)
-    conversion["queue"] = "parallel"
-    conversion["workers"] = get_datasource_sync_max_workers()
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         lensnode,
         {
             "type": "datasource_sync",
+            "conversion_token": conversion_token,
             "request_id": request_id,
             "task_id": task_id,
             "datasource_uuid": str(datasource.uuid),
@@ -511,18 +515,15 @@ def dispatch_datasource_conversion_async(
     )
     lensnode = datasource.lensnode or resolve_datasource_lensnode(datasource)
     validate_datasource_lensnode(lensnode)
-    conversion = {
-        **datasource_conversion_policy(datasource.sync_policy),
-        **dict(conversion or {}),
-    }
-    for key, value in datasource_conversion_defaults().items():
-        if value and not conversion.get(key):
-            conversion[key] = value
+    overrides = {**((datasource.sync_policy or {}).get("conversion") or {}), **dict(conversion or {})}
+    conversion = datasource_conversion_policy({"conversion": overrides})
+    conversion_token = _conversion_model_grant(datasource, lensnode, task_id, conversion, overrides)
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         lensnode,
         {
             "type": "datasource_convert",
+            "conversion_token": conversion_token,
             "request_id": request_id,
             "task_id": task_id,
             "datasource_uuid": str(datasource.uuid),
@@ -588,16 +589,20 @@ def dispatch_datasource_upload_begin(
     execution_node = resolve_datasource_lensnode(datasource)
     if total_bytes > DATASOURCE_UPLOAD_MAX_BYTES:
         raise DataSourceDispatchError("DATASOURCE_UPLOAD_TOO_LARGE")
-    upload_conversion = {"document": True, "image": True}
-    upload_conversion.update(
-        datasource_conversion_policy(datasource.sync_policy)
-    )
-    upload_conversion.update(conversion or {})
+    overrides = {
+        "document": True,
+        "image": True,
+        **((datasource.sync_policy or {}).get("conversion") or {}),
+        **(conversion or {}),
+    }
+    upload_conversion = datasource_conversion_policy({"conversion": overrides})
+    conversion_token = _conversion_model_grant(datasource, execution_node, task_id, upload_conversion, overrides)
     request_id = uuid.uuid4().hex
     _send_lensnode_command(
         execution_node,
         {
             "type": "datasource_upload_begin",
+            "conversion_token": conversion_token,
             "plugin_key": datasource.plugin_key,
             "request_id": request_id,
             "task_id": task_id,
@@ -640,6 +645,17 @@ def send_datasource_upload_chunk(lensnode, task_id, offset, data):
             "data_base64": base64.b64encode(data).decode("ascii"),
         },
     )
+
+
+def _conversion_model_grant(datasource, lensnode, task_id, conversion, overrides):
+    """Translate model authorization failures into the existing dispatch contract."""
+
+    from .model_access import conversion_model_grant
+
+    try:
+        return conversion_model_grant(datasource, lensnode, task_id, conversion, overrides)
+    except ValueError as exc:
+        raise DataSourceDispatchError(str(exc)) from exc
 
 
 def datasource_conversion_policy(sync_policy):

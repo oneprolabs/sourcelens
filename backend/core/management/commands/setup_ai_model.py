@@ -7,14 +7,7 @@ import sys
 import termios
 import tty
 
-from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
-
 from agentcore_metering.adapters.django.models import LLMConfig
-from agentcore_metering.adapters.django.services.config_source import (
-    get_default_llm_config_uuid,
-    set_default_llm_config,
-)
 from agentcore_metering.adapters.django.services.litellm_params import (
     get_provider_params_schema,
 )
@@ -27,7 +20,12 @@ from agentcore_metering.adapters.django.services.runtime_config import (
     get_validation_message,
     validate_llm_config,
 )
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
+from accounts.models import Tenant
+from lens.model_scope import default_model_ref, model_queryset
+from lens.models import LLMConfigScope
 
 FIELD_LABELS = {
     "api_base": "API endpoint",
@@ -62,7 +60,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         """Run model setup or report whether setup is complete."""
 
-        if get_default_llm_config_uuid():
+        if default_model_ref(Tenant.objects.filter(slug="default").first()):
             if not options["check"]:
                 self.stdout.write(
                     self.style.SUCCESS(
@@ -358,7 +356,11 @@ class Command(BaseCommand):
                 config=config,
                 is_active=True,
             )
-            set_default_llm_config(model_config)
+            tenant = Tenant.objects.get(slug="default")
+            LLMConfigScope.objects.create(config=model_config, tenant=tenant)
+            model_queryset(tenant).exclude(pk=model_config.pk).filter(model_type="llm").update(is_default=False)
+            model_config.is_default = True
+            model_config.save(update_fields=["is_default"])
 
     @staticmethod
     def _friendly_error(message):

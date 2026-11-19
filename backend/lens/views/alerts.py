@@ -7,11 +7,11 @@ from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.permissions import HasRequiredFeature
 from core.paginations import APIPagination
 from lens.alert_serializers import AlertEventSerializer, AlertRuleSerializer, PersonalAlertSubscriptionSerializer
 from lens.alerts import SUBJECT_EVENTS, personal_subscription_allowed
 from lens.models import AlertEvent, AlertRule, AlertSubscription
+from lens.notification_scope import HasNotificationAccess, channel_queryset, notification_audit, notification_tenant
 
 from .base import BaseAuthenticatedViewSet
 
@@ -25,7 +25,7 @@ class AlertPagination(APIPagination):
 class AlertRuleViewSet(BaseAuthenticatedViewSet):
     """Manage shared rules and their independently configured destinations."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasNotificationAccess]
     required_feature = "admin_console"
     queryset = (
         AlertRule.objects.select_related("created_by")
@@ -35,10 +35,29 @@ class AlertRuleViewSet(BaseAuthenticatedViewSet):
     serializer_class = AlertRuleSerializer
     pagination_class = AlertPagination
 
+    def get_queryset(self):
+        """Rules belong to exactly one platform or tenant notification scope."""
+
+        return super().get_queryset().filter(tenant=notification_tenant(self.request))
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        """Audit rule mutations without retaining recipient lists or conditions."""
+
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and 200 <= response.status_code < 300:
+            notification_audit(
+                request,
+                f"notification_rule.{self.action}",
+                "notification_rule",
+                kwargs.get("uuid", ""),
+                notification_tenant(request),
+            )
+        return response
+
     def perform_create(self, serializer):
         """Record the managing operator."""
 
-        serializer.save(created_by=self.request.user)
+        serializer.save(created_by=self.request.user, tenant=notification_tenant(self.request))
 
     @action(detail=False, methods=["get"])
     def catalog(self, request):
@@ -47,14 +66,43 @@ class AlertRuleViewSet(BaseAuthenticatedViewSet):
         return Response({key: sorted(values) for key, values in SUBJECT_EVENTS.items()})
 
     @action(detail=False, methods=["get"])
+    def scopes(self, request):
+        """Return tenant-owned resources and recipients for the subscription editor."""
+
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Group
+
+        from accounts.access import get_group_display_name
+        from lens.models import Assistant, DataSource, LensNode
+
+        tenant = notification_tenant(request)
+        users = (
+            get_user_model().objects.filter(membership__tenant=tenant, membership__status="active", is_active=True)
+            if tenant
+            else get_user_model().objects.none()
+        )
+        groups = Group.objects.filter(tenant_group__tenant=tenant) if tenant else Group.objects.none()
+        return Response(
+            {
+                "assistants": list(Assistant.objects.filter(tenant=tenant).values("uuid", "name")),
+                "datasources": list(DataSource.objects.filter(tenant=tenant).values("uuid", "name")),
+                "lensnodes": list(
+                    LensNode.objects.filter(enrollment_status="approved", token_revoked=False).values("uuid", "name")
+                ),
+                "users": list(users.values("id", "username", "email")),
+                "groups": [{"id": group.pk, "name": get_group_display_name(group)} for group in groups],
+            }
+        )
+
+    @action(detail=False, methods=["get"])
     def channels(self, request):
         """Expose paginated channel choices without staff-only configuration secrets."""
 
-        from agentcore_notifier.adapters.django.models import NotificationChannel
-
-        channels = NotificationChannel.objects.filter(
-            is_active=True, channel_type__in=["email", "webhook", "feishu", "wecom", "dingtalk"]
-        ).order_by("created_at", "uuid")
+        channels = (
+            channel_queryset(notification_tenant(request))
+            .filter(is_active=True, channel_type__in=["email", "webhook", "feishu", "wecom", "dingtalk"])
+            .order_by("created_at", "uuid")
+        )
         page = self.paginate_queryset(channels)
         return self.get_paginated_response(
             [
@@ -72,7 +120,7 @@ class AlertRuleViewSet(BaseAuthenticatedViewSet):
 class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
     """Inspect occurrences and per-destination provider outcomes."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasNotificationAccess]
     required_feature = "admin_console"
     queryset = AlertEvent.objects.select_related("rule", "run").prefetch_related("deliveries__diagnosis")
     serializer_class = AlertEventSerializer
@@ -82,7 +130,7 @@ class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Filter by subject, event, rule, operation and summary status."""
 
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().filter(tenant=notification_tenant(self.request))
         for name, field in (
             ("event_type", "event_type"),
             ("rule_uuid", "rule__uuid"),
@@ -110,6 +158,7 @@ class AlertEventViewSet(viewsets.ReadOnlyModelViewSet):
 
             AlertEvent.objects.filter(pk=event.pk).update(status="pending")
             transaction.on_commit(_wake_dispatcher)
+        notification_audit(request, "notification_event.retry", "notification_event", event.uuid, event.tenant)
         return Response({"retried": count})
 
 
@@ -124,8 +173,13 @@ class PersonalAlertSubscriptionViewSet(BaseAuthenticatedViewSet):
     def get_queryset(self):
         """Never expose another subscriber's identity, channel or destination."""
 
+        from accounts.access import get_user_membership
+
+        membership = get_user_membership(self.request.user)
+        if not membership or membership.status != "active" or membership.tenant.status != "active":
+            return AlertSubscription.objects.none()
         return (
-            AlertSubscription.objects.filter(user=self.request.user, personal=True)
+            AlertSubscription.objects.filter(user=self.request.user, personal=True, rule__tenant=membership.tenant)
             .select_related("rule")
             .order_by("-created_at")
         )
@@ -169,7 +223,7 @@ class MessagePublicationParser(CamelCaseJSONParser):
 class MessagePublicationViewSet(viewsets.GenericViewSet):
     """Publish immutable topic messages and inspect every publication, even unmatched ones."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasNotificationAccess]
     parser_classes = [MessagePublicationParser]
     required_feature = "admin_console"
     pagination_class = AlertPagination
@@ -188,7 +242,9 @@ class MessagePublicationViewSet(viewsets.GenericViewSet):
 
         from lens.models import AlertOutbox
 
-        queryset = AlertOutbox.objects.filter(subject="message").order_by("-created_at")
+        queryset = AlertOutbox.objects.filter(subject="message", tenant=notification_tenant(self.request)).order_by(
+            "-created_at"
+        )
         topic = self.request.query_params.get("topic")
         return queryset.filter(payload__topic=topic) if topic else queryset
 
@@ -216,9 +272,18 @@ class MessagePublicationViewSet(viewsets.GenericViewSet):
         serializer = MessagePublicationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            publication, created = publish_message(**serializer.validated_data, publisher=request.user)
+            publication, created = publish_message(
+                **serializer.validated_data, publisher=request.user, tenant=notification_tenant(request)
+            )
         except PublicationConflict as error:
             return Response({"detail": str(error)}, status=409)
+        notification_audit(
+            request,
+            "notification_message.publish",
+            "notification_message",
+            publication.uuid,
+            notification_tenant(request),
+        )
         return Response(
             {**MessageRecordSerializer(publication).data, "deduplicated": not created}, status=201 if created else 200
         )

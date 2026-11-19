@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import uuid as uuid_lib
+from contextlib import aclosing
 
 from agentcore_metering.adapters.django.models import LLMUsage
 from asgiref.sync import sync_to_async
@@ -15,19 +16,34 @@ from django.http import HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.access import get_effective_feature_keys
+from accounts.access import get_effective_feature_keys, get_user_tenant
+from accounts.delegation import get_active_delegation, is_delegated_request
+from accounts.models import TenantApiKey, TenantApiKeyCall
 from accounts.permissions import HasRequiredFeature, HasRunEvaluationsAccess
+from accounts.services.api_key_lifecycle import CanManageTenantApiKeys
+from lens.assistant_management import assistant_configuration_scope
 from lens.attachments import get_session_image_attachments
 from lens.citations import public_run_citations
 from lens.document_attachments import (
     document_attachment_response,
     get_run_document_attachments,
 )
+from lens.evaluation.scope import evaluation_queryset
 from lens.models import EvaluationResult, LensNode, Run, RunExecution, RunTraceEvent, user_sees_all_assistants
+from lens.run_access import (
+    CanInspectTenantRuns,
+    can_inspect_run_configuration,
+    can_inspect_run_evidence,
+    scope_run_queryset,
+)
+from lens.stream_access import StreamAuthority, authorized_stream_events
 from lens.runtime_events import (
+    public_run_error,
+    public_step_detail,
     sanitize_loaded_mcps,
     sanitize_loaded_skills,
     sanitize_termination_detail,
@@ -217,7 +233,7 @@ def _admin_run_model_usage(run):
     frontier = [run.pk]
     while frontier:
         children = list(
-            Run.objects.filter(parent_run_id__in=frontier).values_list(
+            scope_run_queryset(Run.objects.filter(parent_run_id__in=frontier), run.tenant_id).values_list(
                 "pk", "uuid"
             )
         )
@@ -292,7 +308,7 @@ def _admin_run_trace_diagnostics(run):
     gate_fallbacks = {}
     for event in (
         RunTraceEvent.objects.filter(
-            run=run, event_type__in=["tool.started", "tool.completed", "tool.failed", "step.event"]
+            run=run, tenant_id=run.tenant_id, event_type__in=["tool.started", "tool.completed", "tool.failed", "step.event"]
         )
         .order_by("sequence")
         .values("event_type", "call_id", "payload")
@@ -466,9 +482,56 @@ def _is_limit_partial(run):
     return bool({detail.get("reason"), detail.get("trigger")} & LIMIT_PARTIAL_REASONS)
 
 
-def _admin_run_row(run):
+def _public_admin_run_row(row):
+    """Keep tenant content and aggregate usage separate from provider configuration."""
+    fields = {
+        "uuid",
+        "source",
+        "status",
+        "executor_status",
+        "outcome",
+        "termination_detail",
+        "username",
+        "principal_type",
+        "api_key",
+        "assistant_name",
+        "assistant_slug",
+        "question",
+        "answer_preview",
+        "feedback",
+        "feedback_updated_at",
+        "started_at",
+        "admitted_at",
+        "finished_at",
+        "duration_seconds",
+        "control_queue_seconds",
+        "admission_wait_seconds",
+        "event_count",
+        "tool_call_count",
+        "retry_count",
+        "retry_of_run_uuid",
+        "continuation_available",
+        "llm_calls",
+        "total_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+        "subagent_model_calls",
+        "total_cost",
+        "resume_by",
+        "available_actions",
+        "created_at",
+    }
+    return {key: value for key, value in row.items() if key in fields}
+
+
+def _admin_run_row(run, request=None):
     """Serialize one run for the observability list."""
 
+    configuration_access = getattr(run, "_admin_evidence_access", None)
+    if configuration_access is None:
+        configuration_access = can_inspect_run_evidence(request, run)
     session = run.session
     user = session.user if session else None
     assistant = session.assistant if session else None
@@ -519,7 +582,7 @@ def _admin_run_row(run):
         tool_call_count = run.tool_call_count
     else:
         tool_call_count = (
-            run.trace_events.filter(
+            run.trace_events.filter(tenant_id=run.tenant_id).filter(
                 Q(event_type__startswith="tool.")
                 | Q(event_type__startswith="subtool.")
                 | Q(event_type="step.event", payload__name="tool.plugin.start")
@@ -530,9 +593,9 @@ def _admin_run_row(run):
             .count()
         )
     retry_count = (
-        run.retry_count if hasattr(run, "retry_count") else run.retry_runs.count()
+        run.retry_count if hasattr(run, "retry_count") else scope_run_queryset(run.retry_runs.all(), run.tenant_id).count()
     )
-    return {
+    row = {
         "uuid": str(run.uuid),
         "source": run.source,
         "status": run.status,
@@ -540,6 +603,11 @@ def _admin_run_row(run):
         "outcome": run.outcome,
         "termination_detail": sanitize_termination_detail(run.termination_detail),
         "username": user.username if user else None,
+        "principal_type": "tenant_api_key" if session.api_key_id else "user",
+        "api_key": (
+            {"uuid": str(session.api_key_id), "name": session.api_key.name}
+            if session.api_key_id and session.api_key.tenant_id == session.tenant_id else None
+        ),
         "assistant_name": assistant.name if assistant else None,
         "assistant_slug": assistant.slug if assistant else None,
         "question": question[:160],
@@ -595,6 +663,7 @@ def _admin_run_row(run):
         "budget_consumption": budget_consumption,
         "resume_by": run.resume_by.isoformat() if run.resume_by else None,
         "available_actions": {
+            "inspect_configuration": configuration_access,
             "cancel": run.status
             in [Run.Status.QUEUED, Run.Status.RUNNING, Run.Status.STREAMING],
             "retry": (
@@ -613,6 +682,15 @@ def _admin_run_row(run):
         ),
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
+    if is_delegated_request():
+        row.pop("username", None)
+        if request is not None and not hasattr(request, "_run_delegation"):
+            request._run_delegation = get_active_delegation(request.user)
+        delegation = getattr(request, "_run_delegation", None)
+        if delegation and delegation.mode == "readonly":
+            for action in ("cancel", "retry", "resume"):
+                row["available_actions"][action] = False
+    return row if row["available_actions"]["inspect_configuration"] else _public_admin_run_row(row)
 
 
 RESOURCE_SKILL_TOOLS = {
@@ -915,7 +993,7 @@ def _admin_run_resource_usage(run, execution):
             )
     else:
         seen_call_ids = set()
-        events = run.trace_events.filter(
+        events = run.trace_events.filter(tenant_id=run.tenant_id).filter(
             Q(event_type__startswith="tool.") | Q(event_type__startswith="subtool.")
         ).exclude(call_id="")
         for event in events.order_by("sequence"):
@@ -949,14 +1027,15 @@ def _admin_run_resource_usage(run, execution):
     }
 
 
-def _admin_run_detail(run):
+def _admin_run_detail(run, request=None):
     """Serialize a run with full Q&A, timeline and execution snapshot."""
 
     # Attach metered usage before serializing the summary fields so the detail
     # row and the dedicated usage payload use the same authoritative totals.
     model_usage = _admin_run_model_usage(run)
     run._admin_metered_usage = model_usage
-    row = _admin_run_row(run)
+    run._admin_evidence_access = can_inspect_run_evidence(request, run)
+    row = _admin_run_row(run, request)
     out = run.output_message
     assistant = run.session.assistant if run.session else None
     execution = run.execution if hasattr(run, "execution") else None
@@ -1043,7 +1122,7 @@ def _admin_run_detail(run):
             "deep_thinking": runtime_snapshot.get("deep_thinking"),
             "reasoning_effort_requested": runtime_snapshot.get("reasoning_effort_requested"),
             "failure_summary": _admin_run_failure_summary(run),
-            "trace_event_count": run.trace_events.count(),
+            "trace_event_count": run.trace_events.filter(tenant_id=run.tenant_id).count(),
             "steps": steps,
             "execution": (
                 {
@@ -1084,13 +1163,30 @@ def _admin_run_detail(run):
                 "model_calls": [],
             }
         )
+    if not run._admin_evidence_access:
+        content = {key: row[key] for key in ("attachments", "answer", "citations", "output_files")}
+        row = _public_admin_run_row(row)
+        row.update(content)
+        row["available_actions"]["inspect_configuration"] = False
+        row["error"] = public_run_error(run.error)
+        row["execution"] = {"status": execution.status} if execution else None
+        row["steps"] = [
+            {
+                "step_type": step.step_type,
+                "status": step.status,
+                "sequence": step.sequence,
+                "events": public_step_detail(step.detail)["events"],
+                "updated_at": step.updated_at.isoformat() if step.updated_at else None,
+            }
+            for step in run.steps.all()
+        ]
     return row
 
 
 class AdminRunListView(APIView):
     """Admin-only cross-user list of Q&A runs for observability."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def get(self, request):
@@ -1103,8 +1199,10 @@ class AdminRunListView(APIView):
             Run.objects.filter(parent_run__isnull=True)
             .select_related(
                 "session__user",
+                "session__api_key",
                 "session__assistant",
                 "input_message",
+                "output_message",
                 "lensnode",
                 "execution",
                 "retry_of_run",
@@ -1112,6 +1210,28 @@ class AdminRunListView(APIView):
             .prefetch_related("steps")
             .order_by("-created_at")
         )
+        tenant = get_user_tenant(request.user)
+        tenant_id = tenant.pk if tenant is not None else None
+        qs = scope_run_queryset(qs, tenant_id)
+        if is_delegated_request() and any(params.get(key) for key in ("username", "user_id", "group_id")):
+            return Response({"detail": "Personnel filters are unavailable during delegation."}, status=403)
+        api_key = (params.get("api_key") or "").strip()
+        if api_key:
+            if not CanManageTenantApiKeys().has_permission(request, self):
+                return Response({"detail": "PERMISSION_DENIED"}, status=status.HTTP_403_FORBIDDEN)
+            try:
+                key_uuid = uuid_lib.UUID(api_key)
+            except ValueError:
+                return Response({"detail": "INVALID_API_KEY"}, status=status.HTTP_400_BAD_REQUEST)
+            if tenant is None or not TenantApiKey.objects.filter(uuid=key_uuid, tenant=tenant).exists():
+                return Response({"detail": "NOT_FOUND"}, status=status.HTTP_404_NOT_FOUND)
+            call_runs = TenantApiKeyCall.objects.filter(key_id=key_uuid, tenant=tenant).values("run_uuid")
+            qs = qs.filter(
+                Q(session__api_key_id=key_uuid) | Q(session__api_key__isnull=True, uuid__in=call_runs),
+                tenant=tenant,
+                session__tenant=tenant,
+                session__assistant__tenant=tenant,
+            )
         source = (params.get("source") or "").strip()
         if source in Run.Source.values:
             qs = qs.filter(source=source)
@@ -1128,6 +1248,10 @@ class AdminRunListView(APIView):
         if assistant:
             qs = qs.filter(session__assistant__slug=assistant)
         lensnode = (params.get("lensnode") or "").strip()
+        model = (params.get("model") or "").strip()
+        if lensnode or model:
+            allowed, configuration_tenant_id = assistant_configuration_scope(request)
+            qs = qs.filter(session__assistant__tenant_id=configuration_tenant_id) if allowed else qs.none()
         if lensnode:
             try:
                 lensnode_uuid = uuid_lib.UUID(lensnode)
@@ -1135,13 +1259,19 @@ class AdminRunListView(APIView):
                 qs = qs.filter(lensnode__name__icontains=lensnode)
             else:
                 qs = qs.filter(lensnode__uuid=lensnode_uuid)
-        model = (params.get("model") or "").strip()
         if model:
             qs = qs.filter(execution__runtime_snapshot__model_refs__agent=model)
         run_status = (params.get("status") or "").strip()
         keyword = (params.get("q") or "").strip()
         if keyword:
-            qs = qs.filter(input_message__content__icontains=keyword)
+            qs = qs.filter(
+                Q(input_message__content__icontains=keyword)
+                | Q(
+                    output_message__content__icontains=keyword,
+                    output_message__session_id=F("session_id"),
+                    output_message__role="assistant",
+                )
+            )
         start_date = parse_date((params.get("start_date") or "").strip())
         if start_date:
             qs = qs.filter(created_at__date__gte=start_date)
@@ -1157,6 +1287,16 @@ class AdminRunListView(APIView):
                 for status_value, _label in Run.Status.choices
             },
         }
+        result_filters = {
+            "completed": Q(status=Run.Status.DONE) & ~Q(outcome__in=[Run.Outcome.PARTIAL, Run.Outcome.BLOCKED]),
+            "partial": Q(status=Run.Status.DONE, outcome=Run.Outcome.PARTIAL),
+            "failed": Q(status=Run.Status.FAILED) | Q(status=Run.Status.DONE, outcome=Run.Outcome.BLOCKED),
+            "awaiting_user_input": Q(status=Run.Status.AWAITING_USER_INPUT),
+        }
+        result_summary = qs.aggregate(**{key: Count("pk", filter=value) for key, value in result_filters.items()})
+        result = (params.get("result") or "").strip()
+        if result in result_filters:
+            qs = qs.filter(result_filters[result])
         if run_status:
             if run_status == "active":
                 qs = qs.filter(status__in=[Run.Status.RUNNING, Run.Status.STREAMING])
@@ -1169,7 +1309,7 @@ class AdminRunListView(APIView):
         page_ids = [run.pk for run in page_runs]
         tool_counts = {
             row["run_id"]: row["count"]
-            for row in RunTraceEvent.objects.filter(run_id__in=page_ids)
+            for row in RunTraceEvent.objects.filter(run_id__in=page_ids, tenant_id=tenant_id)
             .order_by()
             .values("run_id")
             .annotate(
@@ -1186,7 +1326,7 @@ class AdminRunListView(APIView):
         }
         retry_counts = {
             row["retry_of_run_id"]: row["count"]
-            for row in Run.objects.filter(retry_of_run_id__in=page_ids)
+            for row in scope_run_queryset(Run.objects.filter(retry_of_run_id__in=page_ids), tenant_id)
             .order_by()
             .values("retry_of_run_id")
             .annotate(count=Count("pk"))
@@ -1196,15 +1336,19 @@ class AdminRunListView(APIView):
             run.retry_count = retry_counts.get(run.pk, 0)
         run_ids = [str(run.uuid) for run in page_runs]
         child_pairs = []
+        uninspectable_children = set()
         frontier = run_ids
         while frontier:
             rows = list(
-                Run.objects.filter(parent_run__uuid__in=frontier).values_list(
-                    "uuid", "parent_run__uuid"
+                scope_run_queryset(Run.objects.filter(parent_run__uuid__in=frontier), tenant_id).values_list(
+                    "uuid", "parent_run__uuid", "session__assistant__tenant_id", "configuration_evidence_restricted"
                 )
             )
-            child_pairs.extend(rows)
-            frontier = [str(child) for child, _parent in rows]
+            child_pairs.extend((child, parent) for child, parent, _tenant, _restricted in rows)
+            uninspectable_children.update(
+                str(child) for child, _parent, owner, restricted in rows if owner != tenant_id or restricted
+            )
+            frontier = [str(child) for child, _parent, _tenant, _restricted in rows]
         usage_ids = run_ids + [str(child) for child, _parent in child_pairs]
         usages = LLMUsage.objects.filter(metadata__run_uuid__in=usage_ids).only(
             "metadata", "total_tokens", "prompt_tokens", "completion_tokens",
@@ -1219,6 +1363,7 @@ class AdminRunListView(APIView):
             while owner in parent_by_child:
                 owner = parent_by_child[owner]
             usage_owner[str(child)] = owner
+        uninspectable_roots = {usage_owner[child] for child in uninspectable_children}
         usage_by_run = {}
         for usage in usages:
             usage_run_id = str((usage.metadata or {}).get("run_uuid") or "")
@@ -1229,6 +1374,10 @@ class AdminRunListView(APIView):
             if run_id != usage_run_id:
                 usage_by_run.setdefault(usage_run_id, []).append(usage)
         for run in page_runs:
+            run._admin_evidence_access = (
+                can_inspect_run_configuration(request, run)
+                and str(run.uuid) not in uninspectable_roots
+            )
             calls = usage_by_run.get(str(run.uuid), [])
             if calls:
                 run._admin_metered_usage = {
@@ -1267,7 +1416,16 @@ class AdminRunListView(APIView):
                         else None
                     ),
                 }
-        rows = [_admin_run_row(run) for run in page_runs]
+        rows = []
+        for run in page_runs:
+            row = _admin_run_row(run, request)
+            output = run.output_message
+            row["answer_preview"] = (
+                " ".join(output.content.split())[:240]
+                if output and output.session_id == run.session_id and output.role == "assistant"
+                else ""
+            )
+            rows.append(row)
         return Response(
             {
                 "results": rows,
@@ -1275,6 +1433,7 @@ class AdminRunListView(APIView):
                 "page": page,
                 "page_size": page_size,
                 "summary": summary,
+                "result_summary": result_summary,
             }
         )
 
@@ -1282,16 +1441,17 @@ class AdminRunListView(APIView):
 class AdminRunDetailView(APIView):
     """Admin-only full trace of a single Q&A run."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def get(self, request, uuid):
         """Return the full trace for one run."""
 
         try:
-            run = (
+            run_queryset = (
                 Run.objects.select_related(
                     "session__user",
+                    "session__api_key",
                     "session__assistant",
                     "input_message",
                     "output_message",
@@ -1300,18 +1460,30 @@ class AdminRunDetailView(APIView):
                     "retry_of_run",
                 )
                 .prefetch_related("output_files", "steps")
-                .get(uuid=uuid)
             )
+            tenant_id = _request_tenant_id(request)
+            run_queryset = scope_run_queryset(run_queryset, tenant_id)
+            run = run_queryset.get(uuid=uuid)
         except Run.DoesNotExist:
             return Response(
                 {"detail": "Run not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        detail = _admin_run_detail(run)
+        detail = _admin_run_detail(run, request)
         evaluation_run_uuid = None
         if run.source == Run.Source.EVALUATION and HasRunEvaluationsAccess().has_permission(request, self):
-            results = EvaluationResult.objects.filter(source_run=run)
-            if not user_sees_all_assistants(request.user):
+            results = evaluation_queryset(
+                EvaluationResult.objects.filter(
+                    source_run=run,
+                    tenant_id=run.tenant_id,
+                    evaluation_run__tenant_id=run.tenant_id,
+                    evaluation_run__dataset__assistant_id=run.session.assistant_id,
+                    case__dataset_id=F("evaluation_run__dataset_id"),
+                ),
+                request,
+                "evaluation_run__dataset__",
+            )
+            if run.tenant_id is None and not user_sees_all_assistants(request.user):
                 results = results.filter(evaluation_run__requested_by=request.user)
             evaluation_run_uuid = results.order_by("created_at", "uuid").values_list(
                 "evaluation_run_id", flat=True
@@ -1320,11 +1492,19 @@ class AdminRunDetailView(APIView):
         return Response(detail)
 
 
-def _admin_run_for_action(run_uuid, *, lock=False):
+def _request_tenant_id(request):
+    """Return the caller's tenant id for admin run scoping."""
+
+    tenant = get_user_tenant(request.user)
+    return tenant.pk if tenant is not None else None
+
+
+def _admin_run_for_action(run_uuid, *, lock=False, tenant_id=None):
     """Return one fully-related Run for a server-authorized admin action."""
 
     queryset = Run.objects.select_related(
         "session__user",
+        "session__api_key",
         "session__assistant",
         "input_message",
         "lensnode",
@@ -1333,13 +1513,14 @@ def _admin_run_for_action(run_uuid, *, lock=False):
     )
     if lock:
         queryset = queryset.select_for_update(of=("self",))
+    queryset = scope_run_queryset(queryset, tenant_id)
     return queryset.filter(uuid=run_uuid).first()
 
 
 class AdminRunCancelView(APIView):
     """Cancel one active Run across users from the operations console."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def post(self, request, uuid):
@@ -1347,7 +1528,11 @@ class AdminRunCancelView(APIView):
 
         descendants = []
         with transaction.atomic():
-            run = _admin_run_for_action(uuid, lock=True)
+            run = _admin_run_for_action(
+                uuid,
+                lock=True,
+                tenant_id=_request_tenant_id(request),
+            )
             if run is None:
                 return Response(
                     {"detail": "Run not found."},
@@ -1358,7 +1543,7 @@ class AdminRunCancelView(APIView):
                 Run.Status.RUNNING,
                 Run.Status.STREAMING,
             ]:
-                return Response(_admin_run_row(run))
+                return Response(_admin_run_row(run, request))
             now = timezone.now()
             run.status = Run.Status.CANCELLED
             run.resume_by = None
@@ -1379,13 +1564,13 @@ class AdminRunCancelView(APIView):
         cancel_run_on_lensnode(run)
         for descendant in descendants:
             cancel_run_on_lensnode(descendant)
-        return Response(_admin_run_row(run))
+        return Response(_admin_run_row(run, request))
 
 
 class AdminRunRetryView(APIView):
     """Create an audited retry for a failed or cancelled Run."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def post(self, request, uuid):
@@ -1399,7 +1584,11 @@ class AdminRunRetryView(APIView):
             )
         idempotency_key = f"admin-retry:{uuid}:{request_key}"[:128]
         with transaction.atomic():
-            run = _admin_run_for_action(uuid, lock=True)
+            run = _admin_run_for_action(
+                uuid,
+                lock=True,
+                tenant_id=_request_tenant_id(request),
+            )
             if run is None:
                 return Response(
                     {"detail": "Run not found."},
@@ -1419,8 +1608,11 @@ class AdminRunRetryView(APIView):
                 idempotency_key=idempotency_key,
             ).first()
             if existing is not None:
-                existing = _admin_run_for_action(existing.uuid)
-                return Response(_admin_run_row(existing))
+                existing = _admin_run_for_action(
+                    existing.uuid,
+                    tenant_id=_request_tenant_id(request),
+                )
+                return Response(_admin_run_row(existing, request))
             attachment_uuids = list(
                 run.input_message.attachments.values_list("uuid", flat=True)
             )
@@ -1435,7 +1627,7 @@ class AdminRunRetryView(APIView):
                     retry_of_run=run,
                     enqueue=True,
                     attachment_uuids=attachment_uuids,
-                    user=run.session.user,
+                    user=run.session.execution_principal,
                 )
             except SessionStateError:
                 return Response(
@@ -1455,20 +1647,26 @@ class AdminRunRetryView(APIView):
             }
             retry.execution.runtime_snapshot = snapshot
             retry.execution.save(update_fields=["runtime_snapshot"])
-        retry = _admin_run_for_action(retry.uuid)
-        return Response(_admin_run_row(retry), status=status.HTTP_201_CREATED)
+        retry = _admin_run_for_action(
+            retry.uuid,
+            tenant_id=_request_tenant_id(request),
+        )
+        return Response(_admin_run_row(retry, request), status=status.HTTP_201_CREATED)
 
 
 class AdminRunResumeView(APIView):
     """Resume one checkpoint-ready Run parked after a node disconnect."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def post(self, request, uuid):
         """Request an immediate, state-validated resume attempt."""
 
-        run = _admin_run_for_action(uuid)
+        run = _admin_run_for_action(
+            uuid,
+            tenant_id=_request_tenant_id(request),
+        )
         if run is None:
             return Response(
                 {"detail": "Run not found."},
@@ -1487,8 +1685,11 @@ class AdminRunResumeView(APIView):
                 {"detail": "RUN_RESUME_UNAVAILABLE"},
                 status=status.HTTP_409_CONFLICT,
             )
-        refreshed = _admin_run_for_action(uuid)
-        return Response(_admin_run_row(refreshed))
+        refreshed = _admin_run_for_action(
+            uuid,
+            tenant_id=_request_tenant_id(request),
+        )
+        return Response(_admin_run_row(refreshed, request))
 
 
 def _trace_event_response(
@@ -1648,13 +1849,13 @@ def _run_trace_summary(
 ):
     """Return unfiltered timing, category, call, and usage aggregates."""
 
-    events = RunTraceEvent.objects.filter(run__in=trace_runs or [run])
+    events = RunTraceEvent.objects.filter(run__in=trace_runs or [run], tenant_id=run.tenant_id)
     progress_root = progress_root or run
     progress_runs = progress_runs or trace_runs or [run]
     progress_events = (
         events
         if progress_runs is trace_runs
-        else RunTraceEvent.objects.filter(run__in=progress_runs)
+        else RunTraceEvent.objects.filter(run__in=progress_runs, tenant_id=run.tenant_id)
     )
     aggregate = events.aggregate(
         event_count=Count("uuid"),
@@ -1774,25 +1975,27 @@ def _run_trace_summary(
     return summary
 
 
-def _trajectory_context(run_uuid):
+def _trajectory_context(run_uuid, tenant_id=None):
     """Load one run and the trace/progress runs visible from it."""
 
     try:
-        run = Run.objects.select_related(
+        run_queryset = Run.objects.select_related(
             "execution",
             "session__assistant",
             "input_message",
             "parent_run__execution",
             "parent_run__session__assistant",
             "parent_run__input_message",
-        ).get(uuid=run_uuid)
+        )
+        run_queryset = scope_run_queryset(run_queryset, tenant_id)
+        run = run_queryset.get(uuid=run_uuid)
     except Run.DoesNotExist:
         return None
     trace_runs = [run]
     frontier = [run.pk]
     while frontier:
         children = list(
-            Run.objects.filter(parent_run_id__in=frontier).select_related(
+            scope_run_queryset(Run.objects.filter(parent_run_id__in=frontier), tenant_id).select_related(
                 "execution",
                 "session__assistant",
                 "input_message",
@@ -1800,7 +2003,9 @@ def _trajectory_context(run_uuid):
         )
         trace_runs.extend(children)
         frontier = [child.pk for child in children]
-    progress_root = run.parent_run or run
+    progress_root = run.parent_run if (
+        run.parent_run_id and run.parent_run.tenant_id == tenant_id and run.parent_run.session.tenant_id == tenant_id
+    ) else run
     if progress_root.id == run.id:
         progress_runs = trace_runs
     else:
@@ -1808,7 +2013,7 @@ def _trajectory_context(run_uuid):
         frontier = [progress_root.pk]
         while frontier:
             children = list(
-                Run.objects.filter(parent_run_id__in=frontier).select_related(
+                scope_run_queryset(Run.objects.filter(parent_run_id__in=frontier), tenant_id).select_related(
                     "execution",
                     "session__assistant",
                     "input_message",
@@ -1853,18 +2058,19 @@ def _decode_trajectory_cursor(cursor):
     return created_at, event_uuid
 
 
-def _trajectory_cursor_belongs_to_run(run_uuid, cursor):
+def _trajectory_cursor_belongs_to_run(run_uuid, cursor, tenant_id=None):
     """Return whether a cursor names an event in the requested trace."""
 
     if not cursor:
         return True
-    context = _trajectory_context(run_uuid)
+    context = _trajectory_context(run_uuid, tenant_id=tenant_id)
     if context is None:
         return False
     _run, trace_runs, _progress_root, _progress_runs = context
     created_at, event_uuid = _decode_trajectory_cursor(cursor)
     return RunTraceEvent.objects.filter(
         run__in=trace_runs,
+        tenant_id=tenant_id,
         created_at=created_at,
         uuid=event_uuid,
     ).exists()
@@ -1957,15 +2163,16 @@ def _trajectory_stream_snapshot(
     display_sequence=0,
     known_revision="",
     include_summary=False,
+    tenant_id=None,
 ):
     """Build one resumable trajectory stream snapshot from durable state."""
 
-    context = _trajectory_context(run_uuid)
+    context = _trajectory_context(run_uuid, tenant_id=tenant_id)
     if context is None:
         return None
     run, trace_runs, progress_root, progress_runs = context
     trace_runs_by_id = {item.id: item for item in trace_runs}
-    all_events = RunTraceEvent.objects.filter(run__in=trace_runs)
+    all_events = RunTraceEvent.objects.filter(run__in=trace_runs, tenant_id=run.tenant_id)
     events = all_events
     decoded_cursor = _decode_trajectory_cursor(cursor)
     if decoded_cursor is not None:
@@ -2041,6 +2248,7 @@ async def stream_admin_run_trajectory_events_async(
     display_sequence=0,
     poll_interval=TRAJECTORY_STREAM_POLL_INTERVAL_SECONDS,
     terminal_quiet_polls=TRAJECTORY_STREAM_TERMINAL_QUIET_POLLS,
+    tenant_id=None,
 ):
     """Yield resumable admin trajectory updates from the database."""
 
@@ -2061,6 +2269,7 @@ async def stream_admin_run_trajectory_events_async(
             display_sequence=current_sequence,
             known_revision=current_revision,
             include_summary=event_type == "sync",
+            tenant_id=tenant_id,
         )
         if snapshot is None:
             return
@@ -2120,19 +2329,24 @@ async def stream_admin_run_trajectory_events_async(
 class AdminRunTrajectoryView(APIView):
     """Admin-only paginated trajectory for one Q&A run."""
 
-    permission_classes = [HasRequiredFeature]
+    permission_classes = [HasRequiredFeature, CanInspectTenantRuns]
     required_feature = "admin_console"
 
     def get(self, request, run_uuid):
         """Return filtered events and unfiltered run summary."""
 
-        context = _trajectory_context(run_uuid)
+        context = _trajectory_context(
+            run_uuid,
+            tenant_id=_request_tenant_id(request),
+        )
         if context is None:
             return Response(
                 {"detail": "Run not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
         run, trace_runs, progress_root, progress_runs = context
+        if not can_inspect_run_evidence(request, run):
+            raise PermissionDenied("Assistant configuration access is required.")
         params = request.query_params
         page_size = _admin_safe_int(
             params.get("page_size"),
@@ -2147,7 +2361,7 @@ class AdminRunTrajectoryView(APIView):
         trace_runs_by_id = {
             trace_run.id: trace_run for trace_run in trace_runs
         }
-        events = RunTraceEvent.objects.filter(run__in=trace_runs).order_by("created_at", "uuid")
+        events = RunTraceEvent.objects.filter(run__in=trace_runs, tenant_id=run.tenant_id).order_by("created_at", "uuid")
         latest_event = events.only("uuid", "created_at").last()
         # Bound all page queries to the same cursor while new events are ingested.
         if latest_event:
@@ -2266,20 +2480,26 @@ async def admin_run_trajectory_stream_view(request, run_uuid):
     feature_keys = await sync_to_async(get_effective_feature_keys)(user)
     if "admin_console" not in feature_keys:
         return HttpResponse("Forbidden", status=403)
+    request.user = user
+    if not await sync_to_async(CanInspectTenantRuns().has_permission)(request, None):
+        return HttpResponse("Forbidden", status=403)
+    tenant = await sync_to_async(get_user_tenant)(user)
+    tenant_id = tenant.pk if tenant is not None else None
 
     cursor = (request.GET.get("cursor") or "").strip()[:1024]
     try:
         _decode_trajectory_cursor(cursor)
     except ValueError:
         return HttpResponse("Invalid trajectory cursor", status=400)
-    context_exists = await sync_to_async(
-        lambda: _trajectory_context(run_uuid) is not None
-    )()
-    if not context_exists:
+    context = await sync_to_async(_trajectory_context)(run_uuid, tenant_id=tenant_id)
+    if context is None:
         return HttpResponse("Not found", status=404)
+    if not await sync_to_async(can_inspect_run_evidence)(request, context[0]):
+        return HttpResponse("Forbidden", status=403)
     if not await sync_to_async(_trajectory_cursor_belongs_to_run)(
         run_uuid,
         cursor,
+        tenant_id,
     ):
         return HttpResponse("Invalid trajectory cursor", status=400)
 
@@ -2298,16 +2518,34 @@ async def admin_run_trajectory_stream_view(request, run_uuid):
         "q": (request.GET.get("q") or "").strip().lower()[:256],
     }
 
+    authority = await sync_to_async(StreamAuthority)(request)
+
+    def still_authorized():
+        """Recheck current authority before sending data on a long-lived stream."""
+
+        current_run = scope_run_queryset(Run.objects.select_related("session__assistant"), tenant_id).filter(
+            uuid=run_uuid
+        ).first()
+        return (
+            CanInspectTenantRuns().has_permission(request, None)
+            and "admin_console" in get_effective_feature_keys(request.user)
+            and current_run is not None
+            and can_inspect_run_evidence(request, current_run)
+        )
+
     async def event_stream():
-        async for event in stream_admin_run_trajectory_events_async(
+        events = stream_admin_run_trajectory_events_async(
             run_uuid,
             cursor=cursor,
             revision=revision,
             filters=filters,
             display_sequence=display_sequence,
-        ):
-            payload = json.dumps(event, ensure_ascii=False)
-            yield f"data: {payload}\n\n".encode("utf-8")
+            tenant_id=tenant_id,
+        )
+        async with aclosing(authorized_stream_events(events, authority, still_authorized)) as authorized_events:
+            async for event in authorized_events:
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n".encode("utf-8")
 
     response = StreamingHttpResponse(
         event_stream(),

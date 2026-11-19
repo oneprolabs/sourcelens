@@ -10,7 +10,7 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
-from lens.models import Assistant
+from lens.models import Assistant, LLMConfigScope
 
 
 class AssistantModelReplacementTests(TestCase):
@@ -38,9 +38,12 @@ class AssistantModelReplacementTests(TestCase):
     def model(self, name, **kwargs):
         """Create a global model configuration."""
 
-        return LLMConfig.objects.create(
+        config = LLMConfig.objects.create(
             scope=LLMConfig.Scope.GLOBAL, provider="openai", config={"model": name, "api_key": "test-key"}, **kwargs
         )
+
+        LLMConfigScope.objects.create(config=config, tenant=None)
+        return config
 
     def post(self, **changes):
         """Submit a preview or replacement request."""
@@ -160,6 +163,7 @@ class AssistantModelReplacementTests(TestCase):
             provider="openai",
             config={"model": "gpt-4o", "supports_vision": True, "api_key": "test-key"},
         )
+        LLMConfigScope.objects.create(config=vision, tenant=None)
         response = self.post(
             model_field="multimodal_model_ref", assistant_models=items, target_model_ref=str(vision.uuid), preview=False
         )

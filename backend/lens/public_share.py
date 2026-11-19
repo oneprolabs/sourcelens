@@ -9,10 +9,21 @@ The policy is resolved from three layers:
 A configured layer decides first, so a deployment or Assistant policy always
 applies and the publisher is not asked while one is in place. The publisher
 only chooses while neither of them is configured, and the built-in default
-keeps public shares open to anonymous viewers.
+requires tenant shares to follow the assistant audience. Legacy unowned shares
+remain public unless configured otherwise.
 """
 
+from django.db.models import Q
+
 from lens.models import GlobalSetting
+
+
+def scope_shares_for_moderation(queryset, tenant):
+    """Scope moderation by both the assistant and the published conversation."""
+    return queryset.filter(assistant__tenant=tenant).filter(
+        Q(run__tenant=tenant, run__session__tenant=tenant)
+        | Q(run__isnull=True, published_by__membership__tenant=tenant)
+    )
 
 INHERIT = "inherit"
 PUBLIC = "public"
@@ -21,7 +32,7 @@ LOGIN = "login"
 PUBLIC_SHARE_POLICIES = (INHERIT, PUBLIC, LOGIN)
 
 GLOBAL_POLICY_SETTING_KEY = "lens.public_share.policy"
-DEFAULT_POLICY = PUBLIC
+DEFAULT_POLICY = LOGIN
 
 
 def normalize_policy(value):
@@ -86,6 +97,8 @@ def configured_policy(assistant=None, share=None):
 def policy_source(assistant=None):
     """Return which layer decided the policy, or None when none did."""
 
+    if assistant is not None and assistant.visibility != assistant.Visibility.PUBLIC:
+        return "visibility"
     for candidate, source in (
         (assistant_policy(assistant), "assistant"),
         (global_policy(), "global"),
@@ -101,10 +114,14 @@ def resolve_policy(assistant=None, share=None):
     A configured layer decides first, so enabling a policy in the Assistant
     or the deployment applies to every share it covers. The publisher's own
     choice only applies while neither layer is configured, and the built-in
-    default keeps public shares open to anonymous viewers.
+    default requires tenant shares to follow the assistant audience. Legacy
+    unowned shares remain public unless configured otherwise.
     """
 
-    return configured_policy(assistant) or share_policy(share) or DEFAULT_POLICY
+    if assistant is not None and assistant.visibility != assistant.Visibility.PUBLIC:
+        return LOGIN
+    default = DEFAULT_POLICY if assistant is not None and assistant.tenant_id else PUBLIC
+    return configured_policy(assistant) or share_policy(share) or default
 
 
 def allows_anonymous_access(assistant=None, share=None):

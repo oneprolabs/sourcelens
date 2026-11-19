@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from accounts.models import Tenant, TenantMembership
 from lens.execution import execute_answer_run
 from lens.models import (
     Assistant,
@@ -77,6 +78,14 @@ class AssistantPluginBindingTests(TestCase):
             selected_task="knowledge_qa",
             selected_dirs=[{"path": "/workspace/repo"}],
         )
+
+    def _assign_catalog_tenant(self):
+        """Give tenant-owned adapters the same owner as their native connection."""
+        tenant = Tenant.objects.create(name="Plugins", slug="plugin-catalog-test")
+        TenantMembership.objects.create(tenant=tenant, user=self.user, role="tenant_admin")
+        for resource in [self.connection, self.assistant]:
+            resource.tenant = tenant
+            resource.save(update_fields=["tenant"])
 
     @contextmanager
     def plugin_root(self):
@@ -265,6 +274,7 @@ class AssistantPluginBindingTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
 
     def test_plugin_mcp_adapter_uses_native_plugin_runtime(self):
+        self._assign_catalog_tenant()
         with self.plugin_root():
             response = self.client.post(
                 "/api/lens/admin/mcp-servers/",
@@ -354,6 +364,7 @@ class AssistantPluginBindingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
 
     def test_plugin_mcp_adapter_rejects_arbitrary_mcp_configuration(self):
+        self._assign_catalog_tenant()
         with self.plugin_root():
             response = self.client.post(
                 "/api/lens/admin/mcp-servers/",

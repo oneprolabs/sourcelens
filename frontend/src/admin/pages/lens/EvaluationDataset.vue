@@ -35,6 +35,7 @@
               {{ t('evaluation.revisions.title') }}
             </BaseButton>
             <BaseButton
+              v-if="canWriteEvaluations"
               size="sm"
               :loading="launching"
               :disabled="!caseTotal"
@@ -61,7 +62,7 @@
             </button>
           </div>
           <div
-            v-if="activeTab === 'cases'"
+            v-if="canWriteEvaluations && activeTab === 'cases'"
             class="flex items-center gap-2 py-2"
           >
             <BaseButton variant="outline" size="sm" @click="openImport">
@@ -146,7 +147,7 @@
                     <span v-else class="text-ink-400">—</span>
                   </td>
                   <td class="table-cell">
-                    <div class="flex items-center gap-3">
+                    <div v-if="canWriteEvaluations" class="flex items-center gap-3">
                       <button
                         type="button"
                         class="text-sm font-medium text-primary-600 hover:text-primary-700"
@@ -289,7 +290,7 @@
     </BaseModal>
 
     <BaseModal
-      :show="caseFormOpen"
+      :show="canWriteEvaluations && caseFormOpen"
       :title="
         editingCase ? t('evaluation.cases.edit') : t('evaluation.cases.add')
       "
@@ -358,7 +359,7 @@
     </BaseModal>
 
     <BaseModal
-      :show="importOpen"
+      :show="canWriteEvaluations && importOpen"
       :title="t('evaluation.cases.import')"
       max-width="xl"
       :close-on-backdrop="!importing"
@@ -421,7 +422,7 @@
     </BaseModal>
 
     <ConfirmDeleteModal
-      :show="Boolean(deleteCaseTarget)"
+      :show="canWriteEvaluations && Boolean(deleteCaseTarget)"
       :title="t('evaluation.cases.deleteTitle')"
       :name="deleteCaseTarget?.input"
       :message="t('evaluation.cases.deleteMessage')"
@@ -458,12 +459,15 @@ import {
   updateEvaluationCase
 } from '@/api/evaluation'
 import { useToast } from '@/composables/useToast'
+import { useUserStore } from '@/store/user'
 import { formatDate } from '@/utils/formatting'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { showSuccess, showError } = useToast()
+const userStore = useUserStore()
+const canWriteEvaluations = computed(() => userStore.delegation?.mode !== 'readonly')
 
 const datasetUuid = computed(() => route.params.uuid)
 const dataset = ref(null)
@@ -633,6 +637,7 @@ function changePageSize(value) {
 }
 
 function openCaseForm(row = null) {
+  if (!canWriteEvaluations.value) return
   editingCase.value = row
   formError.value = ''
   caseForm.input = row?.input || ''
@@ -653,6 +658,7 @@ function closeCaseForm() {
 }
 
 async function submitCaseForm() {
+  if (!canWriteEvaluations.value) return
   formError.value = ''
   if (!caseForm.input.trim()) {
     formError.value = t('evaluation.cases.inputRequired')
@@ -694,6 +700,7 @@ async function submitCaseForm() {
 }
 
 async function confirmDeleteCase() {
+  if (!canWriteEvaluations.value) return
   if (!deleteCaseTarget.value) return
   deletingCase.value = true
   try {
@@ -709,6 +716,7 @@ async function confirmDeleteCase() {
 }
 
 function openImport() {
+  if (!canWriteEvaluations.value) return
   importText.value = ''
   importFormat.value = 'jsonl'
   importFile.value = null
@@ -735,6 +743,7 @@ function onImportFile(event) {
 }
 
 async function submitImport() {
+  if (!canWriteEvaluations.value) return
   importErrors.value = []
   if (!importText.value.trim()) {
     importErrors.value = [{ line: 0, error: t('evaluation.cases.importEmpty') }]
@@ -764,6 +773,7 @@ async function submitImport() {
 }
 
 async function launchRun() {
+  if (!canWriteEvaluations.value) return
   launching.value = true
   try {
     const run = await startEvaluationRun(datasetUuid.value, {})

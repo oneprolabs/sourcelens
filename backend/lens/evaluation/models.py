@@ -15,6 +15,7 @@ class EvaluationDataset(models.Model):
         ARCHIVED = "archived", "Archived"
 
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     name = models.CharField(max_length=160)
     assistant = models.ForeignKey(
         "lens.Assistant",
@@ -37,6 +38,12 @@ class EvaluationDataset(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        """Freeze ownership from the assistant when a dataset is first created."""
+        if self._state.adding:
+            self.tenant_id = self.assistant.tenant_id
+        super().save(*args, **kwargs)
 
     class Meta:
         ordering = ["-created_at", "-version"]
@@ -119,6 +126,7 @@ class EvaluationRun(models.Model):
         COMPLETED = "completed", "Completed"
 
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     dataset = models.ForeignKey(
         EvaluationDataset,
         on_delete=models.PROTECT,
@@ -150,6 +158,12 @@ class EvaluationRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        """Retain batch ownership independently of mutable related configuration."""
+        if self._state.adding:
+            self.tenant_id = self.dataset.tenant_id
+        super().save(*args, **kwargs)
+
     class Meta:
         ordering = ["-created_at", "-uuid"]
         permissions = [
@@ -161,6 +175,7 @@ class EvaluationResult(models.Model):
     """One case result with a durable snapshot independent of source Run retention."""
 
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    tenant = models.ForeignKey("accounts.Tenant", null=True, blank=True, on_delete=models.PROTECT)
     evaluation_run = models.ForeignKey(
         EvaluationRun,
         on_delete=models.CASCADE,
@@ -183,6 +198,7 @@ class EvaluationResult(models.Model):
     output_snapshot = models.TextField(blank=True, default="")
     citations_snapshot = models.JSONField(default=list, blank=True)
     trace_summary = models.JSONField(default=dict, blank=True)
+    evidence_restricted = models.BooleanField(null=True, default=None, editable=False)
     execution_metrics = models.JSONField(default=dict, blank=True)
     scores = models.JSONField(default=dict, blank=True)
     passed = models.BooleanField(null=True, blank=True)
@@ -204,6 +220,8 @@ class EvaluationResult(models.Model):
     def save(self, *args, **kwargs):
         """Retain the source UUID even after the source Run is deleted."""
 
+        if self._state.adding:
+            self.tenant_id = self.evaluation_run.tenant_id
         if self.source_run_id and not self.source_run_uuid:
             self.source_run_uuid = self.source_run.uuid
         super().save(*args, **kwargs)

@@ -1,16 +1,20 @@
 <template>
   <AdminLayout>
-    <div class="flex max-w-full flex-col gap-4 py-4">
+    <div class="flex h-full min-h-0 max-w-full flex-col py-4">
       <section
-        class="overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
+        class="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
       >
         <div
-          class="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
+          class="flex shrink-0 flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
         >
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h1 class="text-xl font-semibold text-ink-900">
-                {{ t('lensAdmin.pages.settings.title') }}
+                {{
+                  isNodeSettings
+                    ? t('management.platformNodeSettings')
+                    : t('lensAdmin.pages.settings.title')
+                }}
               </h1>
             </div>
           </div>
@@ -19,15 +23,15 @@
               variant="outline"
               size="sm"
               :loading="loading"
-              @click="load"
+              @click="refreshSettings"
             >
               {{ t('common.refresh') }}
             </BaseButton>
           </div>
         </div>
 
-        <div class="px-5 py-4">
-          <BaseLoading v-if="loading && settingDefinitions.length === 0" />
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <BaseLoading v-if="loading" />
 
           <template v-else>
             <div class="space-y-4">
@@ -68,6 +72,7 @@
                         >
                           <input
                             v-if="setting.type === 'number'"
+                            :aria-label="setting.label"
                             v-model.number="settingsForm[setting.key]"
                             type="number"
                             min="1"
@@ -75,6 +80,7 @@
                           />
                           <BaseSelect
                             v-else-if="setting.type === 'select'"
+                            :aria-label="setting.label"
                             v-model="settingsForm[setting.key]"
                             class="min-w-0 max-w-lg"
                           >
@@ -88,6 +94,7 @@
                           </BaseSelect>
                           <BaseSelect
                             v-else-if="setting.type === 'model_ref'"
+                            :aria-label="setting.label"
                             v-model="settingsForm[setting.key]"
                             class="min-w-0 max-w-lg"
                           >
@@ -104,6 +111,7 @@
                           </BaseSelect>
                           <input
                             v-else-if="setting.type === 'text'"
+                            :aria-label="setting.label"
                             v-model="settingsForm[setting.key]"
                             type="text"
                             :placeholder="setting.placeholder"
@@ -206,46 +214,54 @@
                 </tbody>
               </table>
             </div>
-
-            <div
-              class="mt-4 flex items-center justify-end gap-3 border-t border-line pt-4"
-            >
-              <BaseButton
-                variant="secondary"
-                size="sm"
-                :disabled="saving"
-                @click="resetSettingsForm"
-              >
-                {{ t('lensAdmin.settings.reset') }}
-              </BaseButton>
-              <BaseButton
-                variant="primary"
-                size="sm"
-                :loading="saving"
-                @click="saveSettings"
-              >
-                {{ t('lensAdmin.settings.saveChanges') }}
-              </BaseButton>
-            </div>
-            <p v-if="formError" class="mt-2 text-sm text-danger-700">
-              {{ formError }}
-            </p>
           </template>
         </div>
+        <div
+          v-if="!loading"
+          class="shrink-0 px-5 flex items-center justify-end gap-3 border-t border-line bg-surface py-4"
+        >
+          <span class="mr-auto text-sm text-ink-500" role="status">
+            {{
+              hasChanges
+                ? t('management.settingsUnsaved')
+                : t('management.settingsSaved')
+            }}
+          </span>
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            :disabled="saving || !hasChanges"
+            @click="resetSettingsForm"
+          >
+            {{ t('lensAdmin.settings.reset') }}
+          </BaseButton>
+          <BaseButton
+            variant="primary"
+            size="sm"
+            :loading="saving"
+            :disabled="!hasChanges || !!loadError"
+            @click="saveSettings"
+          >
+            {{ t('lensAdmin.settings.saveChanges') }}
+          </BaseButton>
+        </div>
+        <p v-if="formError" class="mt-2 text-sm text-danger-700">
+          {{ formError }}
+        </p>
       </section>
     </div>
   </AdminLayout>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router'
 
 import { llmAdminApi } from '@/admin/api/llmAdmin'
 import { extractErrorMessage } from '@/utils/api'
 import AdminLayout from '@/admin/layout/AdminLayout.vue'
 import {
-  createGlobalSetting,
   getSystemHealth,
   listGlobalSettings,
   updateGlobalSetting,
@@ -267,10 +283,24 @@ import { useShortDateTime } from './useShortDateTime'
 const { t } = useI18n()
 const { showSuccess, showError } = useToast()
 const formatDateTime = useShortDateTime()
+const route = useRoute()
+const isNodeSettings = computed(() => route.meta.settingsScope === 'nodes')
+const nodeSettingKeys = new Set([
+  'public_base_url',
+  'lensnode.image',
+  'lensnode.defaults.timeout',
+  'lensnode.defaults.idle_timeout',
+  'lensnode_cleanup.run_absolute_timeout_s',
+  'lensnode.health.offline_threshold_s',
+  'lensnode.health.probe_timeout_s',
+  'lensnode_cleanup.interval_seconds',
+  'lensnode_health.interval_seconds'
+])
 
 const loading = ref(false)
 const saving = ref(false)
 const formError = ref('')
+const loadError = ref(false)
 const llmConfigOptions = ref([])
 const globalSettings = ref([])
 const systemHealth = ref([])
@@ -280,6 +310,8 @@ const defaultSettings = {
   public_base_url: '',
   'lensnode.image': '',
   'lensnode.defaults.timeout': 600,
+  'lensnode.defaults.idle_timeout': 300,
+  'lensnode_cleanup.run_absolute_timeout_s': 14400,
   'retention.run_days': 90,
   'lensnode.health.offline_threshold_s': 120,
   'lensnode.health.probe_timeout_s': 5,
@@ -313,7 +345,9 @@ const defaultScheduledTaskMeta = {
 }
 
 const defaultScheduledTasks = computed(() => {
-  const taskTypes = ['lensnode_cleanup', 'lensnode_health', 'run_retention']
+  const taskTypes = isNodeSettings.value
+    ? ['lensnode_cleanup', 'lensnode_health']
+    : ['run_retention']
   return taskTypes.map((taskType) => {
     const existing =
       systemHealth.value.find((row) => row.task_type === taskType) || {}
@@ -354,6 +388,22 @@ const settingDefinitions = computed(() => {
       group: 'runtime',
       label: t('lensAdmin.settings.timeoutTitle'),
       description: t('lensAdmin.settings.timeoutDesc'),
+      type: 'number',
+      unit: t('lensAdmin.settings.secondsUnit')
+    },
+    {
+      key: 'lensnode.defaults.idle_timeout',
+      group: 'runtime',
+      label: t('management.nodeIdleTimeout'),
+      description: t('management.nodeIdleTimeoutHint'),
+      type: 'number',
+      unit: t('lensAdmin.settings.secondsUnit')
+    },
+    {
+      key: 'lensnode_cleanup.run_absolute_timeout_s',
+      group: 'runtime',
+      label: t('management.nodeAbsoluteTimeout'),
+      description: t('management.nodeAbsoluteTimeoutHint'),
       type: 'number',
       unit: t('lensAdmin.settings.secondsUnit')
     },
@@ -477,8 +527,16 @@ const settingDefinitions = computed(() => {
         }
       ]
     }
-  ]
+  ].filter(
+    (setting) => nodeSettingKeys.has(setting.key) === isNodeSettings.value
+  )
 })
+
+const hasChanges = computed(() =>
+  settingDefinitions.value.some(
+    ({ key }) => settingsForm.value[key] !== initialSettings.value[key]
+  )
+)
 
 const settingGroupOrder = ['deploy', 'runtime', 'health', 'advanced']
 
@@ -495,11 +553,14 @@ const groupedSettings = computed(() =>
 async function load() {
   loading.value = true
   formError.value = ''
+  loadError.value = false
   try {
     const [settingRows, healthRows, llmRows] = await Promise.all([
       listGlobalSettings(),
       getSystemHealth(),
-      llmAdminApi.getLLMConfigAll({ scope: 'global' }).catch(() => [])
+      isNodeSettings.value
+        ? []
+        : llmAdminApi.getLLMConfigAll({ scope: 'global' }).catch(() => [])
     ])
 
     globalSettings.value = normalizeList(settingRows)
@@ -507,7 +568,12 @@ async function load() {
     llmConfigOptions.value = normalizeList(llmRows)
     hydrateSettingsForm()
   } catch (error) {
-    showError(extractErrorMessage(error, t('lensAdmin.messages.loadFailed')))
+    loadError.value = true
+    formError.value = extractErrorMessage(
+      error,
+      t('lensAdmin.messages.loadFailed')
+    )
+    showError(formError.value)
   } finally {
     loading.value = false
   }
@@ -539,27 +605,40 @@ function resetSettingsForm() {
   formError.value = ''
 }
 
+function refreshSettings() {
+  if (confirmNavigation()) load()
+}
+
 async function saveSettings() {
   saving.value = true
   formError.value = ''
   try {
     for (const setting of settingDefinitions.value) {
+      if (
+        settingsForm.value[setting.key] === initialSettings.value[setting.key]
+      )
+        continue
       const value =
         setting.type === 'number'
-          ? Math.max(1, Number(settingsForm.value[setting.key]) || 1)
+          ? Number(settingsForm.value[setting.key])
           : setting.type === 'select'
             ? settingsForm.value[setting.key] || defaultSettings[setting.key]
             : settingsForm.value[setting.key] || ''
+      if (
+        setting.type === 'number' &&
+        (!Number.isInteger(value) || value < 1)
+      ) {
+        throw new Error(
+          t('management.settingPositiveInteger', { setting: setting.label })
+        )
+      }
       const payload = {
         key: setting.key,
         value,
         description: setting.description
       }
-      if (globalSettings.value.some((item) => item.key === setting.key)) {
-        await updateGlobalSetting(setting.key, payload)
-      } else {
-        await createGlobalSetting(payload)
-      }
+      await updateGlobalSetting(setting.key, payload)
+      initialSettings.value[setting.key] = value
     }
     showSuccess(t('lensAdmin.messages.saveSuccess'))
     await load()
@@ -577,8 +656,11 @@ async function saveSettings() {
 async function updateScheduledTaskEnabled(taskType, enabled) {
   taskSaving.value = { ...taskSaving.value, [taskType]: true }
   try {
-    await updateSystemTaskEnabled(taskType, enabled)
-    await load()
+    const task = await updateSystemTaskEnabled(taskType, enabled)
+    systemHealth.value = [
+      ...systemHealth.value.filter((row) => row.task_type !== taskType),
+      task
+    ]
     showSuccess(t('lensAdmin.messages.saveSuccess'))
   } catch (error) {
     showError(extractErrorMessage(error, t('lensAdmin.messages.saveFailed')))
@@ -588,6 +670,11 @@ async function updateScheduledTaskEnabled(taskType, enabled) {
 }
 
 onMounted(load)
+watch(() => route.meta.settingsScope, load)
+const confirmNavigation = () =>
+  !hasChanges.value || window.confirm(t('lensAdmin.messages.unsavedChanges'))
+onBeforeRouteLeave(confirmNavigation)
+onBeforeRouteUpdate(confirmNavigation)
 </script>
 
 <style scoped>
